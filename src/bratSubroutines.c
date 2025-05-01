@@ -43,6 +43,7 @@ static long verbose_optimize = 0;
 void clear2dMapList();
 void add2dMapList(double interpValue);
 void readBratFieldFile(BRAT *brat, char *filename, short additionalFile);
+void writeBratFieldOutput(BRAT *brat, char *rootname);
 
 /* parameters of element needed for integration */
 static double theta, fse = 0, interpParameter = 0;
@@ -175,6 +176,7 @@ long trackBRAT(double **part, long np, BRAT *brat, double pCentral, double **acc
     /* SDDS_DATASET SDDS_table; */
 
     brat->dataIndex = brat->dataIndexAdditional = -1;
+    brat->fieldOutputDone = 0;
     readBratFieldFile(brat, brat->filename, 0);
     if (brat->filenameAdditional && strlen(brat->filenameAdditional))
       readBratFieldFile(brat, brat->filenameAdditional, 1);
@@ -199,7 +201,7 @@ long trackBRAT(double **part, long np, BRAT *brat, double pCentral, double **acc
           !SDDS_DefineSimpleColumn(brat->SDDSparticleOutput, "wz", NULL, SDDS_FLOAT) ||
           !SDDS_DefineSimpleColumn(brat->SDDSparticleOutput, "Bx", "T", SDDS_FLOAT) ||
           !SDDS_DefineSimpleColumn(brat->SDDSparticleOutput, "By", "T", SDDS_FLOAT) ||
-          !SDDS_DefineSimpleColumn(brat->SDDSparticleOutput, "Bz", "m", SDDS_FLOAT) ||
+          !SDDS_DefineSimpleColumn(brat->SDDSparticleOutput, "Bz", "T", SDDS_FLOAT) ||
           !SDDS_DefineSimpleParameter(brat->SDDSparticleOutput, "particleID", NULL, SDDS_ULONG64) ||
           !SDDS_DefineSimpleParameter(brat->SDDSparticleOutput, "ySymmetryCode", NULL, SDDS_SHORT) ||
           !SDDS_DefineSimpleParameter(brat->SDDSparticleOutput, "zSymmetryCode", NULL, SDDS_SHORT) ||
@@ -387,6 +389,13 @@ long trackBRAT(double **part, long np, BRAT *brat, double pCentral, double **acc
       part[ip][3] *= -1;
     }
   }
+
+#ifndef ABRAT_PROGRAM
+  if (!brat->fieldOutputDone && brat->fieldOutputFile && strlen(brat->fieldOutputFile))
+    writeBratFieldOutput(brat, tcontext.rootname);
+  brat->fieldOutputDone = 1;
+#endif
+
   itop = np - 1;
   for (ip = 0; ip <= itop; ip++) {
     double accelCoord[6], q[10];
@@ -2110,6 +2119,8 @@ int interpolate2dFieldMapHigherOrder(
     if (gridExcess < 0)
       gridExcess = 0;
     ng = minGrid + gridExcess; /* number of rows and columns of data to use */
+    if (ng>nx || ng>ny)
+      ng = nx>ny ? ny : nx;
     dim = sqr(ng);             /* number of points in the ng x ng grid*/
     if (dim < nc)
       bombElegant("Something wrong with setting up the number of rows and columns of data for higher-order x-y fitting", NULL);
@@ -2127,7 +2138,6 @@ int interpolate2dFieldMapHigherOrder(
 	   ng, ng, order, nc, dim);
     fflush(stdout);
     */
-
     /* arrays of stored powers of x and y */
     xPow = tmalloc(sizeof(*xPow) * (order + 1));
     yPow = tmalloc(sizeof(*yPow) * (order + 1));
@@ -2257,6 +2267,8 @@ int interpolate2dFieldMapHigherOrder2
     if (gridExcess < 0)
       gridExcess = 0;
     ng = minGrid + gridExcess; /* number of rows and columns of data to use */
+    if (ng>nx || ng>ny)
+      ng = nx>ny ? ny : nx;
     dim = sqr(ng);             /* number of points in the ng x ng grid*/
     if (dim < nc)
       bombElegant("Something wrong with setting up the number of rows and columns of data for higher-order x-y fitting", NULL);
@@ -2269,11 +2281,10 @@ int interpolate2dFieldMapHigherOrder2
     m_alloc(&S, nc, dim);        /* T*(XYTrans*XY)^{-1} */
     m_alloc(&xy, 1, nc);         /* vector of polynomial terms for fit evaluation */
     m_alloc(&U, 1, dim);         /* xy*S */
-    /*
+
     printf("Using %ld x %ld grid for order=%hd interpolation in BRAT/BMXYZ elements (%ld coefficients, %ld fit points)\n",
 	   ng, ng, order, nc, dim);
     fflush(stdout);
-    */
 
     /* arrays of stored powers of x and y */
     xPow = tmalloc(sizeof(*xPow) * (order + 1));
@@ -2729,4 +2740,80 @@ void readBratFieldFile(BRAT *brat, char *filename, short additionalFile) {
   nBrat3dData += 1;
   printf("Done reading BRAT field data from %s\n", filename);
   fflush(stdout);
+}
+
+void writeBratFieldOutput(BRAT *brat, char *rootname)
+{
+  long ix, iy, iz, row;
+  long nx1, ny1, nz1;
+  double xyz[3], B[3], dx1, dy1, dz1;
+  SDDS_DATASET SDDSout;
+  BRAT_3D_DATA *data;
+  char *filename;
+
+#ifndef ABRAT_PROGRAM
+#if USE_MPI
+  if (myid==0) {
+#endif
+    data = &brat3dData[brat->dataIndex];
+  
+    nx1 = brat->nOutput[0]<=1 ? data->nx :  brat->nOutput[0];
+    ny1 = brat->nOutput[1]<=1 ? data->ny :  brat->nOutput[1];
+    nz1 = brat->nOutput[2]<=1 ? data->nz :  brat->nOutput[2];
+    
+    filename = compose_filename(brat->fieldOutputFile, rootname);
+    printf("Writing BRAT field output to %s\n", filename);
+    fflush(stdout);
+
+    if (!SDDS_InitializeOutput(&SDDSout, SDDS_BINARY, 0, NULL, NULL, filename)) {
+        SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+        exitElegant(1);
+    }
+    if (!SDDS_DefineSimpleColumn(&SDDSout, "x", "m", SDDS_FLOAT) ||
+        !SDDS_DefineSimpleColumn(&SDDSout, "y", "m", SDDS_FLOAT) ||
+        !SDDS_DefineSimpleColumn(&SDDSout, "z", "m", SDDS_FLOAT) ||
+        !SDDS_DefineSimpleColumn(&SDDSout, "Bx", "T", SDDS_FLOAT) ||
+        !SDDS_DefineSimpleColumn(&SDDSout, "By", "T", SDDS_FLOAT) ||
+        !SDDS_DefineSimpleColumn(&SDDSout, "Bz", "T", SDDS_FLOAT) ||
+        !SDDS_WriteLayout(&SDDSout) ||
+        !SDDS_StartPage(&SDDSout, nx1*ny1*nz1)) {
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+      exitElegant(1);
+    }
+
+    dx1 = (data->xf-data->xi)/(nx1-1);
+    dy1 = (data->yf-data->yi)/(ny1-1);
+    dz1 = (data->zf-data->zi)/(nz1-1);
+    
+    row = 0;
+    for (iz=0; iz<nz1; iz++) {
+      xyz[2] = data->zi + dz1*iz;
+      if (xyz[2]>=data->zf)
+        xyz[2] = data->zf - data->dz/1e6;
+      for (iy=0; iy<ny1; iy++) {
+        xyz[1] = data->yi + dy1*iy;
+        if (xyz[1]>=data->yf)
+          xyz[1] = data->yf - data->dy/1e6;
+        for (ix=0; ix<nx1; ix++) {
+          xyz[0] = data->xi + dx1*ix;
+          if (xyz[0]>=data->xf)
+            xyz[0] = data->xf - data->dx/1e6;
+          BRAT_B_field_permuted(B, xyz);
+          if (!SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_INDEX|SDDS_PASS_BY_VALUE, row++,
+                                 0, (float)xyz[0], 1, (float)xyz[1], 2, (float)xyz[2], 
+                                 3, (float)B[0], 4, (float)B[1], 5, (float)B[2], -1)) {
+            SDDS_SetError("Problem setting data in SDDS table for BRAT field output.");
+            SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+          }
+        }
+      }
+    }
+    if (!SDDS_WriteTable(&SDDSout) || !SDDS_Terminate(&SDDSout)) {
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+    }
+#if USE_MPI
+  }
+  MPI_Barrier(MPI_COMM_WORLD);
+#endif
+#endif
 }
