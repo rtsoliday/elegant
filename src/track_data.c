@@ -3536,6 +3536,10 @@ PARAMETER brat_param[N_BRAT_PARAMS] = {
   {"PARTICLE_OUTPUT_LOST_ONLY", NULL, IS_SHORT, 0, (long)((char *)&brat_example.particleOutputLostOnly), NULL, 0.0, 0, "If non-zero, particle output includes only lost particles."},
   {"PARTICLE_OUTPUT_SELECTION_INTERVAL", NULL, IS_LONG, 0, (long)((char *)&brat_example.particleOutputSelectionInterval), NULL, 0.0, 1, "Interval between particles selected for output."},
   {"PARTICLE_OUTPUT_SAMPLE_INTERVAL", NULL, IS_LONG, 0, (long)((char *)&brat_example.particleOutputSampleInterval), NULL, 0.0, 1, "Interval in integration steps for particle output."},
+  {"FIELD_OUTPUT_FILE", NULL, IS_STRING, PARAM_CHANGES_MATRIX, (long)((char *)&brat_example.fieldOutputFile), NULL, 0.0, 0, "name of a file to which (x, y, z, Bx, By, Bz) will be written on a grid, for debugging."},
+  {"NX_OUTPUT", NULL, IS_LONG, 0, (long)((char *)&brat_example.nOutput[0]), NULL, 0.0, 0, "Grid dimension in x for field output. Defaults to x grid dimension in input file."},
+  {"NY_OUTPUT", NULL, IS_LONG, 0, (long)((char *)&brat_example.nOutput[1]), NULL, 0.0, 0, "Grid dimension in y for field output. Defaults to y grid dimension in input file."},
+  {"NZ_OUTPUT", NULL, IS_LONG, 0, (long)((char *)&brat_example.nOutput[2]), NULL, 0.0, 0, "Grid dimension in z for field output. Defaults to z grid dimension in input file."},
 };
 
 BGGEXP bggexp_example;

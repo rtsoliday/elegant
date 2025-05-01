@@ -1199,7 +1199,7 @@ extern char *entity_text[N_TYPES];
 #define N_EVCOR_PARAMS 16
 #define N_EHVCOR_PARAMS 18
 #define N_BMAPXYZ_PARAMS 32
-#define N_BRAT_PARAMS 33
+#define N_BRAT_PARAMS 37
 #define N_BGGEXP_PARAMS 35
 #define N_BRANCH_PARAMS 7
 #define N_SLICE_POINT_PARAMS 12
@@ -3205,8 +3205,10 @@ typedef struct {
   char *particleOutput;
   short particleOutputLostOnly;
   long particleOutputSelectionInterval, particleOutputSampleInterval;
+  char *fieldOutputFile;
+  long nOutput[3];
   /* these are set by the program when the file is read */
-  short initialized;
+  short initialized, fieldOutputDone;
   long dataIndex, dataIndexAdditional;
   SDDS_DATASET *SDDSparticleOutput;
 } BRAT;
