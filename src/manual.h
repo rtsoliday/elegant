@@ -136,6 +136,39 @@
 //#define TURBO_STRUCTLAYOUT 1
 //#endif
 
+// These commands aim to enable useful parts of fast math without destroying NaN/Inf handling
+// attribute version is used for functions, and start/end can be used for blocks/regions (depends on compiler)
+// Note that this will result in numeric differences between compilers - use with caution
+#if defined(__GNUC__) && !defined(__clang__)
+// #define FAST_MATH [[gnu::optimize("-funsafe-math-optimizations")]]
+#define FAST_MATH __attribute__((optimize("no-trapping-math,associative-math,reciprocal-math,no-signed-zeros,no-signaling-nans,fp-contract=fast")))
+#define FAST_MATH_BEGIN _Pragma("GCC push_options") \
+                        _Pragma("GCC optimize (\"no-trapping-math,associative-math,reciprocal-math,no-signed-zeros,no-signaling-nans,fp-contract=fast\")")
+#define FAST_MATH_END   _Pragma("GCC pop_options")
+#elif defined(__clang__)
+#define FAST_MATH __attribute__((target("fp-model=fast"))) // roughly equivalent to -funsafe-math-optimizations in GCC
+// To use outside compound statements, add push
+// float_control is a recent addition to clang at v21
+// #define FAST_MATH_BEGIN _Pragma(float_control(precise, off)) _Pragma(fp_contract(on))                     
+// reciprocal(on) not supported on clang 16
+#define FAST_MATH_BEGIN _Pragma("clang fp reassociate(on) contract(fast)")
+// #define FAST_MATH_END _Pragma(float_control(precise, on)) _Pragma(fp_contract(off))               
+// reciprocal(off)
+#define FAST_MATH_END _Pragma("clang fp reassociate(off) contract(on)")
+#elif defined(_MSC_VER)
+// MSVC: Use pragmas around the function definition.
+#define FAST_MATH
+#define FAST_MATH_BEGIN __pragma(float_control(push)) \
+                        __pragma(float_control(precise, off)) \
+                        __pragma(float_control(except, off)) \
+                        __pragma(fp_contract(on))
+#define FAST_MATH_END   __pragma(float_control(pop))
+#else
+#define FAST_MATH
+#define FAST_MATH_BEGIN
+#define FAST_MATH_END
+#endif
+
 #ifdef _MSC_VER
 #define UNUSED /*empty*/
 #else
