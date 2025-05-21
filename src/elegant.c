@@ -3352,43 +3352,46 @@ long SDDS_IdentifyTypeOfData(char *data0)
   if (*data=='+' || *data=='-')
     data++;
 
-  while (*data && flags) {
-    if (*data<='/') {
+  while (*data && flags && !exponentialSeen) {
+    if (*data<='/' && !(*data=='.' && !periodSeen)) {
       flags = 0;
       break;
     }
-    if (*data>=':') {
-      flags |= ~DATA_IS_INT;
+    if (*data>=':' || *data=='.') {
+      flags &= ~DATA_IS_INT;
       if (*data=='.' && flags&DATA_IS_FLOAT) {
         if (periodSeen)
           /* can't have two periods */
-          flags |= ~DATA_IS_FLOAT;
+          flags &= ~DATA_IS_FLOAT;
         periodSeen = 1;
         if (data!=data0 && !(isdigit(*(data-1)) || *(data-1)=='+' || *(data-1)=='-'))
           /* Period is not preceed by a number or sign */
-          flags |= ~DATA_IS_FLOAT;
+          flags &= ~DATA_IS_FLOAT;
       }
       if ((*data=='e' || *data=='E') && flags&DATA_IS_FLOAT) {
-        if (exponentialSeen)
-          flags |= ~DATA_IS_FLOAT;
-        else {
-          /* exponent if [.0123456789]e[+-0123456789] */
-          if (data==data0 || (!isdigit(*(data-1)) && *(data-1)!='.'))
-            flags |= ~DATA_IS_FLOAT;
-          else if (*(data+1)=='+' || *(data+1)=='-' || isdigit(*(data+1))) {
-            data ++;
-            exponentialSeen = 1;
-          } else {
-            flags |= ~DATA_IS_FLOAT;
-          }
-        }
+	/* exponent if [.0123456789]e[+-0123456789] */
+	if (data==data0 || (!isdigit(*(data-1)) && *(data-1)!='.'))
+	  flags &= ~DATA_IS_FLOAT;
+	else if (*(data+1)=='+' || *(data+1)=='-' || isdigit(*(data+1))) {
+	  data ++;
+	  exponentialSeen = 1;
+	} else {
+	  flags &= ~DATA_IS_FLOAT;
+	}
       }
     }
     data++;
   }
-  if (flags&DATA_IS_INT && sscanf(data, "%ld", &longValue)==1)
+  while (*data && exponentialSeen) {
+    if (!isdigit(*data)) {
+      flags = 0;
+      break;
+    }
+    data++;
+  }
+  if ((flags&DATA_IS_INT) && sscanf(data0, "%ld", &longValue)==1)
     return SDDS_LONG;
-  if (flags&DATA_IS_FLOAT && sscanf(data, "%lf", &doubleValue)==1)
+  if ((flags&DATA_IS_FLOAT) && sscanf(data0, "%lf", &doubleValue)==1)
     return SDDS_DOUBLE;
   return SDDS_STRING;
 }
@@ -3472,7 +3475,7 @@ void doMacroOutput(NAMELIST_TEXT *nltext, RUN *run, char **macroTag, char **macr
 #endif       
           }
           break;
-        case SDDS_FLOAT:
+        case SDDS_DOUBLE:
           if (!sscanf(macroValue[i], "%lf", &doubleValue) ||
               !SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_INDEX|SDDS_PASS_BY_VALUE, 0, i, doubleValue, -1)) {
             fprintf(stderr, "Problem setting or scanning value %s for macro %s\n",
@@ -3543,7 +3546,7 @@ void doMacroOutput(NAMELIST_TEXT *nltext, RUN *run, char **macroTag, char **macr
 #endif       
           }
           break;
-        case SDDS_FLOAT:
+        case SDDS_DOUBLE:
           if (!sscanf(macroValue[i], "%lf", &doubleValue) ||
               !SDDS_SetParameters(&SDDSout, SDDS_SET_BY_INDEX|SDDS_PASS_BY_VALUE, i, doubleValue, -1)) {
             fprintf(stderr, "Problem setting or scanning value %s for macro %s\n",
@@ -3573,7 +3576,7 @@ void doMacroOutput(NAMELIST_TEXT *nltext, RUN *run, char **macroTag, char **macr
           fprintf(stderr, "Invalid data type writing macro file\n");
           MPI_Abort(MPI_COMM_WORLD, 1);
 #else
-          bombElegant("data type writing macro file\n", NULL);
+          bombElegantVA("invalid data type %ld writing macro file (%s=%s)\n", type[i], macroTag[i], macroValue[i]);
 #endif       
           break;
         }
