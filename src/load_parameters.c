@@ -26,13 +26,14 @@ typedef struct {
   char *filename;
   unsigned long flags;
 #define COMMAND_FLAG_CHANGE_DEFINITIONS 0x0001UL
-#define COMMAND_FLAG_IGNORE 0x0002UL
-#define COMMAND_FLAG_IGNORE_OCCURENCE 0x0004UL
-#define COMMAND_FLAG_USE_FIRST 0x0008UL
-#define ALLOW_MISSING_ELEMENTS 0x0010UL
-#define ALLOW_MISSING_PARAMETERS 0x0020UL
-#define NUMERICAL_DATA_PRESENT 0x0040UL
-#define STRING_DATA_PRESENT 0x0080UL
+#define COMMAND_FLAG_IGNORE             0x0002UL
+#define COMMAND_FLAG_IGNORE_OCCURENCE   0x0004UL
+#define COMMAND_FLAG_USE_FIRST          0x0008UL
+#define ALLOW_MISSING_ELEMENTS          0x0010UL
+#define ALLOW_MISSING_PARAMETERS        0x0020UL
+#define NUMERICAL_DATA_PRESENT          0x0040UL
+#define STRING_DATA_PRESENT             0x0080UL
+#define COMMAND_FLAG_SCRIPT_TRIGGERED   0x0100UL
   char **includeNamePattern, **includeItemPattern, **includeTypePattern;
   long includeNamePatterns, includeItemPatterns, includeTypePatterns;
   char **excludeNamePattern, **excludeItemPattern, **excludeTypePattern;
@@ -133,8 +134,9 @@ long setup_load_parameters_for_file(char *filename, RUN *run, LINE_LIST *beamlin
 
   load_request = trealloc(load_request, sizeof(*load_request) * (load_requests + 1));
   load_request[load_requests].flags = (change_defined_values ? COMMAND_FLAG_CHANGE_DEFINITIONS : 0) +
-                                      (allow_missing_elements ? ALLOW_MISSING_ELEMENTS : 0) +
-                                      (allow_missing_parameters ? ALLOW_MISSING_PARAMETERS : 0);
+    (allow_missing_elements ? ALLOW_MISSING_ELEMENTS : 0) +
+    (allow_missing_parameters ? ALLOW_MISSING_PARAMETERS : 0) +
+    (script_triggered ? COMMAND_FLAG_SCRIPT_TRIGGERED : 0);
   load_request[load_requests].filename = compose_filename(filename, run->rootname);
   if (change_defined_values && !force_occurence_data)
     load_request[load_requests].flags |= COMMAND_FLAG_IGNORE_OCCURENCE;
@@ -280,7 +282,7 @@ long setup_load_parameters_for_file(char *filename, RUN *run, LINE_LIST *beamlin
   load_requests++;
   if (load_request[load_requests - 1].flags & COMMAND_FLAG_CHANGE_DEFINITIONS) {
     /* do this right away so that it gets propagated into error and vary operations */
-    do_load_parameters(beamline, 1);
+    do_load_parameters(beamline, 1, NULL);
     if (printingEnabled) {
       printf("New length per pass: %21.15e m\n",
              compute_end_positions(beamline));
@@ -299,7 +301,7 @@ long setup_load_parameters_for_file(char *filename, RUN *run, LINE_LIST *beamlin
   return 0;
 }
 
-long do_load_parameters(LINE_LIST *beamline, long change_definitions) {
+long do_load_parameters(LINE_LIST *beamline, long change_definitions, char *scriptFile) {
   long i, j, mode_flags, code, rows, param, allFilesRead, allFilesIgnored;
   char **element, **parameter, **type, **mode, *p_elem, *p_elem0, *ptr, lastMissingElement[100];
   double *value, newValue;
@@ -323,6 +325,18 @@ long do_load_parameters(LINE_LIST *beamline, long change_definitions) {
         (!(load_request[i].flags & COMMAND_FLAG_CHANGE_DEFINITIONS) && change_definitions) ||
         ((load_request[i].flags & COMMAND_FLAG_CHANGE_DEFINITIONS) && !change_definitions))
       continue;
+    if (load_request[i].flags&COMMAND_FLAG_SCRIPT_TRIGGERED) {
+      /* If no filename given, or doesn't match this load request, skip this load request */
+      if (!scriptFile || !strlen(scriptFile) || strcmp(scriptFile, load_request[i].filename)!=0)
+	continue;
+      /* Close and reopen the file to ensure we read the first page */
+      SDDS_Terminate(&load_request[i].table);
+      SDDS_InitializeInputFromSearchPath(&load_request[i].table, load_request[i].filename);
+    } else {
+      /* If this request is script triggered but no trigger filename is passed, skip this load request */
+      if (scriptFile && strlen(scriptFile))
+	continue;
+    }
     hash_table = hcreate(12); /* create a hash table with the size of 2^12, it can grow automatically if necessary */
 
     allFilesIgnored = 0;

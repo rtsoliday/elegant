@@ -1603,7 +1603,7 @@ long do_tracking(
                       watch_pt_seen = 1;
                       if (!watch->initialized)
                         set_up_watch_point(watch, run, eptr->occurence, eptr->pred ? eptr->pred->name : NULL,
-                                           eptr->pred ? eptr->pred->occurence : 0, i_pass, beamline->elem);
+                                           eptr->pred ? eptr->pred->occurence : 0, i_pass, beamline->elem, beam ? beam->id_slots_per_bunch : 0);
                       if (i_pass == passOffset && (n_passes / watch->interval) == 0) {
                         char buffer[16384];
                         snprintf(buffer, 16384,
@@ -1698,7 +1698,7 @@ long do_tracking(
                     if (!slicePoint->disable) {
                       watch_pt_seen = 1; /* sic */
                       if (!slicePoint->initialized)
-                        set_up_slice_point(slicePoint, run, eptr->occurence, eptr->pred ? eptr->pred->name : NULL);
+                        set_up_slice_point(slicePoint, run, eptr->occurence, eptr->pred ? eptr->pred->name : NULL, beam ? beam->id_slots_per_bunch : 0);
                       if (i_pass == passOffset && (n_passes / slicePoint->interval) == 0) {
                         char buffer[16384];
                         snprintf(buffer, 16384,
@@ -1727,7 +1727,7 @@ long do_tracking(
                     if (!histogram->disable) {
                       watch_pt_seen = 1; /* yes, this should be here */
                       if (!histogram->initialized)
-                        set_up_histogram(histogram, run, eptr->occurence);
+                        set_up_histogram(histogram, run, eptr->occurence, beam ? beam->id_slots_per_bunch : 0);
                       if (i_pass == passOffset && (n_passes / histogram->interval) == 0) {
                         char buffer[16384];
                         snprintf(buffer, 16384,
@@ -1993,7 +1993,7 @@ long do_tracking(
                   break;
                 case T_SCMULT:
                   if (getSCMULTSpecCount() && !(flags & TEST_PARTICLES))
-                    trackThroughSCMULT(coord, nToTrack, i_pass, eptr);
+                    trackThroughSCMULT(coord, nToTrack, *P_central, i_pass, eptr, charge);
                   break;
                 case T_EDRIFT:
                   exactDrift(coord, nToTrack, ((EDRIFT *)eptr->p_elem)->length);
@@ -2238,7 +2238,7 @@ long do_tracking(
 #endif
                   nLeft = transformBeamWithScript((SCRIPT *)eptr->p_elem, *P_central, charge,
                                                   beam, coord, nToTrack, run->rootname, i_pass, run->default_order, z, 0,
-                                                  eptr->occurence, run->backtrack);
+                                                  eptr->occurence, run->backtrack, beamline, run);
                   nLost = nToTrack - nLeft;
 #if USE_MPI
                   nToTrack = nLeft;
@@ -2834,7 +2834,7 @@ long do_tracking(
                   watch = (WATCH *)eptr->p_elem;
                   if (!watch->initialized)
                     set_up_watch_point(watch, run, eptr->occurence, eptr->pred ? eptr->pred->name : NULL,
-                                       eptr->pred ? eptr->pred->occurence : 0, i_pass, beamline->elem);
+                                       eptr->pred ? eptr->pred->occurence : 0, i_pass, beamline->elem, beam ? beam->id_slots_per_bunch : 0);
                   if (!watch->disable) {
                     if (i_pass % watch->interval == 0) {
                       switch (watch->mode_code) {
