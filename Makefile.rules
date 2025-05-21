@@ -51,6 +51,7 @@ LZMA_LIB = $(firstword $(wildcard \
            $(addsuffix /liblzma.so, $(LIB_DIRS)) \
            $(addsuffix /liblzma.a, $(LIB_DIRS)) \
            $(addsuffix /lzma.lib, $(LIB_DIR))))
+#Note that on Ubuntu 25.04 we cannot link to the serial version of hdf5
 HDF5_LIB = $(firstword $(wildcard \
            $(addsuffix /libhdf5.dylib, $(LIB_DIRS)) \
            $(addsuffix /libhdf5.a, $(LIB_DIRS)) \
