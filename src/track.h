@@ -779,20 +779,6 @@ typedef struct {
 } SASEFEL_OUTPUT;
 
 typedef struct {
-  char *name;
-  long nskip, verbosity;
-  long horizontal, vertical, longitudinal, uniform;
-  long nonlinear;
-  double averagingFactor, center[3];
-  double sigmax, sigmay, sigmaz, sigmap; 
-  double c0;   			/* c0=re*np/(2*Pi)^(3/2) -> calculate once.  */
-  double c1;	 			/* c1=c0/p0^3/sigmaz -> calculate every turn */
-  double chargePerParticle;
-  double dmux, dmuy;
-  double length;
-} SPACE_CHARGE;
-
-typedef struct {
   long active, rows;
   SDDS_DATASET SDDSout;
   /* input data */
@@ -1111,7 +1097,7 @@ extern char *entity_text[N_TYPES];
 #define N_TMCF_PARAMS 18
 #define N_CEPL_PARAMS 16
 #define N_TWPL_PARAMS 16
-#define N_WATCH_PARAMS 20
+#define N_WATCH_PARAMS 21
 #define N_MALIGN_PARAMS 14
 #define N_TWLA_PARAMS 20
 #define N_PEPPOT_PARAMS 6
@@ -1154,7 +1140,7 @@ extern char *entity_text[N_TYPES];
 #define N_TUBEND_PARAMS 6
 #define N_CHARGE_PARAMS 3
 #define N_PFILTER_PARAMS 6
-#define N_HISTOGRAM_PARAMS 14
+#define N_HISTOGRAM_PARAMS 15
 #define N_CSRCSBEND_PARAMS 72
 #define N_CSRDRIFT_PARAMS 27
 #define N_REMCOR_PARAMS 6
@@ -1163,8 +1149,8 @@ extern char *entity_text[N_TYPES];
 #define N_REFLECT_PARAMS 1
 #define N_CLEAN_PARAMS 7
 #define N_TWISSELEMENT_PARAMS 22
-#define N_WIGGLER_PARAMS 10
-#define N_SCRIPT_PARAMS 39
+#define N_WIGGLER_PARAMS 16
+#define N_SCRIPT_PARAMS 40
 #define N_FLOORELEMENT_PARAMS 6
 #define N_LTHINLENS_PARAMS 8
 #define N_LMIRROR_PARAMS 9
@@ -1178,7 +1164,7 @@ extern char *entity_text[N_TYPES];
 #define N_LSRMDLTR_PARAMS 27
 #define N_POLYNOMIALSERIES_PARAMS 6
 #define N_RFTM110_PARAMS 16
-#define N_CWIGGLER_PARAMS 32
+#define N_CWIGGLER_PARAMS 38
 #define N_EDRIFT_PARAMS 1
 #define N_SCMULT_PARAMS 0		
 #define N_ILMATRIX_PARAMS 46
@@ -1202,7 +1188,7 @@ extern char *entity_text[N_TYPES];
 #define N_BRAT_PARAMS 37
 #define N_BGGEXP_PARAMS 35
 #define N_BRANCH_PARAMS 7
-#define N_SLICE_POINT_PARAMS 12
+#define N_SLICE_POINT_PARAMS 13
 #define N_IONEFFECTS_PARAMS 18
 #define N_SPEEDBUMP_PARAMS 9
 #define N_CCBEND_PARAMS 73
@@ -1866,7 +1852,7 @@ typedef struct {
     short disable, useDisconnect;
     long indexOffset;
     double referenceFrequency;
-    short autoReference; 
+    short autoReference, bunchSeries; 
     /* internal variables for SDDS output */
     short initialized;
     long count, mode_code, window_code;
@@ -1887,6 +1873,7 @@ typedef struct {
     double binSizeFactor;
     short normalize, disable, sparse;
     long startPID, endPID;
+    short bunchSeries;
     /* internal variables for SDDS output */
     short initialized;
     long count;
@@ -1918,7 +1905,7 @@ typedef struct {
   char *filename, *label;
   long indexOffset;
   double referenceFrequency;
-  short disable, useDisconnect;
+  short disable, useDisconnect, bunchSeries;
   /* internal variables for SDDS output */
   short initialized;
   SDDS_TABLE *SDDS_table;
@@ -3115,7 +3102,7 @@ typedef struct {
 /* space charge multipole element */
 typedef struct {
     /* values for internal use: */
-    long flag;
+  long flag;
   double lastSigma[3]; /* values of sigmax, sigmay, sigmaz on last pass */
 } SCMULT;          
 
@@ -3303,8 +3290,10 @@ typedef struct {
   double dx, dy, dz, tilt;
   long poles;
   short focusing;
+  char *model;
+  double gap, jFraction, C[3];
   /* internal use only */
-  double radiusInternal;  /* may be computed from K */
+  double radiusInternal;  /* may be computed from K or gap */
 } WIGGLER;
 
 /* names and storage structure for CWIGGLER element */
@@ -3321,8 +3310,11 @@ typedef struct {
   char *fieldOutput;
   short verbosity;
   double BConstant[2];
+  char *model;
+  double gap, jFraction, C[3];
   /* for internal use */
   short initialized;
+  double BMaxToUse, BxMaxToUse, ByMaxToUse; /* copies of user data, or computed from model */
   double *ByData, *BxData; 
   long ByHarmonics, BxHarmonics;
   double BPeak[2];              
@@ -3370,6 +3362,7 @@ typedef struct {
   char *directory, *rootname, *inputExtension, *outputExtension;
   short keepFiles, driftMatrix;
   short useParticleID, noNewParticles, determineLossesFromParticleID, softFailure;
+  char *postCommandParameterFile;
   double NP[10];
   char *SP[10];
 } SCRIPT;
@@ -4004,6 +3997,7 @@ extern long fill_in_matrices(ELEMENT_LIST *elem, RUN *run);
 extern VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long order, long radiation, long nSlices, long sliceEtilted);
 extern long calculate_matrices(LINE_LIST *line, RUN *run);
 extern VMATRIX *drift_matrix(double length, long order);
+extern double computeUndulatorFieldFromModel(double gap, double fractionOfJc, double *C, double length, long poles, char *model);
 extern VMATRIX *wiggler_matrix(double length, double radius, long poles, long order, long focusing);
 extern void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
 			CWIGGLER *cwiggler, double *sigmaDelta2, long singleStep, double *ZwStart);
@@ -4020,9 +4014,9 @@ extern VMATRIX *determineMatrix(RUN *run, ELEMENT_LIST *eptr, double *startingCo
 VMATRIX *determineMatrixHigherOrder(RUN *run, ELEMENT_LIST *eptr, double *startingCoord, double *stepSize, long order);
 extern void determineRadiationMatrix(VMATRIX *Mr, RUN *run, ELEMENT_LIST *eptr, double *startingCoord, double *D, long slices, long sliceEtilted, long order);
 extern void determineRadiationMatrix1(VMATRIX *Mr, RUN *run, ELEMENT_LIST *eptr, double *startingCoord, double *D, long ignoreRadiation, double *z, long iSlice);
-  extern void set_up_watch_point(WATCH *watch, RUN *run, long occurence, char *previousElementName, long previousElementOccurence,
-                                 long i_pass, ELEMENT_LIST *eptr);
-extern void set_up_slice_point(SLICE_POINT *slice, RUN *run, long occurence, char *previousElementName);
+extern void set_up_watch_point(WATCH *watch, RUN *run, long occurence, char *previousElementName, long previousElementOccurence,
+			       long i_pass, ELEMENT_LIST *eptr, long IDSlotsPerBunch);
+extern void set_up_slice_point(SLICE_POINT *slice, RUN *run, long occurence, char *previousElementName, long IDSlotsPerBunch);
 void SDDS_SlicePointSetup(SLICE_POINT *slicePoint, char *command_file, char *lattice_file, char *caller, 
                           char *previousElementName);
 void dump_slice_analysis(SLICE_POINT *slicePoint, long step, long pass, long n_passes, 
@@ -4107,7 +4101,7 @@ void setTrackingOmniWedgeFunction(void (*wedgeFunc)(double **part, long np, long
 void gatherParticles(double ***coord, long *nToTrack, long *nLost, double ***accepted, long n_processors, int myid, double *round);
 long transformBeamWithScript(SCRIPT *script, double pCentral, CHARGE *charge, BEAM *beam, double **part, 
                              long np, char *mainRootname, long iPass, long driftOrder, double z, long forceSerial,
-			     long occurence, long backtrack);
+			     long occurence, long backtrack, LINE_LIST *bealmine, RUN *run);
 long transformBeamWithScript_s(SCRIPT *script, double pCentral, CHARGE *charge, BEAM *beam, double **part, 
 			       long np, char *mainRootname, long iPass, long driftOrder, double z, long occurence, long backtrack);
 #ifdef USE_MPI
@@ -4869,7 +4863,8 @@ void convertLocalCoordinatesToGlobal(double *Z, double *X, double *Y, double *th
 long trackThroughExactCorrector(double **part, long n_part, ELEMENT_LIST *eptr, double Po, double **accepted, double z_start, double *sigmaDelta2);
 
 long setup_load_parameters(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
-long do_load_parameters(LINE_LIST *beamline, long change_definitions);
+long setup_load_parameters_for_file(char *filename, RUN *run, LINE_LIST *beamline);
+long do_load_parameters(LINE_LIST *beamline, long change_definitions, char *scriptLoadFile);
 char **addPatterns(long *patterns, char *input0);
 int matchesPatternList(char **pattern, long patterns, char *input);
 #define NO_LOAD_PARAMETERS 0
@@ -4943,7 +4938,7 @@ extern void SDDS_CentroidOutputSetup(SDDS_TABLE *SDDS_table, char *filename, lon
 extern void SDDS_SigmaOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row,
                            char *command_file, char *lattice_file, char *caller);
 extern void readErrorMultipoleData(MULTIPOLE_DATA *multData, char *multFile, long steering);
-extern void set_up_histogram(HISTOGRAM *histogram, RUN *run, long occurence);
+extern void set_up_histogram(HISTOGRAM *histogram, RUN *run, long occurence, long IDSlotsPerBunch);
 extern long track_through_tubend(double **part, long n_part, TUBEND *tubend,
                           double p_error, double Po, double **accepted,
                           double z_start);
@@ -5008,13 +5003,13 @@ long ignoreElement(char *name, long type, long completelyOnly);
 void setupTransmuteElements(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
 
 void setupSCEffect(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline); 
-void addSCSpec(char *name, char *type, char *exclude);
+void addSCSpec(char *name, char *type, char *exclude, long skip, long verbosity);
 void clearSCSpecs();
-long getSCMULTSpecCount();
-char *getSCMULTName();
+long getSCMULTSpecCount();  
+extern char *scMultName;
 long insertSCMULT(char *name, long type, long *occurrence);
-void trackThroughSCMULT(double **part, long np, long iPass, ELEMENT_LIST *eptr);
-  void finishSCSpecs();
+void trackThroughSCMULT(double **part, long np, double Po, long iPass, ELEMENT_LIST *eptr, CHARGE *charge);
+void finishSCSpecs();
 void initializeSCMULT(ELEMENT_LIST *eptr, double **part, long np, double Po, long i_pass );
 void accumulateSCMULT(double **part, long np, ELEMENT_LIST *eptr);
 double computeRmsCoordinate(double **coord, long i1, long np, double *mean, long *countReturn);

@@ -17,10 +17,13 @@
 long transformBeamWithScript(SCRIPT *script, double pCentral, CHARGE *charge,
                              BEAM *beam, double **part, long np,
                              char *mainRootname, long iPass, long driftOrder, double z,
-                             long forceSerial, long occurence, long backtrack) {
-  long doDrift;
+                             long forceSerial, long occurence, long backtrack,
+			     LINE_LIST *beamline, RUN *run) {
+  short doDrift;
+  long npReturn;
   doDrift = 0;
-
+  npReturn = 0;
+  
   if (script->onPass >= 0) {
     if (script->onPass != iPass)
       doDrift = 1;
@@ -39,26 +42,35 @@ long transformBeamWithScript(SCRIPT *script, double pCentral, CHARGE *charge,
 
   if (doDrift) {
     drift_beam(part, np, script->length, driftOrder);
-    return np;
-  }
-
+    npReturn = np;
+  } else {
 #if USE_MPI
 #  if MPI_DEBUG
-  printf("In transformBeamWithScript, forceSerial=%ld\n", forceSerial);
-  fflush(stdout);
+    printf("In transformBeamWithScript, forceSerial=%ld\n", forceSerial);
+    fflush(stdout);
 #  endif
-  if (!forceSerial) {
-    if (script->useParticleID && script->determineLossesFromParticleID) {
-      if (isMaster)
-        printWarningForTracking("The DETERMINE_LOSSES_FROM_PID flag of the SCRIPT element is ignored in Pelegant.", NULL);
+    if (!forceSerial) {
+      if (script->useParticleID && script->determineLossesFromParticleID) {
+	if (isMaster)
+	  printWarningForTracking("The DETERMINE_LOSSES_FROM_PID flag of the SCRIPT element is ignored in Pelegant.", NULL);
+      }
+      npReturn = transformBeamWithScript_p(script, pCentral, charge, beam, part, np, mainRootname, iPass, driftOrder, z, occurence, backtrack);
+    } else {
+      npReturn = transformBeamWithScript_s(script, pCentral, charge, beam, part, np, mainRootname, iPass, driftOrder, z, occurence, backtrack);
     }
-    return transformBeamWithScript_p(script, pCentral, charge, beam, part, np, mainRootname, iPass, driftOrder, z, occurence, backtrack);
-  } else {
-    return transformBeamWithScript_s(script, pCentral, charge, beam, part, np, mainRootname, iPass, driftOrder, z, occurence, backtrack);
-  }
 #else
-  return transformBeamWithScript_s(script, pCentral, charge, beam, part, np, mainRootname, iPass, driftOrder, z, occurence, backtrack);
+    npReturn = transformBeamWithScript_s(script, pCentral, charge, beam, part, np, mainRootname, iPass, driftOrder, z, occurence, backtrack);
 #endif
+  }
+  
+  if (script->postCommandParameterFile && strlen(script->postCommandParameterFile) && beamline && run) {
+    /* load data from the file into element parameters */
+    do_load_parameters(beamline, 0, script->postCommandParameterFile);
+    /* update matrices etc. */
+    fill_in_matrices(beamline->elem, run);
+  }
+
+  return npReturn;
 }
 
 void determineScriptNames(SCRIPT *script, char **rootname0, char **input0, char **output0, long *nameLength0,

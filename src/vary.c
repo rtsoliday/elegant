@@ -437,7 +437,7 @@ long vary_beamline(VARY *_control, ERRORVAL *errcon, RUN *run, LINE_LIST *beamli
   parameters_loaded = 0;
   do_alter_elements(run, beamline, 1, 1);
   if (!(_control->i_step >= _control->n_steps && !_control->n_indices))
-    parameters_loaded = do_load_parameters(beamline, 0);
+    parameters_loaded = do_load_parameters(beamline, 0, NULL);
   do_alter_elements(run, beamline, 0, 1);
 
   if (errcon->n_items && do_perturbations) {

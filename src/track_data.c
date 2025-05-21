@@ -64,6 +64,11 @@ int totalPropertiesPerParticle = COORDINATES_PER_PARTICLE + BASIC_PROPERTIES_PER
 /* number of sigmas for gaussian random numbers in radiation emission simulation in CSBEND, KQUAD, etc. */
 double srGaussianLimit = 3.0;
 
+/* global variable needed for SCMULT element name. Using a global variable resolves
+ * issues with linking elegantto.
+ */
+char *scMultName = NULL;
+
 char *entity_name[N_TYPES] = {
   "LINE",
   "QUAD",
@@ -901,6 +906,7 @@ PARAMETER watch_param[N_WATCH_PARAMS] = {
   {"INDEX_OFFSET", "", IS_LONG, 0, (long)((char *)&watch_example.indexOffset), NULL, 0.0, 0, "Offset for file indices for sequential file naming."},
   {"REFERENCE_FREQUENCY", "", IS_DOUBLE, 0, (long)((char *)&watch_example.referenceFrequency), NULL, -1.0, -1, "If non-zero, the indicated frequency is used to define the bucket center for purposes of computing time offsets."},
   {"AUTO_REFERENCE", "", IS_SHORT, 0, (long)((char *)&watch_example.autoReference), NULL, 0.0, 0, "If nonzero, uses the highest-frequency RFCA or RFCW element to determien the reference frequency."},
+  {"BUNCH_SERIES", "", IS_SHORT, 0, (long)((char *)&watch_example.bunchSeries), NULL, 0.0, 0, "If nonzero, successive instances of the same WATCH element are assigned to successive bunches. Overrides START_PID and END_PID values."},
 };
 
 TW_PLATES twpl_example;
@@ -2538,6 +2544,7 @@ PARAMETER histogram_param[N_HISTOGRAM_PARAMS] = {
   {"SPARSE", "", IS_SHORT, 0, (long)((char *)&histogram_example.sparse), NULL, 0.0, 0, "If nonzero, only bins with non-zero counts will be output."},
   {"START_PID", "", IS_LONG, 0, (long)((char *)&histogram_example.startPID), NULL, 0.0, -1, "starting particleID for particles to include"},
   {"END_PID", "", IS_LONG, 0, (long)((char *)&histogram_example.endPID), NULL, 0.0, -1, "ending particleID for particles to include"},
+  {"BUNCH_SERIES", "", IS_SHORT, 0, (long)((char *)&histogram_example.bunchSeries), NULL, 0.0, 0, "If nonzero, successive instances of the same HISTOGRAM element are assigned to successive bunches. Overrides START_PID and END_PID values."},
 };
 
 MHISTOGRAM mhistogram_example;
@@ -2710,6 +2717,12 @@ PARAMETER wiggler_param[N_WIGGLER_PARAMS] = {
   {"TILT", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&wiggler_example.tilt), NULL, 0.0, 0, "Rotation about beam axis."},
   {"POLES", "", IS_LONG, PARAM_CHANGES_MATRIX, (long)((char *)&wiggler_example.poles), NULL, 0.0, 0, "Number of wiggler poles"},
   {"FOCUSING", "", IS_SHORT, PARAM_CHANGES_MATRIX, (long)((char *)&wiggler_example.focusing), NULL, 0.0, 1, "If 0, turn off vertical focusing (this is unphysical!)"},
+  {"MODEL", "", IS_STRING, PARAM_CHANGES_MATRIX, (long)((char *)&wiggler_example.model), NULL, 0.0, 0, "Model for determining B from GAP. Used if GAP is non-zero, K=0, and B=0."},
+  {"GAP", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&wiggler_example.gap), NULL, 0.0, 0, "Magnetic gap. Ignored if K or B is non-negative."},
+  {"JFRACTION", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&wiggler_example.jFraction), NULL, 0.0, 0, "For SCU models, fraction of maximum current at which to operate."},
+  {"C1", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&wiggler_example.C[0]), NULL, 0.0, 0, "For custom model, the C1 parameter of the Halbach-type expression."},
+  {"C2", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&wiggler_example.C[1]), NULL, 0.0, 0, "For custom model, the C2 parameter of the Halbach-type expression."},
+  {"C3", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&wiggler_example.C[2]), NULL, 0.0, 0, "For custom model, the C3 parameter of the Halbach-type expression."},
 };
 
 CWIGGLER cwiggler_example;
@@ -2746,7 +2759,14 @@ PARAMETER cwiggler_param[N_CWIGGLER_PARAMS] = {
   {"FIELD_OUTPUT", "", IS_STRING, 0, (long)((char *)&cwiggler_example.fieldOutput), NULL, 0.0, 0, "Name of file to which field samples will be written.  Slow, so use only for debugging."},
   {"VERBOSITY", "", IS_SHORT, 0, (long)((char *)&cwiggler_example.verbosity), NULL, 0.0, 0, "A higher value requires more detailed printouts related to computations."},
   {"BX_CONSTANT", "T", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&cwiggler_example.BConstant[0]), NULL, 0.0, 0, "Constant horizontal magnetic field."},
-  {"BY_CONSTANT", "T", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&cwiggler_example.BConstant[1]), NULL, 0.0, 0, "Constant vertical magnetic field."},};
+  {"BY_CONSTANT", "T", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&cwiggler_example.BConstant[1]), NULL, 0.0, 0, "Constant vertical magnetic field."},
+  {"MODEL", "", IS_STRING, PARAM_CHANGES_MATRIX, (long)((char *)&cwiggler_example.model), NULL, 0.0, 0, "Model for determining BMAX from GAP. Used if GAP is positive."},
+  {"GAP", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&cwiggler_example.gap), NULL, 0.0, 0, "Magnetic gap."},
+  {"JFRACTION", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&cwiggler_example.jFraction), NULL, 0.0, 0, "For SCU models, fraction of maximum current at which to operate."},
+  {"C1", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&cwiggler_example.C[0]), NULL, 0.0, 0, "For custom model, the C1 parameter of the Halbach-type expression."},
+  {"C2", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&cwiggler_example.C[1]), NULL, 0.0, 0, "For custom model, the C2 parameter of the Halbach-type expression."},
+  {"C3", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&cwiggler_example.C[2]), NULL, 0.0, 0, "For custom model, the C3 parameter of the Halbach-type expression."},
+};
 
 APPLE apple_example;
 
@@ -2800,6 +2820,7 @@ PARAMETER script_param[N_SCRIPT_PARAMS] = {
   {"NO_NEW_PARTICLES", "", IS_SHORT, 0, (long)((char *)&script_example.noNewParticles), NULL, 0.0, 1, "If nonzero, then no new particles will be added in the script output file."},
   {"DETERMINE_LOSSES_FROM_PID", "", IS_SHORT, 0, (long)((char *)&script_example.determineLossesFromParticleID), NULL, 0.0, 1, "If nonzero and if USE_PARTICLE_ID is nonzero, then particleID data from script output is used to determine which particles were lost."},
   {"SOFT_FAILURE", "", IS_SHORT, 0, (long)((char *)&script_example.softFailure), NULL, 0.0, 1, "If output file does not exist or can't be read, consider all particles lost."},
+  {"POST_COMMAND_PARAMETER_FILE", "", IS_STRING, 0, (long)((char *)&script_example.postCommandParameterFile), NULL, 0.0, 0, "Name of load_parameters file to load after running the script. Must correspond to a load_parameters command exactly."},
   {"NP0", "", IS_DOUBLE, 0, (long)((char *)&script_example.NP[0]), NULL, 0.0, 0, "User-defined numerical parameter for command substitution for sequence %np0"},
   {"NP1", "", IS_DOUBLE, 0, (long)((char *)&script_example.NP[1]), NULL, 0.0, 0, "User-defined numerical parameter for command substitution for sequence %np1"},
   {"NP2", "", IS_DOUBLE, 0, (long)((char *)&script_example.NP[2]), NULL, 0.0, 0, "User-defined numerical parameter for command substitution for sequence %np2"},
@@ -3621,6 +3642,7 @@ PARAMETER slice_point_param[N_SLICE_POINT_PARAMS] = {
   {"REFERENCE_FREQUENCY", "", IS_DOUBLE, 0, (long)((char *)&slice_point_example.referenceFrequency), NULL, -1.0, -1, "If non-zero, the indicated frequency is used to define the bucket center for purposes of computing time offsets."},
   {"DISABLE", "", IS_SHORT, 0, (long)((char *)&slice_point_example.disable), NULL, 0.0, 0, "If nonzero, no output will be generated."},
   {"USE_DISCONNECT", "", IS_SHORT, 0, (long)((char *)&slice_point_example.useDisconnect), NULL, 0.0, 0, "If nonzero, files are disconnected between each write operation. May be useful for parallel operation.  Ignored otherwise."},
+  {"BUNCH_SERIES", "", IS_SHORT, 0, (long)((char *)&slice_point_example.bunchSeries), NULL, 0.0, 0, "If nonzero, successive instances of the same SLICE element are assigned to successive bunches. Overrides START_PID and END_PID values."},
 };
 
 SPEEDBUMP speedbump_example;
