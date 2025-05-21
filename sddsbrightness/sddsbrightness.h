@@ -34,7 +34,7 @@
 #define HELICAK(k) (32.0/7.0*(k)/pow((1.0+(k)*(k)),3.0))
 
 /*method:
-  dujus:             Non-zero emittance
+  dejus:             Non-zero emittance
                      infinite-N +convolution (Dejus' approach)
   walkerinfinite:    Non-zero emittance;
               i      nfinite-N +convolution (Walker's approach)
@@ -44,9 +44,10 @@
 #define DEJUS 1
 #define WALKER_INF 2
 #define WALKER_FIN 3
-#define METHOD_OPTIONS 4
+#define LINDBERG 4
+#define METHOD_OPTIONS 5
 char *method_option[METHOD_OPTIONS]={
-  "borland","dejus","walkerinfinite","walkerfinite"
+  "borland", "dejus", "walkerinfinite", "walkerfinite", "lindberg",
   };
 
 /*device of type: regular planar or helical */
@@ -54,7 +55,7 @@ char *method_option[METHOD_OPTIONS]={
 #define HELICAL 1
 #define DEVICE_OPTIONS 2
 char *device_option[DEVICE_OPTIONS]={
-  "planar","helica"
+  "planar", "helical"
   };
 
 #endif
