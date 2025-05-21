@@ -1221,7 +1221,7 @@ int computeGGderiv(FIELDS_ON_PLANES *fieldsOnPlanes, char *outputFile, long deri
   {
     int ik, iy, n, myid;
     COMPLEX *Bint;
-    Bint = calloc(Nx, sizeof(COMPLEX));
+    Bint = calloc(Ny, sizeof(COMPLEX));
 #if !defined(NOTHREADS)
     myid = omp_get_thread_num();
 #else
