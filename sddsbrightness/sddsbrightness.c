@@ -55,7 +55,7 @@ char *USAGE1 = "sddsbrightness [-pipe=[input][,output]] [<twissFile>] [<SDDSoutp
  [-errorFactors=<filename>,<columnName>] \n\
  [-emittanceRatio=<value> | -coupling=<value>] [-noSpectralBroadening]\n\
  [-latticeFunctions=betax=<meters>,betay=<meters>,etax=<meters>]\n\
- [-method=<string value>,device=<string value>,neks=<value>]\n\
+ [-method=<string value>[,device=<string value>][,neks=<value>][,detuning=<value>]]\n\
  [-originalFortran] [-threads=<value>]\n\n\
 harmonics        number of harmonics to compute\n\
 Krange           range and number of undulator K parameter to evaluate or a list of K values provided by a file.\n\
@@ -84,12 +84,15 @@ method           choose method for calculating brightness \n\
                  method=walkerinfinite        Non-zero emittance, \n\
                                               infinite-N +convolution (Walker's approach) \n\
                  method=walkerfinite          Non-zero emittance; finite-N (Walker's) \n\
+                 method=lindberg  Ryan Lindberg's method.\n\
                  device=planar or helical      undulator type. \n\
-                 neks=<value> number of points for peaking search. \n\n\
+                 neks=<value> number of points for peaking search for Dejus' method. \n\
+                 detuning=<value> fractional detuning from harmonic for Lindberg's method.\n\n\
+                                  defaults to -0.5 \n\n\
 Computes on-axis brightness for an undulator centered on the end of the beamline\n\
 the Twiss parameters for which are in the input file.  You should generate the\n\
 input file using elegant's twiss_output command with radiation_integrals=1 .\n\n\
-Program by Michael Borland.  ANL (This is version 1.21, "__DATE__
+Program by M. Borland, R. Dejus, X. Jiao, R. Lindberg, H. Shang, R. Soliday. ANL (This is version 1.22, "__DATE__
   ")\n";
 
 void getErrorFactorData(double **errorFactor, long *errorFactors, char *filename, char *columnName);
@@ -109,6 +112,13 @@ long GetTwissValues(SDDS_DATASET *SDDSin,
 double computeFactorOfConvolution(long periods, long harmonic, double Sdelta0);
 double convolutionFunc(double x);
 double delta0, sincNu; /*two constants used in convolutionFunc() */
+
+double computeBrightnessLindberg(double radLambda, int radHarm, double radDet,
+                                 double undLength, int undN, double undK,
+                                 double emitx, double emity, double betax, double betay,
+                                 double alphax, double alphay, double sigmaDelta, double current);
+double computeFluxLindberg(int radHarm, int undN, double undK,
+			   double radDet, double sigmaDelta, double current);
 
 /*following functions are needed for calculating brightness using Dejus's method */
 void FindPeak(double *E, double *spec, double *ep, double *sp, double *fwhm, int32_t n);
@@ -181,7 +191,7 @@ int main(int argc, char **argv) {
   double *KK, **FnOut, **Energy, **Brightness, **LamdarOut, **FWHMOut;
   long minNEKS, maxNEKS;
   int32_t neks;
-  double sigmax, sigmay, sigmaxp, sigmayp;
+  double sigmax, sigmay, sigmaxp, sigmayp, detuning=-0.5;
   char *deviceOption, *Units = NULL;
   double *errorFactor = NULL;
   long errorFactors = 0;
@@ -320,27 +330,13 @@ int main(int argc, char **argv) {
       case SET_METHOD:
         if (s_arg[i_arg].n_items < 2)
           SDDS_Bomb("invalid -dejus syntax/values");
-        switch (match_string(s_arg[i_arg].list[1], method_option, METHOD_OPTIONS, 0)) {
-        case BORLAND:
-          method = 0;
-          break;
-        case DEJUS:
-          method = 1;
-          break;
-        case WALKER_INF:
-          method = 2;
-          break;
-        case WALKER_FIN:
-          method = 3;
-          break;
-        default:
+        if ((method=match_string(s_arg[i_arg].list[1], method_option, METHOD_OPTIONS, 0))<0)
           SDDS_Bomb("Invalid method given!");
-          break;
-        }
         s_arg[i_arg].n_items -= 2;
         if (s_arg[i_arg].n_items > 0 &&
             !scanItemList(&dummyFlags, s_arg[i_arg].list + 2, &s_arg[i_arg].n_items, 0,
                           "device", SDDS_STRING, &deviceOption, 1, 0,
+                          "detuning", SDDS_DOUBLE, &detuning, 1, 0,
                           "neks", SDDS_LONG, &neks, 1, 0, NULL))
           SDDS_Bomb("invalid -method syntax/values");
         if (deviceOption) {
@@ -493,7 +489,7 @@ int main(int argc, char **argv) {
 
   dK = (KEnd - KStart) / (KPoints - 1);
   if (method)
-    current = current * 1.0e3; /*change unit from A to mA for dejus's method */
+    current = current * 1.0e3; /*change unit from A to mA for Dejus's, Walker's, and Lindberg's methods */
 #ifdef DEBUG
   fprintf(stderr, "Entering main loop\n");
 #endif
@@ -527,7 +523,7 @@ int main(int argc, char **argv) {
 #ifdef DEBUG
     fprintf(stderr, "Started output page.\n");
 #endif
-    if (method) {
+    if (method==DEJUS || method==WALKER_INF || method==WALKER_FIN) {
       ihMin = 1;
       ihMax = 2 * (harmonics - 1) + 1;
       nE = KPoints;
@@ -568,7 +564,50 @@ int main(int argc, char **argv) {
                               "period", periodLength, "numberOfPeriods", periods,
                               "emitx", ex0, "emity", ey0, NULL))
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    } else if (method==LINDBERG) {
+      double *flux, *K, *lambda, *energy, *brightness;
+      flux = malloc(sizeof(double)*KPoints);
+      K = malloc(sizeof(double)*KPoints);
+      lambda = malloc(sizeof(double)*KPoints);
+      energy = malloc(sizeof(double)*KPoints);
+      brightness = malloc(sizeof(double)*KPoints);
+      for (ih = 0; ih < harmonics; ih++) {
+        h = ih * 2 + 1;
+#pragma omp parallel for \
+  private(iK)
+        for (iK = 0; iK < KPoints; iK++) {
+          if (Kfilename)
+            K[iK] = Kvalue[iK];
+	  else
+	    K[iK] = KStart + iK*dK;
+          lambda[iK] = periodLength/(2*sqr(pCentral)*h)*(1 + sqr(K[iK])/2);
+          brightness[iK] = computeBrightnessLindberg(lambda[iK], h, detuning, periodLength*periods, periods, K[iK],
+                                         ex0, ey0, betax, betay, alphax, alphay, Sdelta0, current/1e3);
+          flux[iK] = computeFluxLindberg(h, periods, K[iK], detuning, Sdelta0, current/1e3);
+          energy[iK] = 12.39 / (1e10*lambda[iK]);
+	}
+	if (!SDDS_SetColumn(&SDDSout, SDDS_SET_BY_INDEX, brightness, KPoints, ih * 4 + 1) ||
+	    !SDDS_SetColumn(&SDDSout, SDDS_SET_BY_INDEX, flux, KPoints, ih * 4 + 2) ||
+	    !SDDS_SetColumn(&SDDSout, SDDS_SET_BY_INDEX, lambda, KPoints, ih * 4 + 3) ||
+	    !SDDS_SetColumn(&SDDSout, SDDS_SET_BY_INDEX, energy, KPoints, ih * 4 + 4) ||
+	    (h == 1 &&
+	     !SDDS_SetColumn(&SDDSout, SDDS_SET_BY_INDEX, K, KPoints, 0))) {
+            SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+        }
+      }
+      if (!SDDS_SetParameters(&SDDSout, SDDS_BY_NAME | SDDS_PASS_BY_VALUE, "current", current,
+			      "EnergySpread", Sdelta0,
+			      "period", periodLength, "numberOfPeriods", periods,
+			      "emitx", ex0, "emity", ey0, NULL)) {
+	SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+      }
+      free(flux);
+      free(K);
+      free(lambda);
+      free(energy);
+      free(brightness);
     } else {
+      /* Fall through to Borland's method. "Probably not the best choice." -- M. Borland */
       for (ih = 0; ih < harmonics; ih++) {
         h = ih * 2 + 1;
         /*convolution factor is same for all K s, it varies on periods,h and Sdelta0 only*/
@@ -620,7 +659,7 @@ int main(int argc, char **argv) {
     free(Kcolumn);
   }
   free_scanargs(&s_arg, argc);
-  if (method) {
+  if (method==DEJUS || method==WALKER_INF || method==WALKER_FIN) {
     for (ih = 0; ih < harmonics; ih++) {
       free(Energy[ih]);
       free(FnOut[ih]);
@@ -658,16 +697,23 @@ long SetUpOutputFile(SDDS_DATASET *SDDSout, SDDS_DATASET *SDDSin, char *outputfi
     sprintf(buffer, "Brightness%ld", h);
     if (!SDDS_DefineSimpleColumn(SDDSout, buffer, "photons/s/mrad$a2$n/mm$a2$n/0.1%BW", SDDS_DOUBLE))
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
-    sprintf(buffer, "F%ld", h);
-    if (!SDDS_DefineSimpleColumn(SDDSout, buffer, NULL, SDDS_DOUBLE))
-      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    if (method==DEJUS || method==WALKER_FIN || method==WALKER_INF) {
+      sprintf(buffer, "F%ld", h);
+      if (!SDDS_DefineSimpleColumn(SDDSout, buffer, NULL, SDDS_DOUBLE))
+	SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    }
+    if (method==LINDBERG) {
+      sprintf(buffer, "CentralConeFlux%ld", h);
+      if (!SDDS_DefineSimpleColumn(SDDSout, buffer, "photons/s/0.1%BW", SDDS_DOUBLE))
+	SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    }
     sprintf(buffer, "wavelength%ld", h);
     if (!SDDS_DefineSimpleColumn(SDDSout, buffer, "m", SDDS_DOUBLE))
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     sprintf(buffer, "photonEnergy%ld", h);
     if (!SDDS_DefineSimpleColumn(SDDSout, buffer, "keV", SDDS_DOUBLE))
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
-    if (method == 1) {
+    if (method == DEJUS) {
       sprintf(buffer, "FWHM%ld", h);
       if (!SDDS_DefineSimpleColumn(SDDSout, buffer, "eV", SDDS_DOUBLE))
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
