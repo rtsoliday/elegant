@@ -1,5 +1,5 @@
 The output filename may be an incomplete filename.  In the case of the
-\verb|HISTOGRAM| point element, this means it may contain one instance of
+\verb|HISTOGRAM| element, this means it may contain one instance of
 the string format specification ``\%s'' and one occurence of an
 integer format specification (e.g., ``\%ld'').  {\tt elegant} will
 replace the format with the rootname (see
@@ -42,4 +42,17 @@ H1: HISTOGRAM,FILENAME=''output.h1''
 \end{verbatim}
 only a single file would be produced, containing output from the last instance
 only.
+
+For multi-bunch simulation, a variant of this feature can be used to create multiple files, one for
+each bunch. For example,
+\begin{verbatim}
+H1: HISTOGRAM,FILENAME=''%s-%03ld.h1'',BUNCH_SERIES=1
+Q1: QUAD,L=0.1,K1=1
+D: DRIFT,L=1
+Q2: QUAD,L=0.1,K1=-1
+CELL: LINE=(Q1,D,2*Q2,D,Q1)
+BL: LINE=(100*CELL,48*H1)
+\end{verbatim}
+would result in the creation of 48 files, one for each of 48 bunches. If more than 48 bunches are present,
+they won't be recorded. If fewer are present, the excess files will be empty.
 
