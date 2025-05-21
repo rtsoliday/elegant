@@ -1,2 +1,43 @@
 NB: This element has very poor parallel efficiency. Hence, the \verb|START_PASS|, \verb|END_PASS|, and
 \verb|INTERVAL| options should be used to limit the frequency of computations to the minimum needed.
+
+The output filename may be an incomplete filename.  In the case of the
+\verb|SLICE| element, this means it may contain one instance of
+the string format specification ``\%s'' and one occurence of an
+integer format specification (e.g., ``\%ld'').  {\tt elegant} will
+replace the format with the rootname (see
+\verb|run_setup|) and the latter with the element's occurrence
+number.  For example, suppose you had a repetitive lattice defined as
+follows:
+\begin{verbatim}
+S1: SLICE,FILENAME=''%s-%03ld.s1''
+Q1: QUAD,L=0.1,K1=1
+D: DRIFT,L=1
+Q2: QUAD,L=0.1,K1=-1
+CELL: LINE=(S1,Q1,D,2*Q2,D,Q1)
+BL: LINE=(100*CELL)
+\end{verbatim}
+The element \verb|S1| appears 100 times.  Each instance will result in a new file being produced.  Successive instances
+have names like ``{\em rootname}-001.s1'', ``{\em rootname}-002.s1'', ``{\em rootname}-003.s1'', and so on up to ``{\em
+rootname}-100.s1''.  (If instead of ``\%03ld'' you used ``\%ld'', the names would be ``{\em rootname}-1.s1'', ``{\em
+rootname}-2.s1'', etc. up to ``{\em rootname}-100.s1''.  This is generally not as convenient as the names don't sort
+into occurrence order.)
+
+These files can be plotted together easily, for example,
+\begin{verbatim}
+sddsplot -column=Slice,ey *-???.s1 -graph=line,vary -order=spectral
+\end{verbatim}
+
+For multi-bunch simulation, a variant of this feature can be used to create multiple files, one for
+each bunch. For example,
+\begin{verbatim}
+S1: SLICE,FILENAME=''%s-%03ld.s1'',BUNCH_SERIES=1
+Q1: QUAD,L=0.1,K1=1
+D: DRIFT,L=1
+Q2: QUAD,L=0.1,K1=-1
+CELL: LINE=(Q1,D,2*Q2,D,Q1)
+BL: LINE=(100*CELL,48*S1)
+\end{verbatim}
+would result in the creation of 48 files, one for each of 48 bunches. If more than 48 bunches are present,
+they won't be recorded. If fewer are present, the excess files will be empty.
+
