@@ -26,6 +26,18 @@
 /******************************************************************************/
 /* PHYSICS SECTION ************************************************************/
 
+void UpdateCWigglerFields(CWIGGLER *cwiggler) {
+  /* Default to the user-provided values */
+  cwiggler->BMaxToUse = cwiggler->BMax;
+  cwiggler->ByMaxToUse = cwiggler->ByMax;
+  cwiggler->BxMaxToUse = cwiggler->BxMax;
+  if (cwiggler->gap<=0)
+    return;
+  cwiggler->BMaxToUse = computeUndulatorFieldFromModel(cwiggler->gap, cwiggler->jFraction, &(cwiggler->C[0]), cwiggler->length,
+							2*cwiggler->periods, cwiggler->model);
+  cwiggler->BxMaxToUse = cwiggler->ByMaxToUse = 0;
+}
+  
 void GWigInit(struct gwig *Wig,
               double Ltot,         /* total length of wiggler */
               double Lw,           /* wiggler period (m) */
@@ -198,8 +210,10 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
     printWarningForTracking("CWIGGLER STEPS_PER_PERIOD must be 4*integer", buffer);
   }
 
+  UpdateCWigglerFields(cwiggler);
+  
   GWigInit(&Wig, cwiggler->length, cwiggler->length / cwiggler->periods,
-           cwiggler->BMax, cwiggler->ByMax, cwiggler->BxMax,
+           cwiggler->BMaxToUse, cwiggler->ByMaxToUse, cwiggler->BxMaxToUse,
            cwiggler->tgu ? cwiggler->tguGradient : 0,
            cwiggler->stepsPerPeriod,
            cwiggler->integrationOrder,
@@ -350,7 +364,8 @@ void InitializeCWiggler(CWIGGLER *cwiggler, char *name) {
   double sumCmn[2] = {0, 0};
   long i;
 
-  if (cwiggler->BMax && (cwiggler->BxMax || cwiggler->ByMax)) {
+  UpdateCWigglerFields(cwiggler);
+  if (cwiggler->BMaxToUse && (cwiggler->BxMaxToUse || cwiggler->ByMaxToUse)) {
     printf("*** Error: Non-zero BMAX for CWIGGLER when BXMAX or BYMAX also non-zero\n");
     exitElegant(1);
   }
@@ -381,9 +396,9 @@ void InitializeCWiggler(CWIGGLER *cwiggler, char *name) {
       cwiggler->BxHarmonics = 0;
       cwiggler->BxData = NULL;
       if (cwiggler->tgu) {
-        if (!cwiggler->BMax && !cwiggler->ByMax) {
+        if (!cwiggler->BMaxToUse && !cwiggler->ByMaxToUse) {
           printf("*** Error: CWIGGLER element has TGU=1, but also has B_MAX=%le and BY_MAX=%le\n",
-                 cwiggler->BMax, cwiggler->ByMax);
+                 cwiggler->BMaxToUse, cwiggler->ByMaxToUse);
           exitElegant(1);
         }
         if (cwiggler->vertical || cwiggler->helical) {
@@ -438,18 +453,18 @@ void InitializeCWiggler(CWIGGLER *cwiggler, char *name) {
     sumCmn[1] += cwiggler->ByData[6 * i + 1];
   for (i = 0; i < cwiggler->BxHarmonics; i++)
     sumCmn[0] += cwiggler->BxData[6 * i + 1];
-  if (cwiggler->BMax) {
-    cwiggler->BPeak[0] = cwiggler->BMax * sumCmn[0];
-    cwiggler->BPeak[1] = cwiggler->BMax * sumCmn[1];
+  if (cwiggler->BMaxToUse) {
+    cwiggler->BPeak[0] = cwiggler->BMaxToUse * sumCmn[0];
+    cwiggler->BPeak[1] = cwiggler->BMaxToUse * sumCmn[1];
   } else {
-    cwiggler->BPeak[0] = cwiggler->BxMax * sumCmn[0];
-    cwiggler->BPeak[1] = cwiggler->ByMax * sumCmn[1];
+    cwiggler->BPeak[0] = cwiggler->BxMaxToUse * sumCmn[0];
+    cwiggler->BPeak[1] = cwiggler->ByMaxToUse * sumCmn[1];
   }
 
   if (cwiggler->ByHarmonics) {
     double phase;
     phase = fmod(cwiggler->ByData[5], PIx2);
-    if (cwiggler->BMax == 0 && cwiggler->ByMax == 0)
+    if (cwiggler->BMaxToUse == 0 && cwiggler->ByMaxToUse == 0)
       printWarningForTracking("BMAX=0 and BYMAX=0 for CWIGGLER with BY Harmonics", NULL);
     if (phase == 0 || phase == PI || !cwiggler->forceMatched) {
       cwiggler->zEndPointH[0] = 0;
@@ -471,7 +486,7 @@ void InitializeCWiggler(CWIGGLER *cwiggler, char *name) {
   if (cwiggler->BxHarmonics) {
     double phase;
     phase = fmod(cwiggler->BxData[5], PIx2);
-    if (cwiggler->BMax == 0 && cwiggler->BxMax == 0)
+    if (cwiggler->BMaxToUse == 0 && cwiggler->BxMaxToUse == 0)
       printWarningForTracking("BMAX=0 and BXMAX=0 for CWIGGLER WITH BX Harmonics", NULL);
     if (phase == 0 || phase == PI || !cwiggler->forceMatched) {
       cwiggler->zEndPointV[0] = 0;
