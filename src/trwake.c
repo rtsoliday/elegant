@@ -640,7 +640,8 @@ long binTransverseTimeDistribution(double **posItime, double *pz, long *pbin, do
     else
       posItime[1][ib] += ipow(part[ip][2] - dy, yPower);
     pbin[ip] = ib;
-    pz[ip] = Po * (1 + part[ip][5]) / sqrt(1 + sqr(part[ip][1]) + sqr(part[ip][3]));
+    if (pz)
+      pz[ip] = Po * (1 + part[ip][5]) / sqrt(1 + sqr(part[ip][1]) + sqr(part[ip][3]));
     n_binned++;
   }
   return n_binned;
