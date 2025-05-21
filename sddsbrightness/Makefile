@@ -9,7 +9,7 @@ SCRIPTS = brightnessEnvelope
 
 PROD = sddsws sddsbs sddsecon sddscompton sddsxrf xrltool xrltest sddssyncflux
 
-sddsbrightness_SRC = sddsbrightness.c usbC.c brighteC.c huntC.c
+sddsbrightness_SRC = sddsbrightness.c usbC.c brighteC.c huntC.c lindbergBrightness.c
 sddsurgent_SRC = sddsurgent.c
 sddsfluxcurve_SRC = sddsfluxcurve.c
 
