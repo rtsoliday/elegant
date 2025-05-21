@@ -45,12 +45,15 @@ Here is a summary of what's changed since release 2025.2  Historical change logs
 \begin{itemize}
 \item The \verb|CSBEND| and \verb|SBEN| elements did not behave well when very small angles were used together with
   non-zero gradient or sextupole terms. This was reported by forum user \verb|Skamarokha|.
+\item Fixed issues with computation of radiation integrals when dipoles have zero bending angle. This was reported by forum user \verb|Skamarokha|.
 \end{itemize}
 
 \subsection{Bug Fixes for Commands}
 \begin{itemize}
 \item The \verb|semaphores| command issued errors if an immediate semaphore was requested even if the
   other semaphores were blank.
+\item The \verb|insert_sceffects| element, which inserts special elements for computation of transverse space charge in rings,
+  had a bug that resulted in use of linear space charge calculations even when nonlinear calculations were requested.
 \end{itemize}
 
 \subsection{New and Modified Elements}
@@ -58,6 +61,11 @@ Here is a summary of what's changed since release 2025.2  Historical change logs
 \item Added the \verb|FLIP| parameter to \verb|BRAT| to allow turning the magnet upside down.
 \item Added the \verb|FIELD_OUTPUT_FILE|, \verb|NX_OUTPUT|, \verb|NY_OUTPUT|, and \verb|NZ_OUTPUT|
   parameters to \verb|BRAT| to allow output of interpolated field values to an SDDS file.
+\item The \verb|WATCH|, \verb|HISTOGRAM|, and \verb|SLICE| elements now support automatic bunch-by-bunch
+  modes using the new \verb|BUNCH_SERIES| flag. If this flag is set, successive instances of the same element
+  will be assigned to successive bunches.
+\item The \verb|WIGGLER| and \verb|CWIGGLER| elements now internally implement several optional models for hybrid permanent magnet
+  and superconducting undulators.
 \end{itemize}
 
 \subsection{New and Modified Commands}
@@ -67,6 +75,12 @@ Here is a summary of what's changed since release 2025.2  Historical change logs
   results and the matrix.
 \item Added the \verb|macro_output| command, which allows writing the values of the commandline macros to
   a file.
+\item The \verb|insert_sceffects| command, which inserts elements that model transverse space charge kicks,
+  now automatically supports multiple bunches. It also supports a slice-based simulation of space charge
+  kicks.
+\item The \verb|load_parameters| command now allows specifying a parameter file that will be loaded each
+  time a specific \verb|SCRIPT| element is encountered. This allows the script to create
+  a parameter file that alters properties of the lattice elements for subsequent tracking.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -83,7 +97,8 @@ are listed in Section \ref{sect:tools}.
 
 Changes to these tools in this release include
 \begin{itemize}
-\item None.
+\item \verb|sddsbrightness| has a new method for computing the brightness that is about 20 times faster than the
+  default method. R. Lindberg (APS) developed the method and code.
 \end{itemize}
 
 \subsection{Known Bugs, Problems, and Limitations}
@@ -458,7 +473,8 @@ example.)
 \section{Preparing beams for bunch-mode simulations}\label{sect:bunchedBeams}
 
 Certain collective-effects elements in {\tt elegant} can operate under the assumption that the beam is organized into bunches.
-This includes the {\tt FRFMODE}, {\tt FTRFMODE}, {\tt LRWAKE}, {\tt RFMODE}, {\tt WAKE}, {\tt TRFMODE}, {\tt TRWAKE}, {\tt ZLONGIT}, and {\tt ZTRANSVERSE} elements.
+This includes the {\tt FRFMODE}, {\tt FTRFMODE}, {\tt LRWAKE}, {\tt RFMODE}, {\tt WAKE}, {\tt TRFMODE}, {\tt TRWAKE}, {\tt ZLONGIT}, and {\tt ZTRANSVERSE} elements, as well as space charge effects via the \verb|insert_sceffects| command and ion effects via the
+\verb|ion_effects| command.
 At present, this behavior is only available when loading a beam from an external file using the \verb|sdds_beam| command.
 A typical sequence is to run {\tt elegant} once to generate a beam file using \verb|bunched_beam|, then load that beam into a subsequent run.
 
@@ -2159,7 +2175,8 @@ and \verb|SOLE|.
 &divide_elements
     STRING name = NULL;
     STRING type = NULL;
-    STRING exclude = NULL;
+    STRING exclude_name_pattern = NULL;
+    STRING exclude_type_pattern = NULL;
     long divisions = 0;
     double maximum_length = 0;
     long clear = 0;
@@ -2171,8 +2188,11 @@ and \verb|SOLE|.
 	the elements to which this specification applies.
 \item \verb|type| --- A possibly wildcard-containing string specifying
  	the element types to which this specification applies.
-\item \verb|exclude| --- A possibily wildcard-containing string specifying
- 	elements to be excluded from the specification.
+\item \verb|exclude| --- Deprecated. Use \verb|exclude_name_pattern|.
+\item \verb|exclude_name_pattern| --- A possibily wildcard-containing string specifying
+ 	element names to be excluded from the specification.
+\item \verb|exclude_type_pattern| --- A possibily wildcard-containing string specifying
+ 	element types to be excluded from the specification.
 \item \verb|divisions| --- The number of times to subdivide the specified
 	elements.  If zero, then \verb|maximum_length| should be nonzero.
 \item \verb|maximum_length| --- The maximum length of a slice.  This is
@@ -3024,10 +3044,14 @@ be set to zero  and the {\bf name} must be the exact name (no wild-card matching
 
 \begin{itemize}
 \item type: setup command.
-\item function: set up for transverse space charge calculation.  
+\item function: set up for transverse space charge calculation by inserting special elements into the lattice.
 \item sequence: must precede \verb|run_setup|.
-\item NB: this command is intended only for simulation of space-charge kicks in rings. Please read the manual page
-  for \verb|SCMULT| for details on the algorithm.
+\item Notes:
+  \begin{itemize}
+  \item This command is intended only for simulation of space-charge kicks in rings.
+  \item If multiple commands are given, the calculation settings from the last command are used for
+    all insertion points.
+  \end{itemize}
 \item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
 \end{itemize}
 
@@ -3043,9 +3067,12 @@ be set to zero  and the {\bf name} must be the exact name (no wild-card matching
         long vertical = 0;
         long horizontal = 0;
         long nonlinear = 0;
-	long uniform_distribution = 0;
+        long uniform_distribution = 0;
         long verbosity = 0;
         double averaging_factor = 1;
+        double slice_duration = 0.0;
+        long slice_threshold = 100;
+        long slice_interpolation = 0;
 &end
 \end{verbatim}
 
@@ -3061,8 +3088,10 @@ be set to zero  and the {\bf name} must be the exact name (no wild-card matching
 \item \verb|element_prefix| --- Name under which the space charge kick will appear in the beamline.
 \item \verb|skip| --- If nonzero, the given number of insertion locations are skipped. 
         If zero, only one space charge kick is inserted at the end of beamline. 
-\item \verb|vertical|, \verb|horizontal|, \verb|nonlinear| --- If non-zero, then space charge is
-included in the plane in question.
+\item \verb|vertical|, \verb|horizontal|, \verb|longitudinal| --- If non-zero, then space charge is
+included in the plane in question. Longituidinal is not, in fact, supported at present; the \verb|LSCDRIFT|
+element can be used for this.
+\item \verb|nonlinear| --- If zero, use linear approximation, otherwise not. See details below.
 \item \verb|uniform_distribution| --- Used for bi-Gaussian distributed beam (coasting beam), i.e., beam that is
   uniform in z but gaussian in x and y.
 \item \verb|verbosity| --- Larger non-zero values request greater amounts of detail in printouts.
@@ -3078,6 +3107,14 @@ included in the plane in question.
   N.B.: strictly speaking, simulations performed with $f\ne 1$ are invalid, as the effect of strong space charge could
   be understated. However, judicious use of this parameter may allow valid simulations with fewer particles.
   The user should vary the parameter to ensure that results are insenstive to the value.
+\item \verb|slice_duration| --- The length, in seconds, of slices into which to divide the beam for computations.
+  Space charge kicks are computed slice-by-slice assuming each slice is independent and has a uniform longitudinal
+  distribution.
+\item \verb|slice_threshold| --- The minimum number of particles in a slice, below which slice-based computations
+  of the centroids and beam sizes will replaced with whole-beam values. If this value is too small, numerical
+  instabilities may be encountered.
+\item \verb|slice_interpolation| --- If non-zero, the charge, centroid, and beam size values used to compute the
+  kicks are interpolated linearly within each slice.
 \end{itemize}
 
 {\bf Important notes:}
@@ -3092,6 +3129,45 @@ included in the plane in question.
   command just before tracking.
 \end{itemize}
 
+This element simulates transverse space charge (SC) kicks using K.Y. Ng's formula \cite{Xiao2007a}.
+
+The linear SC force is given by:
+\[
+\Delta x'=\frac{K_{sc}Le^{-z^2/(2\sigma_z^2)}}{\sqrt{2\pi}\sigma_z}
+\frac{x}{\sigma_x(\sigma_x+\sigma_y)}
+\]
+\begin{equation}
+\Delta y'=\frac{K_{sc}Le^{-z^2/(2\sigma_z^2)}}{\sqrt{2\pi}\sigma_z}
+\frac{y}{\sigma_y(\sigma_x+\sigma_y)}
+\end{equation}
+where $K_{sc}=\frac{2Nr_e}{\gamma^3\beta^2}$,
+$L$ is the integrating length, $\sigma_{x,y,z}$ are rms beam size.
+
+The non-linear SC force is given by:
+\[
+\Delta x'=\frac{K_{sc}Le^{-z^2/(2\sigma_z^2)}}{2\sigma_z\sqrt{\sigma_x^2-\sigma_y^2}}
+Im\left [ w\left( \frac{x+iy}{\sqrt{2(\sigma_x^2-\sigma_y^2)}} \right)
+-e^{-\frac{x^2}{2 \sigma_x^2}-\frac{y^2}{2 \sigma_y^2}}
+w\left(\frac{x\frac{\sigma_y}{\sigma_x}+iy\frac{\sigma_x}{\sigma_y}}
+{\sqrt{2(\sigma_x^2-\sigma_y^2)}}\right)\right ]
+\]
+\begin{equation}
+\Delta y'=\frac{K_{sc}Le^{-z^2/(2\sigma_z^2)}}{2\sigma_z\sqrt{\sigma_x^2-\sigma_y^2}}
+Re\left [ w\left( \frac{x+iy}{\sqrt{2(\sigma_x^2-\sigma_y^2)}} \right)
+-e^{-\frac{x^2}{2 \sigma_x^2}-\frac{y^2}{2 \sigma_y^2}}
+w\left(\frac{x\frac{\sigma_y}{\sigma_x}+iy\frac{\sigma_x}{\sigma_y}}
+{\sqrt{2(\sigma_x^2-\sigma_y^2)}}\right)\right ]
+\label{equa2}
+\end{equation}
+where $w(z)$ is the complex error function
+\begin{equation}
+w(z)=e^{-z^2}\left [ 1+\frac{2i}{\sqrt{\pi}}\int\limits_0^z e^{\zeta^2}d\zeta\right ]
+\end{equation}
+These expressions appear to diverge when $\sigma_x=\sigma_y$. In fact, this is not
+true, because the expressions inside the square brackets will provide zero too at
+$\sigma_x=\sigma_y$ to cancel the poles outside. In our code, we calculate this equation
+at  $1.01 \sigma_x$ and $0.99\sigma_x$, and average the total effects. 
+ 
 %\begin{latexonly}
 \newpage
 \begin{center}{\Large\verb|ion_effects|}\end{center}
@@ -3451,6 +3527,7 @@ assigned to the target parameter.
         STRING exclude_type_pattern = NULL;
         STRING edit_name_command = NULL;
         long change_defined_values = 0;
+        long script_triggered = 0;
         long repeat_first_page_at_each_step = 0;
         long clear_settings = 0;
         long allow_missing_elements = 0;
@@ -3528,6 +3605,12 @@ Note that the \verb|ElementOccurence| data is normally ignored if
 only one definition of each element, even if it is used multiple times.
 This behavior can be altered with the next control.
 
+\item \verb|script_triggered| --- If non-zero, the specified file is read and loaded after execution of a
+  specific \verb|SCRIPT| element. The script can create this file, allowing modification of element parameters
+  for subsequent passes by the script. A sample of the file must exist when the \verb|load_parameters| command is
+  given and will be used to check for validity. The \verb|SCRIPT| is associated with the \verb|load_parameters|
+  command by virtue of having the same filename assigned to its \verb|POST_COMMAND_PARAMETER_FILE| parameter.
+  
 \item \verb|repeat_first_page_at_each_step| --- Normally each simulation step results in loading a new page from
   the file. If this parameter is non-zero, then the first page is instead loaded at each step. This can be used,
   for example, to reassert a starting configuration prior to other changes, or to load a common set of changes into
@@ -6700,7 +6783,7 @@ up-to-date than these manual pages.
         is of the type written by {\tt elegant} using the {\tt output} field of the {\tt run\_setup}
         command, or the WATCH element.  (Program by M. Borland.)
 \item {\tt sddsbrightness} --- Uses twiss parameter output or data from {\tt sddsanalyzebeam} to
-  compute undulator brightness curves.  (Program by H. Shang, R. Dejus, M. Borland, X. Jiao.)
+  compute undulator brightness curves.  (Program by H. Shang, R. Dejus, R. Lindberg, M. Borland, X. Jiao.)
 \item {\tt sddsbs} --- Computes bending magnet spectra.
   (Program by H. Shang and M. Borland.)
 \item {\tt sddsbunchingfactor} --- Computes bunching factor vs frequency from phase space data.
@@ -7524,21 +7607,24 @@ and {\tt Brightness{\em i}}.
 
  In the case of twiss output from {\tt sddsanalyzebeam}, both emittances are present and these options
  are ignored.
-\item {\tt -method={\em string},device={\em string},neks={\em value}]} --- Choose which method to
+\item {\tt -method={\em string}[,device={\em string}][,neks={\em value}][,detuning={\em value}]} --- Choose which method to
  use for brightness calculations.  Options are
  \begin{itemize} 
- \item {\tt borland} --- M. Borland's approximation method. Fast, but not as reliable as others.
+ \item {\tt borland} --- M. Borland's approximate method. Deprecated. Use Lindberg's method if a fast
+   approximation is desired.
  \item {\tt dejus} --- R. Dejus' non-zero emittance, infinite-N+convolution method.  This is the
    default.
  \item {\tt walkerinfinite} --- R. Walker's method.  Dejus' method is derived from this method.
  \item {\tt walkerfinite} --- R. Walker's method using finite N without convolution.  This is 
    quite slow.
+ \item {\tt lindberg} --- R. Lindberg's method. About 20 times faster than Dejus' method.
+   Provides central cone flux in addition to brightness. Provides control of detuning.
  \end{itemize}
  The {\tt device} qualifier may be {\tt planar} or {\tt helical}.  {\tt neks} is used to 
  change the number of points used for finding the peak of the distribution.
 \end{itemize}
 
-\item {\bf authors:} M. Borland, H. Shang, R. Dejus (ANL).
+\item {\bf authors:} M. Borland, R. Dejus, X. Jiao, R. Lindberg, H. Shang, R. Soliday (ANL).
 \end{itemize}
 
 %\begin{latexonly}
@@ -11366,6 +11452,23 @@ Y.-P. Sun and C.-Y. Yao, ``Tracking With Space Harmonics in ELEGANT Code,'' Proc
   Z. Zhang {\em et al.}, ``Electron beam energy chirp control with a rectangular corrugated structure at the
   Linac Coherent Light Source,'' Phys. Rev. ST Accel. Beams 18, 010702 (2015).
 
+\bibitem{HalbachModel}
+  K. Halbach, J. de Physique, C1, 1983.
+
+\bibitem{DejusModels}
+  R. Dejus {\em et al.}, ANL/APS/LS-314, 2009.
+  
+\bibitem{MoogModels}
+  E. Moog {\em et al.}, ANL/APS/LS-348, 2017.
+  
+\bibitem{Kim-SCU-Scaling} S. H. Kim, ``A scaling law for the magnetic
+  ﬁelds of superconducting undulators,'' Nuclear Instruments and
+  Methods in Physics Research Section A: Accelerators, Spectrometers,
+  Detectors and Associated Equipment, vol. 546, no. 3, pp. 604–619,
+  2005
+
+\bibitem{IvanyushenkovPC} Y. Ivanyushenkov, private communication.
+  
 \end{thebibliography}
 
 \end{document}
