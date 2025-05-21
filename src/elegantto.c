@@ -60,6 +60,15 @@ char *option[N_OPTIONS] = {
 
 void convert_to_mad8(char *outputfile, LINE_LIST *beamline, char *header_file, char *ender_file);
 
+/* Needed by insertSCeffects.cc */
+long isSlave;
+long notSinglePart;     
+void index_bunch_assignments(double **part, long np, long idSlotsPerBunch, double P0,
+                             double **time, long **ibParticle, long ***ipBunch, long **npBunch,
+                             long *nBunches, long lastNBunches
+) {
+}
+
 int main(int argc, char **argv) {
   LINE_LIST *beamline;
   char *input, *output, *magnets;
@@ -311,3 +320,4 @@ long nearly_equal(double x1, double x2, double frac) {
     return (1);
   return (0);
 }
+
