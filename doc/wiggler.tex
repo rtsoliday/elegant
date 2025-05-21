@@ -1,6 +1,6 @@
 This element simulates a wiggler or undulator.  There are two aspects
 to the simulation: the effect on radiation integrals and the vertical
-focusing.  Both are included as of release 15.2 of elegant.  
+focusing. 
 
 If the number of poles should be an odd integer, we include
 half-strength end poles to match the dispersion, but only for the
@@ -36,4 +36,31 @@ K = \frac{\gamma \lambda_u}{2 \pi \rho},
 \end{equation}
 where $\gamma$ is the relativistic factor for the beam and $\lambda_u$ is
 the period length.
+
+There are several ways to specify the strenght of the magnetic field:
+\begin{enumerate}
+\item Using the \verb|B| parameter directly
+\item Using the \verb|K| parameter in combination with the \verb|L| and \verb|POLES| parameters, in which case $B[T] = K/(93.37287 \lambda_u[m])$.
+\item Using a predefined undulator model. Several hybrid-permanent-magnet undulator (HPMU) models are supported. To use these, the \verb|GAP| parameter
+      must be used to provide the full magnetic gap.
+      \begin{itemize}
+        \item \verb|Halbach| --- The original model of a hybrid-permanent-magnet (HPM) undulator by K. Halbach \cite{HalbachModel}. This is mostly of historical interest.
+        \item \verb|SmCo-RT| --- A SmCo HPMU at room temperature, using the model of R. Dejus \cite{DejusModels}.
+        \item \verb|NdFeB-RT| --- A NdFeB HPMU at room temperature, using the model of R. Dejus \cite{DejusModels}.
+        \item \verb|NdFeB-150K| --- A NdFeB HPMU at 150 K, using the model of E. Moog \cite{MoogModels}.
+        \item \verb|PrFeB-77K| --- A PrFeB HPMU at 77 K, using the model of E. Moog \cite{MoogModels}.
+        \item \verb|Custom| --- A user-specified Halbach-type model. The parameters \verb|C1|, \verb|C2|, and \verb|C3| must be given. The field is computed from
+        \begin{equation}
+                B = C_1 e^{C_2 r + C_3 r^3},
+        \end{equation}
+        where $r = g/\lambda_u$, $g$ is the full magnetic gap, and $\lambda$ is the undulator period.
+      \end{itemize}
+      Two superconducting undulator (SCU) models are supported. In addition to providing the magnetic gap, the user must
+      provide a value for the parameter \verb|JFRACTION|, which is the fraction of the quench current at which to
+      operate; 0.8 is considered conservative. These are based on the model of S. H. Kim \cite{Kim-SCU-Scaling}.
+      \begin{itemize}
+        \item \verb|NbTi| --- A NbTi SCU.
+        \item \verb|Nb3Sn| --- A ${\rm Nb_3 Sn}$ SCU.  This is just the \verb|NbTi| model scaled up by 30\% \cite{IvanyushenkovPC}
+      \end{itemize}
+\end{enumerate}
 
