@@ -43,7 +43,7 @@ static SDDS_DEFINITION slice_column[SLICE_COLUMNS] = {
   {"ey", "&column name=ey, symbol=\"$ge$r$by$n\", units=m, type=double, description=\"geometric vertical emittance\" &end"},
 };
 
-void set_up_slice_point(SLICE_POINT *slicePoint, RUN *run, long occurence, char *previousElementName) {
+void set_up_slice_point(SLICE_POINT *slicePoint, RUN *run, long occurence, char *previousElementName, long IDSlotsPerBunch) {
   if (slicePoint->disable)
     return;
   if (slicePoint->interval <= 0)
@@ -58,6 +58,10 @@ void set_up_slice_point(SLICE_POINT *slicePoint, RUN *run, long occurence, char 
   slicePoint->filename = compose_filename_occurence(slicePoint->filename, run->rootname, occurence + slicePoint->indexOffset);
   SDDS_SlicePointSetup(slicePoint, run->runfile, run->lattice, "set_up_slice_point", previousElementName);
   slicePoint->initialized = 1;
+  if (slicePoint->bunchSeries && IDSlotsPerBunch>0) {
+    slicePoint->startPID = 1 + (occurence-1)*IDSlotsPerBunch;
+    slicePoint->endPID = slicePoint->startPID + IDSlotsPerBunch - 1;
+  }
 }
 
 void SDDS_SlicePointSetup(SLICE_POINT *slicePoint, char *command_file, char *lattice_file, char *caller,

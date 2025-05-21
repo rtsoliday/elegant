@@ -18,6 +18,9 @@
         long longitudinal = 0;
         long nonlinear = 0;
 	long uniform_distribution = 0; 
+	double slice_duration = 0;
+	long slice_threshold = 100;
+	long slice_interpolation = 0;
         long verbosity = 0;
         double averaging_factor = 1;
 #end
