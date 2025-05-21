@@ -335,7 +335,7 @@ LINE_LIST *get_beamline(char *madfile, char *use_beamline, double p_central, lon
     }
 
     if (getSCMULTSpecCount()) {
-      fill_elem(eptr, getSCMULTName(), T_SCMULT, NULL);
+      fill_elem(eptr, scMultName, T_SCMULT, NULL);
       eptr_sc = eptr;
       check_duplic_elem(&elem, &eptr, NULL, n_elems, NULL);
       extend_elem_list(&eptr);
@@ -2224,3 +2224,82 @@ void initializeApContour(APCONTOUR *apcontour) {
     apcontour->initialized = 1;
   }
 }
+
+typedef struct {
+  char *name, *type, *exclude;
+  long skip, verbosity;
+} SC_SPEC;
+static short scSpecActive = 0;
+static SC_SPEC *scSpec = NULL;
+static long No_scSpec = 0;
+
+long getSCMULTSpecCount() {
+  return (No_scSpec);
+}
+
+void addSCSpec(char *name, char *type, char *exclude, long skip, long verbosity) {
+  if (!(scSpec = (SC_SPEC *)SDDS_Realloc(scSpec,
+                                         sizeof(*scSpec) * (No_scSpec + 1))))
+    bombElegant((char *)"memory allocation failure", NULL);
+  scSpec[No_scSpec].name = NULL;
+  scSpec[No_scSpec].type = NULL;
+  scSpec[No_scSpec].exclude = NULL;
+  if ((name &&
+       !SDDS_CopyString(&scSpec[No_scSpec].name, name)) ||
+      (type &&
+       !SDDS_CopyString(&scSpec[No_scSpec].type, type)) ||
+      (exclude &&
+       !SDDS_CopyString(&scSpec[No_scSpec].exclude, exclude)))
+    bombElegant((char *)"memory allocation failure", NULL);
+
+  scSpec[No_scSpec].skip = skip;
+  
+  No_scSpec++;
+}
+
+void finishSCSpecs() {
+  if (No_scSpec)
+    scSpecActive = 1;
+}
+
+void clearSCSpecs() {
+  while (No_scSpec--) {
+    if (scSpec[No_scSpec].name)
+      free(scSpec[No_scSpec].name);
+    if (scSpec[No_scSpec].type)
+      free(scSpec[No_scSpec].type);
+    if (scSpec[No_scSpec].exclude)
+      free(scSpec[No_scSpec].exclude);
+  }
+  free(scSpec);
+  scSpec = NULL;
+  scSpecActive = 0;
+  
+}
+
+long insertSCMULT(char *name, long type, long *occurrence) {
+  long i;
+  if (scSpecActive)
+    return 0;
+  for (i = 0; i < No_scSpec; i++) {
+    if (scSpec[i].exclude && wild_match(name, scSpec[i].exclude))
+      continue;
+    if (scSpec[i].name && !wild_match(name, scSpec[i].name))
+      continue;
+    if (scSpec[i].type && !wild_match(entity_name[type], scSpec[i].type))
+      continue;
+    (*occurrence)++;
+    break;
+  }
+  if (i==No_scSpec)
+    return 0;
+  
+  if (*occurrence < scSpec[i].skip || scSpec[i].skip == 0)
+    return (0);
+
+  if (scSpec[i].verbosity > 0)
+    printf("Inserting SCMULT after %s\n", name);
+  *occurrence = 0;
+  return (1);
+}
+

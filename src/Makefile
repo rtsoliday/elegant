@@ -180,7 +180,6 @@ elegantto_SRC = bombElegant.c \
 	find_elem.c \
 	get_beamline.c \
 	ignoreElements.c \
-	insertSCeffects.cc \
 	insert_elements.c \
 	mad_parse.c \
 	matrix.c \
