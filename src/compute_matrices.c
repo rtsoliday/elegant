@@ -59,6 +59,126 @@ void checkMatrices(char *label, ELEMENT_LIST *elem) {
   }
 }
 
+double computeUndulatorFieldFromModel(double gap, double fractionOfJc, double *C, double length, long poles, char *model)
+{
+#define UND_MODEL_DEJUS_NdFeB 0
+#define UND_MODEL_DEJUS_SmCo 1
+#define UND_MODEL_MOOG_PrFeB_77K 2
+#define UND_MODEL_MOOG_NdFeB_150K 3
+#define UND_MODEL_HALBACH 4
+#define UND_MODEL_SC_NbTi 5
+#define UND_MODEL_SC_Nb3Sn 6
+#define UND_MODEL_CUSTOM 7
+#define N_MODELS 8
+  double r;
+  short type = 0; /* Halbach-type expression for HPMU */
+  /* Arrays for S. H. Kim model of SCU */
+#define SCU_ARRAY_SIZE 100
+  static double *jn = NULL, *BmRef = NULL, *B0Ref = NULL, *j = NULL, *B0 = NULL, *deltaB = NULL;
+  static char *modelOption[N_MODELS] = {
+    "NdFeB-RT", "SmCo-RT", "PrFeB-77K", "NdFeB-150K", "Halbach", "NbTi", "Nb3Sn", "Custom"
+  };
+  double C1, C2, C3;
+  double Bc2, ja, period0, jMax, jOp, B0Op;
+  long i, interpCode;
+  double period = 0;
+  if (poles>2)
+    period = 2*(length/poles);
+  if (period<=0 || gap<=0)
+    bombElegantVA("Period (%le) or gap (%le) invalid for planar undulator models\n", period, gap);
+  C1 = C2 = C3 = 0;
+  switch (match_string(model, modelOption, N_MODELS, 0)) {
+  case UND_MODEL_DEJUS_NdFeB:
+    C1 = 3.276;
+    C2 = -4.51;
+    C3 = 1.20;
+    break;
+  case UND_MODEL_DEJUS_SmCo:
+    C1 = 2.94;
+    C2 = -4.62;
+    C3 = 1.37;
+    break;
+  case UND_MODEL_MOOG_PrFeB_77K:
+    C1 = 3.502;
+    C2 = -3.604;
+    C3 = 0.359;
+    break;
+  case UND_MODEL_MOOG_NdFeB_150K:
+    C1 = 3.341;
+    C2 = -3.606;
+    C3 = 0.300;
+    break;
+  case UND_MODEL_HALBACH:
+    C1 = 3.33;
+    C2 = -5.47;
+    C3 = 1.8;
+    break;
+  case UND_MODEL_CUSTOM:
+    C1 = C[0];
+    C2 = C[1];
+    C3 = C[2];
+    break;
+  case UND_MODEL_SC_NbTi:
+    type = 1;
+    break;
+  case UND_MODEL_SC_Nb3Sn:
+    type = 2;
+    break;
+  default:
+    bombElegantVA("Unknown undulator model \"%s\"\n", model);
+    break;
+  }
+  if (!type) {
+    r = gap/period;
+    return C1*exp((C3*r+C2)*r);
+  }
+  if (fractionOfJc>1 || fractionOfJc<0) 
+    bombElegantVA("Superconducting undulator model evaluation invalid for j/jC = %le\n", fractionOfJc);
+  if (jn==NULL) {
+    double jn1, jn0, djn;
+    /* initialize arrays for interpolation of S. H. Kim SCU model */
+    jn = tmalloc(sizeof(*jn)*SCU_ARRAY_SIZE);
+    BmRef = tmalloc(sizeof(double)*SCU_ARRAY_SIZE);
+    B0Ref = tmalloc(sizeof(double)*SCU_ARRAY_SIZE);
+    j = tmalloc(sizeof(double)*SCU_ARRAY_SIZE);
+    B0 = tmalloc(sizeof(double)*SCU_ARRAY_SIZE);
+    deltaB = tmalloc(sizeof(double)*SCU_ARRAY_SIZE);
+    jn1 = 2.5;
+    jn0 = 0.5;
+    djn = (jn1 - jn0) / (SCU_ARRAY_SIZE - 1);
+    for (i = 0; i < SCU_ARRAY_SIZE; i++) {
+      jn[i] = jn0 + djn * i;
+      B0Ref[i] = 0.28588 + 0.69021 * jn[i] - 0.022496 * jn[i] * jn[i];
+      BmRef[i] = 1.8228 + 0.67253 * jn[i] + 0.88641 * jn[i] * jn[i] - 0.2227 * ipow(jn[i], 3);
+    }
+  }
+  Bc2 = 10.4;
+  ja = 2.111;
+  period0 = 16e-3;
+  for (i = 0; i < SCU_ARRAY_SIZE ; i++) {
+    j[i] = jn[i] * period0 / period;
+    B0[i] = B0Ref[i] / exp(PI *(gap / period - 0.5));
+    deltaB[i] = (1 - j[i] / ja) * Bc2 - BmRef[i];
+  }
+  jMax = interp(j, deltaB, SCU_ARRAY_SIZE, 0.0, 0, 1, &interpCode);
+  if (!interpCode) {
+    bombElegantVA("Problem (1) with superconducting undulator model evaluation for period = %le, j/jC = %le, model = %s. Code = %ld\n",
+		  period, fractionOfJc, model, interpCode);
+  } else {
+    jOp = fractionOfJc * jMax;
+    B0Op = interp(B0, j, SCU_ARRAY_SIZE, jOp, 0, 1, &interpCode);
+    if (!interpCode) {
+      bombElegantVA("Problem (2) with superconducting undulator model evaluation for period = %le, j/jC = %le, model = %s. Code = %ld\n",
+		    period, fractionOfJc, model, interpCode);
+    } else {
+      if (type==2) /* Nb3Sn */
+	B0Op *= 1.3;
+      return B0Op;
+    }
+  }
+  return 0.0;
+}
+
 VMATRIX *full_matrix(ELEMENT_LIST *elem, RUN *run, long order) {
   VMATRIX *M;
   log_entry("full_matrix");
@@ -1105,6 +1225,7 @@ VMATRIX *compute_matrix(
     break;
   case T_WIGGLER:
     wiggler = (WIGGLER *)elem->p_elem;
+    wiggler->radiusInternal = wiggler->radius;
     if (wiggler->K > 0) {
       double period;
       /* poles = 2*(wiggler->poles/2)+1; */
@@ -1112,12 +1233,15 @@ VMATRIX *compute_matrix(
       wiggler->radiusInternal = elem->Pref_input * period / (PIx2 * wiggler->K);
     } else if (wiggler->B > 0)
       wiggler->radiusInternal = elem->Pref_input / (particleCharge / particleMass / c_mks) / wiggler->B;
-    else
-      wiggler->radiusInternal = wiggler->radius;
+    else if (wiggler->gap > 0) {
+      double B;
+      if ((B = computeUndulatorFieldFromModel(wiggler->gap, wiggler->jFraction, &(wiggler->C[0]), wiggler->length, wiggler->poles, wiggler->model))>0)
+	wiggler->radiusInternal = elem->Pref_input / (particleCharge / particleMass / c_mks) / B;
+    }
     if (wiggler->radiusInternal == 0) {
       fprintf(stderr, "Error: wiggler radius is zero\n");
-      fprintf(stderr, "Parameters are length=%e, poles=%ld, radius=%e, K=%e\n",
-              wiggler->length, wiggler->poles, wiggler->radiusInternal, wiggler->K);
+      fprintf(stderr, "Parameters are length=%e, poles=%ld, radius=%e, K=%e, B=%e, gap=%e, j/jC=%e, model=%s\n",
+              wiggler->length, wiggler->poles, wiggler->radiusInternal, wiggler->K, wiggler->B, wiggler->gap, wiggler->jFraction, wiggler->model);
     }
     elem->matrix = wiggler_matrix(wiggler->length, wiggler->radiusInternal, wiggler->poles,
                                   run->default_order, wiggler->focusing);
@@ -1877,7 +2001,7 @@ char *fft_window_name[N_FFT_WINDOWS] = {
 };
 
 void set_up_watch_point(WATCH *watch, RUN *run, long occurence, char *previousElementName, long previousElementOccurence,
-                        long i_pass, ELEMENT_LIST *eptr) {
+                        long i_pass, ELEMENT_LIST *eptr, long IDSlotsPerBunch) {
   char *mode, *qualifier;
 
 #if MPI_DEBUG
@@ -1928,9 +2052,13 @@ void set_up_watch_point(WATCH *watch, RUN *run, long occurence, char *previousEl
   if (watch->start_pass < i_pass)
     /* Need this for WATCH points on branches that don't get executed on pass 0 */
     watch->start_pass = i_pass;
+  if (watch->bunchSeries && IDSlotsPerBunch>0) {
+    watch->startPID = 1 + (occurence-1)*IDSlotsPerBunch;
+    watch->endPID = watch->startPID + IDSlotsPerBunch - 1;
+  }
 }
 
-void set_up_histogram(HISTOGRAM *histogram, RUN *run, long occurence) {
+void set_up_histogram(HISTOGRAM *histogram, RUN *run, long occurence, long IDSlotsPerBunch) {
   if (histogram->disable)
     return;
   if (histogram->interval <= 0)
@@ -1947,6 +2075,10 @@ void set_up_histogram(HISTOGRAM *histogram, RUN *run, long occurence) {
   SDDS_HistogramSetup(histogram, SDDS_BINARY, 1, run->runfile, run->lattice, "set_up_histogram");
   histogram->initialized = 1;
   histogram->count = 0;
+  if (histogram->bunchSeries && IDSlotsPerBunch>0) {
+    histogram->startPID = 1 + (occurence-1)*IDSlotsPerBunch;
+    histogram->endPID = histogram->startPID + IDSlotsPerBunch - 1;
+  }
 }
 
 VMATRIX *magnification_matrix(MAGNIFY *magnif) {
