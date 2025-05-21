@@ -21,14 +21,13 @@ harmonic should be 0 or $\pi$ in order to have matched dispersion.
  {\tt KxOverKw}, {\tt KyOverKw}, and {\tt KzOverKw}.
 \end{itemize}
 
-In Version 17.3 and later, for matrix computations {\tt elegant} uses
-a first-order matrix derived from particle tracking when it
-encounterse a CWIGGLER.  Tests show that this gives good agreement in
-the tunes from tracking and Twiss parameter calculations.  For
-radiation integrals, an idealized sinusoidal wiggler model is used
-with bending radius equal to $B\rho/(B_0 \sum C_{mn})$ for each plane.
-Energy loss, energy spread, and horizontal emittance should be estimated
-accurately.
+For matrix-based computations {\tt elegant} uses a first-order matrix
+derived from particle tracking when it encounterse a CWIGGLER.  Tests
+show that this gives good agreement in the tunes from tracking and
+Twiss parameter calculations.  For radiation integrals, an idealized
+sinusoidal wiggler model is used with bending radius equal to
+$B\rho/(B_0 \sum C_{mn})$ for each plane.  Energy loss, energy spread,
+and horizontal emittance should be estimated accurately.
 
 {\tt elegant} allows specifying field expansions for on-axis $B_y$ and
 $B_x$ components, so one can model a helical wiggler.  However, in this
@@ -117,3 +116,29 @@ In addition, if contiguous \verb|CWIGGLER| elements are seen in a beamline, they
 same element. That means that the pole factors will be ignored except at the ends of the sequence.
 For this purpose, \verb|CWIGGLER| elements separated only by \verb|MARK| or \verb|WATCH| elements are considered
 to be contiguous. 
+
+There are several ways to specify the strength of the magnetic field:
+\begin{enumerate}
+\item Using the \verb|BMAX|, \verb|BYMAX|, or \verb|BXMAX| parameters directly.
+\item Using a predefined undulator model to compute the value of \verb|BYMAX|. Several hybrid-permanent-magnet undulator (HPMU) models are supported. To use these, the \verb|GAP| parameter
+      must be used to provide the full magnetic gap.
+      \begin{itemize}
+        \item \verb|Halbach| --- The original model of a hybrid-permanent-magnet (HPM) undulator by K. Halbach \cite{HalbachModel}. This is mostly of historical interest.
+        \item \verb|SmCo-RT| --- A SmCo HPMU at room temperature, using the model of R. Dejus \cite{DejusModels}.
+        \item \verb|NdFeB-RT| --- A NdFeB HPMU at room temperature, using the model of R. Dejus \cite{DejusModels}.
+        \item \verb|NdFeB-150K| --- A NdFeB HPMU at 150 K, using the model of E. Moog \cite{MoogModels}.
+        \item \verb|PrFeB-77K| --- A PrFeB HPMU at 77 K, using the model of E. Moog \cite{MoogModels}.
+        \item \verb|Custom| --- A user-specified Halbach-type model. The parameters \verb|C1|, \verb|C2|, and \verb|C3| must be given. The field is computed from
+        \begin{equation}
+                B = C_1 e^{C_2 r + C_3 r^3},
+        \end{equation}
+        where $r = g/\lambda_u$, $g$ is the full magnetic gap, and $\lambda$ is the undulator period.
+      \end{itemize}
+      Two superconducting undulator (SCU) models are supported. In addition to providing the magnetic gap, the user must
+      provide a value for the parameter \verb|JFRACTION|, which is the fraction of the quench current at which to
+      operate; 0.8 is considered conservative. These are based on the model of S. H. Kim \cite{Kim-SCU-Scaling}.
+      \begin{itemize}
+        \item \verb|NbTi| --- A NbTi SCU.
+        \item \verb|Nb3Sn| --- A ${\rm Nb_3 Sn}$ SCU.  This is just the \verb|NbTi| model scaled up by 30\% \cite{IvanyushenkovPC}
+      \end{itemize}
+\end{enumerate}
