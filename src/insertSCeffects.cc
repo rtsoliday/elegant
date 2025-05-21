@@ -1,4 +1,4 @@
-/*************************************************************************\
+/************************************************************************* \
 * Copyright (c) 2002 The University of Chicago, as Operator of Argonne
 * National Laboratory.
 * Copyright (c) 2002 The Regents of the University of California, as
@@ -18,93 +18,33 @@
 #include "track.h"
 #include "match_string.h"
 
+/* There's no reason to use a structure here since these are all local variables.
+ * Note that they can't be part of the SCMULT elements since the information is needed
+ * across such elements.
+ */
 typedef struct {
-  char *name, *type, *exclude;
-} SC_SPEC;
+  long verbosity;
+  long horizontal, vertical, longitudinal, uniform;
+  long nonlinear, sliceThreshold, sliceInterpolation;
+  double sliceDuration;
+  double averagingFactor, center[3];
+  double sigma[3];
+  double c0;   			/* c0=re*np/(2*Pi)^(3/2) -> calculate once.  */
+  double c1;	 		/* c1=c0/p0^3 */
+  double dmux, dmuy;
+  double length;
+} SPACE_CHARGE;
 
-static short scSpecActive = 0;
-static SC_SPEC *scSpec = NULL;
-static long No_scSpec = 0;
-static SPACE_CHARGE *sc = NULL;
+static SPACE_CHARGE sc;
 
-void linearSCKick(double *coord, ELEMENT_LIST *eptr, double *center, double charge);
-int nonlinearSCKick(double *coord, ELEMENT_LIST *eptr, double *center,
+void linearSCKick(double *coord, ELEMENT_LIST *eptr, double *centroid, double charge);
+int nonlinearSCKick(double *coord, ELEMENT_LIST *eptr, double *centroid,
                     double sigmax, double sigmay, double *kick, double charge);
 
-long getSCMULTSpecCount() {
-  return (No_scSpec);
-}
-char *getSCMULTName() {
-  return (sc->name);
-}
 
-void addSCSpec(char *name, char *type, char *exclude) {
-  if (!(scSpec = (SC_SPEC *)SDDS_Realloc(scSpec,
-                                         sizeof(*scSpec) * (No_scSpec + 1))))
-    bombElegant((char *)"memory allocation failure", NULL);
-  scSpec[No_scSpec].name = NULL;
-  scSpec[No_scSpec].type = NULL;
-  scSpec[No_scSpec].exclude = NULL;
-  if ((name &&
-       !SDDS_CopyString(&scSpec[No_scSpec].name, name)) ||
-      (type &&
-       !SDDS_CopyString(&scSpec[No_scSpec].type, type)) ||
-      (exclude &&
-       !SDDS_CopyString(&scSpec[No_scSpec].exclude, exclude)))
-    bombElegant((char *)"memory allocation failure", NULL);
-
-  No_scSpec++;
-}
-
-void finishSCSpecs() {
-  if (No_scSpec)
-    scSpecActive = 1;
-}
-
-void clearSCSpecs() {
-  while (No_scSpec--) {
-    if (scSpec[No_scSpec].name)
-      free(scSpec[No_scSpec].name);
-    if (scSpec[No_scSpec].type)
-      free(scSpec[No_scSpec].type);
-    if (scSpec[No_scSpec].exclude)
-      free(scSpec[No_scSpec].exclude);
-  }
-  free(scSpec);
-  scSpec = NULL;
-  scSpecActive = 0;
-}
-
-long insertSCMULT(char *name, long type, long *occurrence) {
-  long i;
-  if (scSpecActive)
-    return 0;
-  for (i = 0; i < No_scSpec; i++) {
-    if (scSpec[i].exclude && wild_match(name, scSpec[i].exclude))
-      continue;
-    if (scSpec[i].name && !wild_match(name, scSpec[i].name))
-      continue;
-    if (scSpec[i].type && !wild_match(entity_name[type], scSpec[i].type))
-      continue;
-    (*occurrence)++;
-    break;
-  }
-
-  if (*occurrence < sc->nskip || sc->nskip == 0)
-    return (0);
-
-  if (sc->verbosity > 0)
-    printf("Inserting SCMULT after %s\n", name);
-  *occurrence = 0;
-  return (1);
-}
-
-#include "insertSCeffects.h"
 void setupSCEffect(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
+#include "insertSCeffects.h"
   long i;
-
-  if (!No_scSpec && !(sc = (SPACE_CHARGE *)SDDS_Realloc(sc, sizeof(*sc))))
-    bombElegant((char *)"memory allocation failure", NULL);
 
   /* process the namelist text */
   set_namelist_processing_flags(STICKY_NAMELIST_DEFAULTS);
@@ -145,48 +85,49 @@ void setupSCEffect(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
       exclude = expand_ranges(exclude);
   }
 
-  addSCSpec(name, type, exclude);
-  cp_str(&(sc->name), element_prefix);
+  if (getSCMULTSpecCount())
+    printWarning((char*)"Multiple insert_sceffects commands given.",
+		 (char*)"Calculation settings will be taken from the last command.");
+  
+  addSCSpec(name, type, exclude, skip, verbosity);
+  cp_str(&(scMultName), element_prefix);
 
-  sc->verbosity = verbosity;
-  sc->nskip = 0;
-  sc->nonlinear = 0;
-  sc->horizontal = sc->vertical = sc->longitudinal = sc->uniform = 0;
-  if (skip)
-    sc->nskip = skip;
-
-  if ((sc->averagingFactor = averaging_factor) <= 0 || averaging_factor > 1)
+  sc.vertical = vertical;
+  sc.horizontal = horizontal;
+  sc.longitudinal = longitudinal;
+  sc.nonlinear = nonlinear;
+  sc.uniform = uniform_distribution;
+  sc.sliceDuration = slice_duration;
+  sc.sliceThreshold = slice_threshold;
+  sc.sliceInterpolation = slice_interpolation;
+  
+  if ((sc.averagingFactor = averaging_factor) <= 0 || averaging_factor > 1)
     bombElegant("averaging_factor must be on (0, 1]", NULL);
   if (averaging_factor < 1 && !nonlinear)
     bombElegant("averaging_factor is ignore for linear mode", NULL);
-
-  if (vertical)
-    sc->vertical = vertical;
-
-  if (horizontal)
-    sc->horizontal = horizontal;
 
   if (longitudinal)
     printWarning((char *)"The longitudinal space-charge effect is not implemented by SCMULT.",
                  (char *)"Consider using LSCDRIFT elements.");
 
-  if (uniform_distribution)
-    sc->uniform = 1;
-
-  if (nonlinear)
-    sc->nonlinear = nonlinear;
 }
 
 /* track through space charge element */
-void trackThroughSCMULT(double **part, long np, long iPass, ELEMENT_LIST *eptr) {
+void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT_LIST *eptr, CHARGE *charge) {
   long i;
-#if USE_MPI
-  long np_total;
-#endif
+  long *pbin = NULL;       /* array to record which bin each particle is in */
+  double *time0 = NULL;    /* array to record arrival time of each particle */
+  double *time = NULL;     /* array to record arrival time of each particle, for working bucket */
+  double **part = NULL;    /* particle buffer for working bucket */
+  long *ibParticle = NULL; /* array to record which bucket each particle is in */
+  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  /* long ib, nb = 0, n_binned = 0; */
+  long iBucket, nBuckets, max_np = 0, ip, np;
+  double tmin, tmax;
   double *coord;
-  double kx, ky, sx;
-  double center[3], kick[2];
-  double sigmax, sigmay, totalCharge;
+  double kick[2];
+  double totalCharge;
   int flag;
 
 #ifdef DEBUG
@@ -194,148 +135,331 @@ void trackThroughSCMULT(double **part, long np, long iPass, ELEMENT_LIST *eptr) 
   fflush(stdout);
 #endif
 
-  if (!USE_MPI || !notSinglePart) {
-    if (!np)
-      return;
-    totalCharge = sc->chargePerParticle * (double)np;
-  }
-#if USE_MPI
-  else {
-    if (isMaster)
-      np = 0;
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
-    if (!np_total)
-      return;
-    totalCharge = sc->chargePerParticle * (double)np_total;
-#  ifdef DEBUG
-    printf("totalCharge = %le, np_total = %ld\n", totalCharge, np_total);
-    fflush(stdout);
-#  endif
-  }
+  if (isSlave || !notSinglePart) {
+    index_bunch_assignments(part0, np0, charge->idSlotsPerBunch, Po, &time0, &ibParticle, &ipBucket, &npBucket, &nBuckets, -1);
+
+#ifdef DEBUG
+    if (nBuckets > 1) {
+      printf("%ld buckets\n", nBuckets);
+      fflush(stdout);
+      for (iBucket = 0; iBucket < nBuckets; iBucket++) {
+        printf("bucket %ld: %ld particles\n", iBucket, npBucket[iBucket]);
+        fflush(stdout);
+      }
+    }
 #endif
 
-  /* apply kick to particles */
-  if (!sc->nonlinear) {
-    sc->sigmaz = computeRmsCoordinate(part, 4, np, &center[2], NULL);
-    for (i = 0; i < np; i++) {
-      coord = part[i];
-      linearSCKick(coord, eptr, sc->center, totalCharge);
-    }
-  } else {
-    sigmax = computeRmsCoordinate(part, 0, np, &center[0], NULL);
-    sigmay = computeRmsCoordinate(part, 2, np, &center[1], NULL);
-    sc->sigmaz = computeRmsCoordinate(part, 4, np, &center[2], NULL);
-    if (!(iPass == 0 || sc->averagingFactor == 1)) {
-      sigmax = (1 - sc->averagingFactor) * ((SCMULT *)eptr->p_elem)->lastSigma[0] + sc->averagingFactor * sigmax;
-      sigmay = (1 - sc->averagingFactor) * ((SCMULT *)eptr->p_elem)->lastSigma[1] + sc->averagingFactor * sigmay;
-      sc->sigmaz = (1 - sc->averagingFactor) * ((SCMULT *)eptr->p_elem)->lastSigma[2] + sc->averagingFactor * sc->sigmaz;
-    }
-    /* Save values in case we need them for averaging */
-    ((SCMULT *)eptr->p_elem)->lastSigma[0] = sigmax;
-    ((SCMULT *)eptr->p_elem)->lastSigma[1] = sigmax;
-    ((SCMULT *)eptr->p_elem)->lastSigma[2] = sc->sigmaz;
-    for (i = 0; i < np; i++) {
-      coord = part[i];
-      /* remove linear kick approximation.
-      if ((fabs(coord[0]-center[0])<sigmax) && (fabs(coord[2]-center[1]) < sigmay)) {
-        linearSCKick(coord, eptr, center,totalCharge);
-        continue;
-      }
-      */
-
-      if (sigmax / sigmay > 0.99 && sigmax / sigmay < 1.01) {
-        sx = 0.99 * sigmay;
-        flag = nonlinearSCKick(coord, eptr, center, sx, sigmay, kick, totalCharge);
-        if (!flag) {
-          linearSCKick(coord, eptr, center, totalCharge);
-          continue;
-        }
-        kx = kick[0];
-        ky = kick[1];
-        sx = 1.01 * sigmay;
-        flag = nonlinearSCKick(coord, eptr, center, sx, sigmay, kick, totalCharge);
-        if (!flag) {
-          linearSCKick(coord, eptr, center, totalCharge);
-          continue;
-        }
-        kx += kick[0];
-        ky += kick[1];
-        coord[1] += kx / 2.0;
-        coord[3] += ky / 2.0;
+    for (iBucket = 0; iBucket < nBuckets; iBucket++) {
+      if (nBuckets == 1) {
+        time = time0;
+        part = part0;
+        np = np0;
+        pbin = (long*)trealloc(pbin, sizeof(*pbin) * (max_np = np));
       } else {
-        flag = nonlinearSCKick(coord, eptr, center, sigmax, sigmay, kick, totalCharge);
-        if (!flag) {
-          linearSCKick(coord, eptr, center, totalCharge);
+        if ((np = npBucket[iBucket]) == 0)
           continue;
+#ifdef DEBUG
+        printf("SCMULT: copying data to work array, iBucket=%ld, np=%ld\n", iBucket, np);
+        fflush(stdout);
+#endif
+        if (np > max_np) {
+          if (part)
+            free_czarray_2d((void **)part, max_np, totalPropertiesPerParticle);
+          part = (double **)czarray_2d(sizeof(double), np, totalPropertiesPerParticle);
+          time = (double *)tmalloc(sizeof(*time) * np);
+          pbin = (long *)trealloc(pbin, sizeof(*pbin) * np);
+          max_np = np;
         }
-        coord[1] += kick[0];
-        coord[3] += kick[1];
+        for (ip=0; ip < np; ip++) {
+          time[ip] = time0[ipBucket[iBucket][ip]];
+          memcpy(part[ip], part0[ipBucket[iBucket][ip]], sizeof(double) * totalPropertiesPerParticle);
+        }
+      }
+	
+      tmax = -(tmin = DBL_MAX);
+      find_min_max(&tmin, &tmax, time, np);
+#ifdef DEBUG
+      printf("SCMULT: tmin=%21.15le, tmax=%21.15le, np=%ld\n", tmin, tmax, np);
+      fflush(stdout);
+#endif
+#if USE_MPI
+      totalCharge = 0;
+      if (isSlave && notSinglePart) {
+	long np_total;
+	find_global_min_max(&tmin, &tmax, np, workers);
+	MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+	totalCharge = np_total*charge->macroParticleCharge;
+#ifdef DEBUG
+	printf("SCMULT: global tmin=%21.15le, tmax=%21.15le, np=%ld, Q=%le C\n", tmin, tmax, np_total, totalCharge);
+	fflush(stdout);
+#endif
+      }
+#else
+      totalCharge = np*charge->macroParticleCharge;
+#ifdef DEBUG
+      printf("SCMULT: global tmin=%21.15le, tmax=%21.15le, np=%ld, Q=%le C\n", tmin, tmax, np, totalCharge);
+      fflush(stdout);
+#endif
+#endif
+
+      /* Compute rms sizes */
+      for (int j=0; j<3; j++)
+	sc.sigma[j] = computeRmsCoordinate(part, 2*j, np, &(sc.center[j]), NULL);
+#ifdef DEBUG
+      printf("SCMULT: sigmax, y, z = %le, %le, %le; %ld particles, %le C\n", sc.sigma[0], sc.sigma[1], sc.sigma[2], np, totalCharge);
+      fflush(stdout);
+#endif
+      if (!(iPass == 0 || sc.averagingFactor == 1)) {
+	/* average over turns if requested */
+	for (int j=0; j<3; j++)
+	  sc.sigma[j] = (1 - sc.averagingFactor) * ((SCMULT *)eptr->p_elem)->lastSigma[j] + sc.averagingFactor * sc.sigma[j];
+      }
+      /* Save values in case we need them for future averaging */
+      for (int j=0; j<3; j++)
+	((SCMULT *)eptr->p_elem)->lastSigma[j] = sc.sigma[j];
+      if (sc.sliceDuration<=0) {
+	/* compute kicks using unsliced method */
+	for (i = 0; i < np; i++) {
+	  coord = part[i];
+	  if (!sc.nonlinear) {
+	    linearSCKick(coord, eptr, sc.center, totalCharge);
+	  } else {
+	    flag = nonlinearSCKick(coord, eptr, sc.center, sc.sigma[0], sc.sigma[1], kick, totalCharge);
+	    if (!flag) {
+	      linearSCKick(coord, eptr, sc.center, totalCharge);
+	      continue;
+	    }
+	    coord[1] += kick[0];
+	    coord[3] += kick[1];
+	  }
+	}
+      } else {
+	/* compute kicks using sliced method */
+	long nSlices, iSlice;
+	double *QTime, *xyCentroidTime[2], *xySizeTime[2], centroid[3], sigma[3], sliceCharge;
+	tmin -= sc.sliceDuration/2;
+	tmax += sc.sliceDuration/2;
+	if ((nSlices = (tmax-tmin)/sc.sliceDuration+1)<=0)
+	  bombElegantVA("Error in trackThroughSCMULT: number of slices is %ld, t:[%le, %le], dt=%le\n",
+			nSlices, tmin, tmax, sc.sliceDuration);
+	QTime = (double*)calloc(nSlices, sizeof(*QTime));
+	xyCentroidTime[0] = (double*)calloc(nSlices, sizeof(*xyCentroidTime[0]));
+	xyCentroidTime[1] = (double*)calloc(nSlices, sizeof(*xyCentroidTime[1]));
+	xySizeTime[0] = (double*)calloc(nSlices, sizeof(*xySizeTime[0]));
+	xySizeTime[1] = (double*)calloc(nSlices, sizeof(*xySizeTime[1]));
+	binTimeDistribution(QTime, pbin, tmin, sc.sliceDuration, nSlices, time, part, Po, np);
+	binTransverseTimeDistribution(xyCentroidTime, NULL, pbin, tmin, sc.sliceDuration, nSlices, time, part, Po, np, 0.0, 0.0, 1, 1);
+	binTransverseTimeDistribution(xySizeTime, NULL, pbin, tmin, sc.sliceDuration, nSlices, time, part, Po, np, 0.0, 0.0, 2, 2);
+#if USE_MPI
+	if (isSlave && notSinglePart) {
+	  /* Sum charge distribution across all processors */
+	  double *buffer;
+	  buffer = (double*)malloc(sizeof(double) * nSlices);
+	  MPI_Allreduce(QTime, buffer, nSlices, MPI_DOUBLE, MPI_SUM, workers);
+	  memcpy(QTime, buffer, sizeof(double) * nSlices);
+	  for (int plane=0; plane<2; plane++) {
+	    MPI_Allreduce(xyCentroidTime[plane], buffer, nSlices, MPI_DOUBLE, MPI_SUM, workers);
+	    memcpy(xyCentroidTime[plane], buffer, sizeof(double) * nSlices);
+	    MPI_Allreduce(xySizeTime[plane], buffer, nSlices, MPI_DOUBLE, MPI_SUM, workers);
+	    memcpy(xySizeTime[plane], buffer, sizeof(double) * nSlices);
+	  }
+	  free(buffer);
+	}
+#endif
+	sc.sigma[2] = sc.sliceDuration*c_mks;
+	for (iSlice=0; iSlice<nSlices; iSlice++) {
+	  if (QTime[iSlice]) {
+	    double d;
+	    for (int plane=0; plane<2; plane++) {
+	      if (QTime[iSlice]>=sc.sliceThreshold)
+		/* compute slice centroid */
+		xyCentroidTime[plane][iSlice] /= QTime[iSlice];
+	      else
+		xyCentroidTime[plane][iSlice] = sc.center[plane];
+	      /* compute slice rms size. If invalid or too few particles, use whole-beam value */
+	      if (QTime[iSlice]>=sc.sliceThreshold &&
+		  (d = xySizeTime[plane][iSlice]/QTime[iSlice] - sqr(xyCentroidTime[plane][iSlice]))>=0)
+		xySizeTime[plane][iSlice] = sqrt(d);
+	      else
+		xySizeTime[plane][iSlice] = sc.sigma[plane];
+	    }
+	  }
+	  QTime[iSlice] *= charge->macroParticleCharge;
+	}
+	centroid[2] = 0;
+	sigma[2] = sc.sliceDuration*c_mks;
+	for (i = 0; i < np; i++) {
+	  coord = part[i];
+	  iSlice = pbin[i];
+	  if (sc.sliceInterpolation==0) {
+	    for (int plane=0; plane<2; plane++) {
+	      centroid[plane] = xyCentroidTime[plane][iSlice];
+	      sigma[plane] = xySizeTime[plane][iSlice];
+	    }
+	    sliceCharge = QTime[iSlice];
+	  } else {
+	    double timeOffset;
+	    long ib;
+	    short interpolate = sc.sliceInterpolation;
+	    if ((ib = iSlice)<0 || ib>(nSlices-1)) {
+	      interpolate = 0;
+              timeOffset = 0;
+            }
+	    else
+	      timeOffset = time[i] - (tmin + ib*sc.sliceDuration); /* distance to bin center */
+	    if ((timeOffset<0 && ib) || ib==nSlices-1) {
+	      ib--;
+	      timeOffset += sc.sliceDuration;
+	    }
+	    for (int plane=0; plane<2; plane++) {
+	      if (!interpolate) {
+		centroid[plane] = xyCentroidTime[plane][iSlice];
+		sigma[plane] = xySizeTime[plane][iSlice];
+		sliceCharge = QTime[iSlice];
+	      } else {
+		centroid[plane] = xyCentroidTime[plane][ib] + (xyCentroidTime[plane][ib+1]-xyCentroidTime[plane][ib])/sc.sliceDuration*timeOffset;
+		sigma[plane] = xySizeTime[plane][ib] + (xySizeTime[plane][ib+1]-xySizeTime[plane][ib])/sc.sliceDuration*timeOffset;
+		sliceCharge = QTime[ib] + (QTime[ib+1]-QTime[ib])/sc.sliceDuration*timeOffset;
+	      }
+	    }
+	  }
+	  if (!sc.nonlinear) {
+	    linearSCKick(coord, eptr, centroid, sliceCharge);
+	  } else {
+	    flag = nonlinearSCKick(coord, eptr, centroid, sigma[0], sigma[1], kick, sliceCharge);
+	    if (!flag) {
+	      linearSCKick(coord, eptr, centroid, sliceCharge);
+	      continue;
+	    }
+	    coord[1] += kick[0];
+	    coord[3] += kick[1];
+	  }
+	}
+	free(QTime);
+	free(xyCentroidTime[0]);
+	free(xyCentroidTime[1]);
+	free(xySizeTime[0]);
+	free(xySizeTime[1]);
+      }
+	
+      if (nBuckets != 1) {
+	/* Move data back to input array */
+        for (ip = 0; ip < np; ip++)
+          memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
       }
     }
   }
 
-  sc->dmux = sc->dmuy = 0.0; /* reset space charge strength */
+  if (pbin)
+    free(pbin);
+  if (time && time!=time0)
+    free(time);
+  if (part && part!=part0)
+    free(part);
+  if (isSlave || !notSinglePart)
+    free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
+
+  sc.dmux = sc.dmuy = 0.0; /* reset space charge strength */
 #ifdef DEBUG
   printf("returning from trackThroughSCMULT\n");
   fflush(stdout);
 #endif
 }
 
-void linearSCKick(double *coord, ELEMENT_LIST *eptr, double *center, double charge) {
+void linearSCKick(double *coord, ELEMENT_LIST *eptr, double *centroid, double charge) {
   double k0, kx, ky;
-  if (sc->uniform) {
-    k0 = sc->c1 * charge * sqrt(PI / 6.0);
+  if (sc.sliceDuration>0) {
+    k0 = sc.c1 / sc.sigma[2] * charge * sqrt(PIx2);
   } else {
-    k0 = sc->c1 * charge * exp(-sqr(coord[4] - center[2]) / sqr(sc->sigmaz) / 2.0);
+    if (sc.uniform) {
+      k0 = sc.c1 / sc.sigma[2] * charge * sqrt(PI / 6.0);
+    } else {
+      k0 = sc.c1 / sc.sigma[2] * charge * exp(-sqr(coord[4] - centroid[2]) / sqr(sc.sigma[2]) / 2.0);
+    }
   }
-  if (sc->horizontal) {
-    kx = k0 * sc->dmux / eptr->twiss->betax; /* From dmux to KL */
-    coord[1] += kx * (coord[0] - center[0]);
+  if (sc.horizontal) {
+    kx = k0 * sc.dmux / eptr->twiss->betax; /* From dmux to KL */
+    coord[1] += kx * (coord[0] - centroid[0]);
   }
-  if (sc->vertical) {
-    ky = k0 * sc->dmuy / eptr->twiss->betay; /* From dmuy to KL */
-    coord[3] += ky * (coord[2] - center[1]);
+  if (sc.vertical) {
+    ky = k0 * sc.dmuy / eptr->twiss->betay; /* From dmuy to KL */
+    coord[3] += ky * (coord[2] - centroid[1]);
   }
 }
 
-int nonlinearSCKick(double *coord, ELEMENT_LIST *eptr, double *center,
+int nonlinearSCKick(double *coord, ELEMENT_LIST *eptr, double *centroid,
                     double sigmax, double sigmay, double *kick, double charge) {
-  double k0, kx, ky, sqs;
+  double k0, kx, ky;
   std::complex<double> wa, wb, w1, w2, w;
-  double temp;
-  long flag;
+  long overflow;
+  double x, y, z;
 
-  if (sc->uniform) {
-    k0 = sc->c1 * charge * PI / 12.0;
+  x = coord[0] - centroid[0];
+  y = coord[2] - centroid[1];
+  z = coord[4] - centroid[2];
+
+  if (sc.sliceDuration>0) {
+    k0 = sc.c1/sc.sigma[2] * charge * PI;
   } else {
-    k0 = sc->c1 * charge * exp(-sqr(coord[4] - center[2]) / sqr(sc->sigmaz) / 2.0) * sqrt(PI / 2.0);
+    if (sc.uniform) {
+      k0 = sc.c1/sc.sigma[2] * charge * PI / 12.0;
+    } else {
+      k0 = sc.c1/sc.sigma[2] * charge * exp(-sqr(z / sc.sigma[2]) / 2.0) * sqrt(PI / 2.0);
+    }
   }
 
-  sqs = sqrt(fabs(sqr(sigmax) - sqr(sigmay)) * 2.0);
-  kx = k0 * sc->dmux * sigmax * sqrt(sigmax + sigmay) / sqrt(fabs(sigmax - sigmay)) / eptr->twiss->betax;
-  ky = k0 * sc->dmuy * sigmay * sqrt(sigmax + sigmay) / sqrt(fabs(sigmax - sigmay)) / eptr->twiss->betay;
+  if (fabs(sigmax-sigmay)/sigmax<1e-6) {
+    // special case for round beams
+    double sig = (sigmax + sigmay)/2;
+    double r = sqrt(sqr(x)+sqr(y));
+    double dp = (1- exp (-sqr(r/sig)/2))/r;
+    double theta = atan2(y, x);
+    k0 *= sqrt(2/PI);
+    kick[0] = dp*cos(theta)*k0;
+    kick[1] = dp*sin(theta)*k0;
+  } else {
+    short swapXY = 0;
+    if (sigmax<sigmay) {
+      double tmp;
+      swapXY = 1;
+      SWAP_DOUBLE(sigmax, sigmay);
+      tmp = x;
+      x = y;
+      y = -tmp;
+    }
 
-  w1 = std::complex<double>((coord[0] - center[0]) / sqs, (coord[2] - center[1]) / sqs);
-  w2 = std::complex<double>((coord[0] - center[0]) * sigmay / sigmax / sqs, (coord[2] - center[1]) * sigmax / sigmay / sqs);
+    double ay = fabs(y);
+    double sd = sqrt(2.0*(sqr(sigmax) - sqr(sigmay)));
+    w1 = std::complex<double>(x / sd, ay / sd);
+    w2 = std::complex<double>(x / sd * sigmay / sigmax, ay / sd * sigmax / sigmay);
+    
+    wa = complexErf(w1, &overflow);
+    if (overflow)
+      return (0);
+    wb = complexErf(w2, &overflow);
+    if (overflow)
+      return (0);
 
-  temp = exp((-sqr(coord[0] - center[0]) / sqr(sigmax) - sqr(coord[2] - center[1]) / sqr(sigmay)) / 2.0);
+    double C3 = exp(-sqr(x) / (2 * sqr(sigmax)) - sqr(y) / (2 * sqr(sigmay)));
+    w = wa + C3 * wb;
 
-  wa = complexErf(w1, &flag);
-  if (!flag)
-    return (0);
-  wb = complexErf(w2, &flag);
-  if (!flag)
-    return (0);
+    kx = k0 * sc.dmux * sigmax * sqrt(sigmax + sigmay) / sqrt(fabs(sigmax - sigmay)) / eptr->twiss->betax;
+    ky = k0 * sc.dmuy * sigmay * sqrt(sigmax + sigmay) / sqrt(fabs(sigmax - sigmay)) / eptr->twiss->betay;
 
-  w = wa + temp * wb;
-  kick[0] = kx * w.imag();
-  kick[1] = ky * w.real();
+    kick[0] = kx * w.imag();
+    kick[1] = ky * w.real() * (y>0 ? 1 : -1);
+
+    if (swapXY) {
+      double tmp;
+      tmp = kick[0];
+      kick[0] = -kick[1];
+      kick[1] = tmp;
+    }
+  }
   return (1);
 }
 
 void initializeSCMULT(ELEMENT_LIST *eptr, double **part, long np, double Po, long i_pass) {
-  CHARGE *charge = NULL;
-
   if (!eptr->twiss)
     bombElegant((char *)"Twiss parameters must be calculated before SC tracking.", NULL);
 
@@ -343,38 +467,6 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part, long np, double Po, lon
   printf("initializeSCMULT 0\n");
   fflush(stdout);
 #endif
-
-  /* initialize charge per particle parameters */
-  if (i_pass == 0) {
-    while (eptr) {
-      if (eptr->type == T_CHARGE) {
-        charge = (CHARGE *)eptr->p_elem;
-        if (!charge->chargePerParticle) {
-          if (!charge->charge) {
-            bombElegant((char *)"Charge is zero. Please set non-zero charge to charge element", NULL);
-          } else {
-#if USE_MPI
-            long np_total;
-            MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-            sc->chargePerParticle = fabs(charge->charge / (double)np_total);
-#  ifdef DEBUG
-            printf("initializeSCMULT np_total = %ld\n", np_total);
-            fflush(stdout);
-#  endif
-#else
-            sc->chargePerParticle = fabs(charge->charge / (double)np);
-#endif
-          }
-        } else {
-          sc->chargePerParticle = fabs(charge->chargePerParticle);
-        }
-        break;
-      }
-      eptr = eptr->succ;
-    }
-    if (charge == NULL)
-      bombElegant((char *)"No charge element is given.", NULL);
-  }
 
 #ifdef DEBUG
   printf("initializeSCMULT 1\n");
@@ -386,9 +478,8 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part, long np, double Po, lon
      when the function is called, all the processors will do the same */
   notSinglePart = 0;
 #endif
-  sc->sigmax = computeRmsCoordinate(part, 0, np, NULL, NULL);
-  sc->sigmay = computeRmsCoordinate(part, 2, np, NULL, NULL);
-  sc->sigmaz = computeRmsCoordinate(part, 4, np, NULL, NULL);
+  for (int j=0; j<3; j++)
+    sc.sigma[j] = computeRmsCoordinate(part, 2*j, np, NULL, NULL);
 #ifdef DEBUG
   printf("initializeSCMULT 2\n");
   fflush(stdout);
@@ -397,13 +488,13 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part, long np, double Po, lon
   /* set it back to parallel execution */
   notSinglePart = 1;
 #endif
-  sc->c0 = fabs(sqrt(2.0 / PI) * particleRadius / particleCharge);
-  sc->c1 = sc->c0 / sqr(Po) / sqrt(sqr(Po) + 1.0) / sc->sigmaz;
-  /* printf("r=%g, chargeperparticle=%g, particleCharge=%g\n",  particleRadius,  sc->chargePerParticle, particleCharge); 
-     printf("c0=%g, c1=%g, sz=%.6g\n", sc->c0, sc->c1, sc->sigmaz); */
+  sc.c0 = fabs(sqrt(2.0 / PI) * particleRadius / particleCharge);
+  sc.c1 = sc.c0 / sqr(Po) / sqrt(sqr(Po) + 1.0);
+  /* printf("r=%g, chargeperparticle=%g, particleCharge=%g\n",  particleRadius,  sc.chargePerParticle, particleCharge); 
+     printf("c0=%g, c1=%g, sz=%.6g\n", sc.c0, sc.c1, sc.sigma[2]); */
 
-  sc->dmux = sc->dmuy = 0.0;
-  sc->length = 0.0;
+  sc.dmux = sc.dmuy = 0.0;
+  sc.length = 0.0;
 #ifdef DEBUG
   printf("initializeSCMULT 3\n");
   fflush(stdout);
@@ -416,26 +507,24 @@ void accumulateSCMULT(double **part, long np, ELEMENT_LIST *eptr) {
   double length;
 
   twiss0 = (eptr->pred)->twiss;
-  temp = sc->sigmax + sc->sigmay;
-  dmux = twiss0->betax / sc->sigmax / temp;
-  dmuy = twiss0->betay / sc->sigmay / temp;
+  temp = sc.sigma[0] + sc.sigma[1];
+  dmux = twiss0->betax / sc.sigma[0] / temp;
+  dmuy = twiss0->betay / sc.sigma[1] / temp;
 #if USE_MPI
-  sc->sigmax = computeRmsCoordinate_p(part, 0, np, &(sc->center[0]), NULL, entity_description[eptr->type].flags);
-  sc->sigmay = computeRmsCoordinate_p(part, 2, np, &(sc->center[1]), NULL, entity_description[eptr->type].flags);
-  sc->sigmaz = computeRmsCoordinate_p(part, 4, np, &(sc->center[2]), NULL, entity_description[eptr->type].flags);
+  for (int j=0; j<3; j++)
+    sc.sigma[j] = computeRmsCoordinate_p(part, 2*j, np, &(sc.center[j]), NULL, entity_description[eptr->type].flags);
 #else
-  sc->sigmax = computeRmsCoordinate(part, 0, np, &(sc->center[0]), NULL);
-  sc->sigmay = computeRmsCoordinate(part, 2, np, &(sc->center[1]), NULL);
-  sc->sigmaz = computeRmsCoordinate(part, 4, np, &(sc->center[2]), NULL);
+  for (int j=0; j<3; j++)
+    sc.sigma[j] = computeRmsCoordinate(part, 2*j, np, &(sc.center[j]), NULL);
 #endif
   twiss0 = eptr->twiss;
-  temp = sc->sigmax + sc->sigmay;
-  dmux += twiss0->betax / sc->sigmax / temp;
-  dmuy += twiss0->betay / sc->sigmay / temp;
+  temp = sc.sigma[0] + sc.sigma[1];
+  dmux += twiss0->betax / sc.sigma[0] / temp;
+  dmuy += twiss0->betay / sc.sigma[1] / temp;
 
   length = ((DRIFT *)eptr->p_elem)->length;
-  sc->dmux += dmux * length / 2.0;
-  sc->dmuy += dmuy * length / 2.0;
+  sc.dmux += dmux * length / 2.0;
+  sc.dmuy += dmuy * length / 2.0;
 }
 
 double computeRmsCoordinate(double **coord, long i1, long np, double *meanReturn, long *countReturn)
