@@ -360,7 +360,7 @@ VMATRIX *compute_periodic_twiss(
   if (mirror)
     free_czarray_2d((void **)R, 6, 6);
 
-  report_stats(stdout, "Computed periodic Twiss functions\nstatistics: ");
+  // report_stats(stdout, "Computed periodic Twiss functions\nstatistics: ");
 
   log_exit((char *)"compute_periodic_twiss");
 #ifdef DEBUG
@@ -952,7 +952,7 @@ void propagate_twiss_parameters(TWISS *twiss0, double *tune, long *waists,
 
   processTwissAnalysisRequests(elemOrig);
 
-  report_stats(stdout, "Finished propagating twiss parameters.\nstatistics: ");
+  //report_stats(stdout, "Finished propagating twiss parameters.\nstatistics: ");
 
   if (finalTraj)
     memcpy(finalTraj, path, 6 * sizeof(*finalTraj));
