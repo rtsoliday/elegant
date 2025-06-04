@@ -166,13 +166,13 @@ $(OBJ_DIR)/%.$(OBJEXT): %.cc
 	$(CCC) $(CCFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CCFLAGS)) -c $< $(OUTPUT)
 $(OBJ_DIR)/%.$(OBJEXT): %.cpp
 	$(CCC) $(CCFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CCFLAGS)) -c $< $(OUTPUT)
-$(SCRIPTS): $(subst $(BIN_DIR)/,,$@)
-	cp -f $(subst $(BIN_DIR)/,,$@) $@
+$(BIN_DIR)/%: %
+	cp -f $< $@
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
 ifneq ($(EPICS_INC_DIR),)
-$(INC): $(subst $(EPICS_INC_DIR)/,,$@)
-	cp -f $(subst $(EPICS_INC_DIR)/,,$@) $@
+$(EPICS_INC_DIR)/%: %
+	cp -f $< $@
 
 endif
 
