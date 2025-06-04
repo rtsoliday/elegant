@@ -93,8 +93,9 @@ if [catch {exec sddssampledist $tmpRoot.2 -pipe=out -samples=[expr $pages*$parti
 	       "-define=column,yp,bp b alphay0 * - ey betay0 / sqrt * delta etayp0 * +" \
 	       "-redefine=column,y,y delta etay0 * +,units=m" \
 	       "-define=column,p,delta 1 + pCentral *" \
+	       -process=$weightColumn,sum,%sSum \
 	       | sddsconvert -pipe=in $output \
-	       -retain=parameter,ex,ey,St,Sdelta \
+	       -retain=parameter,ex,ey,St,Sdelta,beta*,eta*,alpha*,${weightColumn}Sum \
 	       -retain=column,x,xp,y,yp,t,p,$weightColumn} result] {
     puts stderr "$result"
     exit 1
