@@ -8,20 +8,22 @@ endif
 OBJ_DIR = O.$(OS)-$(ARCH)
 BIN_DIR = $(DD)../bin/$(OS)-$(ARCH)
 LIB_DIR = $(DD)../lib/$(OS)-$(ARCH)
+
+EPICS_HOST := $(shell uname -s | tr '[:upper:]' '[:lower:]')
+EPICS_ARCH = $(ARCH)
+ifeq ($(findstring cygwin, $(EPICS_HOST)),cygwin)
+ EPICS_HOST := windows
+ EPICS_ARCH := x64
+endif
+ifeq ($(ARCH),arm64)
+ EPICS_ARCH := aarch64
+endif
+ifeq ($(EPICS_HOST)-$(EPICS_ARCH),darwin-x86_64)
+ EPICS_ARCH := x86
+endif
+
 ifneq ($(wildcard $(DD)../.svn $(DD)../../../../.svn),)
  USE_EPICS_DIRS = 1
- EPICS_HOST := $(shell uname -s | tr '[:upper:]' '[:lower:]')
- EPICS_ARCH = $(ARCH)
- ifeq ($(findstring cygwin, $(EPICS_HOST)),cygwin)
-    EPICS_HOST := windows
-    EPICS_ARCH := x64
- endif
- ifeq ($(ARCH),arm64)
-    EPICS_ARCH := aarch64
- endif
- ifeq ($(EPICS_HOST)-$(EPICS_ARCH),darwin-x86_64)
-    EPICS_ARCH := x86
- endif
  EPICS_LIB_DIR = $(DD)../../../lib/$(EPICS_HOST)-$(EPICS_ARCH)
  EPICS_BIN_DIR = $(DD)../../../bin/$(EPICS_HOST)-$(EPICS_ARCH)
  EPICS_INC_DIR = $(DD)../../../include
