@@ -129,6 +129,8 @@ ifeq ($(OS), Windows)
 	@if [ -n "$(EPICS_LIB_DIR)" ]; then echo cp -f $@ $(EPICS_LIB_DIR)/; fi
 	@if [ -n "$(EPICS_LIB_DIR)" ]; then cp -f $@ $(EPICS_LIB_DIR)/; fi
 
+DEPFLAGS =
+
 else
  %$(EXEEXT): %.$(OBJEXT) $(PROD_DEPS)
 	$(CCC) -o $@ $@.o $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
@@ -158,14 +160,17 @@ ifeq ($(OS), Darwin)
 	@if [ -n "$(EPICS_LIB_DIR)" ]; cp -f $@ $(EPICS_LIB_DIR)/; fi
 endif
 
+DEPFLAGS = -MMD -MP -MF $(@:.$(OBJEXT)=.d)
+
 endif
 
+
 $(OBJ_DIR)/%.$(OBJEXT): %.c
-	$(CC) $(CFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CFLAGS)) -c $< $(OUTPUT)
+	$(CC) $(CFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CFLAGS)) -c $< $(OUTPUT)
 $(OBJ_DIR)/%.$(OBJEXT): %.cc
-	$(CCC) $(CCFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CCFLAGS)) -c $< $(OUTPUT)
+	$(CCC) $(CCFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CCFLAGS)) -c $< $(OUTPUT)
 $(OBJ_DIR)/%.$(OBJEXT): %.cpp
-	$(CCC) $(CCFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CCFLAGS)) -c $< $(OUTPUT)
+	$(CCC) $(CCFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CCFLAGS)) -c $< $(OUTPUT)
 $(BIN_DIR)/%: %
 	cp -f $< $@
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
@@ -182,5 +187,7 @@ clean:
 $(PROD_DEPS):
 
 $(LIBRARY_DEPS):
+
+-include $(wildcard $(OBJ_DIR)/*.d)
 
 .PHONY: all clean
