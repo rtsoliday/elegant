@@ -408,6 +408,7 @@ int nonlinearSCKick(double *coord, ELEMENT_LIST *eptr, double *centroid,
     }
   }
 
+  // See V. Ziemann, SLAC-PUB-5582
   if (fabs(sigmax-sigmay)/sigmax<1e-6) {
     // special case for round beams
     double sig = (sigmax + sigmay)/2;
@@ -441,7 +442,7 @@ int nonlinearSCKick(double *coord, ELEMENT_LIST *eptr, double *centroid,
       return (0);
 
     double C3 = exp(-sqr(x) / (2 * sqr(sigmax)) - sqr(y) / (2 * sqr(sigmay)));
-    w = wa + C3 * wb;
+    w = wa - C3 * wb;
 
     kx = k0 * sc.dmux * sigmax * sqrt(sigmax + sigmay) / sqrt(fabs(sigmax - sigmay)) / eptr->twiss->betax;
     ky = k0 * sc.dmuy * sigmay * sqrt(sigmax + sigmay) / sqrt(fabs(sigmax - sigmay)) / eptr->twiss->betay;
