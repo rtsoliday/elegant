@@ -5010,8 +5010,8 @@ extern char *scMultName;
 long insertSCMULT(char *name, long type, long *occurrence);
 void trackThroughSCMULT(double **part, long np, double Po, long iPass, ELEMENT_LIST *eptr, CHARGE *charge);
 void finishSCSpecs();
-void initializeSCMULT(ELEMENT_LIST *eptr, double **part, long np, double Po, long i_pass );
-void accumulateSCMULT(double **part, long np, ELEMENT_LIST *eptr);
+void initializeSCMULT(ELEMENT_LIST *eptr, double **part, long np, double Po, long i_pass, long idSlotsPerbunch);
+void accumulateSCMULT(double **part, long np, double Po, ELEMENT_LIST *eptr, long idSlotsPerbunch);
 double computeRmsCoordinate(double **coord, long i1, long np, double *mean, long *countReturn);
 #if USE_MPI
 double computeRmsCoordinate_p(double **coord, long i1, long np, double *centroid, long *npTotal, unsigned long classFlags);

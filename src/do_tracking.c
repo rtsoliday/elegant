@@ -693,7 +693,7 @@ long do_tracking(
           coord = forceParticlesToCpu("initializeSCMULT");
 #endif
           if (!(flags & TEST_PARTICLES))
-            initializeSCMULT(eptr, coord, nToTrack, *P_central, i_pass);
+            initializeSCMULT(eptr, coord, nToTrack, *P_central, i_pass, beam? beam->id_slots_per_bunch : 0);
         }
 
 #ifdef DEBUG_CRASH
@@ -2657,7 +2657,7 @@ long do_tracking(
 #ifdef HAVE_GPU
                 coord = forceParticlesToCpu("accumulateSCMULT");
 #endif
-                accumulateSCMULT(coord, nToTrack, eptr);
+                accumulateSCMULT(coord, nToTrack, *P_central, eptr, beam ? beam->id_slots_per_bunch: 0);
               }
             }
 
