@@ -2650,7 +2650,8 @@ long do_tracking(
               }
             }
 
-            if (getSCMULTSpecCount() && entity_description[eptr->type].flags & HAS_LENGTH) {
+            if (getSCMULTSpecCount() && (entity_description[eptr->type].flags & HAS_LENGTH) && 
+                !(flags & TEST_PARTICLES)) {
               /* calcaulate beam size at exit of element for use in space  charge calculation with SCMULT */
               /* need special care for element with 0 length but phase space rotation */
               if (((DRIFT *)eptr->p_elem)->length > 0.0) {
