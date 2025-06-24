@@ -52,7 +52,7 @@ void convert_to_mad8(char *outputfile, LINE_LIST *beamline, char *header_file, c
   while (eptr) {
     strcpy(name, eptr->name);
     replace_chars(name, ":.", "cd");
-    if (hadd(hash_table, name, strlen(name), NULL) == TRUE) {
+    if (hadd(hash_table, (unsigned char*)name, strlen(name), NULL) == TRUE) {
       switch (eptr->type) {
       case T_QUAD:
         quad = (QUAD *)eptr->p_elem;

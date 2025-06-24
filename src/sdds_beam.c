@@ -727,7 +727,7 @@ long new_sdds_beam(
 #endif
 #if !USE_MPI
       sprintf(buffer, "%ld", (long)beam->particle[i][bunchIndex]);
-      hadd(hashTable, buffer, strlen(buffer), NULL);
+      hadd(hashTable, (unsigned char*)buffer, strlen(buffer), NULL);
 #endif
     }
 #if !USE_MPI
