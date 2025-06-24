@@ -695,9 +695,9 @@ LINE_LIST *get_beamline(char *madfile, char *use_beamline, double p_central, lon
   eptr = lptr->elem;
   while (eptr) {
     if (eptr->name != NULL) {
-      if (hcount(occurence_htab) == 0 || hfind(occurence_htab, eptr->name, strlen(eptr->name)) == FALSE) {
+      if (hcount(occurence_htab) == 0 || hfind(occurence_htab, (unsigned char*)eptr->name, strlen(eptr->name)) == FALSE) {
         occurenceCounter[uniqueElements] = 0;
-        hadd(occurence_htab, eptr->name, strlen(eptr->name), (void *)&occurenceCounter[uniqueElements++]);
+        hadd(occurence_htab, (unsigned char*)eptr->name, strlen(eptr->name), (void *)&occurenceCounter[uniqueElements++]);
         if (echo) {
           printf("Added %s to hash table\n", eptr->name);
           fflush(stdout);
@@ -721,7 +721,7 @@ LINE_LIST *get_beamline(char *madfile, char *use_beamline, double p_central, lon
     printf("Setting occurence number for %s\n", eptr->name);
     fflush(stdout);
 #endif
-    if (hfind(occurence_htab, eptr->name, strlen(eptr->name)) == TRUE) {
+    if (hfind(occurence_htab, (unsigned char*)eptr->name, strlen(eptr->name)) == TRUE) {
       occurencePtr = hstuff(occurence_htab);
       eptr->occurence = (*occurencePtr += 1);
     } else
@@ -814,7 +814,7 @@ void create_load_hash(ELEMENT_LIST *elem) {
     sprintf(occurence_s, "#%ld", eptr->occurence);
     strcpy(eptr_name, eptr->name);
     strcat(eptr_name, occurence_s);
-    hadd(load_hash, eptr_name, strlen(eptr_name), (void *)eptr);
+    hadd(load_hash, (unsigned char*)eptr_name, strlen(eptr_name), (void *)eptr);
     eptr = eptr->succ;
   }
 }

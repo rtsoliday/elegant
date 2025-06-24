@@ -47,7 +47,7 @@ long addBGGExpData(char *filename, char *nameFragment, short skew) {
   if (!fileHashTable)
     fileHashTable = hcreate(12);
 
-  if (hfind(fileHashTable, filename, strlen(filename))) {
+  if (hfind(fileHashTable, (unsigned char*)filename, strlen(filename))) {
     printf("Using previously-stored BGGEXP data for filename %s\n", filename);
     fflush(stdout);
     im = *((long *)hstuff(fileHashTable));
@@ -191,7 +191,7 @@ long addBGGExpData(char *filename, char *nameFragment, short skew) {
 
   nstore = tmalloc(sizeof(*nstore));
   *nstore = nBGGExpDataSets;
-  hadd(fileHashTable, filename, strlen(filename), (void *)nstore);
+  hadd(fileHashTable, (unsigned char *)filename, strlen(filename), (void *)nstore);
 
   printf("Done adding BGGEXP data from file %s\n", filename);
   fflush(stdout);

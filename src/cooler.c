@@ -171,7 +171,7 @@ void coolerPickup(CPICKUP *cpickup, double **part0, long np0, long pass, double 
 	cpickup->pid[ib][i] = part0[ipBucket[ib][i]][particleIDIndex];
 	snprintf(pidString, 32, "%ld", cpickup->pid[ib][i]);
 	cpickup->index[ib][i] = i;
-	if (!hadd(cpickup->pidHashTable[ib], pidString, strlen(pidString), &(cpickup->index[ib][i])))
+	if (!hadd(cpickup->pidHashTable[ib], (unsigned char*)pidString, strlen(pidString), &(cpickup->index[ib][i])))
 	  bombElegantVA("Problem creating PID hash table: duplicate PID %ld\n", cpickup->pid[ib][i]);
       } // particle
 
@@ -386,7 +386,7 @@ void coolerKicker(CKICKER *ckicker, double **part0, long np0, LINE_LIST *beamlin
       sourceIndex = (long*)malloc(sizeof(long)*npBucket[ib]);
       for (i = 0; i < npBucket[ib]; i++) {
 	snprintf(pidString, 32, "%ld", (long)part0[ipBucket[ib][i]][particleIDIndex]);
-	if (!hfind(ckicker->pickup->pidHashTable[ib], pidString, strlen(pidString)))
+	if (!hfind(ckicker->pickup->pidHashTable[ib], (unsigned char*)pidString, strlen(pidString)))
 	  bombElegantVA("PID of particle in CKICKER not present at CPICKUP! Cooling ID=%s\n",
 			ckicker->ID);
 	if (!(sitmp = (long*)hstuff(ckicker->pickup->pidHashTable[ib])))

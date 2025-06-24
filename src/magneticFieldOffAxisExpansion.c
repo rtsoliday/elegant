@@ -35,7 +35,7 @@ long addBOFFAXEData(char *filename, char *zColumn, char *dataColumn, long order)
   if (!fileHashTable)
     fileHashTable = hcreate(12);
 
-  if (hfind(fileHashTable, filename, strlen(filename))) {
+  if (hfind(fileHashTable, (unsigned char*)filename, strlen(filename))) {
     long istore;
     printf("Using previously-stored BOFFAXE data for filename %s\n", filename);
     fflush(stdout);
@@ -151,7 +151,7 @@ long addBOFFAXEData(char *filename, char *zColumn, char *dataColumn, long order)
 
   nstore = tmalloc(sizeof(*nstore));
   *nstore = nBOFFAXEDataSets;
-  hadd(fileHashTable, filename, strlen(filename), (void *)nstore);
+  hadd(fileHashTable, (unsigned char*)filename, strlen(filename), (void *)nstore);
 
   printf("Done adding BOFFAXE data from file %s\n", filename);
   fflush(stdout);

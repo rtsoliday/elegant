@@ -531,7 +531,7 @@ long do_load_parameters(LINE_LIST *beamline, long change_definitions, char *scri
         } else {
           sprintf(elem_param, "%s%s%" PRId32, element[j], parameter[j], occurence[j]);
         }
-        inHash = !hadd(hash_table, elem_param, strlen(elem_param), NULL);
+        inHash = !hadd(hash_table, (unsigned char *)elem_param, strlen(elem_param), NULL);
         /* Compare to hash table to see if we've already done this element/parameter */
         if (load_request[i].flags & COMMAND_FLAG_USE_FIRST && inHash)
           continue;

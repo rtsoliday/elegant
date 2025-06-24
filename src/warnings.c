@@ -40,14 +40,14 @@ void printWarningWithContext(char *context1, char *context2, char *text, char *d
   if (!hash_table)
     hash_table = hcreate(12);
   if (hcount(hash_table) == 0 ||
-      hfind(hash_table, text, strlen(text)) == FALSE) {
+      hfind(hash_table, (unsigned char*)text, strlen(text)) == FALSE) {
     if (!(warningRecord = SDDS_Realloc(warningRecord, sizeof(*warningRecord) * (warnings + 1))))
       bombElegant("Memory allocation error in printWarning\n", NULL);
     warningRecord[warnings] = malloc(sizeof(**warningRecord));
     cp_str(&(warningRecord[warnings]->text), text);
     warningRecord[warnings]->count = 1;
     wrPointer = warningRecord[warnings];
-    hadd(hash_table, warningRecord[warnings]->text, strlen(warningRecord[warnings]->text),
+    hadd(hash_table, (unsigned char*)warningRecord[warnings]->text, strlen(warningRecord[warnings]->text),
          (void *)warningRecord[warnings]);
     warnings++;
   } else {

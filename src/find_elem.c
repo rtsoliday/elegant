@@ -68,7 +68,7 @@ ELEMENT_LIST *find_element_hash(char *elem_name, long occurence, ELEMENT_LIST **
   strcpy(name_occurence, elem_name);
   strcat(name_occurence, occurence_s);
   /* use hash table */
-  if (hfind(load_hash, name_occurence, strlen(name_occurence)))
+  if (hfind(load_hash, (unsigned char*)name_occurence, strlen(name_occurence)))
     eptr = (ELEMENT_LIST *)hstuff(load_hash);
   else
     eptr = NULL;

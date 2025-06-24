@@ -187,7 +187,7 @@ void accumulateParticleTuneData
       if (!useParticle || useParticle[ip]) {
         snprintf(pidText, 32, "%ld", (long)coord[ip][particleIDIndex]);
         ptunes->particleIndex[jp] = jp;
-        if (!hadd(ptunes->indexHash, pidText, strlen(pidText), &(ptunes->particleIndex[jp])))
+        if (!hadd(ptunes->indexHash, (unsigned char*)pidText, strlen(pidText), &(ptunes->particleIndex[jp])))
           bombElegantVA("Problem creating PID hash table for particle tunes: duplicate PID %ld\n", (long)coord[ip][particleIDIndex]);
         jp++;
       }
@@ -204,7 +204,7 @@ void accumulateParticleTuneData
         (ptunes->endPID<=0 || pid<=ptunes->endPID) &&
         (ptunes->PIDInterval<=1 || (pid%ptunes->PIDInterval==0))) {
       snprintf(pidText, 32, "%ld", pid);
-      if (!hfind(ptunes->indexHash, pidText, strlen(pidText)))
+      if (!hfind(ptunes->indexHash, (unsigned char *)pidText, strlen(pidText)))
         bombElegantVA("PID %ld of particle not found in hash table for particle tunes\n", pid);
       if (!(pIndexPtr = (long*)hstuff(ptunes->indexHash)))
         bombElegantVA("Problem retrieving particle index of PID %ld for particle tunes\n", pid);

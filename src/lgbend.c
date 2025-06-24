@@ -941,13 +941,13 @@ void readLGBendApertureData(LGBEND *lgbend)
   
   if (!apertureDataHashTable) 
     apertureDataHashTable = hcreate(12);
-  if (hcount(apertureDataHashTable)==0 || hfind(apertureDataHashTable, filename, strlen(filename))==FALSE) {
+  if (hcount(apertureDataHashTable)==0 || hfind(apertureDataHashTable, (unsigned char*)filename, strlen(filename))==FALSE) {
     /* Read file and add to hash table */
     if (!(apertureDataset = SDDS_Realloc(apertureDataset, sizeof(*apertureDataset)*(apertureDatasets+1))) ||
         !(apertureDataset[apertureDatasets] = malloc(sizeof(**apertureDataset))))
       bombElegantVA("Memory allocation error in readLGBendApertureData reading file %s\n", filename);
     readApertureInput(apertureDataset[apertureDatasets], filename, 1);
-    hadd(apertureDataHashTable, filename, strlen(filename), (void*)apertureDataset[apertureDatasets]);
+    hadd(apertureDataHashTable, (unsigned char *)filename, strlen(filename), (void*)apertureDataset[apertureDatasets]);
     lgbend->localApertureData = apertureDataset[apertureDatasets];
     apertureDatasets++;
   } else {

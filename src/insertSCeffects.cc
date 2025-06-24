@@ -163,7 +163,7 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 #endif
 
     if (sc.nBunches!=0 && sc.nBunches!=nBuckets)
-      bombElegantVA("Change in number of bunches from %ld to %ld seen in SCMULT. Not supported.\n",
+      bombElegantVA((char*)"Change in number of bunches from %ld to %ld seen in SCMULT. Not supported.\n",
 		    sc.nBunches, nBuckets);
     if (!sc.bunchData)
       bombElegant("Bucket data not allocated for SCMULT (2). This is a bug!", NULL);
@@ -259,7 +259,7 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 	tmin -= sc.sliceDuration/2;
 	tmax += sc.sliceDuration/2;
 	if ((nSlices = (tmax-tmin)/sc.sliceDuration+1)<=0)
-	  bombElegantVA("Error in trackThroughSCMULT: number of slices is %ld, t:[%le, %le], dt=%le\n",
+	  bombElegantVA((char*)"Error in trackThroughSCMULT: number of slices is %ld, t:[%le, %le], dt=%le\n",
 			nSlices, tmin, tmax, sc.sliceDuration);
 	QTime = (double*)calloc(nSlices, sizeof(*QTime));
 	xyCentroidTime[0] = (double*)calloc(nSlices, sizeof(*xyCentroidTime[0]));
@@ -513,7 +513,7 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part0, long np0, double Po, l
 #endif
   
     if (sc.nBunches!=0 && sc.nBunches!=nBuckets)
-      bombElegantVA("Change in number of bunches from %ld to %ld seen in SCMULT. Not supported.\n",
+      bombElegantVA((char*)"Change in number of bunches from %ld to %ld seen in SCMULT. Not supported.\n",
 		    sc.nBunches, nBuckets);
     if (sc.nBunches==0) {
       sc.nBunches = nBuckets;
@@ -625,7 +625,7 @@ void accumulateSCMULT(double **part0, long np0, double Po, ELEMENT_LIST *eptr, l
 #endif
     
     if (sc.nBunches!=0 && sc.nBunches!=nBuckets)
-      bombElegantVA("Change in number of bunches from %ld to %ld seen in SCMULT. Not supported.\n",
+      bombElegantVA((char*)"Change in number of bunches from %ld to %ld seen in SCMULT. Not supported.\n",
 		    sc.nBunches, nBuckets);
     if (!sc.bunchData)
       bombElegant("Bucket data not allocated for SCMULT (1). This is a bug!", NULL);

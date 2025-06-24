@@ -2744,6 +2744,7 @@ void readBratFieldFile(BRAT *brat, char *filename, short additionalFile) {
 
 void writeBratFieldOutput(BRAT *brat, char *rootname)
 {
+#ifndef ABRAT_PROGRAM
   long ix, iy, iz, row;
   long nx1, ny1, nz1;
   double xyz[3], B[3], dx1, dy1, dz1;
@@ -2751,7 +2752,6 @@ void writeBratFieldOutput(BRAT *brat, char *rootname)
   BRAT_3D_DATA *data;
   char *filename;
 
-#ifndef ABRAT_PROGRAM
 #if USE_MPI
   if (myid==0) {
 #endif
