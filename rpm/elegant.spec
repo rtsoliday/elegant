@@ -6,9 +6,9 @@ URL:		https://www.aps.anl.gov/Accelerator-Operations-Physics
 Packager:	Robert Soliday <soliday@aps.anl.gov>
 Prefix:		%{_bindir}
 Autoreq:	0
-Version:	2025.1.0
+Version:	2025.2.0
 Release:	1
-Source:		elegant-2025.1.0.tar.gz
+Source:		elegant-2025.2.0.tar.gz
 
 %define debug_package %{nil}
 %undefine __check_files
