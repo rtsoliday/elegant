@@ -64,6 +64,9 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
 
   IBS = (IBSCATTER *)eptr->p_elem;
 
+  if (IBS->factor<=0)
+    return;
+  
   if (IBS->verbose) {
 #if USE_MPI
     if (myid == 0) {
