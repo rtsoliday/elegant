@@ -52,6 +52,8 @@ endif
 ifneq ($(PROD),)
  $(foreach prod, $(PROD), $(eval $(call make_prod_objs,$(prod))))
  FULLPROD = $(patsubst %,$(OBJ_DIR)/%$(EXEEXT), $(PROD))
+ PROD_OBJECTS = $(patsubst %$(EXEEXT),%.$(OBJEXT),$(FULLPROD))
+ .SECONDARY: $(PROD_OBJECTS)
 endif
 
 ifeq ($(OS), Windows)
