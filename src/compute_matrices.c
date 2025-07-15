@@ -1392,7 +1392,7 @@ VMATRIX *compute_matrix(
     quad = (QUAD *)elem->p_elem;
     elem->matrix = quadrupole_matrix(quad->k1, quad->length,
                                      quad->order ? quad->order : run->default_order,
-                                     quad->fse, quad->xkick, quad->ykick,
+                                     quad->fse, quad->xkick*quad->xKickCalibration, quad->ykick*quad->yKickCalibration,
                                      quad->edge1_effects, quad->edge2_effects,
                                      quad->fringeType, quad->ffringe, quad->lEffective,
                                      quad->fringeIntM, quad->fringeIntP, quad->radial);
