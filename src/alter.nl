@@ -12,6 +12,7 @@
         STRING exclude = NULL;
         double value = 0;
         STRING string_value = NULL;
+	long disable = 0;
         long differential = 0;
         long multiplicative = 0;
         long alter_at_each_step = 0;

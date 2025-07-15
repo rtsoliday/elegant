@@ -68,7 +68,9 @@ void setup_alter_element(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
     bombElegant(NULL, NULL);
   if (echoNamelists)
     print_namelist(stdout, &alter_elements);
-
+  if (disable)
+    return;
+  
   if (!alter_at_each_step && alter_before_load_parameters) {
     printf("N.B.: alter_before_load_parameters has no effect unless alter_at_each_step=1\n");
     fflush(stdout);
