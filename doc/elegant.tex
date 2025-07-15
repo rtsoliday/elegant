@@ -22,7 +22,7 @@
 \begin{document}
 
 \title{User's Manual for {\tt elegant}}
-\author{Program Version 2025.2\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
+\author{Program Version 2025.3\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
 \maketitle
 
 Note: another source of help for {\tt elegant} is the on-line
@@ -35,7 +35,7 @@ available from the software download page that demonstrates many features of {\t
 overview}{http://ops.aps.anl.gov/elegant.html} of {\tt elegant} is also available, which introduces the capabilities
 at a high level.
 
-\section{Highlights of What's New in Version 2025.2}
+\section{Highlights of What's New in Version 2025.3}
 
 Here is a summary of what's changed since release 2025.2  Historical change logs are collected in Section
 \ref{sect:changeLog}.
@@ -43,45 +43,26 @@ Here is a summary of what's changed since release 2025.2  Historical change logs
 \subsection{Bug Fixes for Elements}
 
 \begin{itemize}
-\item The \verb|CSBEND| and \verb|SBEN| elements did not behave well when very small angles were used together with
-  non-zero gradient or sextupole terms. This was reported by forum user \verb|Skamarokha|.
-\item Fixed issues with computation of radiation integrals when dipoles have zero bending angle. This was reported by forum user \verb|Skamarokha|.
+\item The \verb|HCALIBRATION| and \verb|VCALIBRATION| parameters on the \verb|QUAD| element were non-functional,
+  as reported by V. Sajaev (APS).
+\item In sliced mode, the \verb|IBSCATTER| element no longer hangs in \verb|Pelegant| when a slice has fewer than
+  10 particles.
 \end{itemize}
 
 \subsection{Bug Fixes for Commands}
 \begin{itemize}
-\item The \verb|semaphores| command issued errors if an immediate semaphore was requested even if the
-  other semaphores were blank.
-\item The \verb|insert_sceffects| element, which inserts special elements for computation of transverse space charge in rings,
-  had a bug that resulted in use of linear space charge calculations even when nonlinear calculations were requested,
-  plus other bugs once that once fixed. P. Baxevanis (BNL) assisted in finding and resolving these issues.
+\item None.
 \end{itemize}
 
 \subsection{New and Modified Elements}
 \begin{itemize}
-\item Added the \verb|FLIP| parameter to \verb|BRAT| to allow turning the magnet upside down.
-\item Added the \verb|FIELD_OUTPUT_FILE|, \verb|NX_OUTPUT|, \verb|NY_OUTPUT|, and \verb|NZ_OUTPUT|
-  parameters to \verb|BRAT| to allow output of interpolated field values to an SDDS file.
-\item The \verb|WATCH|, \verb|HISTOGRAM|, and \verb|SLICE| elements now support automatic bunch-by-bunch
-  modes using the new \verb|BUNCH_SERIES| flag. If this flag is set, successive instances of the same element
-  will be assigned to successive bunches.
-\item The \verb|WIGGLER| and \verb|CWIGGLER| elements now internally implement several optional models for hybrid permanent magnet
-  and superconducting undulators.
+\item None.
 \end{itemize}
 
 \subsection{New and Modified Commands}
 \begin{itemize}
-\item When reporting results for elements for which the matrix is determined by tracking, the
-  \verb|matrix_output| command now provides the maximum error for each coordinate between the tracking
-  results and the matrix.
-\item Added the \verb|macro_output| command, which allows writing the values of the commandline macros to
-  a file.
-\item The \verb|insert_sceffects| command, which inserts elements that model transverse space charge kicks,
-  now automatically supports multiple bunches. It also supports a slice-based simulation of space charge
-  kicks. These changes were requested by A. Blednykh, P. Baxevanis, and others (BNL).
-\item The \verb|load_parameters| command now allows specifying a parameter file that will be loaded each
-  time a specific \verb|SCRIPT| element is encountered. This allows the script to create
-  a parameter file that alters properties of the lattice elements for subsequent tracking.
+\item The \verb|alter_elements| command now supports a parameter called \verb|disable| that can be used to
+  disable a particular instance.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -98,8 +79,7 @@ are listed in Section \ref{sect:tools}.
 
 Changes to these tools in this release include
 \begin{itemize}
-\item \verb|sddsbrightness| has a new method for computing the brightness that is about 20 times faster than the
-  default method. R. Lindberg (APS) developed the method and code.
+\item None.
 \end{itemize}
 
 \subsection{Known Bugs, Problems, and Limitations}
@@ -800,6 +780,7 @@ Command name & Type & Description \\\hline
         STRING exclude = NULL;
         double value = 0;
         STRING string_value = NULL;
+        long disable = 0;
         long differential = 0;
         long multiplicative = 0;
         long alter_at_each_step = 0;
@@ -825,7 +806,8 @@ Command name & Type & Description \\\hline
 \item \verb|exclude| --- A possibly-wildcard-containing string giving the names of elements
         to excluded from alteration.
 \item \verb|value|, \verb|string_value| --- The new value for the parameter.  Use
-      \verb|string_value| only if the parameter takes a character string as its value.
+  \verb|string_value| only if the parameter takes a character string as its value.
+\item \verb|disable| --- If nonzero, the command is ignored.
 \item \verb|differential| --- If nonzero, the new value is 
         the predefined value of the parameter plus the quantity given with \verb|value|.
 \item \verb|multiplicative| --- If nonozero, the new given value is the predefined
@@ -8709,6 +8691,73 @@ terminal input and terminal output, respectively.
 \newpage
 
 \section{Change Log\label{sect:changeLog}}
+
+\subsection{Highlights of What's New in Version 2025.2}
+
+Here is a summary of what's changed since release 2025.2  Historical change logs are collected in Section
+\ref{sect:changeLog}.
+
+\subsubsection{Bug Fixes for Elements}
+
+\begin{itemize}
+\item The \verb|CSBEND| and \verb|SBEN| elements did not behave well when very small angles were used together with
+  non-zero gradient or sextupole terms. This was reported by forum user \verb|Skamarokha|.
+\item Fixed issues with computation of radiation integrals when dipoles have zero bending angle. This was reported by forum user \verb|Skamarokha|.
+\end{itemize}
+
+\subsubsection{Bug Fixes for Commands}
+\begin{itemize}
+\item The \verb|semaphores| command issued errors if an immediate semaphore was requested even if the
+  other semaphores were blank.
+\item The \verb|insert_sceffects| element, which inserts special elements for computation of transverse space charge in rings,
+  had a bug that resulted in use of linear space charge calculations even when nonlinear calculations were requested,
+  plus other bugs once that once fixed. P. Baxevanis (BNL) assisted in finding and resolving these issues.
+\end{itemize}
+
+\subsubsection{New and Modified Elements}
+\begin{itemize}
+\item Added the \verb|FLIP| parameter to \verb|BRAT| to allow turning the magnet upside down.
+\item Added the \verb|FIELD_OUTPUT_FILE|, \verb|NX_OUTPUT|, \verb|NY_OUTPUT|, and \verb|NZ_OUTPUT|
+  parameters to \verb|BRAT| to allow output of interpolated field values to an SDDS file.
+\item The \verb|WATCH|, \verb|HISTOGRAM|, and \verb|SLICE| elements now support automatic bunch-by-bunch
+  modes using the new \verb|BUNCH_SERIES| flag. If this flag is set, successive instances of the same element
+  will be assigned to successive bunches.
+\item The \verb|WIGGLER| and \verb|CWIGGLER| elements now internally implement several optional models for hybrid permanent magnet
+  and superconducting undulators.
+\end{itemize}
+
+\subsubsection{New and Modified Commands}
+\begin{itemize}
+\item When reporting results for elements for which the matrix is determined by tracking, the
+  \verb|matrix_output| command now provides the maximum error for each coordinate between the tracking
+  results and the matrix.
+\item Added the \verb|macro_output| command, which allows writing the values of the commandline macros to
+  a file.
+\item The \verb|insert_sceffects| command, which inserts elements that model transverse space charge kicks,
+  now automatically supports multiple bunches. It also supports a slice-based simulation of space charge
+  kicks. These changes were requested by A. Blednykh, P. Baxevanis, and others (BNL).
+\item The \verb|load_parameters| command now allows specifying a parameter file that will be loaded each
+  time a specific \verb|SCRIPT| element is encountered. This allows the script to create
+  a parameter file that alters properties of the lattice elements for subsequent tracking.
+\end{itemize}
+
+\subsubsection{Changes to Examples}
+
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{Changes to Related Programs and Files}
+
+The {\tt elegant} distribution includes many programs and scripts that perform computations with {\tt elegant}
+output data, provide interfaces with other programs, or prepare data for use with {\tt elegant}. These
+are listed in Section \ref{sect:tools}. 
+
+Changes to these tools in this release include
+\begin{itemize}
+\item \verb|sddsbrightness| has a new method for computing the brightness that is about 20 times faster than the
+  default method. R. Lindberg (APS) developed the method and code.
+\end{itemize}
 
 \subsection{Highlights of What's New in Version 2025.1}
 
