@@ -68,14 +68,8 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
     return;
   
   if (IBS->verbose) {
-#if USE_MPI
-    if (myid == 0) {
-#endif
-      printf("Starting IBSCATTER\n");
-      fflush(stdout);
-#if USE_MPI
-    }
-#endif
+    printf("Starting IBSCATTER\n");
+    fflush(stdout);
   }
 
   if (IBS->nslice < 1)
@@ -95,13 +89,9 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
   if (IBS->verbose) {
 #if USE_MPI
     MPI_Barrier(MPI_COMM_WORLD);
-    if (myid == 0) {
 #endif
-      printf("Beginning IBSCATTER algorithm (tests passed)\n");
-      fflush(stdout);
-#if USE_MPI
-    }
-#endif
+    printf("Beginning IBSCATTER algorithm (tests passed)\n");
+    fflush(stdout);
   }
 
   if (isSlave || !notSinglePart) {
@@ -132,21 +122,15 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
     MPI_Recv(&nBuckets, 1, MPI_LONG, 1, 1, MPI_COMM_WORLD, &mpiStatus);
   else if (myid == 1)
     MPI_Send(&nBuckets, 1, MPI_LONG, 0, 1, MPI_COMM_WORLD);
-  if (IBS->verbose && myid == 0) {
+#endif
+  if (IBS->verbose) {
     printf("Bunch assignment completed\n");
     fflush(stdout);
   }
-#endif
 
   if (IBS->verbose) {
-#if USE_MPI
-    if (myid == 0) {
-#endif
-      printf("%ld bunches identified\n", nBuckets);
-      fflush(stdout);
-#if USE_MPI
-    }
-#endif
+    printf("%ld bunches identified\n", nBuckets);
+    fflush(stdout);
   }
 
   for (iBucket = 0; iBucket < nBuckets; iBucket++) {
@@ -157,14 +141,8 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
 #endif
 
     if (IBS->verbose) {
-#if USE_MPI
-      if (myid == 0) {
-#endif
-        printf("Starting IBS for bunch %ld\n", iBucket);
-        fflush(stdout);
-#if USE_MPI
-      }
-#endif
+      printf("Starting IBS for bunch %ld\n", iBucket);
+      fflush(stdout);
     }
 
     if (isSlave || !notSinglePart) {
@@ -201,7 +179,7 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
       MPI_Allreduce(&np, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
       IBS->charge = charge->macroParticleCharge * npTotal;
       /* printf("myid=%d, np=%ld, npTotal=%ld, charge=%le\n", myid, np, npTotal, IBS->charge); */
-      if (myid == 0 && IBS->verbose) {
+      if (IBS->verbose) {
         printf("bunch %ld has charge=%e, np=%ld\n", iBucket, IBS->charge, npTotal);
         fflush(stdout);
       }
@@ -246,6 +224,10 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
 #if USE_MPI
         long countTemp;
         MPI_Barrier(MPI_COMM_WORLD);
+	if (IBS->verbose>3) {
+	  printf("myid=%d, isSlave=%ld, notSinglePart=%ld\n", myid, isSlave, notSinglePart);
+	  fflush(stdout);
+	}
         if (myid == 0)
           countTemp = 0;
         else {
@@ -254,40 +236,49 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
           countTemp = count[islice];
         }
         MPI_Allreduce(&countTemp, &countTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if (myid == 0) {
-          printf("Starting computation of parameters for slice %ld for bunch %ld (%ld particles)\n", islice, iBucket, countTotal);
-          fflush(stdout);
-        }
+	printf("Starting computation of parameters for slice %ld for bunch %ld (%ld particles)\n", islice, iBucket, countTotal);
+	fflush(stdout);
 #else
         printf("Starting computation of parameters for slice %ld for bunch %ld (%ld particles)\n", islice, iBucket, count[islice]);
         fflush(stdout);
 #endif
       }
 
-      if (isSlave || !notSinglePart) {
+#if USE_MPI
+      countTotal = 0;
+      if (myid == 0) {
+	long dummyCount = 0;
+	MPI_Allreduce(&dummyCount, &countTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+	istart = iend = 0;
+      } else {
         istart = iend;
         iend += count[islice];
-
-#if USE_MPI
-        MPI_Allreduce(&count[islice], &countTotal, 1, MPI_LONG, MPI_SUM, workers);
-        if (countTotal < 10) {
-          printWarningForTracking("IBS suppressed due to fewer than 10 particles in slice.",
-                                  "This may happen for end slices and may be resolved using more particles");
-          zeroslice(islice, IBS);
-          continue;
-        }
+        MPI_Allreduce(&count[islice], &countTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+      }
+      if (countTotal < 10) {
+	printWarningForTracking("IBS suppressed due to fewer than 10 particles in slice.",
+				"This may happen for end slices and may be resolved using more particles");
+	zeroslice(islice, IBS);
+	continue;
+      }
 #else
-        if (count[islice] < 10) {
-          printWarningForTracking("IBS suppressed due to fewer than 10 particles in slice.",
-                                  "This may happen for end slices and may be resolved using more particles");
-          zeroslice(islice, IBS);
-          continue;
-        }
+      istart = iend;
+      iend += count[islice];
+      if (count[islice] < 10) {
+	printWarningForTracking("IBS suppressed due to fewer than 10 particles in slice.",
+				"This may happen for end slices and may be resolved using more particles");
+	zeroslice(islice, IBS);
+	continue;
+      }
 #endif
 
+      if (isSlave || !notSinglePart) {
         computeSliceParameters(aveCoord, S, part, index, istart, iend, Po);
       }
-
+      if (IBS->verbose > 1) {
+	printf("Finished computation of parameters for slice %ld for bunch %ld\n", islice, iBucket);
+        fflush(stdout);
+      }
 #if USE_MPI
       if (IBS->verbose > 2) {
         if (myid == 0) {
@@ -314,6 +305,10 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
 #endif
 
       if (isSlave || !notSinglePart) {
+	if (IBS->verbose > 3) {
+	  printf("Computing growth rate for slice %ld\n", islice);
+	  fflush(stdout);
+	}
         /*** Should update eta[i] here to use values from the sigma matrix ****/
         IBS->emitx0[islice] = correctedEmittance(S, eta, 0, 1, &betax0, &alphax0);
         IBS->emity0[islice] = correctedEmittance(S, eta, 2, 3, &betay0, &alphay0);
@@ -322,17 +317,30 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
         if (IBS->nslice == 1)
           bLength = sqrt(S[4][4]) * c_mks;
         IBS->sigmaz0[islice] = bLength;
-#ifdef DEBUG
-        printf("slice %ld, bLength=%le\n", islice, bLength);
-        fflush(stdout);
-#endif
-
-        if (!IBS->forceMatchedTwiss)
+	if (IBS->verbose > 3) {
+	  printf("slice %ld, bLength=%le\n", islice, bLength);
+	  fflush(stdout);
+	}
+	
+        if (!IBS->forceMatchedTwiss) {
           forth_propagate_twiss(IBS, islice, betax0, alphax0, betay0, alphay0, run);
+	  if (IBS->verbose > 3) {
+	    printf("slice %ld, forth_propagate_twiss returned\n", islice);
+	    fflush(stdout);
+	  }
+	}
 #if USE_MPI
         IBS->icharge[islice] = (IBS->charge * countTotal) / npTotal;
+	if (IBS->verbose > 3) {
+	  printf("slice %ld, particles=%ld of %ld, charge=%le\n", islice, countTotal, npTotal, IBS->icharge[islice]);
+	  fflush(stdout);
+	}
 #else
         IBS->icharge[islice] = IBS->charge * (double)count[islice] / (double)np;
+	if (IBS->verbose > 3) {
+	  printf("slice %ld, particles=%ld of %ld, charge=%le\n", islice, count[islice], np, IBS->icharge[islice]);
+	  fflush(stdout);
+	}
 #endif
 #if USE_MPI
         elemCount = 0;
@@ -346,6 +354,10 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
             elemOffset--;
             elemCount++;
           }
+	  if (IBS->verbose > 3) {
+	    printf("slice %ld, computing rate\n", islice);
+	    fflush(stdout);
+	  }
           IBSRate(fabs(IBS->icharge[islice] / particleCharge),
                   elemCount, 1, 0, IBS->isRing,
                   IBS->emitx0[islice], IBS->emity0[islice], IBS->sigmaDelta0[islice], bLength,
@@ -355,12 +367,20 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
                   IBS->xRateVsS[islice] + elemOffset, IBS->yRateVsS[islice] + elemOffset, IBS->zRateVsS[islice] + elemOffset,
                   &(IBS->xGrowthRate[islice]), &(IBS->yGrowthRate[islice]), &(IBS->zGrowthRate[islice]), 1,
                   IBS->s[IBS->elements - 1] - IBS->s[0]);
+	  if (IBS->verbose > 3) {
+	    printf("slice %ld, accumulating rate\n", islice);
+	    fflush(stdout);
+	  }
           MPI_Allreduce(&IBS->xGrowthRate[islice], &mpiTemp, 1, MPI_DOUBLE, MPI_SUM, workers);
           IBS->xGrowthRate[islice] = mpiTemp;
           MPI_Allreduce(&IBS->yGrowthRate[islice], &mpiTemp, 1, MPI_DOUBLE, MPI_SUM, workers);
           IBS->yGrowthRate[islice] = mpiTemp;
           MPI_Allreduce(&IBS->zGrowthRate[islice], &mpiTemp, 1, MPI_DOUBLE, MPI_SUM, workers);
           IBS->zGrowthRate[islice] = mpiTemp;
+	  if (IBS->verbose > 3) {
+	    printf("slice %ld, rate=%le, %le, %le\n", islice, IBS->xGrowthRate[islice], IBS->yGrowthRate[islice], IBS->zGrowthRate[islice]);
+	    fflush(stdout);
+	  }
         } else {
           IBSRate(fabs(IBS->icharge[islice] / particleCharge),
                   IBS->elements, 1, 0, IBS->isRing,
@@ -369,6 +389,10 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
                   IBS->etax, IBS->etaxp, IBS->etay, IBS->etayp,
                   IBS->xRateVsS[islice], IBS->yRateVsS[islice], IBS->zRateVsS[islice],
                   &(IBS->xGrowthRate[islice]), &(IBS->yGrowthRate[islice]), &(IBS->zGrowthRate[islice]), 1, -1);
+	  if (IBS->verbose > 3) {
+	    printf("slice %ld, rate=%le, %le, %le\n", islice, IBS->xGrowthRate[islice], IBS->yGrowthRate[islice], IBS->zGrowthRate[islice]);
+	    fflush(stdout);
+	  }
         }
 #else
         IBSRate(fabs(IBS->icharge[islice] / particleCharge),
@@ -378,24 +402,33 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
                 IBS->etax, IBS->etaxp, IBS->etay, IBS->etayp,
                 IBS->xRateVsS[islice], IBS->yRateVsS[islice], IBS->zRateVsS[islice],
                 &(IBS->xGrowthRate[islice]), &(IBS->yGrowthRate[islice]), &(IBS->zGrowthRate[islice]), 1, -1);
+	if (IBS->verbose > 3) {
+	  printf("slice %ld, rate=%le, %le, %le\n", islice, IBS->xGrowthRate[islice], IBS->yGrowthRate[islice], IBS->zGrowthRate[islice]);
+	  fflush(stdout);
+	}
 #endif
         IBS->xGrowthRate[islice] *= IBS->factor;
         IBS->yGrowthRate[islice] *= IBS->factor;
         IBS->zGrowthRate[islice] *= IBS->factor;
       }
+#if USE_MPI
+    MPI_Barrier(MPI_COMM_WORLD);
+#endif
+    if (IBS->verbose > 2 ) {
+      printf("Finished computation of growth rates for slice %ld of %ld\n", islice, IBS->nslice);
+      fflush(stdout);
     }
-
+    }
+    if (IBS->verbose > 2 ) {
+      printf("Finished computation of growth rates for all slices\n");
+      fflush(stdout);
+    }
+    
     iend = 0;
     for (islice = 0; islice < IBS->nslice; islice++) {
       if (IBS->verbose > 1) {
-#if USE_MPI
-        if (myid == 0) {
-#endif
-          printf("Starting application of IBS effect for slice %ld for bunch %ld\n", islice, iBucket);
-          fflush(stdout);
-#if USE_MPI
-        }
-#endif
+	printf("Starting application of IBS effect for slice %ld for bunch %ld\n", islice, iBucket);
+	fflush(stdout);
       }
 #if USE_MPI
       MPI_Barrier(MPI_COMM_WORLD);
@@ -1064,7 +1097,20 @@ void forth_propagate_twiss(IBSCATTER *IBS, long islice, double betax0, double al
   TWISS *tp;
 
   tp = &(twiss0[islice]);
+
+  if (IBS->verbose>4) {
+    printf("running forth_propagate_twiss with betax=%le, alphax=%le, betay=%le, alphay=%le\n",
+	   tp->betax, tp->alphax, tp->betay, tp->alphay);
+    fflush(stdout);
+  }
+
   propagate_twiss_parameters(tp, tune, waists, NULL, IBS->elem, run, NULL, NULL, NULL);
+
+  if (IBS->verbose>4) {
+    printf("returned from propagate_twiss_parameters\n");
+    fflush(stdout);
+  }
+
   elem = IBS->elem;
   for (i = 0; i < IBS->elements; i++) {
     IBS->betax[islice][i] = elem->twiss->betax;
@@ -1072,6 +1118,11 @@ void forth_propagate_twiss(IBSCATTER *IBS, long islice, double betax0, double al
     IBS->betay[islice][i] = elem->twiss->betay;
     IBS->alphay[islice][i] = elem->twiss->alphay;
     elem = elem->succ;
+  }
+
+  if (IBS->verbose>4) {
+    printf("Updated twiss function array\n");
+    fflush(stdout);
   }
 
   tp->betax = betax0;
@@ -1084,6 +1135,12 @@ void forth_propagate_twiss(IBSCATTER *IBS, long islice, double betax0, double al
   tp->phiy = 0;
   tp->etay = IBS->etay[0];
   tp->etapy = IBS->etayp[0];
+
+  if (IBS->verbose>4) {
+    printf("Restored twiss function values in beamline\n");
+    fflush(stdout);
+  }
+
   return;
 }
 
