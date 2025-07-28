@@ -147,11 +147,16 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
   long nElements, lastNElements, iElement;
   double betax1, betax2, betay1, betay2, etax, etay, tilt;
   double nux, nuy;
-
+  static long cnuMemory[2] = {-1, -1};
+  
   if (!initialized)
     return 0;
-
-  if (verbosity > 1)
+  if (cnuMemory[0]==-1) {
+    cnuMemory[0] = rpn_create_mem("cnux", 0);
+    cnuMemory[1] = rpn_create_mem("cnuy", 0);
+  }
+      
+  if (verbosity > 2)
     printf("\n* Computing coupled sigma matrix\n");
   beamline->flags |= BEAMLINE_MATRICES_NEEDED;
   if (emittances_from_twiss_command) {
@@ -165,7 +170,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
     }
     emit_x = beamline->radIntegrals.ex0;
     sigma_dp = beamline->radIntegrals.sigmadelta;
-    if (verbosity > 1)
+    if (verbosity > 2)
       printf("Raw emittance = %e, momentum spread = %e\n", emit_x, sigma_dp);
   }
   fflush(stdout);
@@ -204,7 +209,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
     M = accumulate_matrices(eptr0, run, NULL, concat_order, 0);
   R = M->R;
 
-  if (verbosity > 2) {
+  if (verbosity > 3) {
     long order;
     order = M->order;
     M->order = 1;
@@ -242,7 +247,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
       A[i * 6 + 4] = -1.0 * A[i * 6 + 4];
     }
   }
-  if (verbosity > 3) {
+  if (verbosity > 4) {
     MatrixPrintout((double *)&A, &matDim, &matDim, 1);
   }
 
@@ -272,14 +277,14 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
     }
     return (1);
   }
-  if (verbosity > 0) {
+  if (verbosity > 1) {
     printf("Info: %d ; %f \n", info, work[0]);
     for (i = 0; i < matDim; i++) {
       printf("%d: %9.6f + i* %10.6f\n", i, WR[i], WI[i]);
     }
     fflush(stdout);
   }
-  if (verbosity > 1) {
+  if (verbosity > 2) {
     printf("Non-normalized vectors:\n");
     MatrixPrintout((double *)&VR, &matDim, &matDim, 1);
     fflush(stdout);
@@ -289,6 +294,12 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
   SortEigenvalues((double *)&WR, (double *)&WI, (double *)&VR, matDim, eigenModesNumber, verbosity);
   nux = fabs(atan2(WI[0], WR[0]) / PIx2);
   nuy = fabs(atan2(WI[2], WR[2]) / PIx2);
+  if (verbosity>0) {
+    printf("coupled twiss nux = %le, nuy=%le\n", nux, nuy);
+    fflush(stdout);
+  }
+  rpn_store(nux, NULL, cnuMemory[0]);
+  rpn_store(nuy, NULL, cnuMemory[1]);
 
   /*--- Normalization of eigenvectors... */
   for (k = 0; k < eigenModesNumber; k++) {
@@ -298,7 +309,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
       Norm[k] += VR[2 * k * matDim + 2 * i + 1] * VR[(2 * k + 1) * matDim + 2 * i] - VR[2 * k * matDim + 2 * i] * VR[(2 * k + 1) * matDim + 2 * i + 1];
     }
     Norm[k] = 1.0 / sqrt(fabs(Norm[k]));
-    if (verbosity > 2) {
+    if (verbosity > 3) {
       printf("Norm[%d]= %12.4e \n", k, Norm[k]);
     }
   }
@@ -308,7 +319,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
       Vnorm[(k * 2 + 1) * matDim + i] = VR[(k * 2 + 1) * matDim + i] * Norm[k];
     }
   }
-  if (verbosity > 1) {
+  if (verbosity > 2) {
     printf("Normalized vectors:\n");
     MatrixPrintout((double *)&Vnorm, &matDim, &matDim, 1);
   }
@@ -328,7 +339,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
   iElement = 0;
   eptr = eptr0;
   while (eptr) {
-    if (verbosity > 0) {
+    if (verbosity > 1) {
       printf("\nElement number %ld: %s\n", iElement, eptr->name);
       fflush(stdout);
     }
@@ -356,7 +367,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
 
     /*--- Calculating A matrices (product of eigenvectors)... */
     GetAMatrix((double *)&Vnorm, (double *)&transferMatrix, (double *)&Amatrix, &eigenModesNumber, &matDim);
-    if (verbosity > 1) {
+    if (verbosity > 2) {
       for (k = 0; k < eigenModesNumber; k++) {
         printf("A matrix for mode %d\n", k);
         MatrixPrintout((double *)&Amatrix[k * matDim * matDim], &matDim, &matDim, 1);
@@ -375,7 +386,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
         }
       }
     }
-    if (verbosity > 0) {
+    if (verbosity > 1) {
       printf("Sigma matrix:\n");
       MatrixPrintout((double *)&SigmaMatrix, &matDim, &matDim, 2);
     }
@@ -399,7 +410,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
       }
     }
 
-    if (verbosity > 0) {
+    if (verbosity > 1) {
       printf("SigmaX  = %12.4e, SigmaY  = %12.4e, Beam tilt = %12.4e \n",
              sqrt(SigmaMatrix[0][0]), sqrt(SigmaMatrix[2][2]),
              0.5 * atan(2 * SigmaMatrix[0][2] / (SigmaMatrix[0][0] - SigmaMatrix[2][2])));
@@ -443,7 +454,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
       }
     }
 
-    if (verbosity > 0) {
+    if (verbosity > 1) {
       printf("betax_1 = %12.4e, betax_2 = %12.4e \n",
              Amatrix[0], Amatrix[1 * matDim * matDim]);
       printf("betay_1 = %12.4e, betay_2 = %12.4e \n",
@@ -458,6 +469,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
       store_fitpoint_ctwiss_parameters((MARK *)eptr->p_elem, eptr->name, eptr->occurence, betax1, betax2, betay1, betay2, etax, etay,
                                        tilt);
 
+    
     iElement++;
     eptr = eptr->succ;
   }
@@ -538,13 +550,13 @@ void SortEigenvalues(double *WR, double *WI, double *VR, int matDim, int eigenMo
     }
   }
 
-  if (verbosity > 0) {
+  if (verbosity > 1) {
     printf("Eigenvalues after sorting:\n");
     for (i = 0; i < matDim; i++) {
       printf("%d: %9.6f + i* %10.6f\n", i, WR[i], WI[i]);
     }
   }
-  if (verbosity > 1) {
+  if (verbosity > 2) {
     printf("Vectors after sorting:\n");
     MatrixPrintout((double *)&VR[0], &matDim, &matDim, 1);
   }
