@@ -1150,7 +1150,7 @@ extern char *entity_text[N_TYPES];
 #define N_CLEAN_PARAMS 7
 #define N_TWISSELEMENT_PARAMS 22
 #define N_WIGGLER_PARAMS 16
-#define N_SCRIPT_PARAMS 40
+#define N_SCRIPT_PARAMS 41
 #define N_FLOORELEMENT_PARAMS 6
 #define N_LTHINLENS_PARAMS 8
 #define N_LMIRROR_PARAMS 9
@@ -3360,7 +3360,7 @@ typedef struct {
   short useCsh, verbosity, rpnParameters;
   long startPass, endPass, passInterval, onPass;
   char *directory, *rootname, *inputExtension, *outputExtension;
-  short keepFiles, driftMatrix;
+  short keepFiles, driftMatrix, driftTestParticles;
   short useParticleID, noNewParticles, determineLossesFromParticleID, softFailure;
   char *postCommandParameterFile;
   double NP[10];
@@ -4101,7 +4101,7 @@ void setTrackingOmniWedgeFunction(void (*wedgeFunc)(double **part, long np, long
 void gatherParticles(double ***coord, long *nToTrack, long *nLost, double ***accepted, long n_processors, int myid, double *round);
 long transformBeamWithScript(SCRIPT *script, double pCentral, CHARGE *charge, BEAM *beam, double **part, 
                              long np, char *mainRootname, long iPass, long driftOrder, double z, long forceSerial,
-			     long occurence, long backtrack, LINE_LIST *bealmine, RUN *run);
+			     long occurence, long backtrack, LINE_LIST *beamline, RUN *run);
 long transformBeamWithScript_s(SCRIPT *script, double pCentral, CHARGE *charge, BEAM *beam, double **part, 
 			       long np, char *mainRootname, long iPass, long driftOrder, double z, long occurence, long backtrack);
 #ifdef USE_MPI

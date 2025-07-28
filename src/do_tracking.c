@@ -2236,10 +2236,16 @@ long do_tracking(
                   printf("Preparing to call transformBeamWithScript, nToTrack=%ld\n", nToTrack);
                   fflush(stdout);
 #endif
-                  nLeft = transformBeamWithScript((SCRIPT *)eptr->p_elem, *P_central, charge,
-                                                  beam, coord, nToTrack, run->rootname, i_pass, run->default_order, z, 0,
-                                                  eptr->occurence, run->backtrack, beamline, run);
-                  nLost = nToTrack - nLeft;
+                  if ((flags & TEST_PARTICLES) && ((SCRIPT *)eptr->p_elem)->driftTestParticles) {
+                    exactDrift(coord, nToTrack, ((EDRIFT *)eptr->p_elem)->length);
+                    nLost = 0;
+                    nLeft = nToTrack;
+                  } else {
+                    nLeft = transformBeamWithScript((SCRIPT *)eptr->p_elem, *P_central, charge,
+                                                    beam, coord, nToTrack, run->rootname, i_pass, run->default_order, z, 0,
+                                                    eptr->occurence, run->backtrack, beamline, run);
+                    nLost = nToTrack - nLeft;
+                  }
 #if USE_MPI
                   nToTrack = nLeft;
                   nLost = 0;

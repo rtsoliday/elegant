@@ -2816,6 +2816,7 @@ PARAMETER script_param[N_SCRIPT_PARAMS] = {
   {"OUTPUT_EXTENSION", "", IS_STRING, 0, (long)((char *)&script_example.outputExtension), "out", 0.0, 0, "Extension for the script output file."},
   {"KEEP_FILES", "", IS_SHORT, 0, (long)((char *)&script_example.keepFiles), NULL, 0.0, 0, "If nonzero, then script input and output files are not deleted after use.  By default, they are deleted."},
   {"DRIFT_MATRIX", "", IS_SHORT, 0, (long)((char *)&script_example.driftMatrix), NULL, 0.0, 0, "If nonzero, then for non-tracking calculations the element is treated as a drift space."},
+  {"DRIFT_TEST_PARTICLES", "", IS_SHORT, 0, (long)((char *)&script_example.driftTestParticles), NULL, 0.0, 0, "If nonzero, then for \"test-particle\" tracking, such as for closed orbit or trajectory correction, the element is treated as a drift space."},
   {"USE_PARTICLE_ID", "", IS_SHORT, 0, (long)((char *)&script_example.useParticleID), NULL, 0.0, 1, "If nonzero, then the output file will supply particle IDs. Otherwise, particles are renumbered."},
   {"NO_NEW_PARTICLES", "", IS_SHORT, 0, (long)((char *)&script_example.noNewParticles), NULL, 0.0, 1, "If nonzero, then no new particles will be added in the script output file."},
   {"DETERMINE_LOSSES_FROM_PID", "", IS_SHORT, 0, (long)((char *)&script_example.determineLossesFromParticleID), NULL, 0.0, 1, "If nonzero and if USE_PARTICLE_ID is nonzero, then particleID data from script output is used to determine which particles were lost."},
