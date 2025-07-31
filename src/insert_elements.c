@@ -16,6 +16,7 @@ typedef struct {
   char **name, *type, *exclude, *elemDef, *variable;
   long nNames, nskip, add_end, add_start, total, before, occur[100];
   double sStart, sEnd;
+  long oStart, oEnd;
 } ADD_ELEM;
 
 static ADD_ELEM addElem;
@@ -158,6 +159,8 @@ void do_insert_elements(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
   addElem.elemDef = element_def;
   addElem.sStart = s_start;
   addElem.sEnd = s_end;
+  addElem.oStart = occurrence_start;
+  addElem.oEnd = occurrence_end;
   addElem.before = insert_before;
   addElem.variable = insertion_count_variable;
   delete_spaces(addElem.elemDef);
@@ -219,6 +222,9 @@ long insertElem(char *name, long type, long *skip, long occurPosition, double en
 
   if ((addElem.sStart >= 0 && endPosition < addElem.sStart) ||
       (addElem.sEnd >= 0 && endPosition > addElem.sEnd))
+    return 0;
+  if ((addElem.oStart >= 0 && occurPosition < addElem.oStart) ||
+      (addElem.oEnd >= 0 && occurPosition > addElem.oEnd))
     return 0;
 
   if (addElem.total) {

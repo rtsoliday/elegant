@@ -16,6 +16,8 @@
         long add_at_end = 0;
         double s_start = -1;
         double s_end = -1;
+        long occurrence_start = -1;
+        long occurrence_end = -1;
         STRING start_at_element = NULL;
         STRING end_at_element = NULL;
         STRING element_def = NULL;
