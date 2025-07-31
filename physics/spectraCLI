@@ -23,7 +23,7 @@ set descriptionList [list "Pinhole flux vs photon energy for undulator with fixe
     "Undulator flux density vs K for fixed observation photon energy." \
     "Undulator pinhole flux vs K for fixed observation photon energy." ]
 
-set usage {spectraCLI -mode <mode> [-keepSpectraFiles 1] <mode-arguments>}
+set usage {spectraCLI -mode <mode> [-templateDir <string>]  [-solverExec <string>] [-keepSpectraFiles 1] <mode-arguments>}
 set mode ""
 set keepSpectraFiles 0
 set args $argv
@@ -49,11 +49,21 @@ proc addToLists {originals replacements} {
 
 set coupling 0.01
         
-proc addBeamParamsToLists {twiss} {
+proc addBeamParamsToLists {args} {
+    set twiss ""
+    set location ""
     global coupling
-    set dataList [exec sddsprocess $twiss -pipe=out -process=*eta*,last,%s -process=alpha*,last,%s \
-        "-redefine=parameter,E,pCentral mev * 1e3 /" \
-        | sdds2stream -pipe -parameter=E,Sdelta0,betax,alphax,etax,etaxp,betay,alphay,etay,etayp]
+    APSStrictParseArguments {twiss location}
+    if ![string length location] {
+        set filter -clip=0,1,invert
+    } else {
+        set name [lindex [split $location "#"] 0]
+        set occurrence [lindex [split $location "#"] 1]
+        set filter {-match=col,ElementName=$name -filter=col,ElementOccurence,$occurrence,$occurrence}
+    }
+    set dataList [eval exec sddsprocess $twiss -pipe=out $filter -process=*eta*,last,%s -process=alpha*,last,%s \
+                    "{-redefine=parameter,E,pCentral mev * 1e3 /}" \
+                    | sdds2stream -pipe -parameter=E,Sdelta0,betax,alphax,etax,etaxp,betay,alphay,etay,etayp]
     addToLists <beamEnergy-GeV>,<Sdelta0>,<betax>,<alphax>,<etax>,<etaxp>,<betay>,<alphay>,<etay>,<etayp> \
         [join $dataList ,]
     set dataList [exec sdds2stream $twiss -parameter=ex0,taux,tauy]
@@ -96,6 +106,7 @@ switch $mode {
         #      distance to observation point, size and grid points in x and y
         #      output filename
         set twiss ""
+        set location ""
         set coupling 0.01
         set current 0.1
         set period 0.033
@@ -108,8 +119,8 @@ switch $mode {
         set yMax 5e-3
         set ny 25
         set output ""
-        set usage "spectraCLI -mode $mode -twiss <filename> -coupling <value> -current <Amps> -period <meters> -length <meters> -Ky <value> -Kx <value> -distance <meters> -xMax <meters> -yMax <meters> -nx <points> -ny <points> -output <filename>"
-        if {[APSStrictParseArguments {twiss coupling current period length Kx Ky distance xMax yMax nx ny output}] || \
+        set usage "spectraCLI -mode $mode -twiss <filename> -coupling <value> -current <Amps> -period <meters> -length <meters> -Ky <value> -Kx <value> -distance <meters> -xMax <meters> -yMax <meters> -nx <points> -ny <points> -output <filename> \[-location <name>#<occurrence>]"
+        if {[APSStrictParseArguments {twiss location coupling current period length Kx Ky distance xMax yMax nx ny output}] || \
               ![string length $twiss] || [expr $coupling<=0] || [expr $current<=0] || [expr $period<=0] || [expr $length<=0] || \
               [expr $Kx<0] || [expr $Ky<=0] || \
               [expr $distance<=0] || [expr $xMax<=0] || [expr $yMax<=0] || ![string length $output]} {
@@ -121,7 +132,7 @@ switch $mode {
             puts stderr "not found: $twiss"
             exit 1
         }
-        addBeamParamsToLists $twiss 
+        addBeamParamsToLists -twiss $twiss -location $location
         addToLists <outputRoot>,<beamCurrent-mA>,<kappa>,<period-cm>,<length-m>,<Kx>,<Ky>,<pinholeDistance>,<xMax-mm>,<yMax-mm>,<nx>,<ny>,<sourceType> \
                   $output,[expr $current*1e3],$coupling,[expr $period*1e2],$length,$Kx,$Ky,$distance,[expr $xMax*1e3],[expr $yMax*1e3],$nx,$ny,$type
         exec replaceText $templateDir/$mode.spin $output.spin \
@@ -148,6 +159,7 @@ switch $mode {
         #      observation energy
         #      output filename
         set twiss ""
+        set location ""
         set coupling 0.01
         set current 0.1
         set period 0.033
@@ -162,8 +174,8 @@ switch $mode {
         # eV
         set EpFixed 8000
         set output ""
-        set usage "spectraCLI -mode $mode -twiss <filename> -coupling <value> -current <Amps> -period <meters> -length <meters> -Ky <value> -Kx <value> -distance <meters> -xMax <meters> -yMax <meters> -nx <points> -ny <points> -EpFixed <eV> -output <filename>"
-        if {[APSStrictParseArguments {twiss coupling current period length Kx Ky distance xMax yMax nx ny EpFixed output}] || \
+        set usage "spectraCLI -mode $mode -twiss <filename> -coupling <value> -current <Amps> -period <meters> -length <meters> -Ky <value> -Kx <value> -distance <meters> -xMax <meters> -yMax <meters> -nx <points> -ny <points> -EpFixed <eV> -output <filename> \[-location <name>\#<occurrence>]"
+        if {[APSStrictParseArguments {twiss location coupling current period length Kx Ky distance xMax yMax nx ny EpFixed output}] || \
               ![string length $twiss] || [expr $coupling<=0] || [expr $current<=0] || [expr $period<=0] || [expr $length<=0] || \
               [expr $Kx<0] || [expr $Ky<=0] || \
               [expr $distance<=0] || [expr $xMax<=0] || [expr $yMax<=0] || [expr $EpFixed<=0] || ![string length $output]} {
@@ -175,7 +187,7 @@ switch $mode {
             puts stderr "not found: $twiss"
             exit 1
         }
-        addBeamParamsToLists $twiss 
+        addBeamParamsToLists -twiss $twiss -location $location
         addToLists <outputRoot>,<beamCurrent-mA>,<kappa>,<period-cm>,<length-m>,<Kx>,<Ky>,<pinholeDistance>,<EpFixed-eV>,<xMax-mm>,<yMax-mm>,<nx>,<ny>,<sourceType> \
                   $output,[expr $current*1e3],$coupling,[expr $period*1e2],$length,$Kx,$Ky,$distance,$EpFixed,[expr $xMax*1e3],[expr $yMax*1e3],$nx,$ny,$type
         exec replaceText $templateDir/$mode.spin $output.spin \
@@ -194,7 +206,9 @@ switch $mode {
         #      distance to slit, slit size
         #      min energy, max energy, energy pitch
         #      output filename
+        # optional location (ElementName#ElementOccurrence)
         set twiss ""
+        set location ""
         set coupling 0.01
         set current 0.1
         set period 0.033
@@ -204,13 +218,14 @@ switch $mode {
         set distance 30.0
         set dx 5e-4
         set dy 5e-4
+        set location ""
         # eV
         set Ep1 1000
         set Ep2 25000
         set dEp 10
         set output ""
-        set usage "spectraCLI -mode $mode -twiss <filename> -coupling <value> -current <Amps> -period <meters> -length <meters> -Ky <value> -Kx <value> -distance <meters> -dx <meters> -dy <meters> -Ep1 <eV> -Ep2 <eV> -dEp <eV> -output <filename>"
-        if {[APSStrictParseArguments {twiss coupling current period length Kx Ky distance dx dy Ep1 Ep2 dEp output}] || \
+        set usage "spectraCLI -mode $mode -twiss <filename> -coupling <value> -current <Amps> -period <meters> -length <meters> -Ky <value> -Kx <value> -distance <meters> -dx <meters> -dy <meters> -Ep1 <eV> -Ep2 <eV> -dEp <eV> -output <filename> \[-location <name>#<occurrence>]"
+        if {[APSStrictParseArguments {twiss coupling current period length Kx Ky distance dx dy Ep1 Ep2 dEp output location}] || \
               ![string length $twiss] || [expr $coupling<=0] || [expr $current<=0] || [expr $period<=0] || [expr $length<=0] || \
               [expr $Kx<0] || [expr $Ky<=0] || \
               [expr $distance<=0] || [expr $dx<=0] || [expr $dy<=0] || [expr $Ep1<=0] || [expr $Ep2<=$Ep1] || [expr $dEp<=0] || ![string length $output]} {
@@ -222,7 +237,7 @@ switch $mode {
             puts stderr "not found: $twiss"
             exit 1
         }
-        addBeamParamsToLists $twiss 
+        addBeamParamsToLists -twiss $twiss -location $location
         addToLists <outputRoot>,<beamCurrent-mA>,<kappa>,<period-cm>,<length-m>,<Kx>,<Ky>,<pinholeDistance>,<EpMin-eV>,<EpMax-eV>,<dEp-eV>,<dxSlit-mm>,<dySlit-mm>,<sourceType> \
                   $output,[expr $current*1e3],$coupling,[expr $period*1e2],$length,$Kx,$Ky,$distance,$Ep1,$Ep2,$dEp,[expr $dx*1e3],[expr $dy*1e3],$type
         exec replaceText $templateDir/$mode.spin $output.spin \
@@ -242,6 +257,7 @@ switch $mode {
         #      min energy, max energy, energy pitch
         #      output filename
         set twiss ""
+        set location ""
         set coupling 0.01
         set current 0.1
         set period 0.033
@@ -253,8 +269,8 @@ switch $mode {
         set Ep2 25000
         set dEp 10
         set output ""
-        set usage "spectraCLI -mode $mode -twiss <filename> -coupling <value> -current <Amps> -period <meters> -length <meters> -Ky <value> -Kx <value> -Ep1 <eV> -Ep2 <eV> -dEp <eV> -output <filename>"
-        if {[APSStrictParseArguments {twiss coupling current period length Kx Ky Ep1 Ep2 dEp output}] || \
+        set usage "spectraCLI -mode $mode -twiss <filename> -coupling <value> -current <Amps> -period <meters> -length <meters> -Ky <value> -Kx <value> -Ep1 <eV> -Ep2 <eV> -dEp <eV> -output <filename> \[-location <name>\#<occurrence>]"
+        if {[APSStrictParseArguments {twiss location coupling current period length Kx Ky Ep1 Ep2 dEp output}] || \
               ![string length $twiss] || [expr $coupling<=0] || [expr $current<=0] || [expr $period<=0] || [expr $length<=0] || \
               [expr $Kx<0] || [expr $Ky<=0] || \
               [expr $Ep1<=0] || [expr $Ep2<=$Ep1] || [expr $dEp<=0] || ![string length $output]} {
@@ -266,7 +282,7 @@ switch $mode {
             puts stderr "not found: $twiss"
             exit 1
         }
-        addBeamParamsToLists $twiss 
+        addBeamParamsToLists -twiss $twiss -location $location
         addToLists <outputRoot>,<beamCurrent-mA>,<kappa>,<period-cm>,<length-m>,<Kx>,<Ky>,<EpMin-eV>,<EpMax-eV>,<dEp-eV>,<sourceType> \
                   $output,[expr $current*1e3],$coupling,[expr $period*1e2],$length,$Kx,$Ky,$Ep1,$Ep2,$dEp,$type
         exec replaceText $templateDir/$mode.spin $output.spin \
@@ -288,6 +304,7 @@ switch $mode {
         #      output filename
         # May also need observation energy, min harm, max harm, pinhole parameters
         set twiss ""
+        set location ""
         set coupling 0.01
         set current 0.1
         set period 0.033
@@ -306,7 +323,7 @@ switch $mode {
         set yMax 5e-3
         set ny 25
         set output ""
-        set usage "spectraCLI -mode $mode -twiss <filename> -coupling <value> -current <Amps> -period <meters> -length <meters> -KMin <value> -KMax <value> -KPoints <number> -helical {0|1} "
+        set usage "spectraCLI -mode $mode -twiss <filename> -coupling <value> -current <Amps> -period <meters> -length <meters> -KMin <value> -KMax <value> -KPoints <number> -helical {0|1} \[-location <name>\#<occurrence>]"
         switch $mode {
             undulatorPinholeFluxKSpectrum {
                 append usage "-distance <meters> -xMax <meters> -yMax <meters> -nx <points> -ny <points> --EpFixed <eV> -output <filename>"
@@ -318,7 +335,7 @@ switch $mode {
                 append usage "-hMin <number> -hMax <number> -output <filename>"
             }
         }
-        if {[APSStrictParseArguments {twiss coupling current period length KMin KMax KPoints hMin hMax helical EpFixed output distance xMax yMax nx ny}] || \
+        if {[APSStrictParseArguments {twiss location coupling current period length KMin KMax KPoints hMin hMax helical EpFixed output distance xMax yMax nx ny}] || \
               ![string length $twiss] || [expr $coupling<=0] || [expr $current<=0] || [expr $period<=0] || [expr $length<=0] || \
               [expr $KMin<0] || [expr $KMax<$KMin] || [expr $KPoints<1] || [expr $helical<0] || [expr $helical>1] || \
               [expr $hMin<1] || [expr $hMax<$hMin] || [expr $EpFixed<=0] || \
@@ -335,7 +352,7 @@ switch $mode {
             puts stderr "not found: $twiss"
             exit 1
         }
-        addBeamParamsToLists $twiss 
+        addBeamParamsToLists -twiss $twiss -location $location
         addToLists <outputRoot>,<beamCurrent-mA>,<kappa>,<period-cm>,<length-m>,<KMin>,<KMax>,<KPoints>,<hMin>,<hMax>,<sourceType>,<EpFixed> \
                   $output,[expr $current*1e3],$coupling,[expr $period*1e2],$length,$KMin,$KMax,$KPoints,$hMin,$hMax,$type,$EpFixed
         addToLists <nx>,<ny>,<pinholeDistance>,<dxSlit-mm>,<dySlit-mm> \
