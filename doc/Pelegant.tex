@@ -41,7 +41,7 @@ This document describes how to build {\tt Pelegant}, run the code and
 optimize the performance. An explicit list of elements which have NOT  been parallelized can be found in the appendices. The user can also check if an element has been parallelized
 from the latest {\tt elegant} manual. 
 The list of commands which  have been used in the regression tests is available at the end of the appendices.  
-The user should be familiar with the \htmladdnormallink{User's Manual for {\tt elegant}}{http://ops.aps.anl.gov/manuals/elegant_latest/elegant.html}  before reading this document.
+The user should be familiar with the \htmladdnormallink{User's Manual for {\tt elegant}}{https://ops.aps.anl.gov/manuals/elegant_latest/elegant.html}  before reading this document.
 
 
 \section{{\tt Pelegant} installation}
@@ -168,7 +168,7 @@ parallelized 95 out of 102 elements for tracking simulations. The elements
 which have not been parallelized are listed at the end of
 this manual. As most time-intensive elements have been
 parallelized, we can expect a good speedup and efficiency for this type of simulations.
- If a simulation is slow due to a particular element, the user is encouraged to send the input files to us for a performance study. After the tracking elements have been parallelized, I/O becomes the bottleneck of the simulation, especially for simulations requiring a very large number of particles. We developed parallel SDDS library~\cite{PSDDSlib} to meet the I/O requirement for large-scale computation. The parallelization of frequency map analysis, dynamic aperture search, and position-dependent momentum aperture determination is discussed in~\cite{Wang09}.  Recently, we also added several parallel optimization options to {\tt Pelegant}, including Parallel Genetic Algorithm (PGA), Hybrid Parallel Simplex (HPS) and Parallel Particle Swarm Optimization (PPSO). The usage of these parallel optimization methods can be found in the \verb|parallel_optimization_setup| section of \htmladdnormallink{User's Manual for {\tt elegant}}{http://ops.aps.anl.gov/manuals/elegant_latest/elegant.html}.
+ If a simulation is slow due to a particular element, the user is encouraged to send the input files to us for a performance study. After the tracking elements have been parallelized, I/O becomes the bottleneck of the simulation, especially for simulations requiring a very large number of particles. We developed parallel SDDS library~\cite{PSDDSlib} to meet the I/O requirement for large-scale computation. The parallelization of frequency map analysis, dynamic aperture search, and position-dependent momentum aperture determination is discussed in~\cite{Wang09}.  Recently, we also added several parallel optimization options to {\tt Pelegant}, including Parallel Genetic Algorithm (PGA), Hybrid Parallel Simplex (HPS) and Parallel Particle Swarm Optimization (PPSO). The usage of these parallel optimization methods can be found in the \verb|parallel_optimization_setup| section of \htmladdnormallink{User's Manual for {\tt elegant}}{https://ops.aps.anl.gov/manuals/elegant_latest/elegant.html}.
 
 \subsection{Parallelization overview}
 
