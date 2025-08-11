@@ -28,7 +28,7 @@ static char *USAGE = "touschekLifetime <resultsFile>\n\
  [-deltaLimit=<percent>]\n\
  {-rf=voltage=<MV>,harmonic=<value>[,limit][,superperiods=<number>] | -length=<mm>}\n\
  [-emitInput=<valueInMeters>] [-deltaInput=<value>] [-verbosity=<value>]\n\
- [-method=[0/1] 0-direct; 1-variable substitution] [-ignoreMismatch]\n\n\
+ [-method=[0/1] 0-direct; 1-variable substitution] [-ignoreMismatch[=silently]]\n\n\
 twiss          Give &twiss_output output file from elegant, with radiation_integrals=1.\n\
 aperture       Give &momentum_aperture output file from elegant.\n\
 beam           Give beam profile file from elegant2genesis.\n\
@@ -49,6 +49,8 @@ RF             Give rf voltage (in MV) and harmonic number. If limit qualifier\n
 length         Give rms bunch length in mm.\n\
 verbosity      Higher values result in more output during computations.\n\
 ignoreMismatch Ignore mismatch between names of elements in the Twiss and aperture files.\n\
+               By default, exits if mismatch is detected. If 'silently' is given\n\
+               ignores with no warning messages.\n\
 method         Choose integration method, direct or variable substitution.\n\n\
 Program by A. Xiao, M. Borland.  (This is version 8, March 2017, M. Borland)\n";
 
@@ -244,6 +246,9 @@ int main(int argc, char **argv) {
         break;
       case IGNORE_MISMATCH:
         ignoreMismatch = 1;
+	if (scanned[i].n_items==2 &&
+	    strncmp(scanned[i].list[1], "silently", strlen(scanned[i].list[1]))==0)
+	  ignoreMismatch = 2;
         break;
       case METHOD:
         if (scanned[i].n_items > 1) {
@@ -556,15 +561,15 @@ int main(int argc, char **argv) {
       if (!SDDS_CheckColumn(&sliceAnalysisPage, "Charge", "C", SDDS_DOUBLE, verbosity ? stdout : NULL) ||
           !SDDS_CheckColumn(&sliceAnalysisPage, "Ct", "s", SDDS_DOUBLE, verbosity ? stdout : NULL) ||
           !SDDS_CheckColumn(&sliceAnalysisPage, "Sdelta", NULL, SDDS_DOUBLE, verbosity ? stdout : NULL) ||
-          !SDDS_CheckColumn(&sliceAnalysisPage, "ex", "m", SDDS_DOUBLE, verbosity ? stdout : NULL) ||
-          !SDDS_CheckColumn(&sliceAnalysisPage, "ey", "m", SDDS_DOUBLE, verbosity ? stdout : NULL))
+          !SDDS_CheckColumn(&sliceAnalysisPage, "ecx", "m", SDDS_DOUBLE, verbosity ? stdout : NULL) ||
+          !SDDS_CheckColumn(&sliceAnalysisPage, "ecy", "m", SDDS_DOUBLE, verbosity ? stdout : NULL))
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
       nSlice = SDDS_CountRowsOfInterest(&sliceAnalysisPage);
       npSlice = SDDS_GetColumnInDoubles(&sliceAnalysisPage, "Charge");
       sSlice = SDDS_GetColumnInDoubles(&sliceAnalysisPage, "Ct");
       sigmapSlice = SDDS_GetColumnInDoubles(&sliceAnalysisPage, "Sdelta");
-      exSlice = SDDS_GetColumnInDoubles(&sliceAnalysisPage, "ex");
-      eySlice = SDDS_GetColumnInDoubles(&sliceAnalysisPage, "ey");
+      exSlice = SDDS_GetColumnInDoubles(&sliceAnalysisPage, "ecx");
+      eySlice = SDDS_GetColumnInDoubles(&sliceAnalysisPage, "ecy");
 
       /* Convert Coulombs to # electrons */
       for (i = 0; i < nSlice; i++)
@@ -774,9 +779,10 @@ void TouschekLifeCalc(long verbosity) {
     /* Normally the first element for twiss file is _BEG_, which is not true for aperture file.
        But we need it for starting the calculation. */
     if (s[i] != 0 && s[i] == s2[j] && strcmp(eName1[i], eName2[j]) != 0) {
-      if (ignoreMismatch)
-        printf("warning: element1 \"%s\" and elem2 \"%s\" at s1 %21.15e s2 %21.15e don't match\n", eName1[i], eName2[j], s[i], s2[j]);
-      else {
+      if (ignoreMismatch) {
+	if (ignoreMismatch==1)
+	  printf("warning: element1 \"%s\" and elem2 \"%s\" at s1 %21.15e s2 %21.15e don't match\n", eName1[i], eName2[j], s[i], s2[j]);
+      } else {
         printf("error: element1 \"%s\" and elem2 \"%s\" at s1 %21.15e s2 %21.15e don't match\n", eName1[i], eName2[j], s[i], s2[j]);
         bomb("Twiss and Aperture file are not for same beamline", NULL);
       }
