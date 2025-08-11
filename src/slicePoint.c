@@ -21,7 +21,7 @@ static SDDS_DEFINITION slice_parameter[SLICE_PARAMETERS] = {
   {"SVNVersion", "&parameter name=SVNVersion, type=string, description=\"SVN version number\", fixed_value=" SVN_VERSION " &end"},
 };
 
-#define SLICE_COLUMNS 18
+#define SLICE_COLUMNS 20
 static SDDS_DEFINITION slice_column[SLICE_COLUMNS] = {
   {"Slice", "&column name=Slice, type=long &end"},
   {"Particles", "&column name=Particles, description=\"Number of simulation particles in slice\", type=long, &end"},
@@ -41,6 +41,8 @@ static SDDS_DEFINITION slice_column[SLICE_COLUMNS] = {
   {"Sdelta", "&column name=Sdelta, symbol=\"$gs$bd$n$r\", type=double, description=\"sqrt(<(delta-<delta>)^2>)\" &end"},
   {"ex", "&column name=ex, symbol=\"$ge$r$bx$n\", units=m, type=double, description=\"geometric horizontal emittance\" &end"},
   {"ey", "&column name=ey, symbol=\"$ge$r$by$n\", units=m, type=double, description=\"geometric vertical emittance\" &end"},
+  {"ecx", "&column name=ecx, symbol=\"$ge$r$bcx$n\", units=m, type=double, description=\"geometric horizontal emittance less dispersion contribution\" &end"},
+  {"ecy", "&column name=ecy, symbol=\"$ge$r$bcy$n\", units=m, type=double, description=\"geometric vertical emittance less dispersion contribution\" &end"},
 };
 
 void set_up_slice_point(SLICE_POINT *slicePoint, RUN *run, long occurence, char *previousElementName, long IDSlotsPerBunch) {
@@ -264,8 +266,10 @@ void dump_slice_analysis(SLICE_POINT *slicePoint, long step, long pass, long n_p
         }
       }
       if (!SDDS_SetRowValues(slicePoint->SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, iSlice,
-                             ex_index, emit[0],
+                             ex_index    , emit[0],
                              ex_index + 1, emit[1],
+                             ex_index + 2, emitc[0],
+                             ex_index + 3, emitc[1],
                              -1)) {
         SDDS_SetError("Problem setting row values for SDDS table (dump_slice_analysis)");
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
