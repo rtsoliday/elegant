@@ -9,8 +9,8 @@ The program’s philosophy emphasizes flexibility, encouraging users to leverage
 
 ## Documentation
 
-For comprehensive details and examples, please refer to the **[elegant User’s Manual ](https://ops.aps.anl.gov/manuals/elegant_latest/elegant.pdf)**.
-An [online forum](https://www3.aps.anl.gov/forums/elegant) is available for support.
+For comprehensive details and examples, please refer to the **[elegant User’s Manual](https://ops.aps.anl.gov/manuals/elegant_latest/elegant.pdf)**.
+An [online forum](https://www3.aps.anl.gov/forums/elegant/) is available for support.
 
 ## Installation
 
@@ -47,7 +47,7 @@ If you use **elegant** in your research, please cite:
 - Michael Borland
 - Bob Soliday
 - Yusong Wang
-- Aiaim Xiao
+- Aimin Xiao
 - Hairong Shang
 - Nikita Kuklev
 - Joe Calvey
