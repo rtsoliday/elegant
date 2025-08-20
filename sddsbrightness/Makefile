@@ -7,21 +7,23 @@ include ../Makefile.rules
 
 SCRIPTS = brightnessEnvelope
 
-PROD = sddsws sddsbs sddsecon sddscompton sddsxrf xrltool xrltest sddssyncflux
+PROD = sddsws sddsbs sddsecon sddscompton sddsxrf xrltool xrltest sddssyncflux sddsfresnel
 
 sddsbrightness_SRC = sddsbrightness.c usbC.c brighteC.c huntC.c lindbergBrightness.c
 sddsurgent_SRC = sddsurgent.c
 sddsfluxcurve_SRC = sddsfluxcurve.c
+sddsfresnel_SRC = sddsfresnel.c fresnel.c
 
-CFLAGS += -DUSE_GSL -I$(SDDS_REPO)/include -I../physics -I../xraylib -I$(OBJ_DIR)
+CFLAGS += -DUSE_GSL -I$(SDDS_REPO)/include -I../physics -I../xraylib -I$(OBJ_DIR) -I.
 
 ifeq ($(OS), Linux)
   PROD += sddsbrightness sddsurgent sddsfluxcurve sddsxra
   CFLAGS += -std=gnu11 -fopenmp $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
-  LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -fopenmp $(LDFLAGS)
+  LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -L$(SDDS_REPO)/fftpack/O.linux-x86_64 -fopenmp $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -lxrl -loagphy
   PROD_LIBS_SDDS = -lmdbcommon -lSDDS1 -lrpnlib -lmdbmth -lmdblib
+  SDDSFRESNEL_LIBS = -lfftpack -lgfortran
 endif
 
 ifeq ($(OS), Darwin)
@@ -73,5 +75,10 @@ $(OBJ_DIR)/brighte.$(OBJEXT): brighte.f
 	$(F77) brighte.f -c -o $(OBJ_DIR)/brighte.$(OBJEXT)	
 
 $(OBJ_DIR)/urgent.$(OBJEXT): urgent.f
-	$(F77) urgent.f -c -o $(OBJ_DIR)/urgent.$(OBJEXT)	
+	$(F77) urgent.f -c -o $(OBJ_DIR)/urgent.$(OBJEXT)
 
+$(OBJ_DIR)/sddsfresnel$(EXEEXT): $(sddsfresnel_OBJS) $(PROD_DEPS)
+	$(CC) $(RPATH) $(OUTPUTEXE) $(sddsfresnel_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(SDDSFRESNEL_LIBS) $(PROD_SYS_LIBS)
+	cp -f $@ $(BIN_DIR)/
+	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
+	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi

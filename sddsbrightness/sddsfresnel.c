@@ -1,3 +1,35 @@
+/*************************************************************************\
+* Copyright (c) 2002 The University of Chicago, as Operator of Argonne
+* National Laboratory.
+* Copyright (c) 2002 The Regents of the University of California, as
+* Operator of Los Alamos National Laboratory.
+* This file is distributed subject to a Software License Agreement found
+* in the file LICENSE that is included with this distribution. 
+\*************************************************************************/
+
+/**
+ * @file sddsfresnel.c
+ * @brief One-dimensional Fresnel diffraction pattern computation program
+ * 
+ * This program computes one-dimensional Fresnel diffraction patterns of a 
+ * general mask design for point and Gaussian sources. It uses the Fresnel
+ * integrals to calculate the diffraction amplitude and intensity at various
+ * points in the image plane.
+ * 
+ * The program supports:
+ * - Multiple apertures with different geometries
+ * - Polychromatic sources with bandwidth effects
+ * - Gaussian source profiles
+ * - Custom source and spectrum profiles from SDDS files
+ * - Convolution with source size effects
+ * 
+ * @author Bingxin Yang
+ * @author Hairong Shang
+ * @version 1.0
+ * @date 2025
+ * @organization Argonne National Laboratory
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,10 +37,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <complex.h>
-#ifndef USE_GSL
-#error The GSL library must be available to build sddsfresnel.
-#endif
-#include "gsl/fresnel.h"
+#include "fresnel.h"
 
 #include "fftpackC.h"
 #include "SDDS.h"
@@ -25,7 +54,20 @@
 
 static char *option[N_OPTIONS]={"spectrum", "source", "aperture", "image", "verbose"};
 
-char *USAGE="sddsfresnel <inputFile> <outputFile> \n\
+static char *USAGE="sddsfresnel computes one-dimensional Fresnel diffraction patterns of a \n\
+ * general mask design for point and Gaussian sources. It uses the Fresnel \n\
+ * integrals to calculate the diffraction amplitude and intensity at various \n\
+ * points in the image plane. \n\
+ * \n\
+ * The program supports:\n\
+ * - Multiple apertures with different geometries \n\
+ * - Polychromatic sources with bandwidth effects \n\
+ * - Gaussian source profiles \n\
+ * - Custom source and spectrum profiles from SDDS files \n\
+ * - Convolution with source size effects/. \n\
+\n\
+The usages are: \n\
+sddsfresnel <inputFile> <outputFile> \n\
                    -spectrum=wavelength=nm,energy=eV,bandWidth=ss,nwaves=ss,file=<filename> \n\
                    -source=distance=m,center=mm,width=mm,file=<filename> \n\
                    -aperture=center=mm,width=mm,peakamplitude=tt,phaseshift=pp,symmetry=ss \n\
@@ -74,32 +116,113 @@ sddsxra computes one-dimensional Fresnel diffraction patterns of a general mask 
 Program by Bingxin Yang and Hairong Shang.  ANL(This is version 1.0, "__DATE__")\n";
 
 
+/**
+ * @struct APERTURE
+ * @brief Structure to define aperture properties for Fresnel diffraction
+ * 
+ * This structure contains all the geometric and optical properties
+ * needed to define a single aperture in the diffraction mask.
+ */
 typedef struct {
-  double center, width, amplitude, phase;
-  double complex Ap;
+  double center;     /**< Position of aperture center in mm */
+  double width;      /**< Full width of aperture in mm */
+  double amplitude;  /**< Peak amplitude transmission (dimensionless) */
+  double phase;      /**< Phase shift through aperture in degrees */
+  double complex Ap; /**< Complex amplitude factor (amplitude * exp(-i*phase)) */
 } APERTURE;
 
+/* Function prototypes */
+
+/**
+ * @brief Calculate the complex amplitude contribution from a single aperture
+ * @param aperture The aperture structure containing geometry and optical properties
+ * @param wavelength Photon wavelength in nm
+ * @param phi Observation angle in radians
+ * @param f Focal length in mm
+ * @return Complex amplitude contribution from this aperture
+ */
 double complex one_aperture_amplitude(APERTURE aperture, double wavelength, double phi, double f);
+
+/**
+ * @brief Initialize the output SDDS file with proper column and parameter definitions
+ * @param outTable Pointer to SDDS dataset structure
+ * @param outputFile Name of the output file
+ */
 void SetupOutputFile(SDDS_DATASET *outTable, char *outputFile);
+
+/**
+ * @brief Initialize an aperture structure with default values
+ * @param aperture Pointer to aperture structure to initialize
+ */
 void initialize_aperture(APERTURE *aperture);
+
+/**
+ * @brief Read input parameters and aperture data from SDDS file
+ * @param inputFile Name of input SDDS file
+ * @param aperture Pointer to aperture array (will be reallocated)
+ * @param apertures Pointer to number of apertures (will be updated)
+ * @param sourceDistance Pointer to source distance parameter
+ * @param sourceCenter Pointer to source center parameter
+ * @param sourceWidth Pointer to source width parameter
+ * @param photonWavelength Pointer to photon wavelength parameter
+ * @param photonEnergy Pointer to photon energy parameter
+ * @param photonBandwidth Pointer to photon bandwidth parameter
+ * @param nWaves Pointer to number of wavelength points parameter
+ * @param imageDistance Pointer to image distance parameter
+ * @param imageCenter Pointer to image center parameter
+ * @param imageWidth Pointer to image width parameter
+ * @param nImagePoints Pointer to number of image points parameter
+ */
 void ReadInputFile(char *inputFile, APERTURE *aperture, int32_t *apertures, 
                    double *sourceDistance, double *sourceCenter, double *sourceWidth,
                    double *photonWavelength, double *photonEnergy, double *photonBandwidth, int32_t *nWaves,
                    double *imageDistance, double *imageCenter, double *imageWidth, int32_t *nImagePoints);
-void wrap_around_order
-  (
-   double *response1,
-   double *t,
-   double *response,
-   long nres,
-   long nsig                       
-   );
 
-void complex_multiply(double *r0, double *i0, double  r1, double  i1,
-                      double  r2, double  i2);
+/**
+ * @brief Reorder array for FFT convolution (wrap-around ordering)
+ * @param response1 Output reordered array (size 2*nsig+2)
+ * @param t Independent variable array
+ * @param response Input response array
+ * @param nres Number of response points
+ * @param nsig Number of signal points
+ */
+void wrap_around_order(double *response1, double *t, double *response,
+                       long nres, long nsig);
 
+/**
+ * @brief Multiply two complex numbers stored as separate real and imaginary parts
+ * @param r0 Pointer to real part of result
+ * @param i0 Pointer to imaginary part of result
+ * @param r1 Real part of first complex number
+ * @param i1 Imaginary part of first complex number
+ * @param r2 Real part of second complex number
+ * @param i2 Imaginary part of second complex number
+ */
+void complex_multiply(double *r0, double *i0, double r1, double i1,
+                      double r2, double i2);
+
+/**
+ * @brief Convolve two signals using FFT
+ * @param signal1 First signal array (diffraction intensity)
+ * @param indep1 Independent variable for first signal
+ * @param signal2 Second signal array (source profile)
+ * @param indep2 Independent variable for second signal
+ * @param points Number of points in arrays
+ * @return Pointer to convolved signal array (caller must free)
+ */
 double *convolve(double *signal1, double *indep1, double *signal2, double *indep2, long points);
 
+/**
+ * @brief Main function for sddsfresnel program
+ * 
+ * This function processes command line arguments, reads input files,
+ * performs Fresnel diffraction calculations, and writes results to
+ * an output SDDS file.
+ * 
+ * @param argc Number of command line arguments
+ * @param argv Array of command line argument strings
+ * @return 0 on success, non-zero on error
+ */
 int main ( int argc, char *argv[] )
 {
   long    i_arg, i, verbose=0, k, m;
@@ -136,8 +259,8 @@ int main ( int argc, char *argv[] )
   SDDS_RegisterProgramName(argv[0]);
   argc = scanargs(&s_arg, argc, argv);
   if (argc<2) {
-    fprintf(stderr, "%s", USAGE);
-    exit(1);
+    fprintf(stdout, "%s", USAGE);
+    exit(0);
   }
   
   for (i_arg=1; i_arg<argc; i_arg++) {
@@ -316,13 +439,13 @@ int main ( int argc, char *argv[] )
 
   /* Show input parameters */
   if (verbose > 0) {
-    fprintf(stdout, " photonWavelength = %0.3f (nm), photonEnergy = %0.1f (eV), photonBandwidth = %0.3f, nWaves = %ld\n", 
+    fprintf(stdout, " photonWavelength = %0.3f (nm), photonEnergy = %0.1f (eV), photonBandwidth = %0.3f, nWaves = %d \n", 
       photonWavelength, photonEnergy, photonBandwidth, nWaves );
     fprintf(stdout, " sourceDistance = %0.2f (m), sourceCenter = %0.3f (mm), sourceWidth = %0.3f (mm)\n", 
       sourceDistance, sourceCenter, sourceWidth);
-    fprintf(stdout, " imageDistance  = %0.2f (m), imageCenter  = %0.3f (mm), imageWidth  = %0.3f (mm), nImagePoints = %ld \n", 
+    fprintf(stdout, " imageDistance  = %0.2f (m), imageCenter  = %0.3f (mm), imageWidth  = %0.3f (mm), nImagePoints = %d \n", 
       imageDistance, imageCenter, imageWidth, nImagePoints);
-    fprintf(stdout, " Total apertures = %ld\n   Center(mm)  Width(mm)    Amplitude      Phase\n", apertures);
+    fprintf(stdout, " Total apertures = %d\n   Center(mm)  Width(mm)    Amplitude      Phase\n", apertures);
     for (m=0; m<apertures; m++)
       fprintf(stdout, "%10.3f%10.3f%14.3e%14.3e \n", aperture[m].center, aperture[m].width, aperture[m].amplitude, aperture[m].phase);
   }
@@ -392,7 +515,7 @@ int main ( int argc, char *argv[] )
     sum = weight[0] * (sqr(creal(Amp0)) + sqr(cimag(Amp0)));
     if (nWaves>1 && (photonBandwidth>0 || spectrumProfile)) {
       for (k=1; k<nWaves; k++) {
-        if (verbose && i==0) fprintf(stdout, "k=%d, wavelength=%f, weight=%f\n", k, wavelength[k], weight[k]);
+        if (verbose && i==0) fprintf(stdout, "k=%ld, wavelength=%f, weight=%f\n", k, wavelength[k], weight[k]);
         Amp1 = 0;
         for (m=0; m<apertures; m++) 
           Amp1 += one_aperture_amplitude(aperture[m], wavelength[k], imageAngle, f);
@@ -436,6 +559,26 @@ int main ( int argc, char *argv[] )
   if (weight) free(weight);
   free_scanargs(&s_arg, argc);
   return 0;
+}
+
+/**
+ * @brief Multiply two complex numbers stored as separate real and imaginary parts
+ * 
+ * Performs complex multiplication: (r1 + i1*i) * (r2 + i2*i) = (r0 + i0*i)
+ * where r0 = r1*r2 - i1*i2 and i0 = r1*i2 + i1*r2
+ * 
+ * @param r0 Pointer to real part of result
+ * @param i0 Pointer to imaginary part of result
+ * @param r1 Real part of first complex number
+ * @param i1 Imaginary part of first complex number
+ * @param r2 Real part of second complex number
+ * @param i2 Imaginary part of second complex number
+ */
+void complex_multiply(double *r0, double *i0, double r1, double i1,
+                      double r2, double i2)
+{
+  *r0 = r1 * r2 - i1 * i2;  /* Real part: (a+bi)(c+di) = ac-bd */
+  *i0 = r1 * i2 + i1 * r2;  /* Imaginary part: (a+bi)(c+di) = ad+bc */
 }
 
 double complex one_aperture_amplitude(APERTURE aperture, double wavelength, double phi, double f) 
@@ -612,10 +755,9 @@ void wrap_around_order
    long nsig                       
    )
 {
-  long i, zero_seen;
+  long i;
   long iz;
 
-  zero_seen = 0;
   for (iz=0; iz<nres; iz++)
     if (t[iz]>=0)
       break;
@@ -662,4 +804,3 @@ double *convolve(double *signal1, double *indep1, double *signal2, double *indep
   free(fft_res);
   return fft_sig;
 }
-
