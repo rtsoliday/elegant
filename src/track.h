@@ -341,8 +341,9 @@ typedef struct element_list {
     char *part_of;     /* name of lowest-level line that this element is part of */
     struct element_list *pred, *succ;
     short ignore, firstOfDivGroup;
-    double *D;            /* 21-element diffusion matrix for this element */
-    double *accumD;       /* accumulated diffusion matrix up to end of this element */
+    double *D;            /* 21-element radiation diffusion matrix for this element */
+    double *DIbs;         /* 21-element IBS diffusion matrix for this element */
+    double *accumD;       /* accumulated radiation+IBS diffusion matrix up to end of this element */
     long divisions;    /* if element was subdivided, how many times */
 #if TURBO_STRLEN
     size_t namelen;

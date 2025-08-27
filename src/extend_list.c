@@ -35,7 +35,7 @@ void extend_elem_list(ELEMENT_LIST **eptr) {
   (*eptr)->matrix = (*eptr)->accumMatrix = (*eptr)->Mld = NULL;
   (*eptr)->type = (*eptr)->flags = (*eptr)->end_pos = 0;
   (*eptr)->p_elem = (*eptr)->name = (*eptr)->group = (*eptr)->definition_text = NULL;
-  (*eptr)->D = (*eptr)->accumD = NULL;
+  (*eptr)->D = (*eptr)->accumD = (*eptr)->DIbs = NULL;
   (*eptr)->twiss = NULL;
   (*eptr)->part_of = NULL;
   (*eptr)->sigmaMatrix = NULL;

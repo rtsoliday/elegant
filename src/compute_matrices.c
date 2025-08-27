@@ -373,6 +373,34 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
         concat_matrices(Ml2, member->matrix, Ml1,
                         entity_description[member->type].flags & HAS_RF_MATRIX ? CONCAT_EXCLUDE_S0 : 0);
       }
+      if (member->DIbs) {
+	/* Add the IBS contribution to the diffusion matrix */
+	printf("Element %s diffusion matrix without IBS:\n", member->name);
+	for (i=0; i<6; i++) {
+	  printf("D[%ld]: ", i);
+	  for (j=0; j<=i; j++)
+	    printf("%13.6e ", member->accumD[sigmaIndex3[i][j]]);
+	  printf("\n");
+	}
+	fflush(stdout);
+	printf("IBS contribution:\n");
+	for (i=0; i<6; i++) {
+	  printf("D[%ld]: ", i);
+	  for (j=0; j<=i; j++)
+	    printf("%13.6e ", member->DIbs[i]);
+	  printf("\n");
+	}
+	for (i=0; i<21; i++)
+	  member->accumD[i] += member->DIbs[i];
+	printf("Element diffusion matrix with IBS:\n");
+	for (i=0; i<6; i++) {
+	  printf("D[%ld]: ", i);
+	  for (j=0; j<=i; j++)
+	    printf("%13.6e ", member->accumD[sigmaIndex3[i][j]]);
+	  printf("\n");
+	}
+	fflush(stdout);
+      }
       /* Step 2: Copy the C vector */
       memcpy(M2->C, Ml2->C, 6 * sizeof(*(M2->C)));
       /* Step 3: Propagate the diffusion matrix */
@@ -382,6 +410,16 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
           for (j = 0; j < 21; j++)
             member->accumD[i] += Ms->a[i][j] * member->pred->accumD[j];
       }
+      /*
+      printf("Accumulated diffusion matrix:\n");
+      for (i=0; i<6; i++) {
+	printf("D[%ld]: ", i);
+	for (j=0; j<=i; j++)
+	  printf("%13.6e ", member->accumD[sigmaIndex3[i][j]]);
+	printf("\n");
+      }
+      fflush(stdout);
+      */
       /* Step 5: Multiply the R matrices */
       for (i = 0; i < 6; i++)
         for (j = 0; j < 6; j++) {

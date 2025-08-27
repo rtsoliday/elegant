@@ -94,7 +94,9 @@ static SDDS_DEFINITION column_definition[N_COLUMNS] = {
 #define IP_E1 3
 #define IP_E2 4
 #define IP_E3 5
-#define N_PARAMETERS IP_E3 + 1
+#define IP_IBS_ITERATIONS 6
+#define IP_CHARGE 7
+#define N_PARAMETERS IP_CHARGE + 1
 static SDDS_DEFINITION parameter_definition[N_PARAMETERS] = {
   {"Step", "&parameter name=Step, type=long, description=\"Simulation step\" &end"},
   {"Stage", "&parameter name=Stage, type=string, description=\"Stage of computation\" &end"},
@@ -102,12 +104,15 @@ static SDDS_DEFINITION parameter_definition[N_PARAMETERS] = {
   {"e1", "&parameter name=e1, symbol=\"$ge$r$b1$n\", type=double, units=m,  description=\"Emittance of mode 1\" &end"},
   {"e2", "&parameter name=e2, symbol=\"$ge$r$b2$n\", type=double, units=m,  description=\"Emittance of mode 2\" &end"},
   {"e3", "&parameter name=e3, symbol=\"$ge$r$b3$n\", type=double, units=m,  description=\"Emittance of mode 3\" &end"},
+  {"IBSIterations", "&parameter name=IBSIterations, type=short, description=\"Number of IBS iterations\" &end"},
+  {"Charge", "&parameter name=Charge, type=double, units=C, description=\"Charge if IBS included otherwise zero.\" &end"},
 };
 
 static double savedFinalMoments[6][6];
 static double savedFinalCentroid[6];
 static SDDS_DATASET SDDSmatrix;
 static short matrixOutputInitialized = 0;
+void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eNatural);
 
 void setUpMomentsMatrixOutput(RUN *run, char *outputFilename) {
   char buffer[1024], t[1024];
@@ -357,7 +362,20 @@ void setupMomentsOutput(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline, lo
     matrix_output = compose_filename(matrix_output, run->rootname);
   *doMomentsOutput = output_at_each_step;
   trackingBasedDiffusionMatrixParticles = tracking_based_diffusion_matrix_particles;
-
+  if (ibs_iterations) {
+    ELEMENT_LIST *eptr;
+    short chargePresent = 0;
+    eptr = beamline->elem;
+    while (eptr) {
+      if (eptr->type == T_CHARGE) {
+	chargePresent = 1;
+	break;
+      }
+      eptr = eptr->succ;
+    }
+    if (!chargePresent)
+      bombElegant("ibs_iterations is non-zero but no CHARGE element in the beamline", NULL);
+  }
   if (reference_file && matched)
     bombElegant("reference_file and matched=1 are incompatible", NULL);
   if (!matched) {
@@ -400,9 +418,10 @@ void finishMomentsOutput(void) {
 
 long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long tune_corrected, long writeToFile) {
   ELEMENT_LIST *eptr, *elast;
-  long n_elem, last_n_elem, i;
+  long n_elem, last_n_elem, i, iterationsLeft;
   double eNatural[3] = {0, 0, 0};
-
+  double charge = 0;
+  
 #ifdef DEBUG
   printf("now in runMomentsOutput\n");
   fflush(stdout);
@@ -420,6 +439,8 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
   eptr = beamline->elem_twiss = beamline->elem;
   n_elem = last_n_elem = beamline->n_elems;
   while (eptr) {
+    if (eptr->type == T_CHARGE)
+      charge = ((CHARGE*)(eptr->p_elem))->charge;
     if (eptr->type == T_RECIRC) {
       last_n_elem = n_elem;
       beamline->elem_twiss = beamline->elem_recirc = eptr;
@@ -433,113 +454,128 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
     beamline->sigmaMatrix0 = tmalloc(sizeof(*(beamline->sigmaMatrix0)));
 
   if (verbosity > 0) {
-    printf("\nPerforming beam moments computation.\n");
+    if (!ibs_iterations)
+      printf("\nPerforming beam moments computation.\n");
+    else
+      printf("\nPerforming beam moments computation including IBS with total charge of %le C per bunch.\n", charge);
     fflush(stdout);
   }
 
-  if (beamline->Mld) {
-    free_matrices(beamline->Mld);
-    free(beamline->Mld);
-    beamline->Mld = NULL;
-  }
-
-  if (startingCoord) {
-    VMATRIX *M1;
-    M1 = tmalloc(sizeof(*M1));
-    initialize_matrices(M1, 1);
-    for (i = 0; i < 6; i++) {
-      M1->C[i] = startingCoord[i];
-      M1->R[i][i] = 1;
+  iterationsLeft = ibs_iterations + 1;
+  while (iterationsLeft--) {
+    if (beamline->Mld) {
+      free_matrices(beamline->Mld);
+      free(beamline->Mld);
+      beamline->Mld = NULL;
     }
-    if (verbosity > 1)
-      printf("Computing matrix with starting coordinates (%e, %e, %e, %e, %e, %e)\n",
-             startingCoord[0],
-             startingCoord[1],
-             startingCoord[2],
-             startingCoord[3],
-             startingCoord[4],
-             startingCoord[5]);
-    beamline->Mld = accumulateRadiationMatrices(beamline->elem_twiss, run, M1, 1, radiation, n_slices, slice_etilted);
-    free_matrices(M1);
-    free(M1);
-    M1 = NULL;
-  } else {
-    if (verbosity > 1)
-      printf("Computing matrix without starting coordinates\n");
-    beamline->Mld = accumulateRadiationMatrices(beamline->elem_twiss, run, NULL, 1, radiation, n_slices, slice_etilted);
-  }
 
-  if (verbosity > 0) {
-    char text[200];
-    sprintf(text, "** One-turn, on-orbit matrix with%sradiation:", radiation ? " " : "out ");
-    print_matrices(stdout, text, beamline->Mld);
-  }
-  if (verbosity > 1) {
-    long j;
-    printf("** One-turn diffusion matrix: \n");
-    for (i = 0; i < 6; i++)
-      for (j = 0; j < 6; j++)
-        printf("%13.6e%c", beamline->elast->accumD[sigmaIndex3[i][j]], j == 5 ? '\n' : ' ');
-  }
-
-  if (matrixOutputInitialized)
-    outputMomentsMatrices(beamline->Mld, beamline->elast->accumD);
-
-  if (equilibrium) {
-    /* Compute equilibrium moments */
-    determineEquilibriumMoments(beamline->Mld->R, beamline->elast->accumD, beamline->sigmaMatrix0);
-  } else {
-    if (matched) {
-      /* Use periodic lattice functions */
-      if (!(beamline->flags & BEAMLINE_TWISS_DONE))
-        bombElegant("no twiss parameters computed for matched moments propogation", NULL);
-      /* Determine starting moments from twiss parameter values */
-      setStartingMoments(beamline->sigmaMatrix0,
-                         emit_x, beamline->twiss0->betax, beamline->twiss0->alphax, beamline->twiss0->etax, beamline->twiss0->etapx,
-                         emit_y, beamline->twiss0->betay, beamline->twiss0->alphay, beamline->twiss0->etay, beamline->twiss0->etapy,
-                         emit_z, beta_z, alpha_z);
-    } else
-      /* Determine starting moments from twiss parameter values */
-      setStartingMoments(beamline->sigmaMatrix0,
-                         emit_x, beta_x, alpha_x, eta_x, etap_x,
-                         emit_y, beta_y, alpha_y, eta_y, etap_y,
-                         emit_z, beta_z, alpha_z);
-  }
-  if (verbosity > 1) {
-    long j;
-    printf("** Starting sigma matrix: \n");
-    for (i = 0; i < 6; i++)
-      for (j = 0; j < 6; j++)
-        printf("%13.6e%c", beamline->sigmaMatrix0->sigma[sigmaIndex3[i][j]], j == 5 ? '\n' : ' ');
-  }
-
-  /* Propagate moments to each element */
-  propagateBeamMoments(run, beamline, startingCoord);
-
-  elast = beamline->elast;
-  if (verbosity > 1) {
-    long j;
-    printf("** Final sigma matrix: \n");
-    for (i = 0; i < 6; i++)
-      for (j = 0; j < 6; j++)
-        printf("%13.6e%c", elast->sigmaMatrix->sigma[sigmaIndex3[i][j]], j == 5 ? '\n' : ' ');
-  }
-
-  if (equilibrium)
-    computeNaturalEmittances(beamline->Mld, beamline->sigmaMatrix0->sigma, eNatural);
-
-  if (SDDSMomentsInitialized && writeToFile)
-    dumpBeamMoments(beamline, n_elem, final_values_only, tune_corrected, run, eNatural);
-
-  if (beamline->elem->sigmaMatrix) {
-    for (i = 0; i < 6; i++) {
+    if (startingCoord) {
+      VMATRIX *M1;
+      M1 = tmalloc(sizeof(*M1));
+      initialize_matrices(M1, 1);
+      for (i = 0; i < 6; i++) {
+	M1->C[i] = startingCoord[i];
+	M1->R[i][i] = 1;
+      }
+      if (verbosity > 1)
+	printf("Computing matrix with starting coordinates (%e, %e, %e, %e, %e, %e)\n",
+	       startingCoord[0],
+	       startingCoord[1],
+	       startingCoord[2],
+	       startingCoord[3],
+	       startingCoord[4],
+	       startingCoord[5]);
+      beamline->Mld = accumulateRadiationMatrices(beamline->elem_twiss, run, M1, 1, radiation, n_slices, slice_etilted);
+      free_matrices(M1);
+      free(M1);
+      M1 = NULL;
+    } else {
+      if (verbosity > 1) {
+	printf("Computing matrix without starting coordinates\n");
+	fflush(stdout);
+      }
+      beamline->Mld = accumulateRadiationMatrices(beamline->elem_twiss, run, NULL, 1, radiation, n_slices, slice_etilted);
+    }
+    
+    if (verbosity > 0) {
+      char text[200];
+      sprintf(text, "** One-turn, on-orbit matrix with%sradiation:", radiation ? " " : "out ");
+      print_matrices(stdout, text, beamline->Mld);
+      fflush(stdout);
+    }
+    if (verbosity > 1) {
       long j;
-      for (j = 0; j < 6; j++)
-        savedFinalMoments[i][j] = beamline->elem->sigmaMatrix->sigma[sigmaIndex3[i][j]];
-      savedFinalCentroid[i] = beamline->elem->Mld->C[i];
+      printf("** One-turn diffusion matrix: \n");
+      for (i = 0; i < 6; i++)
+	for (j = 0; j < 6; j++)
+	  printf("%13.6e%c", beamline->elast->accumD[sigmaIndex3[i][j]], j == 5 ? '\n' : ' ');
+      fflush(stdout);
+    }
+    
+    if (matrixOutputInitialized)
+      outputMomentsMatrices(beamline->Mld, beamline->elast->accumD);
+
+    if (equilibrium) {
+      /* Compute equilibrium moments */
+      determineEquilibriumMoments(beamline->Mld->R, beamline->elast->accumD, beamline->sigmaMatrix0);
+    } else {
+      if (matched) {
+	/* Use periodic lattice functions */
+	if (!(beamline->flags & BEAMLINE_TWISS_DONE))
+	  bombElegant("no twiss parameters computed for matched moments propogation", NULL);
+	/* Determine starting moments from twiss parameter values */
+	setStartingMoments(beamline->sigmaMatrix0,
+			   emit_x, beamline->twiss0->betax, beamline->twiss0->alphax, beamline->twiss0->etax, beamline->twiss0->etapx,
+			   emit_y, beamline->twiss0->betay, beamline->twiss0->alphay, beamline->twiss0->etay, beamline->twiss0->etapy,
+			   emit_z, beta_z, alpha_z);
+      } else
+	/* Determine starting moments from twiss parameter values */
+	setStartingMoments(beamline->sigmaMatrix0,
+			   emit_x, beta_x, alpha_x, eta_x, etap_x,
+			   emit_y, beta_y, alpha_y, eta_y, etap_y,
+			   emit_z, beta_z, alpha_z);
+    }
+    if (verbosity > 1) {
+      long j;
+      printf("** Starting sigma matrix: \n");
+      for (i = 0; i < 6; i++)
+	for (j = 0; j < 6; j++)
+	  printf("%13.6e%c", beamline->sigmaMatrix0->sigma[sigmaIndex3[i][j]], j == 5 ? '\n' : ' ');
+      fflush(stdout);
+    }
+
+    /* Propagate moments to each element */
+    propagateBeamMoments(run, beamline, startingCoord);
+
+    elast = beamline->elast;
+    if (verbosity > 1) {
+      long j;
+      printf("** Final sigma matrix: \n");
+      for (i = 0; i < 6; i++)
+	for (j = 0; j < 6; j++)
+	  printf("%13.6e%c", elast->sigmaMatrix->sigma[sigmaIndex3[i][j]], j == 5 ? '\n' : ' ');
+      fflush(stdout);
+    }
+    
+    if (equilibrium)
+      computeNaturalEmittances(beamline->Mld, beamline->sigmaMatrix0->sigma, eNatural);
+      
+    if (ibs_iterations)
+      updateIbsScatteringMatrices(beamline, charge, eNatural);
+    
+    if (SDDSMomentsInitialized && writeToFile)
+      dumpBeamMoments(beamline, n_elem, final_values_only, tune_corrected, run, eNatural);
+    
+    if (beamline->elem->sigmaMatrix) {
+      for (i = 0; i < 6; i++) {
+	long j;
+	for (j = 0; j < 6; j++)
+	  savedFinalMoments[i][j] = beamline->elem->sigmaMatrix->sigma[sigmaIndex3[i][j]];
+	savedFinalCentroid[i] = beamline->elem->Mld->C[i];
+      }
     }
   }
-
+  
   return 1;
 }
 
@@ -877,8 +913,8 @@ void computeNaturalEmittances(VMATRIX *Mld, double *sigmaMatrix, double *emittan
 
   /*--- Calculating eigenvectors using dgeev ... */
   /* VR is right-hand side eigenvectors such that: VR^transp * M = lamdba * VR^transp
-     VR[0 to 5] are real components of vector 1, VR[6 to 11] are imagenary components of vector 1 and so on.
-     see description of procedure on the web */
+     VR[0 to 5] are real components of vector 1, VR[6 to 11] are imaginary components of vector 1 and so on.
+  */
 #if defined(LAPACK) || defined(CLAPACK) || defined(MKL)
   JOBVL = 'N';
   JOBVR = 'V';
@@ -1060,4 +1096,364 @@ long getMoments(double M[6][6], double C[6], long matched0, long equilibrium0, l
     C[i] = savedFinalCentroid[i];
 
   return 1;
+}
+
+
+static inline void diagonalization_matrix_3x3(MATRIX *F, double eval[3], MATRIX *Mevec, int do_sort)
+/*
+  Fast diagonalization of a symmetric 3x3 matrix F (2D array).
+  
+  Input:
+    F        - symmetric matrix (row-major in C). Only upper/lower triangle is used.
+    do_sort  - if nonzero, eigenvalues are sorted ascending and eigenvectors permuted.
+
+  Output:
+    eval[3]  - eigenvalues
+    Mevec    - matrix of eigenvectors Mevec->a[i] is the ith eigenvector
+
+  Author: ChatGPT 5
+*/
+{
+    double evec[3][3]; /* local storage of the eigen vectors */
+    // Copy & symmetrize
+    double A[3][3];
+    for (int i=0;i<3;++i)
+        for (int j=0;j<3;++j)
+            A[i][j] = 0.5*(F->a[i][j] + F->a[j][i]);
+
+    // Initialize eigenvectors as identity
+    memset(evec, 0, 9*sizeof(double));
+    evec[0][0]=1.0; evec[1][1]=1.0; evec[2][2]=1.0;
+
+    const int max_sweeps = 10;
+    const double tol = 1e-15;
+
+    for (int sweep=0; sweep<max_sweeps; ++sweep) {
+        double off = fabs(A[0][1]) + fabs(A[0][2]) + fabs(A[1][2]);
+        if (off < tol * (fabs(A[0][0])+fabs(A[1][1])+fabs(A[2][2]))) break;
+
+        int pairs[3][2] = {{0,1},{0,2},{1,2}};
+        for (int k=0;k<3;++k) {
+            int p = pairs[k][0], q = pairs[k][1];
+            double apq = A[p][q];
+            if (fabs(apq) < tol) continue;
+
+            double app = A[p][p], aqq = A[q][q];
+            double tau = (aqq - app)/(2.0*apq);
+            double t = copysign(1.0/(fabs(tau)+sqrt(1.0+tau*tau)), tau);
+            double c = 1.0/sqrt(1.0+t*t);
+            double s = t*c;
+            double theta = s/(1.0+c);
+
+            // Zero out p,q off-diagonal
+            A[p][q] = A[q][p] = 0.0;
+            A[p][p] = app - t*apq;
+            A[q][q] = aqq + t*apq;
+
+            // Update other elements
+            for (int r=0;r<3;++r) if (r!=p && r!=q) {
+                double arp = A[r][p], arq = A[r][q];
+                double nrp = arp - s*(arq + theta*arp);
+                double nrq = arq + s*(arp - theta*arq);
+                A[r][p] = A[p][r] = nrp;
+                A[r][q] = A[q][r] = nrq;
+            }
+
+            // Update eigenvectors
+            for (int r=0;r<3;++r) {
+                double vrp = evec[r][p];
+                double vrq = evec[r][q];
+                evec[r][p] = vrp - s*(vrq + theta*vrp);
+                evec[r][q] = vrq + s*(vrp - theta*vrq);
+            }
+        }
+    }
+
+    // Eigenvalues
+    eval[0]=A[0][0]; eval[1]=A[1][1]; eval[2]=A[2][2];
+
+    if (do_sort) {
+      // Sort eigenvalues ascending and reorder eigenvectors
+      int idx[3]={0,1,2};
+      for (int i=0;i<3;++i) for (int j=i+1;j<3;++j) {
+	  if (eval[j] < eval[i]) {
+            double te=eval[i]; eval[i]=eval[j]; eval[j]=te;
+            int ti=idx[i]; idx[i]=idx[j]; idx[j]=ti;
+	  }
+	}
+      
+      double V[3][3];
+      memcpy(V, evec, 9*sizeof(double));
+      for (int r=0;r<3;++r) {
+        evec[r][0]=V[r][idx[0]];
+        evec[r][1]=V[r][idx[1]];
+        evec[r][2]=V[r][idx[2]];
+      }
+    }
+
+    for (int i=0; i<3; i++)
+      for (int j=0; j<3; j++)
+	Mevec->a[i][j] = evec[j][i];
+}
+
+void m_schur(MATRIX *F, MATRIX *C)
+/* Compute the 3x3 momentum moments matrix conditional on locality using the Schur-complement identity
+   F = C[pp] - C[px] Inv(C[xx]) C[xp]
+   where C[pp][ij] = <pi*pj>, C[xx][ij] = <xi*xj>, and C[px][ij] = C[xp][ji] = <pi*xj>
+*/
+{
+  static short initialized = 0;
+  static MATRIX *Cxx, *Cpp, *Cxp, *Cpx, *InvCxx, *temp1, *temp2;
+  long i, j;
+  if (!initialized) {
+    initialized = 1;
+    m_alloc(&Cxx, 3, 3);
+    m_alloc(&Cpp, 3, 3);
+    m_alloc(&Cxp, 3, 3);
+    m_alloc(&Cpx, 3, 3);
+    m_alloc(&InvCxx, 3, 3);
+    m_alloc(&temp1, 3, 3);
+    m_alloc(&temp2, 3, 3);
+    initialized = 1;
+  }
+  /* Extract submatrices */
+  for (i=0; i<3; i++) {
+    for (j=0; j<3; j++) {
+      Cxx->a[i][j] = C->a[2*i][2*j];
+      Cpp->a[i][j] = C->a[2*i+1][2*j+1];
+      Cxp->a[i][j] = Cpx->a[j][i] = C->a[2*i][2*j+1];
+    }
+  }
+  m_invert(InvCxx, Cxx);
+  m_mult(temp1, Cpx, InvCxx);
+  m_mult(temp2, temp1, Cxp);
+  m_subtract(F, Cpp, temp2);
+}
+
+/* Code to compute integrals in K&O equation 70, by ChatGPT.
+ * Performs non-adapative gaussian quadrature.
+ */
+
+static const double x32[16] = {
+ 0.0483076656877383, 0.1444719615827965, 0.2392873622521371, 0.3318686022821277,
+ 0.4213512761306353, 0.5068999089322294, 0.5877157572407623, 0.6630442669302152,
+ 0.7321821187402897, 0.7944837959679424, 0.8493676137325700, 0.8963211557660521,
+ 0.9349060759377390, 0.9647622555875064, 0.9856115115452684, 0.9972638618494816
+};
+static const double w32[16] = {
+ 0.0965400885147278, 0.0956387200792749, 0.0938443990808046, 0.0911738786957639,
+ 0.0876520930044038, 0.0833119242269467, 0.0781938957870703, 0.0723457941088485,
+ 0.0658222227763618, 0.0586840934785355, 0.0509980592623762, 0.0428358980222267,
+ 0.0342738629130214, 0.0253920653092621, 0.0162743947309057, 0.0070186100094701
+};
+
+// integrand for gi
+static double integrand(double s, int i, const double u[3]) {
+    double ss = sin(s), cc = cos(s);
+    double num = 2.0*u[i]*ss*ss*cc;
+    double d1,d2;
+    if (i==0) {
+        d1 = ss*ss + (u[0]/u[1])*cc*cc;
+        d2 = ss*ss + (u[0]/u[2])*cc*cc;
+    } else if (i==1) {
+        d1 = ss*ss + (u[1]/u[0])*cc*cc;
+        d2 = ss*ss + (u[1]/u[2])*cc*cc;
+    } else {
+        d1 = ss*ss + (u[2]/u[0])*cc*cc;
+        d2 = ss*ss + (u[2]/u[1])*cc*cc;
+    }
+    return num / sqrt(d1*d2);
+}
+
+double compute_gi(int i, const double u[3])
+{
+    const double a = 0.0, b = M_PI_2;
+    const double c1 = 0.5*(b-a);
+    const double c2 = 0.5*(b+a);
+    double sum = 0.0;
+    for (int k=0;k<16;++k) {
+        double dx = c1 * x32[k];
+        double s1 = c2 - dx, s2 = c2 + dx;
+        sum += w32[k]*( integrand(s1,i,u) + integrand(s2,i,u) );
+    }
+    return c1*sum;
+}
+
+#define DEBUG
+
+/* Based on Kubo and Oide, PRST-AB 4, 124401 (2001) */
+/* A human wrote this part! */
+void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGeometric)
+{
+
+  ELEMENT_LIST *eptr;
+  double coulombLog = 15; /* use this "typical" value afor now */
+  double Ci, betaGamma, gamma, p0;
+  double u[3], g[3], dw2dts[3], length, duration, eigVal[3];
+  int i, j;
+  static short initialized = 0;
+  static MATRIX *Sigma, *Cp, *C, *D, *Dt, *G, *ToMom, *Boost, *DeBoost, *F, *dppdt, *dppdtLab, *temp6x6, *temp3x3, *dw2dt;
+  static double *diagElements;
+  eptr = beamline->elem_twiss;
+
+  if (!initialized) {
+    initialized = 1;
+    m_alloc(&Sigma, 6, 6);
+    m_alloc(&Cp, 6, 6);
+    m_alloc(&C, 6, 6);
+    m_alloc(&ToMom, 6, 6);
+    m_alloc(&Boost, 6, 6);
+    m_alloc(&DeBoost, 3, 3);
+    m_alloc(&temp6x6, 6, 6);
+    m_alloc(&D, 3, 3);
+    m_alloc(&Dt, 3, 3);
+    m_alloc(&F, 3, 3);
+    m_alloc(&G, 3, 3);
+    m_alloc(&dw2dt, 3, 3);
+    m_alloc(&dppdt, 3, 3);
+    m_alloc(&dppdtLab, 3, 3);
+    m_alloc(&temp3x3, 3, 3);
+    diagElements = malloc(sizeof(*diagElements)*6);
+    initialized = 1;
+  }
+
+  while (eptr) {
+#ifdef DEBUG
+    printf("Working on %s\n", eptr->name);
+#endif
+    if (!eptr->DIbs)
+      eptr->DIbs = malloc(sizeof(*eptr->DIbs)*21);
+    if (!(entity_description[eptr->type].flags&HAS_LENGTH) || (length=((DRIFT*)(eptr->p_elem))->length) <= 0) {
+      /* Diffusion matrix is zero */
+      memset(eptr->DIbs, 0, 21*sizeof(*eptr->DIbs));
+    } else {
+      /* Assume for now that the beam properties at the end of an element are representative of those throughout the element.
+	 This needs to be re-examined for elements (e.g., LGBEND, CCBEND) that can't be split.
+       */
+
+      /* 1. Assemble the lab-frame sigma matrix Sigma in the usual (x, x', y, y', z, delta) coordinates */
+      for (int i=0; i<6; i++)
+	for (int j=0; j<6; j++)
+	  Sigma->a[i][j] = eptr->sigmaMatrix->sigma[sigmaIndex3[i][j]];
+#ifdef DEBUG
+      m_show(Sigma, "%13.6e ", "Sigma:\n", stdout);
+#endif
+
+      /* 2. The sigma matrix is in terms of geometric quantities (x, x', y, y', s, deltaP/P) 
+	 Transform approximately to (x, px, y, py, dz, dpz) coordinates using C' = P*Sigma*Trans(P), where P = diag(1, p0, 1, p0, 1, p0)
+	 and p0 = m*c*beta*gamma.
+      */
+      diagElements[0] = diagElements[2] = diagElements[4] = 1;
+      betaGamma = (eptr->Pref_input+eptr->Pref_output)/2; /* beta*gamma dimensionless momentum */
+      p0 = me_mks*c_mks*betaGamma; /* reference momentum in SI units */
+#ifdef DEBUG
+      printf("betaGamma = %le, p0 = %le\n", betaGamma, p0);
+#endif
+      diagElements[1] = diagElements[3] = diagElements[5] = p0;
+      m_diag(ToMom, diagElements);
+      m_mult(temp6x6, ToMom, Sigma);
+      m_mult(Cp, temp6x6, ToMom);
+#ifdef DEBUG
+      m_show(Cp, "%13.6e ", "Cp:\n", stdout);
+#endif
+	     
+      /* 3. Transform C to the co-moving frame using C = T*C'*Trans(T), where T = diag(1, 1, 1, 1, gamma, 1/gamma) */
+      diagElements[0] = diagElements[1] = diagElements[2] = diagElements[3] = 1;
+      diagElements[4] = gamma = sqrt(betaGamma*betaGamma+1);
+      diagElements[5] = 1/gamma;
+      m_diag(Boost, diagElements);
+      m_mult(temp6x6, Boost, Cp);
+      m_mult(C, temp6x6, Boost);
+#ifdef DEBUG
+      m_show(C, "%13.6e ", "C:\n", stdout);
+#endif
+      
+      /* 4. Compute the 3x3 momentum moments matrix conditional on locality using the Schur-complement identity
+	 F = C[pp] - C[px] Inv(C[xx]) C[xp]
+	 where C[pp][ij] = <pi*pj>, C[xx][ij] = <xi*xj>, and C[px][ij] = C[xp][ji] = <pi*xj>
+      */
+      m_schur(F, C);
+#ifdef DEBUG
+      m_show(F, "%13.6e ", "F:\n", stdout);
+#endif
+      
+      /* 5. Find matrix D (K&O call this matrix R) to diagonalize F */
+      diagonalization_matrix_3x3(F, eigVal, D, 0);
+#ifdef DEBUG
+      m_show(D, "%13.6e ", "D:\n", stdout);
+#endif
+
+      /* 5. Diagonalize F: G=D*F*Trans(D) */
+      m_mult(temp3x3, D, F);
+      m_trans(Dt, D);
+      m_mult(G, temp3x3, Dt);
+#ifdef DEBUG
+      m_show(G, "%13.6e ", "G:\n", stdout);
+#endif
+      
+      /* 6. Compute g[i] integrals (Eq. 70 from K&O). These depend on the diagonal elements of G */
+      for (i=0; i<3; i++)
+	u[i] = G->a[i][i];
+      for (i=0; i<3; i++)
+	g[i] = compute_gi(i, u);
+      
+      /* 7. Compute d<wi^2>/dt for i=1,2,3 (Eq. 65) */
+      Ci = sqr(particleRadius)*fabs(charge/particleCharge)*coulombLog/(4*PI*eGeometric[0]*eGeometric[1]*eGeometric[2]*ipow(gamma,3));
+#ifdef DEBUG
+      printf("particleRadius = %le, particleCharge = %le, charge = %le, gamma = %le, eGeometric=%le, %le, %le \n => Ci = %le\n",
+	     particleRadius, particleCharge, charge, gamma, eGeometric[0], eGeometric[1], eGeometric[2], Ci);
+#endif
+      
+      dw2dts[0] = Ci*((g[1] - g[0]) + (g[2] - g[0]));
+      dw2dts[1] = Ci*((g[0] - g[1]) + (g[2] - g[1]));
+      dw2dts[2] = Ci*((g[0] - g[2]) + (g[1] - g[2]));
+      m_diag(dw2dt, dw2dts);
+#ifdef DEBUG
+      m_show(dw2dt, "%13.6e ", "d<w2>/dt:\n", stdout);
+#endif
+      
+      /* 8. Compute d<pi*pj>/dt for i=1,2,3 j=1,2,3 (Eq. 71)
+       * d<pi*pj>/dt = D*d<w^2>/dt*Trans(D)
+       */
+      m_mult(temp3x3, D, dw2dt);
+      m_mult(dppdt, temp3x3, Dt);
+#ifdef DEBUG
+      m_show(dppdt, "%13.6e ", "d<pi*pj>/dt:\n", stdout);
+#endif
+
+      /* 9. Transform d<pi*pj>/dt to lab frame. 
+       * (d<pi*pj>/dt)Lab = (M d<pi*pj>/dt Trans(M))/gamma
+       */
+      diagElements[0] = 1;
+      diagElements[1] = 1;
+      diagElements[2] = gamma;
+      m_diag(DeBoost, diagElements);
+      m_mult(temp3x3, DeBoost, dppdt);
+      m_mult(dppdtLab, temp3x3, DeBoost);
+      m_scmul(dppdtLab, dppdtLab, 1./gamma);
+#ifdef DEBUG
+      m_show(dppdtLab, "%13.6e ", "d<pi*pj>/dt(Lab):\n", stdout);
+#endif
+
+      /* 10. Compute change in over element length and assign to IBS diffusion matrix */
+      duration = length/(c_mks*betaGamma/gamma);
+#ifdef DEBUG
+      printf("duration = %le s\n", duration);
+#endif
+      memset(eptr->DIbs, 0, 21*sizeof(*eptr->DIbs));
+      for (i=0; i<3; i++)
+	for (j=0; j<3; j++)
+	  eptr->DIbs[sigmaIndex3[2*i+1][2*j+1]] = dppdtLab->a[i][j]*duration;
+
+#ifdef DEBUG
+      for (i=0; i<6; i++) {
+	printf("D[%d] for %s: ", i, eptr->name);
+	for (j=0; j<=i; j++)
+	  printf("%13.6e ", eptr->DIbs[sigmaIndex3[i][j]]);
+	printf("\n");
+      }
+#endif
+    }
+    eptr = eptr->succ;
+  }
 }

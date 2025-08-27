@@ -15,6 +15,7 @@
     long matched = 1;
     long equilibrium = 1;
     long radiation = 1;
+    long ibs_iterations = 0;
     long n_slices = 10;
     long slice_etilted = 1;
     long tracking_based_diffusion_matrix_particles = 1000;
