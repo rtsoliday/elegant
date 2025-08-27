@@ -14,16 +14,15 @@ sddsurgent_SRC = sddsurgent.c
 sddsfluxcurve_SRC = sddsfluxcurve.c
 sddsfresnel_SRC = sddsfresnel.c fresnel.c
 
-CFLAGS += -DUSE_GSL -I$(SDDS_REPO)/include -I../physics -I../xraylib -I$(OBJ_DIR) -I.
+CFLAGS += -DUSE_GSL -I$(SDDS_REPO)/include -I../physics -I../xraylib -I$(OBJ_DIR)
 
 ifeq ($(OS), Linux)
   PROD += sddsbrightness sddsurgent sddsfluxcurve sddsxra
   CFLAGS += -std=gnu11 -fopenmp $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
-  LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -L$(SDDS_REPO)/fftpack/O.linux-x86_64 -fopenmp $(LDFLAGS)
+  LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -fopenmp $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -lxrl -loagphy
-  PROD_LIBS_SDDS = -lmdbcommon -lSDDS1 -lrpnlib -lmdbmth -lmdblib
-  SDDSFRESNEL_LIBS = -lfftpack -lgfortran
+  PROD_LIBS_SDDS = -lmdbcommon -lfftpack -lSDDS1 -lrpnlib -lmdbmth -lmdblib
 endif
 
 ifeq ($(OS), Darwin)
@@ -31,14 +30,14 @@ ifeq ($(OS), Darwin)
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -lxrl -loagphy
-  PROD_LIBS_SDDS = -lmdbcommon -lSDDS1 -lrpnlib -lmdbmth -lmdblib
+  PROD_LIBS_SDDS = -lmdbcommon -lfftpack -lSDDS1 -lrpnlib -lmdbmth -lmdblib
 endif
 
 ifeq ($(OS), Windows)
   CFLAGS += -I$(SDDS_REPO)/lzma -I../../gsl -wd4244 -wd4267
   PROD_LIBS = xrl.lib oagphy.lib
   PROD_SYS_LIBS += gsl.lib gslcblas.lib
-  PROD_LIBS_SDDS = mdbcommon.lib SDDS1.lib rpnlib.lib mdbmth.lib mdblib.lib lzma.lib z.lib
+  PROD_LIBS_SDDS = mdbcommon.lib fftpack.lib SDDS1.lib rpnlib.lib mdbmth.lib mdblib.lib lzma.lib z.lib
   LIB_LINK_DIRS += -LIBPATH:$(SDDS_REPO)/lib/$(OS)-$(ARCH) -LIBPATH:../lib/$(OS)-$(ARCH)
 endif
 
