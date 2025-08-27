@@ -152,7 +152,8 @@ int main(
   MATRIX *Rx, *Ry, *s2x, *s2y;
   MATRIX *Sx, *Sy, *sSx, *sSy, *Kx, *Ky;
   double S11_sum, S11_sum2, S12_sum, S12_sum2, S22_sum, S22_sum2;
-  double S33_sum, S33_sum2, S34_sum, S34_sum2, S44_sum, S44_sum2;
+  //double S33_sum, S33_sum2;
+  double S34_sum, S34_sum2, S44_sum, S44_sum2;
   double betax, alphax, betax_sum, betax_sum2, alphax_sum, alphax_sum2;
   double betay, alphay, betay_sum, betay_sum2, alphay_sum, alphay_sum2;
   int i_variable;
@@ -614,7 +615,8 @@ int main(
       emitx_max = -(emitx_min = DBL_MAX);
       emity_max = -(emity_min = DBL_MAX);
       S11_sum = S11_sum2 = S12_sum = S12_sum2 = S22_sum = S22_sum2 = 0;
-      S33_sum = S33_sum2 = S34_sum = S34_sum2 = S44_sum = S44_sum2 = 0;
+      //S33_sum = S33_sum2 = 0;
+      S34_sum = S34_sum2 = S44_sum = S44_sum2 = 0;
       betax_sum = betax_sum2 = alphax_sum = alphax_sum2 = 0;
       betay_sum = betay_sum2 = alphay_sum = alphay_sum2 = 0;
       md_x = md_y = nx_used_sum = ny_used_sum = 0;
@@ -724,8 +726,8 @@ int main(
               if (verbosity > 2) {
                 fprintf(stderr, "Vertical emittance: %e\n", emity);
               }
-              S33_sum += Sy->a[0][0];
-              S33_sum2 += sqr(Sy->a[0][0]);
+              //S33_sum += Sy->a[0][0];
+              //S33_sum2 += sqr(Sy->a[0][0]);
               S34_sum += Sy->a[1][0];
               S34_sum2 += sqr(Sy->a[1][0]);
               S44_sum += Sy->a[2][0];
