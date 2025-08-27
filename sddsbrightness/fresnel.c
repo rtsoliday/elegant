@@ -5,7 +5,7 @@
 
 #define PI 3.14159265358979323846
 
-static const double sqrt_pi_2   = 1.2533141373155002512078826424; /* sqrt(pi/2) */
+//static const double sqrt_pi_2   = 1.2533141373155002512078826424; /* sqrt(pi/2) */
 static const double sqrt_2_pi   = 0.7978845608028653558798921199; /* sqrt(2/pi) */
 static const double _1_sqrt_2pi = 0.3989422804014326779399460599; /* 1/sqrt(2*pi) */
 static const double pi_2        = 1.5707963267948966192313216916; /* pi/2 */
