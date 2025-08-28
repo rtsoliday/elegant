@@ -294,6 +294,9 @@ double coulombLog(double gamma, double emitx, double emity,
   return value;
 }
 
+#ifdef INCLUDE_COUPLING_ANGLE_FUNCTIONS
+/* Unclear why this code is here, since it is never called. */
+
 static double xRate, yRate;
 
 double couplingAngleFn(double theta) {
@@ -315,3 +318,4 @@ double computeCouplingAngle(double taux, double tauy, double emitx, double emity
   /* printf("coupling angle merit function = %le (theta = %le)\n", couplingAngleFn(theta)-emity/emitx, theta); */
   return theta;
 }
+#endif
