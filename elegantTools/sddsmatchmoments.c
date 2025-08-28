@@ -28,18 +28,20 @@ char *option[N_OPTIONS] = {
   "pipe", "exclude", "momentsfile", "library"};
 
 char *USAGE1 = "sddsmatchmoments [-pipe=[input][,output]] [<SDDSinputfile>] [<SDDSoutputfile>]\n\
-  [-momentsFile=<filename>[,page=<page>]] [-library={meschach|gsl}] [-exclude=[{x|y|z}][,centroids]]\n\n";
+  [-momentsFile=<filename>[,page=<page>][,elementname=<name>]] [-library={meschach|gsl}] [-exclude=[{x|y|z}][,centroids]]\n\n";
 char *USAGE2 = "The input file must have columns x, xp, y, yp, and p; for example, an\n\
 elegant beam output file is acceptable. \n\n\
 -momentsFile    Provide the name of the elegant moments_output file.\n\
-                Optionally provide the page number to use.\n\
+                Optionally provide the page number to use, or elementname=<name>\n\
+                to select the row whose ElementName equals the given string.\n\
+                If neither is given, the last row of the page is used.\n\
 -library        Specify the matrix library to use.\n\
 -exclude        Exclude one or more planes from the transformation.\n\
 Program by Michael Borland.  ("__DATE__
   ")\n";
 
 long check_sdds_beam_column(SDDS_TABLE *SDDS_table, char *name, char *units);
-void readMomentsFile(char *filename, long page, double **Mm, double *Cm);
+void readMomentsFile(char *filename, long page, char *elementName, double **Mm, double *Cm);
 void transformCoordinates(double *x, double *xp, double *y, double *yp, double *t, double *p, long np,
                           unsigned long flags, double **desiredMoment, double *desiredCentroid);
 void findTransformationMatrix(long n, double **sigma, double **desiredSigma, double **M, unsigned long flags);
@@ -65,7 +67,7 @@ char *excludeOption[N_EXCLUDE] = {"x", "y", "z", "centroids"};
 
 int main(int argc, char **argv) {
   SDDS_DATASET SDDSin, SDDSout;
-  char *inputfile, *outputfile, *momentsFile;
+  char *inputfile, *outputfile, *momentsFile, *momentsElementName;
   long i_arg, rows, readCode, momentsPage;
   SCANNED_ARG *s_arg;
   unsigned long pipeFlags, excludeFlags, libFlags;
@@ -79,7 +81,7 @@ int main(int argc, char **argv) {
     return (1);
   }
 
-  inputfile = outputfile = momentsFile = NULL;
+  inputfile = outputfile = momentsFile = momentsElementName = NULL;
   pipeFlags = excludeFlags = libFlags = 0;
   momentsPage = 1;
 
@@ -118,17 +120,19 @@ int main(int argc, char **argv) {
           SDDS_Bomb("Exclude only one of x, y, or z");
         break;
       case SET_MOMENTS_FILE:
-        if (s_arg[i_arg].n_items != 2 && s_arg[i_arg].n_items != 3)
+        if (s_arg[i_arg].n_items < 2)
           SDDS_Bomb("Invalid -momentsFile syntax/values");
         momentsFile = s_arg[i_arg].list[1];
         momentsPage = 1;
-        if (s_arg[i_arg].n_items == 3) {
+        momentsElementName = NULL;
+        if (s_arg[i_arg].n_items > 2) {
           unsigned long dummyFlags;
           s_arg[i_arg].n_items -= 2;
           if (!scanItemList(&dummyFlags, s_arg[i_arg].list + 2, &s_arg[i_arg].n_items, 0,
                             "page", SDDS_LONG, &momentsPage, 1, 0,
+                            "elementname", SDDS_STRING, &momentsElementName, 1, 0,
                             NULL))
-            SDDS_Bomb("Invalid -moments syntax/values");
+            SDDS_Bomb("Invalid -momentsFile syntax/values");
         }
         break;
       default:
@@ -152,7 +156,7 @@ int main(int argc, char **argv) {
   moment = (double **)zarray_2d(sizeof(**moment), 6, 6);
   centroid = (double *)tmalloc(sizeof(*centroid) * 6);
 
-  readMomentsFile(momentsFile, momentsPage, moment, centroid);
+  readMomentsFile(momentsFile, momentsPage, momentsElementName, moment, centroid);
 #if DEBUG
   {
     long i, j;
@@ -253,9 +257,9 @@ long check_sdds_beam_column(SDDS_TABLE *SDDS_table, char *name, char *units) {
   return (0);
 }
 
-void readMomentsFile(char *filename, long momentsPage, double **moment, double *centroid) {
+void readMomentsFile(char *filename, long momentsPage, char *elementName, double **moment, double *centroid) {
   SDDS_DATASET SDDSin;
-  long i, j, rows, code;
+  long i, j, rows, code, selectedRow;
   double *data;
   char s[100];
 
@@ -270,22 +274,49 @@ void readMomentsFile(char *filename, long momentsPage, double **moment, double *
   if ((rows = SDDS_RowCount(&SDDSin)) <= 0)
     SDDS_Bomb("Problem reading moments file. Is page empty?");
 
+  /* Determine which row to use */
+  selectedRow = rows - 1;
+  if (elementName) {
+    long colIndex = SDDS_GetColumnIndex(&SDDSin, "ElementName");
+    if (colIndex < 0)
+      SDDS_Bomb("ElementName selection requested, but ElementName column not found in moments file.");
+    {
+      char **nameData = (char **)SDDS_GetColumn(&SDDSin, "ElementName");
+      if (!nameData)
+        SDDS_Bomb("Problem reading ElementName column from moments file.");
+      /* Choose the last matching row to be consistent with default behavior */
+      long matchFound = 0;
+      for (i = 0; i < rows; i++) {
+        if (nameData[i] && strcmp(nameData[i], elementName) == 0) {
+          selectedRow = i;
+          matchFound = 1;
+        }
+      }
+      /* Free string array */
+      SDDS_FreeStringArray(nameData, rows);
+      free(nameData);
+      if (!matchFound) {
+        SDDS_Bomb("Requested elementname was not found in the specified page of the moments file.");
+      }
+    }
+  }
+
   for (i = 0; i < 6; i++) {
     /* Get s[i] */
     sprintf(s, "s%ld", i + 1);
     if (!(data = SDDS_GetColumnInDoubles(&SDDSin, s)))
       fprintf(stderr, "Error: problem reading %s from moments file. Check existence and type.\n", s);
-    moment[i][i] = sqr(data[rows - 1]);
+    moment[i][i] = sqr(data[selectedRow]);
     free(data);
 #ifdef DEBUG
-    fprintf(stderr, "moment[%ld][%ld] = %le\n", i, i, moment[i][i]);
+    fprintf(stderr, "moment[%ld][%ld] = %le (row %ld)\n", i, i, moment[i][i], selectedRow);
 #endif
 
     /* Get c[i] */
     sprintf(s, "c%ld", i + 1);
     if (!(data = SDDS_GetColumnInDoubles(&SDDSin, s)))
       fprintf(stderr, "Error: problem reading %s from moments file. Check existence and type.\n", s);
-    centroid[i] = data[rows - 1];
+    centroid[i] = data[selectedRow];
     free(data);
 
     for (j = i + 1; j < 6; j++) {
@@ -293,10 +324,10 @@ void readMomentsFile(char *filename, long momentsPage, double **moment, double *
       sprintf(s, "s%ld%ld", i + 1, j + 1);
       if (!(data = SDDS_GetColumnInDoubles(&SDDSin, s)))
         fprintf(stderr, "Error: problem reading %s from moments file. Check existence and type.\n", s);
-      moment[i][j] = moment[j][i] = data[rows - 1];
+      moment[i][j] = moment[j][i] = data[selectedRow];
       free(data);
 #ifdef DEBUG
-      fprintf(stderr, "moment[%ld][%ld] = %le\n", i, j, moment[i][j]);
+      fprintf(stderr, "moment[%ld][%ld] = %le (row %ld)\n", i, j, moment[i][j], selectedRow);
 #endif
     }
   }
