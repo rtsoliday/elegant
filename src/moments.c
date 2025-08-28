@@ -1357,6 +1357,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
 	 Transform approximately to (x, px, y, py, dz, dpz) coordinates using C' = P*Sigma*Trans(P), where P = diag(1, p0, 1, p0, 1, p0)
 	 and p0 = m*c*beta*gamma.
       */
+      memset(diagElements, 0, 6*sizeof(*diagElements));
       diagElements[0] = diagElements[2] = diagElements[4] = 1;
       betaGamma = (eptr->Pref_input+eptr->Pref_output)/2; /* beta*gamma dimensionless momentum */
       p0 = me_mks*c_mks*betaGamma; /* reference momentum in SI units */
@@ -1372,6 +1373,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
 #endif
 	     
       /* 3. Transform C to the co-moving frame using C = T*C'*Trans(T), where T = diag(1, 1, 1, 1, gamma, 1/gamma) */
+      memset(diagElements, 0, 6*sizeof(*diagElements));
       diagElements[0] = diagElements[1] = diagElements[2] = diagElements[3] = 1;
       diagElements[4] = gamma = sqrt(betaGamma*betaGamma+1);
       diagElements[5] = 1/gamma;
@@ -1417,6 +1419,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
 	g[i] = compute_gi(i, u);
       
       /* 8. Compute d<wi^2>/dt for i=1,2,3 (Eq. 65) .
+       * I have extreme doubts about the calculation of Ci!
        */
       Ci = sqr(particleRadius)*(charge/particleCharge)*coulombLog/
         (4*PI*ipow(gamma,3)*eGeometric[0]*eGeometric[1]*eGeometric[2]*ipow(me_mks*c_mks*gamma,3));
@@ -1446,6 +1449,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       /* 10. Transform d<pi*pj>/dt to lab frame. 
        * (d<pi*pj>/dt)Lab = (M d<pi*pj>/dt Trans(M))/gamma
        */
+      memset(diagElements, 0, 6*sizeof(*diagElements));
       diagElements[0] = 1;
       diagElements[1] = 1;
       diagElements[2] = gamma;
