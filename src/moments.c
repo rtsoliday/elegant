@@ -1117,11 +1117,22 @@ static inline void diagonalization_matrix_3x3(MATRIX *F, double eval[3], MATRIX 
 {
     double evec[3][3]; /* local storage of the eigen vectors */
     // Copy & symmetrize
-    double A[3][3];
+    double A[3][3], maxAbs;
     for (int i=0;i<3;++i)
         for (int j=0;j<3;++j)
             A[i][j] = 0.5*(F->a[i][j] + F->a[j][i]);
 
+    // normalize for numerical stability
+    maxAbs = 0;
+    for (int i=0;i<3;++i)
+      for (int j=0;j<3;++j) {
+        if (fabs(A[i][j])>maxAbs)
+          maxAbs = fabs(A[i][j]);
+      }
+    for (int i=0;i<3;++i)
+      for (int j=0;j<3;++j)
+        A[i][j] /= maxAbs;
+    
     // Initialize eigenvectors as identity
     memset(evec, 0, 9*sizeof(double));
     evec[0][0]=1.0; evec[1][1]=1.0; evec[2][2]=1.0;
@@ -1192,9 +1203,11 @@ static inline void diagonalization_matrix_3x3(MATRIX *F, double eval[3], MATRIX 
       }
     }
 
-    for (int i=0; i<3; i++)
+    for (int i=0; i<3; i++) {
+      eval[i] *= maxAbs;
       for (int j=0; j<3; j++)
 	Mevec->a[i][j] = evec[j][i];
+    }
 }
 
 void m_schur(MATRIX *F, MATRIX *C)
@@ -1290,7 +1303,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
   ELEMENT_LIST *eptr;
   double coulombLog = 15; /* use this "typical" value afor now */
   double Ci, betaGamma, gamma, p0;
-  double u[3], g[3], dw2dts[3], length, duration, eigVal[3];
+  double u[3], g[3], dw2dts[3], length, duration, eigVal[3], Gamma;
   int i, j;
   static short initialized = 0;
   static MATRIX *Sigma, *Cp, *C, *D, *Dt, *G, *ToMom, *Boost, *DeBoost, *F, *dppdt, *dppdtLab, *temp6x6, *temp3x3, *dw2dt;
@@ -1368,6 +1381,11 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
 #ifdef DEBUG
       m_show(C, "%13.6e ", "C:\n", stdout);
 #endif
+      /* phase-space volume in the comoving frame */
+      Gamma = m_det(C)*ipow(PIx2,3);
+#ifdef DEBUG
+      printf("Gamma = %le\n", Gamma);
+#endif
       
       /* 4. Compute the 3x3 momentum moments matrix conditional on locality using the Schur-complement identity
 	 F = C[pp] - C[px] Inv(C[xx]) C[xp]
@@ -1384,7 +1402,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       m_show(D, "%13.6e ", "D:\n", stdout);
 #endif
 
-      /* 5. Diagonalize F: G=D*F*Trans(D) */
+      /* 6. Diagonalize F: G=D*F*Trans(D) */
       m_mult(temp3x3, D, F);
       m_trans(Dt, D);
       m_mult(G, temp3x3, Dt);
@@ -1392,17 +1410,20 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       m_show(G, "%13.6e ", "G:\n", stdout);
 #endif
       
-      /* 6. Compute g[i] integrals (Eq. 70 from K&O). These depend on the diagonal elements of G */
+      /* 7. Compute g[i] integrals (Eq. 70 from K&O). These depend on the diagonal elements of G */
       for (i=0; i<3; i++)
 	u[i] = G->a[i][i];
       for (i=0; i<3; i++)
 	g[i] = compute_gi(i, u);
       
-      /* 7. Compute d<wi^2>/dt for i=1,2,3 (Eq. 65) */
-      Ci = sqr(particleRadius)*fabs(charge/particleCharge)*coulombLog/(4*PI*eGeometric[0]*eGeometric[1]*eGeometric[2]*ipow(gamma,3));
+      /* 8. Compute d<wi^2>/dt for i=1,2,3 (Eq. 65) .
+       */
+      Ci = sqr(particleRadius)*(charge/particleCharge)*coulombLog/
+        (4*PI*ipow(gamma,3)*eGeometric[0]*eGeometric[1]*eGeometric[2]*ipow(me_mks*c_mks*gamma,3));
+      
 #ifdef DEBUG
-      printf("particleRadius = %le, particleCharge = %le, charge = %le, gamma = %le, eGeometric=%le, %le, %le \n => Ci = %le\n",
-	     particleRadius, particleCharge, charge, gamma, eGeometric[0], eGeometric[1], eGeometric[2], Ci);
+      printf("particleCharge = %le, charge = %le, Gamma = %le, CL = %le \n => Ci = %le\n",
+	     particleCharge, charge,  Gamma, coulombLog, Ci);
 #endif
       
       dw2dts[0] = Ci*((g[1] - g[0]) + (g[2] - g[0]));
@@ -1413,7 +1434,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       m_show(dw2dt, "%13.6e ", "d<w2>/dt:\n", stdout);
 #endif
       
-      /* 8. Compute d<pi*pj>/dt for i=1,2,3 j=1,2,3 (Eq. 71)
+      /* 9. Compute d<pi*pj>/dt for i=1,2,3 j=1,2,3 (Eq. 71)
        * d<pi*pj>/dt = D*d<w^2>/dt*Trans(D)
        */
       m_mult(temp3x3, D, dw2dt);
@@ -1422,7 +1443,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       m_show(dppdt, "%13.6e ", "d<pi*pj>/dt:\n", stdout);
 #endif
 
-      /* 9. Transform d<pi*pj>/dt to lab frame. 
+      /* 10. Transform d<pi*pj>/dt to lab frame. 
        * (d<pi*pj>/dt)Lab = (M d<pi*pj>/dt Trans(M))/gamma
        */
       diagElements[0] = 1;
@@ -1436,7 +1457,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       m_show(dppdtLab, "%13.6e ", "d<pi*pj>/dt(Lab):\n", stdout);
 #endif
 
-      /* 10. Compute change in over element length and assign to IBS diffusion matrix */
+      /* 11. Compute change in over element length and assign to IBS diffusion matrix */
       duration = length/(c_mks*betaGamma/gamma);
 #ifdef DEBUG
       printf("duration = %le s\n", duration);
