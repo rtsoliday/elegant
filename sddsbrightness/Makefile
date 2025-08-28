@@ -7,7 +7,7 @@ include ../Makefile.rules
 
 SCRIPTS = brightnessEnvelope
 
-PROD = sddsws sddsbs sddsecon sddscompton sddsxrf xrltool xrltest sddssyncflux sddsfresnel
+PROD = sddsws sddsbs sddsecon sddscompton sddsxrf xrltool xrltest sddssyncflux
 
 sddsbrightness_SRC = sddsbrightness.c usbC.c brighteC.c huntC.c lindbergBrightness.c
 sddsurgent_SRC = sddsurgent.c
@@ -17,7 +17,7 @@ sddsfresnel_SRC = sddsfresnel.c fresnel.c
 CFLAGS += -DUSE_GSL -I$(SDDS_REPO)/include -I../physics -I../xraylib -I$(OBJ_DIR)
 
 ifeq ($(OS), Linux)
-  PROD += sddsbrightness sddsurgent sddsfluxcurve sddsxra
+  PROD += sddsbrightness sddsurgent sddsfluxcurve sddsxra sddsfresnel
   CFLAGS += -std=gnu11 -fopenmp $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -fopenmp $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(PROD_SYS_LIBS)
@@ -26,7 +26,7 @@ ifeq ($(OS), Linux)
 endif
 
 ifeq ($(OS), Darwin)
-  PROD += sddsbrightness sddsurgent sddsfluxcurve sddsxra
+  PROD += sddsbrightness sddsurgent sddsfluxcurve sddsxra sddsfresnel
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -lxrl -loagphy

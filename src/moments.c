@@ -12,6 +12,7 @@
  *
  * Michael Borland, 2007
  */
+#define _USE_MATH_DEFINES
 #include "mdb.h"
 #include "track.h"
 #include "moments.h"
