@@ -1112,7 +1112,7 @@ static inline void diagonalization_matrix_3x3(MATRIX *F, double eval[3], MATRIX 
     eval[3]  - eigenvalues
     Mevec    - matrix of eigenvectors Mevec->a[i] is the ith eigenvector
 
-  Author: ChatGPT 5
+  Author: ChatGPT 5, with modification for numerical stability by M. Borland
 */
 {
     double evec[3][3]; /* local storage of the eigen vectors */
@@ -1384,7 +1384,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       m_show(C, "%13.6e ", "C:\n", stdout);
 #endif
       /* phase-space volume in the comoving frame */
-      Gamma = m_det(C)*ipow(PIx2,3);
+      Gamma = sqrt(m_det(C))*ipow(PIx2,3);
 #ifdef DEBUG
       printf("Gamma = %le\n", Gamma);
 #endif
@@ -1422,7 +1422,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
        * I have extreme doubts about the calculation of Ci!
        */
       Ci = sqr(particleRadius)*(charge/particleCharge)*coulombLog/
-        (4*PI*ipow(gamma,3)*eGeometric[0]*eGeometric[1]*eGeometric[2]*ipow(me_mks*c_mks*gamma,3));
+        (4*sqr(PI*betaGamma/gamma)*ipow(gamma,3)*eGeometric[0]*eGeometric[1]*eGeometric[2]);
       
 #ifdef DEBUG
       printf("particleCharge = %le, charge = %le, Gamma = %le, CL = %le \n => Ci = %le\n",
@@ -1461,7 +1461,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       m_show(dppdtLab, "%13.6e ", "d<pi*pj>/dt(Lab):\n", stdout);
 #endif
 
-      /* 11. Compute change in over element length and assign to IBS diffusion matrix */
+      /* 11. Compute change over element length and assign to IBS diffusion matrix */
       duration = length/(c_mks*betaGamma/gamma);
 #ifdef DEBUG
       printf("duration = %le s\n", duration);
