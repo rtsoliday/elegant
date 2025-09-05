@@ -542,6 +542,7 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
       for (i = 0; i < 6; i++)
 	for (j = 0; j < 6; j++)
 	  printf("%13.6e%c", beamline->sigmaMatrix0->sigma[sigmaIndex3[i][j]], j == 5 ? '\n' : ' ');
+      printf("Propagating beam moments\n");
       fflush(stdout);
     }
 
@@ -558,11 +559,20 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
       fflush(stdout);
     }
     
-    if (equilibrium)
+    if (equilibrium) {
+      if (verbosity>1) {
+        printf("Computing natural emittances\n");
+        fflush(stdout);
+      }
       computeNaturalEmittances(beamline->Mld, beamline->sigmaMatrix0->sigma, eNatural);
-      
-    if (ibs_iterations)
+    }
+    if (ibs_iterations) {
+      if (verbosity>1) {
+        printf("Computing IBS scattering matrices\n");
+        fflush(stdout);
+      }
       updateIbsScatteringMatrices(beamline, charge, eNatural);
+    }
     
     if (SDDSMomentsInitialized && writeToFile)
       dumpBeamMoments(beamline, n_elem, final_values_only, tune_corrected, run, eNatural);
@@ -576,7 +586,23 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
       }
     }
   }
-  
+
+#ifdef DEBUG
+  eptr = beamline->elem_twiss;
+  while (eptr) {
+    int i, j;
+    if (strcmp(eptr->name, "B1")==0) {
+      for (i=0; i<6; i++) {
+	printf("D[%d] for %s#%ld: ", i, eptr->name, eptr->occurence);
+	for (j=0; j<=i; j++)
+	  printf("%13.6e ", eptr->DIbs[sigmaIndex3[i][j]]);
+	printf("\n");
+      }
+    }
+    eptr = eptr->succ;
+  }
+#endif
+
   return 1;
 }
 
@@ -1293,8 +1319,6 @@ double compute_gi(int i, const double u[3])
     return c1*sum;
 }
 
-#define DEBUG
-
 /* Based on Kubo and Oide, PRST-AB 4, 124401 (2001) */
 /* A human wrote this part! */
 void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGeometric)
@@ -1335,16 +1359,27 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
 #ifdef DEBUG
     printf("Working on %s\n", eptr->name);
 #endif
-    if (!eptr->DIbs)
+    if (!eptr->DIbs) {
       eptr->DIbs = malloc(sizeof(*eptr->DIbs)*21);
+#ifdef DEBUG
+      printf("DIbs not set for %s#%ld. Allocating\n", eptr->name, eptr->occurence);
+#endif
+    }
     if (!(entity_description[eptr->type].flags&HAS_LENGTH) || (length=((DRIFT*)(eptr->p_elem))->length) <= 0) {
       /* Diffusion matrix is zero */
+#ifdef DEBUG
+      printf("Element %s has zero length.\n", eptr->name);
+#endif
       memset(eptr->DIbs, 0, 21*sizeof(*eptr->DIbs));
     } else {
       /* Assume for now that the beam properties at the end of an element are representative of those throughout the element.
 	 This needs to be re-examined for elements (e.g., LGBEND, CCBEND) that can't be split.
        */
 
+#ifdef DEBUG
+      printf("Element %s has length %le.\n", eptr->name, length);
+#endif
+      
       /* 1. Assemble the lab-frame sigma matrix Sigma in the usual (x, x', y, y', z, delta) coordinates */
       for (int i=0; i<6; i++)
 	for (int j=0; j<6; j++)
@@ -1422,7 +1457,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
        * I have extreme doubts about the calculation of Ci!
        */
       Ci = sqr(particleRadius)*(charge/particleCharge)*coulombLog/
-        (4*sqr(PI*betaGamma/gamma)*ipow(gamma,3)*eGeometric[0]*eGeometric[1]*eGeometric[2]);
+        (4*PI*ipow(gamma,3)*eGeometric[0]*eGeometric[1]*(eGeometric[2]/c_mks));
       
 #ifdef DEBUG
       printf("particleCharge = %le, charge = %le, Gamma = %le, CL = %le \n => Ci = %le\n",
@@ -1482,4 +1517,5 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
     }
     eptr = eptr->succ;
   }
+
 }
