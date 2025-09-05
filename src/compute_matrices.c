@@ -383,16 +383,16 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
 	  printf("\n");
 	}
 	fflush(stdout);
-	printf("IBS contribution:\n");
+	printf("Element %s IBS contribution:\n", member->name);
 	for (i=0; i<6; i++) {
 	  printf("D[%ld]: ", i);
 	  for (j=0; j<=i; j++)
-	    printf("%13.6e ", member->DIbs[i]);
+	    printf("%13.6e ", member->DIbs[sigmaIndex3[i][j]]);
 	  printf("\n");
 	}
 	for (i=0; i<21; i++)
 	  member->accumD[i] += member->DIbs[i];
-	printf("Element diffusion matrix with IBS:\n");
+	printf("Element %s diffusion matrix with IBS:\n", member->name);
 	for (i=0; i<6; i++) {
 	  printf("D[%ld]: ", i);
 	  for (j=0; j<=i; j++)
