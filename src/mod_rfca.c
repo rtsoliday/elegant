@@ -16,7 +16,8 @@
 #include "track.h"
 #include "SDDS.h"
 
-long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central, double zEnd) {
+long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central, double zEnd,
+			 long pass, long nPasses) {
   long ip;
   double amPhase, pmPhase;
   double P, gamma, dgamma, phase, length, volt;
@@ -170,20 +171,72 @@ long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central,
   } else
     tAve /= np;
 #endif
+
   dt = tAve - t0;
-
-  pmPhase = modrf->pmFreq * PIx2 * dt + modrf->pmPhase * PI / 180;
-  phase = PI / 180 * (modrf->phase + modrf->pmMag * sin(pmPhase) * exp(-modrf->pmDecay * dt)) + omega0 * dt;
-  if (modrf->pmMag)
-    omega = omega0 + PIx2 * modrf->pmFreq * (PI / 180 * modrf->pmMag) * cos(pmPhase);
-  else
+  if ((modrf->startTime >= 0 && tAve < modrf->startTime) || (modrf->endTime >= 0 && tAve > modrf->endTime)) {
+    pmPhase = 0;
+    phase = PI / 180 * modrf->phase + omega0 * dt;
     omega = omega0;
+    amPhase = 0;
+    volt = modrf->volt / (1e6 * particleMassMV * particleRelSign);
+  } else {
+    pmPhase = modrf->pmFreq * PIx2 * (dt-modrf->startTime) + modrf->pmPhase * PI / 180;
+    phase = PI / 180 * (modrf->phase + modrf->pmOffset +
+			modrf->pmMag * sin(pmPhase) * exp(-modrf->pmDecay * (dt-modrf->startTime)))
+			+ omega0 * dt;
+    if (modrf->pmMag)
+      omega = omega0 + PIx2 * modrf->pmFreq * (PI / 180 * modrf->pmMag) * cos(pmPhase);
+    else
+      omega = omega0;
+    amPhase = modrf->amFreq * PIx2 * (dt-modrf->startTime) + modrf->amPhase * PI / 180;
+    volt = modrf->volt / (1e6 * particleMassMV * particleRelSign) *
+      (1 + modrf->amOffset + modrf->amMag * sin(amPhase) * exp(-modrf->amDecay * (dt-modrf->startTime)));
+  }
 
-  amPhase = modrf->amFreq * PIx2 * dt + modrf->amPhase * PI / 180;
-  volt = modrf->volt / (1e6 * particleMassMV * particleRelSign) * (1 + modrf->amMag * sin(amPhase) * exp(-modrf->amDecay * dt));
+#if USE_MPI
+  if (myid==0) {
+#endif
+  if (modrf->record) {
+    if (!modrf->SDDSrec) {
+      TRACKING_CONTEXT tcon;
+      getTrackingContext(&tcon);
+      modrf->record = compose_filename(modrf->record, tcon.rootname);
+      modrf->SDDSrec = tmalloc(sizeof(*(modrf->SDDSrec)));
+      if (!SDDS_InitializeOutput(modrf->SDDSrec, SDDS_BINARY, 1, NULL, NULL, modrf->record) ||
+	  !SDDS_DefineSimpleColumn(modrf->SDDSrec, "Pass", NULL, SDDS_LONG) ||
+	  !SDDS_DefineSimpleColumn(modrf->SDDSrec, "Ct", "s", SDDS_DOUBLE) ||
+	  !SDDS_DefineSimpleColumn(modrf->SDDSrec, "Phase", "deg", SDDS_DOUBLE) ||
+	  !SDDS_DefineSimpleColumn(modrf->SDDSrec, "Voltage", "V", SDDS_DOUBLE) ||
+	  !SDDS_WriteLayout(modrf->SDDSrec)) {
+	SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+	SDDS_Bomb("problem setting up MODRF record file");
+      }
+    }
+    if (pass==0 && !SDDS_StartPage(modrf->SDDSrec, nPasses)) {
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+      SDDS_Bomb((char *)"problem starting page for MODRF record file");
+    }
+    if (!SDDS_SetRowValues(modrf->SDDSrec, SDDS_SET_BY_NAME|SDDS_PASS_BY_VALUE,
+			   pass, 
+			   (char*)"Pass", pass,
+			   (char*)"Ct", tAve,
+			   (char*)"Phase", phase*180/PI,
+			   (char*)"Voltage", volt*1e6*particleMassMV,
+			   NULL)) {
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+      SDDS_Bomb((char *)"problem setting up data for MODRF record file");
+    }
+    if ((pass%100==0 || pass==(nPasses-1)) && !SDDS_UpdatePage(modrf->SDDSrec, FLUSH_TABLE)) {
+      SDDS_Bomb((char *)"problem setting up data for TRFMODE record file");
+    }
+  }
+#if USE_MPI
+  }
+#endif
+  
   if ((tau = modrf->Q / omega0))
     volt *= sqrt(1 - exp(-dt / tau));
-
+  
   if (isSlave || !notSinglePart) {
     for (ip = 0; ip < np; ip++) {
       coord = part[ip];
