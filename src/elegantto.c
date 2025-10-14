@@ -21,12 +21,12 @@
 char *USAGE = "elegantto inputfile outputfile \n\
  { -EmmaMatlab | -patpet | -patricia | -parmela[=quad_ap(mm),sext_ap(mm),p(MeV/c)]\n\
   -transport[=quad_ap(mm),sext_ap(mm),p(GeV/c)] | -sdds=[p(GeV/c)] | [-xorbit] \n\
-  -cosy=quad_ap(mm),sext_ap(mm),p(MeV/c),order | -mad8}\n\
+  -cosy=quad_ap(mm),sext_ap(mm),p(MeV/c),order | -mad8 | -sad}\n\
  [-angle_tolerance=value] [-flip_k_signs] [-magnets=filename]\n\
  [-header=filename] [-ender=filename]\n\n\
 elegantto converts elegant's accelerator lattice format to various other formats.\n\
 N.B.: the units for various quantities are not the same for different options!.\n\
-Program by Michael Borland.  (This is Version 7, August 2023.)\n";
+Program by Michael Borland.  (This is Version 8, July 2025.)\n";
 
 #define SET_CONVERT_TO_PATRICIA 0
 #define SET_CONVERT_TO_TRANSPORT 1
@@ -42,11 +42,12 @@ Program by Michael Borland.  (This is Version 7, August 2023.)\n";
 #define SET_CONVERT_TO_EMMAMATLAB 11
 #define SET_CONVERT_TO_COSY 12
 #define SET_CONVERT_TO_MAD8 13
-#define N_OPTIONS 14
+#define SET_CONVERT_TO_SAD 14
+#define N_OPTIONS 15
 char *option[N_OPTIONS] = {
   "patricia", "transport", "parmela", "patpet", "sdds", "xorbit",
   "angle_tolerance", "flip_k_signs", "magnets", "header", "ender",
-  "emmamatlab", "cosy", "mad8"};
+  "emmamatlab", "cosy", "mad8", "sad"};
 
 #define TRANSPORT_OUTPUT 1
 #define PATRICIA_OUTPUT 2
@@ -57,8 +58,10 @@ char *option[N_OPTIONS] = {
 #define EMMAMATLAB_OUTPUT 7
 #define COSY_OUTPUT 8
 #define MAD8_OUTPUT 9
+#define SAD_OUTPUT 10
 
 void convert_to_mad8(char *outputfile, LINE_LIST *beamline, char *header_file, char *ender_file);
+void convert_to_sad(char *outputfile, LINE_LIST *beamline, char *header_file, char *ender_file);
 
 /* Needed by insertSCeffects.cc */
 long isSlave;
@@ -195,6 +198,11 @@ int main(int argc, char **argv) {
           bomb("can only convert to one format at a time", USAGE);
         output_mode = MAD8_OUTPUT;
         break;
+      case SET_CONVERT_TO_SAD:
+        if (output_mode)
+          bomb("can only convert to one format at a time", USAGE);
+        output_mode = SAD_OUTPUT;
+        break;
       default:
         bomb("unknown option given", USAGE);
         break;
@@ -278,6 +286,12 @@ int main(int argc, char **argv) {
     if (magnets)
       output_magnets(magnets, beamline->name, beamline);
     convert_to_mad8(output, beamline, header_file, ender_file);
+    break;
+  case SAD_OUTPUT:
+    beamline = get_beamline(input, NULL, p_cent / (1e6 * particleMassMV), 0, 0, NULL, NULL);
+    if (magnets)
+      output_magnets(magnets, beamline->name, beamline);
+    convert_to_sad(output, beamline, header_file, ender_file);
     break;
   default:
     bomb("internal error--unknown output mode", NULL);
