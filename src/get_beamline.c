@@ -1261,11 +1261,11 @@ void do_save_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
           }
           if (s[j = strlen(s) - 1] == ',')
             s[j] = 0;
-          print_with_continuation(fp, s, 139);
+          print_with_continuation(fp, s, 139, ',', "&");
           eptr = eptr->succ;
         } else {
           lptr = (LINE_LIST *)(object->ptr);
-          print_with_continuation(fp, lptr->definition, 139);
+          print_with_continuation(fp, lptr->definition, 139, ',', "&");
         }
       } while ((object = object->next));
 
@@ -1345,7 +1345,7 @@ void do_save_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
             }
             if (s[j = strlen(s) - 1] == ',')
               s[j] = 0;
-            print_with_continuation(fp, s, 139);
+            print_with_continuation(fp, s, 139, ',', "&");
           }
           eptr = eptr->succ;
         }
@@ -1372,7 +1372,7 @@ void do_save_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
           if (s[j = strlen(s) - 1] == ',')
             s[j] = 0;
           strcat(s, ")");
-          print_with_continuation(fp, s, 139);
+          print_with_continuation(fp, s, 139, ',', "&");
           sprintf(s, "L%04ld: LINE = (", nline);
         }
       }
@@ -1381,7 +1381,7 @@ void do_save_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
         if (s[j = strlen(s) - 1] == ',')
           s[j] = 0;
         strcat(s, ")");
-        print_with_continuation(fp, s, 139);
+        print_with_continuation(fp, s, 139, ',', "&");
       }
 
       sprintf(s, "%s: LINE = (", beamline->name);
@@ -1392,7 +1392,7 @@ void do_save_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
       if (s[j = strlen(s) - 1] == ',')
         s[j] = 0;
       strcat(s, ")");
-      print_with_continuation(fp, s, 139);
+      print_with_continuation(fp, s, 139, ',', "&");
     }
 
     if (beamline && beamline->name)
@@ -1408,7 +1408,7 @@ void do_save_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
   log_exit("do_save_lattice");
 }
 
-void print_with_continuation(FILE *fp, char *s, long endcol) {
+void print_with_continuation(FILE *fp, char *s, long endcol, char separator, char *continuationString) {
   char c, *ptr;
   long l, isContin;
 
@@ -1418,7 +1418,7 @@ void print_with_continuation(FILE *fp, char *s, long endcol) {
       fputc(' ', fp);
     if (l > endcol) {
       ptr = s + endcol - 2;
-      while (ptr != s && *ptr != ',')
+      while (ptr != s && *ptr != separator)
         ptr--;
       if (ptr == s)
         c = *(ptr = s + endcol - 1);
@@ -1428,7 +1428,7 @@ void print_with_continuation(FILE *fp, char *s, long endcol) {
       }
       *ptr = 0;
       fputs(s, fp);
-      fputs("&\n", fp);
+      fprintf(fp, "%s\n", continuationString);
       isContin = 1;
       s = ptr;
       *ptr = c;
@@ -2013,7 +2013,7 @@ void print_beamlines(FILE *fp) {
   do {
     if (object->isLine) {
       lptr = (LINE_LIST *)(object->ptr);
-      print_with_continuation(fp, lptr->definition, 139);
+      print_with_continuation(fp, lptr->definition, 139, ',', "&");
     }
   } while ((object = object->next));
 }
