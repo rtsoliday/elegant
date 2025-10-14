@@ -8,7 +8,7 @@
 %\usepackage{subfigure} 
 \usepackage{amsmath}
 \usepackage{breqn}
-\usepackage[dvips]{graphicx}
+\usepackage{graphicx}
 \pagestyle{plain}
 %\voffset=-0.75in
 \newenvironment{req}{\begin{equation} \rm}{\end{equation}}
@@ -56,15 +56,21 @@ Here is a summary of what's changed since release 2025.2  Historical change logs
 
 \subsection{New and Modified Elements}
 \begin{itemize}
-\item None.
+\item The \verb|MODRF| element (rf cavity with amplitude and phase modulation) now supports user control of the
+  modulation start and end times, as well as modulation offsets and an output file recording the voltage and
+  phase with modulation.
 \end{itemize}
 
 \subsection{New and Modified Commands}
 \begin{itemize}
+\item The \verb|moments_output| command now supports computation of intrabeam scattering effect using
+  the diffusion matrix \cite{KuboOide}.
 \item The \verb|alter_elements| command now supports a parameter called \verb|disable| that can be used to
   disable a particular instance.
 \item The \verb|insert_elements| command now supports parameters \verb|occurrence_start| and \verb|occurrence_end|,
   which provides a more convenient way to limit the insertion region.
+\item The \verb|load_parameters| command now supports a prefactor, which is applied to the parameter values before
+  assertion.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -3526,6 +3532,7 @@ assigned to the target parameter.
         long verbose = 0;
         long skip_pages = 0;
         long use_first = 0;
+        double prefactor = 1;
 &end
 \end{verbatim}
 
@@ -3637,6 +3644,9 @@ changes to parameters.
 
 \item \verb|skip_pages| --- Specify the number of pages of input to skip.
 
+\item \verb|prefactor| --- A factor by which to multiply the loaded numerical values
+  prior to use.
+  
 \end{itemize}
 
 
@@ -3855,7 +3865,8 @@ is modulated.
 
 \begin{itemize}
 \item type: action/setup command.
-\item function: compute periodic or propagate non-periodic beam moments without tracking, optionally including radiation.
+\item function: compute periodic or propagate non-periodic beam moments without tracking, optionally including radiation
+  and intrabeam scattering.
 \item sequence: must follow \verb|run_setup|.
 \item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
 \end{itemize}
@@ -3863,6 +3874,7 @@ is modulated.
 \begin{verbatim}
 &moments_output
     STRING filename = NULL;
+    STRING matrix_output = NULL;
     long output_at_each_step = 0;
     long output_before_tune_correction = 0;
     long final_values_only = 0;
@@ -3870,9 +3882,13 @@ is modulated.
     long matched = 1;
     long equilibrium = 1;
     long radiation = 1;
+    long ibs_iterations = 0;
+    long ibs_output_iterations = 0;
+    double ibs_iteration_fraction = 0.5;
+    double ibs_coulomb_log = 0;
     long n_slices = 10;
-    long tracking_based_diffusion_matrix_particles = 1000;
     long slice_etilted = 1;
+    long tracking_based_diffusion_matrix_particles = 1000;
     double emit_x = 0;
     double beta_x = 0;
     double alpha_x = 0;
@@ -3886,6 +3902,10 @@ is modulated.
     double emit_z = 0;
     double beta_z = 0;
     double alpha_z = 0;
+    STRING reference_file = NULL;
+    STRING reference_element = NULL;
+    long reference_element_occurrence = 0;
+    long reflect_reference_values = 0;
 &end
 \end{verbatim}
 
@@ -3905,6 +3925,14 @@ be output, and not the parameters as a function of s.
 \item \verb|radiation| --- A flag indicating, if set, that synchrotron radiation effects should be included.
   N.B.: this flag is all that needs to be set if the lattice contains no kick elements. However, if the lattice contains \verb|CSBEND|, \verb|CSRCSBEND|, \verb|KQUAD|, 
   or \verb|KQUAD| elements (or other elements with \verb|SYNCH_RAD| and \verb|ISR| parameters), then the \verb|SYNCH_RAD| and\verb|ISR| must be set to 1 as well.
+\item \verb|ibs_iterations|, \verb|ibs_output_iterations|, \verb|ibs_iteration_fraction|, \verb|ibs_coulomb_log| ---
+  If \verb|ibs_iterations| is non-zero, intrabeam scattering computations will be performed using the diffusion matrix \cite{KuboOide}.
+  Because IBS depends on the beam dimensions, the computation is iterative. A suggested minimum value of \verb|ibs_iterations| is
+  10. By default, the output file contains only the results of the final iteration; if \verb|ibs_output_iterations| is non-zero,
+  results are output for each iteration, which can be used to check convergence. There are several parameters in the output file
+  that can also be used, namely, \verb|e1Convergence|, \verb|e2Convergence|, and \verb|e3Convergence|, which give the fractional
+  change in the normal-mode emittances from the final step. If the Coulomb log is not positive, it will be computed using
+  the method outlined in \cite{KuboOide}.
 \item \verb|n_slices| --- The number of slices into which to cut individual dipoles, quadrupoles, and sextuoples for computations.
   10 has been found to work for all rings tested, but users are advised to ensure it is sufficient for their cases.
 \item \verb|tracking_based_diffusion_matrix_particles| --- For most elements, the diffusion matrix determined by 
@@ -11524,7 +11552,10 @@ Y.-P. Sun and C.-Y. Yao, ``Tracking With Space Harmonics in ELEGANT Code,'' Proc
   2005
 
 \bibitem{IvanyushenkovPC} Y. Ivanyushenkov, private communication.
-  
+
+\bibitem{KuboOide} K. Kubo and K. Oide, ``Intrabeam scattering in electron storage rings,''
+ Phys. Rev. ST Accel. Beams, vol. 4, no. 12, 124401, 2001.
+
 \end{thebibliography}
 
 \end{document}
