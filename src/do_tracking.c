@@ -1578,7 +1578,7 @@ long do_tracking(
                                              run, i_pass, charge);
                   break;
                 case T_MODRF:
-                  modulated_rf_cavity(coord, nToTrack, (MODRF *)eptr->p_elem, *P_central, z_travel);
+                  modulated_rf_cavity(coord, nToTrack, (MODRF *)eptr->p_elem, *P_central, z_travel, i_pass, n_passes);
                   break;
                 case T_WATCH:
 #ifdef USE_MPE
