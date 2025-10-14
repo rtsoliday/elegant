@@ -336,13 +336,15 @@ typedef struct element_list {
     VMATRIX *savedMatrix; /* saved matrix of this element */
     VMATRIX *accumMatrix; /* accumulated matrix to the end of this element */
     TWISS *twiss;         /* computed from the above matrices */
-    VMATRIX *Mld;         /* linear damping matrix (on-orbit, with trajectory ) */
+    VMATRIX *Mld0;        /* individual linear damping matix */
+    VMATRIX *Mld;         /* accumulated linear damping matrix (on-orbit, with trajectory ) */
     SIGMA_MATRIX *sigmaMatrix;
     char *part_of;     /* name of lowest-level line that this element is part of */
     struct element_list *pred, *succ;
     short ignore, firstOfDivGroup;
     double *D;            /* 21-element radiation diffusion matrix for this element */
     double *DIbs;         /* 21-element IBS diffusion matrix for this element */
+    double coulombLog;
     double *accumD;       /* accumulated radiation+IBS diffusion matrix up to end of this element */
     long divisions;    /* if element was subdivided, how many times */
 #if TURBO_STRLEN
@@ -1130,7 +1132,7 @@ extern char *entity_text[N_TYPES];
 #define N_TRFMODE_PARAMS 25
 #define N_TWMTA_PARAMS 17
 #define N_ZLONGIT_PARAMS 30
-#define N_MODRF_PARAMS 15
+#define N_MODRF_PARAMS 20
 #define N_SREFFECTS_PARAMS 15
 #define N_ZTRANSVERSE_PARAMS 39
 #define N_IBSCATTER_PARAMS 13
@@ -1501,12 +1503,14 @@ extern PARAMETER modrf_param[N_MODRF_PARAMS] ;
 typedef struct {
     double length, volt, phase, freq, Q;
     long phase_reference;
-    double amMag, amPhase, amFreq, amDecay;
-    double pmMag, pmPhase, pmFreq, pmDecay;
-    char *fiducial;
+    double amMag, amPhase, amFreq, amOffset, amDecay;
+    double pmMag, pmPhase, pmFreq, pmOffset, pmDecay;
+    double startTime, endTime;
+    char *fiducial, *record;
     /* for internal use only: */
     long fiducial_seen;
     double phase_fiducial; /* -omega0*t0 */
+    SDDS_DATASET *SDDSrec;
     } MODRF;
 
 /* names and storage structure for beam-position-monitor physical parameters */
@@ -3995,7 +3999,8 @@ extern VMATRIX *append_full_matrix(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, lo
 extern VMATRIX *accumulate_matrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long order, long full_matrix_only);
 extern void checkMatrices(char *label, ELEMENT_LIST *elem);
 extern long fill_in_matrices(ELEMENT_LIST *elem, RUN *run);
-extern VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long order, long radiation, long nSlices, long sliceEtilted);
+extern VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long order, long radiation, long nSlices, long sliceEtilted,
+                                            short ibsUpdate);
 extern long calculate_matrices(LINE_LIST *line, RUN *run);
 extern VMATRIX *drift_matrix(double length, long order);
 extern double computeUndulatorFieldFromModel(double gap, double fractionOfJc, double *C, double length, long poles, char *model);
@@ -4125,7 +4130,8 @@ extern long simple_rf_cavity(double **part, long np, RFCA *rfca, double **accept
                              double zEnd);
 extern long track_through_rfcw(double **part, long np, RFCW *rfcw, double **accepted, double *P_central, 
                                double zEnd, RUN *run, long i_pass, CHARGE *charge);
-extern long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central, double zEnd);
+extern long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central, double zEnd,
+				long iPass, long nPasses);
 extern void set_up_kicker(KICKER *kicker);
 extern void add_to_particle_energy(double *coord, double timeOfFlight, double Po, double dgamma);
 extern void identifyRfcaBodyFocusModel(void *pElem, long type, short *matrixMethod, short *useSRSModel, short *twFocusing1);
@@ -4332,7 +4338,7 @@ extern void show_elem(ELEMENT_LIST *eptr, long type);
 extern void free_elements(ELEMENT_LIST *elemlist);
 extern void free_beamlines(LINE_LIST *beamline);
 extern void do_save_lattice(NAMELIST_TEXT *nl, RUN *run, LINE_LIST *beamline);
-extern void print_with_continuation(FILE *fp, char *s, long endcol);
+extern void print_with_continuation(FILE *fp, char *s, long endcol, char separator, char *continString);
 extern void change_defined_parameter_values(char **elem_name, long *param_number, long *type, double *value, long n_elems);
 extern void change_defined_parameter_divopt(char *elem_name, long param, long elem_type, 
                                      double value, char *valueString, unsigned long mode, 
@@ -5090,7 +5096,6 @@ double KahanPlus (double oldSum, double b, double *error);
 double KahanParallel (double sum,  double error, MPI_Comm comm);
 void find_global_min_max (double *min, double *max, long np, MPI_Comm comm);
 #endif
-
 typedef struct {
   double t;
   long ip;
@@ -5106,8 +5111,6 @@ void setStartingMoments(SIGMA_MATRIX *sm,
                         double emit_y, double beta_y, double alpha_y, double eta_y, double etap_y,
                         double emit_z, double beta_z, double alpha_z);
 void propagateBeamMoments(RUN *run, LINE_LIST *beamline, double *traj);
-void dumpBeamMoments(LINE_LIST *beamline, long n_elem, long final_values_only, long tune_corrected,
-                     RUN *run, double *emittance);
 void setupMomentsOutput(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline, long *doMomentsOutput,
                         long default_order);
 void finishMomentsOutput(void);
