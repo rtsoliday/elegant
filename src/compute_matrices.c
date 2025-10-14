@@ -15,8 +15,6 @@
 #include "track.h"
 #include "matlib.h"
 
-#define DEBUG 0
-
 void InitializeCWiggler(CWIGGLER *cwiggler, char *name);
 VMATRIX *matrixFromExplicitMatrix(EMATRIX *emat, long order);
 VMATRIX *matrixForILMatrix(ILMATRIX *ilmat, long order);
@@ -279,7 +277,8 @@ VMATRIX *append_full_matrix(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long orde
   return accumulate_matrices(elem, run, M0, order, 1);
 }
 
-VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long order, long radiation, long nSlices, long sliceEtilted) {
+VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long order, long radiation, long nSlices, long sliceEtilted,
+                                     short ibsUpdate) {
   VMATRIX *M1, *M2, *Ml1, *Ml2, *tmp;
   ELEMENT_LIST *member;
   double Pref_input;
@@ -337,7 +336,8 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
     }
     if (!(member->D))
       member->D = tmalloc(21 * sizeof(*(member->D)));
-    memset(member->D, 0, 21 * sizeof(*(member->D)));
+    if (!ibsUpdate)
+      memset(member->D, 0, 21 * sizeof(*(member->D)));
     if (!(member->accumD))
       member->accumD = tmalloc(21 * sizeof(*(member->accumD)));
     memset(member->accumD, 0, 21 * sizeof(*(member->accumD)));
@@ -354,8 +354,16 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
        * the incoming trajectory with the element's matrix.
        */
       if (radiation && (IS_RADIATOR(member->type) || member->type == T_RFCA || member->type == T_TWLA)) {
-        /* Must include radiation, so do tracking */
-        determineRadiationMatrix(Ml2, run, member, M1->C, member->D, nSlices, sliceEtilted, order);
+        if (!(member->Mld0)) {
+          member->Mld0 = tmalloc(sizeof(*(member->Mld0)));
+          initialize_matrices(member->Mld0, 1);
+        }
+        if (!ibsUpdate) {
+          /* Must include radiation, so do tracking */
+          determineRadiationMatrix(Ml2, run, member, M1->C, member->D, nSlices, sliceEtilted, order);
+          copy_matrices(member->Mld0, Ml2);
+        } else
+          copy_matrices(Ml2, member->Mld0);
         memcpy(member->accumD, member->D, 21 * sizeof(*(member->D)));
       } else if (member->type == T_SREFFECTS) {
         /* Must not use the matrix for these elements, as it may double-count radiation losses */
@@ -375,6 +383,7 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
       }
       if (member->DIbs) {
 	/* Add the IBS contribution to the diffusion matrix */
+#ifdef DEBUG
 	printf("Element %s diffusion matrix without IBS:\n", member->name);
 	for (i=0; i<6; i++) {
 	  printf("D[%ld]: ", i);
@@ -390,8 +399,10 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
 	    printf("%13.6e ", member->DIbs[sigmaIndex3[i][j]]);
 	  printf("\n");
 	}
+#endif
 	for (i=0; i<21; i++)
 	  member->accumD[i] += member->DIbs[i];
+#ifdef DEBUG
 	printf("Element %s diffusion matrix with IBS:\n", member->name);
 	for (i=0; i<6; i++) {
 	  printf("D[%ld]: ", i);
@@ -400,6 +411,7 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
 	  printf("\n");
 	}
 	fflush(stdout);
+#endif
       }
       /* Step 2: Copy the C vector */
       memcpy(M2->C, Ml2->C, 6 * sizeof(*(M2->C)));
@@ -410,7 +422,7 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
           for (j = 0; j < 21; j++)
             member->accumD[i] += Ms->a[i][j] * member->pred->accumD[j];
       }
-      /*
+#ifdef DEBUG
       printf("Accumulated diffusion matrix:\n");
       for (i=0; i<6; i++) {
 	printf("D[%ld]: ", i);
@@ -419,7 +431,7 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
 	printf("\n");
       }
       fflush(stdout);
-      */
+#endif
       /* Step 5: Multiply the R matrices */
       for (i = 0; i < 6; i++)
         for (j = 0; j < 6; j++) {
