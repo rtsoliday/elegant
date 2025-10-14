@@ -38,7 +38,8 @@ static long momentsCount = 0;
 #define IC_EMITTANCE (IC_PCENTRAL + 1 + 21 + 6)
 #define IC_SBETA (IC_EMITTANCE + 3)
 #define IC_EMITBETA (IC_SBETA + 10)
-#define N_COLUMNS (IC_PCENTRAL + 1 + 21 + 6 + 3 + 10 + 2)
+#define IC_COULOMB_LOG (IC_EMITBETA+2)
+#define N_COLUMNS (IC_PCENTRAL + 1 + 21 + 6 + 3 + 10 + 2 + 1)
 static SDDS_DEFINITION column_definition[N_COLUMNS] = {
   {"ElementName", "&column name=ElementName, type=string, description=\"Element name\", format_string=%10s &end"},
   {"ElementOccurence", "&column name=ElementOccurence, type=long, description=\"Occurence of element\", format_string=%6ld &end"},
@@ -87,6 +88,7 @@ static SDDS_DEFINITION column_definition[N_COLUMNS] = {
   {"s4beta", "&column name=s4beta, symbol=\"$gs$r$b4,$gb$r$n\", type=double, description=\"sqrt(<y'*y')> (betatron)\" &end"},
   {"exbeta", "&column name=exbeta, symbol=\"$ge$r$bx,$gb$r$n\", units=m, type=double, description=\"Projected horizontal betatron emittance\" &end"},
   {"eybeta", "&column name=eybeta, symbol=\"$ge$r$by,$gb$r$n\", units=m, type=double, description=\"Projected vertical betatron emittance\" &end"},
+  {"CoulombLog", "&column name=CoulombLog, type=double, description=\"Coulomb log if IBS calculations invoked\" &end\n"},
 };
 
 #define IP_STEP 0
@@ -95,8 +97,12 @@ static SDDS_DEFINITION column_definition[N_COLUMNS] = {
 #define IP_E1 3
 #define IP_E2 4
 #define IP_E3 5
-#define IP_IBS_ITERATIONS 6
-#define IP_CHARGE 7
+#define IP_IBS_ITERATION 6
+#define IP_IBS_ITERATIONS 7
+#define IP_E1_CONVERGENCE 8
+#define IP_E2_CONVERGENCE 9
+#define IP_E3_CONVERGENCE 10
+#define IP_CHARGE 11
 #define N_PARAMETERS IP_CHARGE + 1
 static SDDS_DEFINITION parameter_definition[N_PARAMETERS] = {
   {"Step", "&parameter name=Step, type=long, description=\"Simulation step\" &end"},
@@ -105,7 +111,11 @@ static SDDS_DEFINITION parameter_definition[N_PARAMETERS] = {
   {"e1", "&parameter name=e1, symbol=\"$ge$r$b1$n\", type=double, units=m,  description=\"Emittance of mode 1\" &end"},
   {"e2", "&parameter name=e2, symbol=\"$ge$r$b2$n\", type=double, units=m,  description=\"Emittance of mode 2\" &end"},
   {"e3", "&parameter name=e3, symbol=\"$ge$r$b3$n\", type=double, units=m,  description=\"Emittance of mode 3\" &end"},
-  {"IBSIterations", "&parameter name=IBSIterations, type=short, description=\"Number of IBS iterations\" &end"},
+  {"IBSIteration", "&parameter name=IBSIteration, type=short, description=\"Number of IBS iterations performed\" &end"},
+  {"IBSIterations", "&parameter name=IBSIterations, type=short, description=\"Number of IBS iterations requested\" &end"},
+  {"e1Convergence", "&parameter name=e1Convergence, symbol=\"$gDe$r$b1$n/$ge$r$b1$n\", type=double, units=m,  description=\"Convergence for IBS for emittance of mode 1\" &end"},
+  {"e2Convergence", "&parameter name=e2Convergence, symbol=\"$gDe$r$b2$n/$ge$r$b2$n\", type=double, units=m,  description=\"Convergence for IBS for emittance of mode 2\" &end"},
+  {"e3Convergence", "&parameter name=e3Convergence, symbol=\"$gDe$r$b3$n/$ge$r$b3$n\", type=double, units=m,  description=\"Convergence for IBS for emittance of mode 3\" &end"},
   {"Charge", "&parameter name=Charge, type=double, units=C, description=\"Charge if IBS included otherwise zero.\" &end"},
 };
 
@@ -114,6 +124,7 @@ static double savedFinalCentroid[6];
 static SDDS_DATASET SDDSmatrix;
 static short matrixOutputInitialized = 0;
 void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eNatural);
+
 
 void setUpMomentsMatrixOutput(RUN *run, char *outputFilename) {
   char buffer[1024], t[1024];
@@ -224,7 +235,11 @@ void dumpBeamMoments(
                      long final_values_only,
                      long tune_corrected,
                      RUN *run,
-                     double *eNatural) {
+                     double *eNatural,
+                     double *eConvergence,
+                     long ibsIteration,
+                     long ibsIterations,
+                     double charge) {
   double data[N_COLUMNS];
   /* double *emit; */
   long j, row_count, elemCheck;
@@ -263,7 +278,8 @@ void dumpBeamMoments(
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
       }
     if (!SDDS_SetRowValues(&SDDSMoments, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row_count++,
-                           IC_ELEMENT, "_BEG_", IC_OCCURENCE, (long)1, IC_TYPE, "MARK", -1)) {
+                           IC_ELEMENT, "_BEG_", IC_OCCURENCE, (long)1, IC_TYPE, "MARK", 
+                           IC_COULOMB_LOG, elem->succ->coulombLog, -1)) {
       SDDS_SetError("Problem setting SDDS rows (dumpBeamMoments)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
@@ -282,7 +298,8 @@ void dumpBeamMoments(
         }
       if (!SDDS_SetRowValues(&SDDSMoments, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row_count,
                              IC_ELEMENT, elem->name, IC_OCCURENCE, elem->occurence,
-                             IC_TYPE, entity_name[elem->type], -1)) {
+                             IC_TYPE, entity_name[elem->type],
+                             IC_COULOMB_LOG, elem->coulombLog,  -1)) {
         SDDS_SetError("Problem setting SDDS rows (dumpBeamMoments)");
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
       }
@@ -313,7 +330,8 @@ void dumpBeamMoments(
       }
     if (!SDDS_SetRowValues(&SDDSMoments, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, 0,
                            IC_ELEMENT, elem->name, IC_OCCURENCE, elem->occurence,
-                           IC_TYPE, entity_name[elem->type], -1)) {
+                           IC_TYPE, entity_name[elem->type],
+                           IC_COULOMB_LOG, elem->coulombLog, -1)) {
       SDDS_SetError("Problem setting SDDS rows (dumpBeamMoments)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
@@ -322,7 +340,13 @@ void dumpBeamMoments(
   if (!SDDS_SetParameters(&SDDSMoments, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE,
                           IP_E1, eNatural[0],
                           IP_E2, eNatural[1],
-                          IP_E3, eNatural[2], -1)) {
+                          IP_E3, eNatural[2],
+                          IP_E1_CONVERGENCE, eConvergence[0],
+                          IP_E2_CONVERGENCE, eConvergence[1],
+                          IP_E3_CONVERGENCE, eConvergence[2],
+                          IP_IBS_ITERATION, ibsIteration+1,
+                          IP_IBS_ITERATIONS, ibsIterations,
+                          IP_CHARGE, charge, -1)) {
     SDDS_SetError("Problem setting SDDS emittance parameters (dumpBeamMoments)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
@@ -367,6 +391,8 @@ void setupMomentsOutput(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline, lo
     ELEMENT_LIST *eptr;
     short chargePresent = 0;
     eptr = beamline->elem;
+    if (ibs_iterations<5)
+      printWarning("ibs_iterations < 5", "This is not recommended.");
     while (eptr) {
       if (eptr->type == T_CHARGE) {
 	chargePresent = 1;
@@ -419,9 +445,10 @@ void finishMomentsOutput(void) {
 
 long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long tune_corrected, long writeToFile) {
   ELEMENT_LIST *eptr, *elast;
-  long n_elem, last_n_elem, i, iterationsLeft;
+  long n_elem, last_n_elem, i;
   double eNatural[3] = {0, 0, 0};
-  double charge = 0;
+  double eNaturalPrev[3], eConvergence[3]={0,0,0};
+  double charge = 0, charge0 = 0;
   
 #ifdef DEBUG
   printf("now in runMomentsOutput\n");
@@ -434,6 +461,9 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
   if (tune_corrected == 0 && !output_before_tune_correction)
     return 1;
 
+  if (ibs_iterations && (ibs_coulomb_log<=0 && !(beamline->radIntegrals.computed)))
+    bombElegant("IBS computations requested in moments_output, but Coulomb log is zero and radiation integrals were not computed in twiss_output", NULL);
+                
   /* Computations will start at the beginning of the beamline, or at the
    * first recirculation element
    */
@@ -441,7 +471,7 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
   n_elem = last_n_elem = beamline->n_elems;
   while (eptr) {
     if (eptr->type == T_CHARGE)
-      charge = ((CHARGE*)(eptr->p_elem))->charge;
+      charge0 = ((CHARGE*)(eptr->p_elem))->charge;
     if (eptr->type == T_RECIRC) {
       last_n_elem = n_elem;
       beamline->elem_twiss = beamline->elem_recirc = eptr;
@@ -458,12 +488,13 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
     if (!ibs_iterations)
       printf("\nPerforming beam moments computation.\n");
     else
-      printf("\nPerforming beam moments computation including IBS with total charge of %le C per bunch.\n", charge);
+      printf("\nPerforming beam moments computation including IBS with total charge of %le C per bunch.\n", charge0);
     fflush(stdout);
   }
 
-  iterationsLeft = ibs_iterations + 1;
-  while (iterationsLeft--) {
+  for (int iteration=0; (ibs_iterations==0 && iteration==0) || (ibs_iterations>0 && iteration<ibs_iterations); iteration++) {
+    if (verbosity>1 && ibs_iterations)
+      report_stats(stdout, "Performing ibs iteration: ");
     if (beamline->Mld) {
       free_matrices(beamline->Mld);
       free(beamline->Mld);
@@ -486,7 +517,7 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
 	       startingCoord[3],
 	       startingCoord[4],
 	       startingCoord[5]);
-      beamline->Mld = accumulateRadiationMatrices(beamline->elem_twiss, run, M1, 1, radiation, n_slices, slice_etilted);
+      beamline->Mld = accumulateRadiationMatrices(beamline->elem_twiss, run, M1, 1, radiation, n_slices, slice_etilted, iteration);
       free_matrices(M1);
       free(M1);
       M1 = NULL;
@@ -495,7 +526,7 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
 	printf("Computing matrix without starting coordinates\n");
 	fflush(stdout);
       }
-      beamline->Mld = accumulateRadiationMatrices(beamline->elem_twiss, run, NULL, 1, radiation, n_slices, slice_etilted);
+      beamline->Mld = accumulateRadiationMatrices(beamline->elem_twiss, run, NULL, 1, radiation, n_slices, slice_etilted, iteration);
     }
     
     if (verbosity > 0) {
@@ -517,6 +548,10 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
       outputMomentsMatrices(beamline->Mld, beamline->elast->accumD);
 
     if (equilibrium) {
+      if (verbosity > 1) {
+        printf("Computing equilibrium moments\n");
+        fflush(stdout);
+      }
       /* Compute equilibrium moments */
       determineEquilibriumMoments(beamline->Mld->R, beamline->elast->accumD, beamline->sigmaMatrix0);
     } else {
@@ -558,24 +593,52 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
 	  printf("%13.6e%c", elast->sigmaMatrix->sigma[sigmaIndex3[i][j]], j == 5 ? '\n' : ' ');
       fflush(stdout);
     }
-    
+
+    // set eNaturalPrev to the value of eNatural on the previous iteration
+    eNaturalPrev[0] = eNatural[0];
+    eNaturalPrev[1] = eNatural[1];
+    eNaturalPrev[2] = eNatural[2];
     if (equilibrium) {
       if (verbosity>1) {
         printf("Computing natural emittances\n");
         fflush(stdout);
       }
       computeNaturalEmittances(beamline->Mld, beamline->sigmaMatrix0->sigma, eNatural);
+      if (verbosity>1) {
+        printf("e1 = %le, e2 = %le, e3 = %le\n", eNatural[0], eNatural[1], eNatural[2]);
+        fflush(stdout);
+      }
     }
     if (ibs_iterations) {
+      if (iteration==0) {
+        eNaturalPrev[0] = eNatural[0];
+        eNaturalPrev[1] = eNatural[1];
+        eNaturalPrev[2] = eNatural[2];	// for first iteration set the two to be equal
+      }
+      for (int i=0; i<3; i++)
+        eConvergence[i] = fabs(eNaturalPrev[i]-eNatural[i])/eNatural[i];
+    }
+    if (ibs_iterations && iteration!=(ibs_iterations-1)) {
+      if (iteration>=(ibs_iterations-3)) {
+        charge = charge0;
+      } else {
+        // slowly change charge and emittance used to compute ibs to aid convergence
+        charge = charge*(1-ibs_iteration_fraction) + charge0*ibs_iteration_fraction;
+        eNatural[0] = eNatural[0]*(1.0 - ibs_iteration_fraction) + eNaturalPrev[0]*ibs_iteration_fraction;
+        eNatural[1] = eNatural[1]*(1.0 - ibs_iteration_fraction) + eNaturalPrev[1]*ibs_iteration_fraction;
+        eNatural[2] = eNatural[2]*(1.0 - ibs_iteration_fraction) + eNaturalPrev[2]*ibs_iteration_fraction;
+      }
       if (verbosity>1) {
-        printf("Computing IBS scattering matrices\n");
+        printf("Computing IBS scattering matrices for q=%le C\n",charge);
         fflush(stdout);
       }
       updateIbsScatteringMatrices(beamline, charge, eNatural);
     }
     
-    if (SDDSMomentsInitialized && writeToFile)
-      dumpBeamMoments(beamline, n_elem, final_values_only, tune_corrected, run, eNatural);
+    if (SDDSMomentsInitialized && writeToFile &&
+        (!ibs_iterations || ibs_output_iterations || (!ibs_output_iterations && iteration==(ibs_iterations-1))))
+      dumpBeamMoments(beamline, n_elem, final_values_only, tune_corrected, run, eNatural, eConvergence,
+                      iteration, ibs_iterations, charge0);
     
     if (beamline->elem->sigmaMatrix) {
       for (i = 0; i < 6; i++) {
@@ -586,6 +649,9 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
       }
     }
   }
+
+  if (verbosity>1 && ibs_iterations)
+    report_stats(stdout, "Finished ibs iterations: ");
 
 #ifdef DEBUG
   eptr = beamline->elem_twiss;
@@ -1325,18 +1391,20 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
 {
 
   ELEMENT_LIST *eptr;
-  double coulombLog = 15; /* use this "typical" value afor now */
+  double coulombLog;
   double Ci, betaGamma, gamma, p0;
-  double u[3], g[3], dw2dts[3], length, duration, eigVal[3], Gamma;
+  double g[3], dw2dts[3], length, duration, eigVal[3], u[3];
   int i, j;
   static short initialized = 0;
-  static MATRIX *Sigma, *Cp, *C, *D, *Dt, *G, *ToMom, *Boost, *DeBoost, *F, *dppdt, *dppdtLab, *temp6x6, *temp3x3, *dw2dt;
+  static MATRIX *Sigma, *Cp, *C, *D, *Dt, *ToMom, *Boost, *DeBoost, *F, *dppdt, *dppdtLab, *temp6x6, *temp3x3, *dw2dt,
+    *xyzSigma;
   static double *diagElements;
   eptr = beamline->elem_twiss;
 
   if (!initialized) {
     initialized = 1;
     m_alloc(&Sigma, 6, 6);
+    m_alloc(&xyzSigma, 6, 6);
     m_alloc(&Cp, 6, 6);
     m_alloc(&C, 6, 6);
     m_alloc(&ToMom, 6, 6);
@@ -1346,7 +1414,6 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
     m_alloc(&D, 3, 3);
     m_alloc(&Dt, 3, 3);
     m_alloc(&F, 3, 3);
-    m_alloc(&G, 3, 3);
     m_alloc(&dw2dt, 3, 3);
     m_alloc(&dppdt, 3, 3);
     m_alloc(&dppdtLab, 3, 3);
@@ -1359,6 +1426,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
 #ifdef DEBUG
     printf("Working on %s\n", eptr->name);
 #endif
+    eptr->coulombLog = -1;
     if (!eptr->DIbs) {
       eptr->DIbs = malloc(sizeof(*eptr->DIbs)*21);
 #ifdef DEBUG
@@ -1371,6 +1439,8 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       printf("Element %s has zero length.\n", eptr->name);
 #endif
       memset(eptr->DIbs, 0, 21*sizeof(*eptr->DIbs));
+      if (eptr->pred)
+        eptr->coulombLog = eptr->pred->coulombLog;
     } else {
       /* Assume for now that the beam properties at the end of an element are representative of those throughout the element.
 	 This needs to be re-examined for elements (e.g., LGBEND, CCBEND) that can't be split.
@@ -1418,11 +1488,6 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
 #ifdef DEBUG
       m_show(C, "%13.6e ", "C:\n", stdout);
 #endif
-      /* phase-space volume in the comoving frame */
-      Gamma = sqrt(m_det(C))*ipow(PIx2,3);
-#ifdef DEBUG
-      printf("Gamma = %le\n", Gamma);
-#endif
       
       /* 4. Compute the 3x3 momentum moments matrix conditional on locality using the Schur-complement identity
 	 F = C[pp] - C[px] Inv(C[xx]) C[xp]
@@ -1433,37 +1498,65 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       m_show(F, "%13.6e ", "F:\n", stdout);
 #endif
       
-      /* 5. Find matrix D (K&O call this matrix R) to diagonalize F */
-      diagonalization_matrix_3x3(F, eigVal, D, 0);
+      /* 5. Find matrix D (K&O call this matrix R) to diagonalize F. We'll need D and Trans(D) later,
+       * and the eigenvalues immediately.
+       */
+      diagonalization_matrix_3x3(F, u, D, 0);
+      m_trans(Dt, D);
 #ifdef DEBUG
       m_show(D, "%13.6e ", "D:\n", stdout);
 #endif
 
-      /* 6. Diagonalize F: G=D*F*Trans(D) */
-      m_mult(temp3x3, D, F);
-      m_trans(Dt, D);
-      m_mult(G, temp3x3, Dt);
-#ifdef DEBUG
-      m_show(G, "%13.6e ", "G:\n", stdout);
-#endif
-      
-      /* 7. Compute g[i] integrals (Eq. 70 from K&O). These depend on the diagonal elements of G */
-      for (i=0; i<3; i++)
-	u[i] = G->a[i][i];
+      /* 6. Compute g[i] integrals (Eq. 70 from K&O). These depend on the diagonal elements of G, which
+       * are just the eigenvalues of F 
+       */
       for (i=0; i<3; i++)
 	g[i] = compute_gi(i, u);
-      
-      /* 8. Compute d<wi^2>/dt for i=1,2,3 (Eq. 65) .
-       * I have extreme doubts about the calculation of Ci!
-       */
-      Ci = sqr(particleRadius)*(charge/particleCharge)*coulombLog/
-        (4*PI*ipow(gamma,3)*eGeometric[0]*eGeometric[1]*(eGeometric[2]/c_mks));
+
+      if (ibs_coulomb_log>0) {
+        coulombLog = ibs_coulomb_log;
+      } else {
+        double meanDensity, bMax, bMin1, bMin2, bMin, v, tau;
+        /* 6.5 Compute the Coulomb log */
+        /* First, compute bMax */
+        /* form the spatial sigma matrix in the co-moving frame */
+        /* printf("Coulomb log calculation:\n"); */
+        for (i=0; i<6; i+=2)
+          for (j=0; j<6; j+=2)
+            xyzSigma->a[i/2][j/2] = C->a[i][j];
+        /* compute the eigenvalues */
+        diagonalization_matrix_3x3(xyzSigma, eigVal, temp3x3, 0);
+        /* printf("eigenvalues %le, %le %le\n", eigVal[0], eigVal[1], eigVal[2]); */
+        /* mean particle meanDensity */
+        meanDensity = charge/particleCharge/8/sqrt(ipow(PI,3)*eigVal[0]*eigVal[1]*eigVal[2]);
+        /* printf("meanDensity = %le\n", meanDensity); */
+        /* K&O Eq. 78 */
+        bMax = min_double(4, sqrt(eigVal[0]), sqrt(eigVal[1]), sqrt(eigVal[2]), pow(meanDensity, -1./3.));
+        /* printf("bMax = %le\n", bMax); */
+        /* Second, compute bMin */
+        /* maxmium of damping times in co-moving frame */
+        tau = max_double(3, beamline->radIntegrals.taux, beamline->radIntegrals.tauy, beamline->radIntegrals.taudelta)/gamma;
+        /* printf("tau = %le\n", tau); */
+        /* typical velocity */
+        v = sqrt(u[0]+u[1]+u[2])/me_mks;
+        bMin1 = 1/sqrt(PI*meanDensity*v*tau);
+        bMin2 = sqrt(2)*particleRadius*sqr(particleMass*c_mks)/(u[0]+u[1]+u[2]);
+        /* printf("v = %le, bMin1 = %le, bMin2 = %le\n", v, bMin1, bMin2); */
+        bMin = max_double(2, bMin1, bMin2);
+        /* printf("bMin = %le\n", bMin); */
+        coulombLog = log(bMax/bMin);
+      }
+      /* printf("Coulomb log = %le\n", coulombLog); */
+      eptr->coulombLog = coulombLog;
       
 #ifdef DEBUG
       printf("particleCharge = %le, charge = %le, Gamma = %le, CL = %le \n => Ci = %le\n",
 	     particleCharge, charge,  Gamma, coulombLog, Ci);
 #endif
       
+      /* 7. Compute d<wi^2>/dt for i=1,2,3 (Eq. 65) */
+      Ci = sqr(particleRadius)*(charge/particleCharge)*coulombLog/
+        (4*PI*ipow(gamma,3)*eGeometric[0]*eGeometric[1]*(eGeometric[2]/c_mks));
       dw2dts[0] = Ci*((g[1] - g[0]) + (g[2] - g[0]));
       dw2dts[1] = Ci*((g[0] - g[1]) + (g[2] - g[1]));
       dw2dts[2] = Ci*((g[0] - g[2]) + (g[1] - g[2]));
@@ -1472,7 +1565,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       m_show(dw2dt, "%13.6e ", "d<w2>/dt:\n", stdout);
 #endif
       
-      /* 9. Compute d<pi*pj>/dt for i=1,2,3 j=1,2,3 (Eq. 71)
+      /* 8. Compute d<pi*pj>/dt for i=1,2,3 j=1,2,3 (Eq. 71)
        * d<pi*pj>/dt = D*d<w^2>/dt*Trans(D)
        */
       m_mult(temp3x3, D, dw2dt);
@@ -1481,7 +1574,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       m_show(dppdt, "%13.6e ", "d<pi*pj>/dt:\n", stdout);
 #endif
 
-      /* 10. Transform d<pi*pj>/dt to lab frame. 
+      /* 9. Transform d<pi*pj>/dt to lab frame. 
        * (d<pi*pj>/dt)Lab = (M d<pi*pj>/dt Trans(M))/gamma
        */
       memset(diagElements, 0, 6*sizeof(*diagElements));
@@ -1496,8 +1589,9 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       m_show(dppdtLab, "%13.6e ", "d<pi*pj>/dt(Lab):\n", stdout);
 #endif
 
-      /* 11. Compute change over element length and assign to IBS diffusion matrix */
-      duration = length/(c_mks*betaGamma/gamma);
+      /* 10. Compute change over element length and assign to IBS diffusion matrix */
+      /* Also, convert p^2 to x', y', delta */
+      duration = length/(c_mks*betaGamma/gamma)/sqr(betaGamma*me_mks*c_mks);
 #ifdef DEBUG
       printf("duration = %le s\n", duration);
 #endif
@@ -1518,4 +1612,11 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
     eptr = eptr->succ;
   }
 
+  /* Supply CL values for initial zero-length elements, if any */
+  eptr = beamline->elem_twiss;
+  while (eptr && eptr->coulombLog<=0) {
+    eptr->coulombLog = coulombLog;
+    eptr = eptr->succ;
+  }
 }
+
