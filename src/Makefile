@@ -218,7 +218,7 @@ CFLAGS +=  -I$(SDDS_REPO)/include -I$(OBJ_DIR) -DIEEE_MATH -DMINIMIZE_MEMORY -DU
 CCFLAGS +=  -I$(SDDS_REPO)/include -I$(OBJ_DIR) -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\"
 
 ifeq ($(MDEBUG),1)
-  CFLAGS += -DMPI_DEBUG=1 -Og
+  CFLAGS += -DMPI_DEBUG=1 -Og 
   CCFLAGS += -DMPI_DEBUG=1 -Og
 endif
 
@@ -248,6 +248,12 @@ endif
 
 ifeq ($(MDEBUG),1)
   LDFLAGS += -g
+endif
+
+ifeq ($(MPROFILE),1)
+  CFLAGS += -g -pg 
+  CCFLAGS += -g -pg 
+  LDFLAGS += -g -pg
 endif
 
 include ../Makefile.build
