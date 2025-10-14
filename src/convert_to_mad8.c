@@ -1,4 +1,4 @@
-/*************************************************************************\
+/************************************************************************* \
 * Copyright (c) 2017 The University of Chicago, as Operator of Argonne
 * National Laboratory.
 * Copyright (c) 2017 The Regents of the University of California, as
@@ -6,6 +6,8 @@
 * This file is distributed subject to a Software License Agreement found
 * in the file LICENSE that is included with this distribution. 
 \*************************************************************************/
+
+/* also contains convert_to_sad() */
 
 #include "mdb.h"
 #include "madto.h"
@@ -145,7 +147,7 @@ void convert_to_mad8(char *outputfile, LINE_LIST *beamline, char *header_file, c
         sprintf(s, "%s: MARK", name);
         break;
       }
-      print_with_continuation(fp, s, 79);
+      print_with_continuation(fp, s, 79, ',', "&");
       s[0] = 0;
     }
     eptr = eptr->succ;
@@ -168,7 +170,7 @@ void convert_to_mad8(char *outputfile, LINE_LIST *beamline, char *header_file, c
     count++;
     if (count == 100) {
       strcat(s, ")");
-      print_with_continuation(fp, s, 79);
+      print_with_continuation(fp, s, 79, ',', "&");
       s[0] = 0;
       count = 0;
     }
@@ -176,7 +178,7 @@ void convert_to_mad8(char *outputfile, LINE_LIST *beamline, char *header_file, c
   }
   if (count) {
     strcat(s, ")");
-    print_with_continuation(fp, s, 79);
+    print_with_continuation(fp, s, 79, ',', "&");
     s[0] = 0;
     count = 0;
   }
@@ -192,7 +194,188 @@ void convert_to_mad8(char *outputfile, LINE_LIST *beamline, char *header_file, c
     }
   }
   strcat(s, ")");
-  print_with_continuation(fp, s, 79);
+  print_with_continuation(fp, s, 79, ',', "&");
+
+  if (ender_file) {
+    fpi = fopen_e(ender_file, "r", 1);
+    while (fgets(s, 256, fpi))
+      fputs(s, fp);
+    fclose(fpi);
+  }
+}
+
+void convert_to_sad(char *outputfile, LINE_LIST *beamline, char *header_file, char *ender_file) {
+  ELEMENT_LIST *eptr;
+  QUAD *quad;
+  KQUAD *kquad;
+  SEXT *sext;
+  KSEXT *ksext;
+  BEND *bend;
+  DRIFT *drift;
+  EDRIFT *edrift;
+  CSBEND *csbend;
+  CSRCSBEND *csrbend;
+  CSRDRIFT *csrdrift;
+  HCOR *hcor;
+  VCOR *vcor;
+  HVCOR *hvcor;
+  EHCOR *ehcor;
+  EVCOR *evcor;
+  EHVCOR *ehvcor;
+  FILE *fpi, *fp;
+  char s[32768], buffer[32768], name[1024];
+  htab *hash_table;
+  long count, lcount;
+
+  fp = fopen_e(outputfile, "w", 0);
+
+  hash_table = hcreate(12); /* create a hash table with the size of 2^12, it can grow automatically if necessary */
+
+  if (header_file) {
+    fpi = fopen_e(header_file, "r", 1);
+    while (fgets(s, 256, fpi))
+      fputs(s, fp);
+    fclose(fpi);
+  }
+
+  eptr = beamline->elem;
+  count = 0;
+  while (eptr) {
+    strcpy(name, eptr->name);
+    replace_chars(name, ":.", "CD");
+    if (hadd(hash_table, (unsigned char*)name, strlen(name), NULL) == TRUE) {
+      switch (eptr->type) {
+      case T_QUAD:
+        quad = (QUAD *)eptr->p_elem;
+        sprintf(s, "QUAD    %8s = (L=%.15g K1=%.15g ROTATE=%.15g )",
+                name, quad->length, quad->k1*quad->length, quad->tilt);
+        break;
+      case T_KQUAD:
+        kquad = (KQUAD *)eptr->p_elem;
+        sprintf(s, "QUAD    %8s = (L=%.15g K1=%.15g ROTATE=%.15g )",
+                name, kquad->length, kquad->k1*kquad->length, kquad->tilt);
+        break;
+      case T_SBEN:
+        bend = (BEND *)eptr->p_elem;
+        sprintf(s, "BEND    %8s = (L=%.15g ANGLE=%.15g K1=%.15g E1=%.15g E2=%.15g ROTATE=%.15g )",
+                name, bend->length, bend->angle, bend->k1*bend->length, bend->e[0]/bend->angle,
+                bend->e[1]/bend->angle, bend->tilt);
+        break;
+      case T_CSBEND:
+        csbend = (CSBEND *)eptr->p_elem;
+        sprintf(s, "BEND    %8s = (L=%.15g ANGLE=%.15g K1=%.15g E1=%.15g E2=%.15g ROTATE=%.15g )",
+                name, csbend->length, csbend->angle, csbend->k1*csbend->length, csbend->e[0]/csbend->angle,
+                csbend->e[1]/csbend->angle, csbend->tilt);
+        break;
+      case T_CSRCSBEND:
+        csrbend = (CSRCSBEND *)eptr->p_elem;
+        sprintf(s, "BEND    %8s = (L=%.15g ANGLE=%.15g K1=%.15g E1=%.15g E2=%.15g ROTATE=%.15g )",
+                name, csrbend->length, csrbend->angle, csrbend->k1*csrbend->length, csrbend->e[0]/csrbend->angle,
+                csrbend->e[1]/csrbend->angle, csrbend->tilt);
+        break;
+      case T_DRIF:
+        drift = (DRIFT *)eptr->p_elem;
+        sprintf(s, "DRIFT   %8s = (L=%.15g )", name, drift->length);
+        break;
+      case T_EDRIFT:
+        edrift = (EDRIFT *)eptr->p_elem;
+        sprintf(s, "DRIFT   %8s = (L=%.15g )", name, edrift->length);
+        break;
+      case T_CSRDRIFT:
+        csrdrift = (CSRDRIFT *)eptr->p_elem;
+        sprintf(s, "DRIFT   %8s = (L=%.15g )", name, csrdrift->length);
+        break;
+      case T_SEXT:
+        sext = (SEXT *)eptr->p_elem;
+        sprintf(s, "SEXT    %8s = (L=%.15g K2=%.15g ROTATE=%.15g )",
+                name, sext->length, sext->k2*sext->length, sext->tilt);
+        break;
+      case T_KSEXT:
+        ksext = (KSEXT *)eptr->p_elem;
+        sprintf(s, "SEXT    %8s = (L=%.15g K2=%.15g ROTATE=%.15g )",
+                name, ksext->length, ksext->k2*ksext->length, ksext->tilt);
+        break;
+      case T_HCOR:
+        hcor = (HCOR *)eptr->p_elem;
+        sprintf(s, "DRIFT   %8s = (L=%.15g )", name, hcor->length);
+        break;
+      case T_VCOR:
+        vcor = (VCOR *)eptr->p_elem;
+        sprintf(s, "DRIFT   %8s = (L=%.15g )", name, vcor->length);
+        break;
+      case T_HVCOR:
+        hvcor = (HVCOR *)eptr->p_elem;
+        sprintf(s, "DRIFT   %8s = (L=%.15g )", name, hvcor->length);
+        break;
+      case T_EHCOR:
+        ehcor = (EHCOR *)eptr->p_elem;
+        sprintf(s, "DRIFT   %8s = (L=%.15g )", name, ehcor->length);
+        break;
+      case T_EVCOR:
+        evcor = (EVCOR *)eptr->p_elem;
+        sprintf(s, "DRIFT   %8s = (L=%.15g )", name, evcor->length);
+        break;
+      case T_EHVCOR:
+        ehvcor = (EHVCOR *)eptr->p_elem;
+        sprintf(s, "DRIFT   %8s = (L=%.15g )", name, ehvcor->length);
+        break;
+      case T_MARK:
+        sprintf(s, "MARK    %8s", name);
+        break;
+      default:
+        fprintf(stderr, "warning: entity type %s not implemented---translated to MARK\n",
+                entity_name[eptr->type]);
+        sprintf(s, "MARK    %8s", name);
+        break;
+      }
+      str_toupper(s);
+      print_with_continuation(fp, s, 79, ' ', "");
+      s[0] = 0;
+    }
+    eptr = eptr->succ;
+    count++;
+  }
+
+  lcount = 1;
+  eptr = beamline->elem;
+  s[0] = 0;
+  count = 0;
+  while (eptr) {
+    strcpy(name, eptr->name);
+    replace_chars(name, ":.", "CD");
+    if (s[0] == 0) {
+      sprintf(s, "LINE   BL%04ld = (%s", lcount++, name);
+    } else {
+      strcat(s, " ");
+      strcat(s, name);
+    }
+    count++;
+    if (count == 100) {
+      strcat(s, " )");
+      print_with_continuation(fp, s, 79, ' ', "");
+      s[0] = 0;
+      count = 0;
+    }
+    eptr = eptr->succ;
+  }
+  if (count) {
+    strcat(s, ")");
+    print_with_continuation(fp, s, 79, ' ', "");
+    s[0] = 0;
+    count = 0;
+  }
+
+  s[0] = 0;
+  for (count = 1; count < lcount; count++) {
+    if (count == 1)
+      sprintf(s, "LINE    BALL = (BL%04ld ", count);
+    else {
+      sprintf(buffer, " BL%04ld", count);
+      strcat(s, buffer);
+    }
+  }
+  strcat(s, ")");
+  print_with_continuation(fp, s, 79, ' ', "");
 
   if (ender_file) {
     fpi = fopen_e(ender_file, "r", 1);
