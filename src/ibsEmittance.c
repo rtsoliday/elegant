@@ -512,37 +512,40 @@ int main(int argc, char **argv) {
      */
   SDDS_ReadPage(&twissPage);
   /* parameter Type */
-  switch (SDDS_CheckParameter(&twissPage, "I1", NULL, SDDS_DOUBLE, verbosity ? stdout : NULL)) {
-  case SDDS_CHECK_NONEXISTENT:
-    if (verbosity)
-      fprintf(stdout, "\tParameter I1 not found in input file.\n");
-    break;
-  case SDDS_CHECK_WRONGTYPE:
-    SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
-    exitElegant(1);
-    break;
-  case SDDS_CHECK_OKAY:
-    break;
-  default:
-    fprintf(stdout, "Unexpected result from SDDS_CheckParameter routine while checking parameter Type.\n");
-    SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
-    exitElegant(1);
-    break;
+  if (isRing) {
+    switch (SDDS_CheckParameter(&twissPage, "I1", NULL, SDDS_DOUBLE, verbosity ? stdout : NULL)) {
+    case SDDS_CHECK_NONEXISTENT:
+      if (verbosity)
+	fprintf(stdout, "\tParameter I1 not found in input file.\n");
+      break;
+    case SDDS_CHECK_WRONGTYPE:
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+      exitElegant(1);
+      break;
+    case SDDS_CHECK_OKAY:
+      break;
+    default:
+      fprintf(stdout, "Unexpected result from SDDS_CheckParameter routine while checking parameter Type.\n");
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+      exitElegant(1);
+      break;
+    }
   }
   if (verbosity)
     fprintf(stdout, "Opening \"%s\" for writing...\n", outputfile);
   if (!SDDS_InitializeOutput(&resultsPage, SDDS_BINARY, 1, "Intra-beam scattering rates",
-                             "Intra-beam scattering rates", outputfile))
+                             "Intra-beam scattering rates", outputfile) ||
+      !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "pCentral", NULL))
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
-  if (!SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "I1", NULL) ||
-      !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "I2", NULL) ||
-      !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "I3", NULL) ||
-      !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "I4", NULL) ||
-      !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "I5", NULL) ||
-      !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "pCentral", NULL) ||
-      !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "taux", NULL) ||
-      !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "tauy", NULL) ||
-      !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "taudelta", NULL))
+  if (isRing && 
+      (!SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "I1", NULL) ||
+       !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "I2", NULL) ||
+       !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "I3", NULL) ||
+       !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "I4", NULL) ||
+       !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "I5", NULL) ||
+       !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "taux", NULL) ||
+       !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "tauy", NULL) ||
+       !SDDS_TransferParameterDefinition(&resultsPage, &twissPage, "taudelta", NULL)))
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
 
   if (0 > SDDS_DefineParameter(&resultsPage, "Superperiods", NULL, NULL, "Superperiods", NULL, SDDS_LONG, NULL) ||
@@ -673,17 +676,23 @@ int main(int argc, char **argv) {
   while (SDDS_ReadPage(&twissPage) > 0) {
     if (!SDDS_GetParameters(&twissPage,
                             "pCentral", &pCentral0,
-                            "I1", &I1,
-                            "I2", &I2,
-                            "I3", &I3,
-                            "I4", &I4,
-                            "I5", &I5,
-                            "taux", &taux,
-                            "tauy", &tauy,
-                            "taudelta", &taudelta,
-                            "alphac", &alphac,
-                            "U0", &U0,
                             NULL))
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    I1 = I2 = I3 = I4 = I5 = 0;
+    taux = tauy = taudelta = 1;
+    alphac = U0 = 0;
+    if (isRing && !SDDS_GetParameters(&twissPage,
+				      "I1", &I1,
+				      "I2", &I2,
+				      "I3", &I3,
+				      "I4", &I4,
+				      "I5", &I5,
+				      "taux", &taux,
+				      "tauy", &tauy,
+				      "taudelta", &taudelta,
+				      "alphac", &alphac,
+				      "U0", &U0,
+				      NULL))
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     EMeV = sqrt(sqr(pCentral0) + 1) * me_mev;
     elements = SDDS_CountRowsOfInterest(&twissPage);
@@ -719,10 +728,12 @@ int main(int argc, char **argv) {
        zibs requires to internally calculate the quantum excitation.
        (zibs doesn't use the radiation integrals but should!) 
        */
-    if (!emitx0)
-      emitx0 = 55.0 / (32. * sqrt(3.)) * hbar_mks * sqr(pCentral0) / (me_mks * c_mks) * I5 / (I2 - I4);
-    if (!sigmaDelta0)
-      sigmaDelta0 = sqrt(55.0 / (32. * sqrt(3.)) * hbar_mks * sqr(pCentral0) / (me_mks * c_mks) * I3 / (2 * I2 + I4));
+    if (isRing) {
+      if (!emitx0)
+	emitx0 = 55.0 / (32. * sqrt(3.)) * hbar_mks * sqr(pCentral0) / (me_mks * c_mks) * I5 / (I2 - I4);
+      if (!sigmaDelta0)
+	sigmaDelta0 = sqrt(55.0 / (32. * sqrt(3.)) * hbar_mks * sqr(pCentral0) / (me_mks * c_mks) * I3 / (2 * I2 + I4));
+    }
     /* use unperturbed quantities in no input supplied. */
     if (!sigmaDeltaInput)
       sigmaDeltaInput = sigmaDelta0;
@@ -902,14 +913,6 @@ int main(int argc, char **argv) {
         !SDDS_SetParameters(&resultsPage, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                             "Convergence", converged ? "Emittance converged" : "Emittance did not converge",
                             "pCentral", pCentral0, "RfVoltage", rfVoltage,
-                            "I1", I1,
-                            "I2", I2,
-                            "I3", I3,
-                            "I4", I4,
-                            "I5", I5,
-                            "taux", taux,
-                            "tauy", tauy,
-                            "taudelta", taudelta,
                             "Energy", EMeV,
                             "Particles", particles,
                             "Charge", (1e9 * charge),
@@ -924,6 +927,16 @@ int main(int argc, char **argv) {
                             "sigmaDeltaInput", sigmaDeltaInput,
                             "sigmaDelta0", sigmaDelta0,
                             "sigmaz0", sigmaz0, NULL) ||
+        (isRing &&
+	 !SDDS_SetParameters(&resultsPage, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
+                            "I1", I1,
+                            "I2", I2,
+                            "I3", I3,
+                            "I4", I4,
+                            "I5", I5,
+                            "taux", taux,
+                            "tauy", tauy,
+			     "taudelta", taudelta)) ||
         (!growthRatesOnly &&
          !SDDS_SetParameters(&resultsPage, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                              "xGrowthRate", xGrowthRate,
