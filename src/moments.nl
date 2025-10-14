@@ -16,6 +16,9 @@
     long equilibrium = 1;
     long radiation = 1;
     long ibs_iterations = 0;
+    long ibs_output_iterations = 0;
+    double ibs_iteration_fraction = 0.5;
+    double ibs_coulomb_log = 0;
     long n_slices = 10;
     long slice_etilted = 1;
     long tracking_based_diffusion_matrix_particles = 1000;
