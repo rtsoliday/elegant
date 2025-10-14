@@ -49,6 +49,7 @@ typedef struct {
   ELEMENT_LIST **element;
   long *element_flags;
   long values;
+  double prefactor;          /* multiply values by this factor before using */
 } LOAD_PARAMETERS;
 
 /* variables to store and manage load_parameters requests */
@@ -434,7 +435,10 @@ long do_load_parameters(LINE_LIST *beamline, long change_definitions, char *scri
       parameter = element = NULL; /* suppress compiler warning */
       exitElegant(1);
     }
-
+    if (value && prefactor!=1)
+      for (j=0; j<rows; j++)
+        value[j] *= prefactor;
+    
     occurence = NULL;
     if (!(load_request[i].flags & COMMAND_FLAG_IGNORE_OCCURENCE)) {
       if (verbose)
@@ -463,6 +467,7 @@ long do_load_parameters(LINE_LIST *beamline, long change_definitions, char *scri
     lastMissingOccurence = 0;
     for (j = 0; j < rows; j++) {
       char warningText[16384];
+      
       /* If the user gives the use_first flag, then we load only the first instance for
        * any parameter.   If occurence data is present, then we load the first instance
        * for each occurence.  Otherwise, we load the first instance ignoring occurrence
