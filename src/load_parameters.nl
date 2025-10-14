@@ -26,5 +26,6 @@
         long verbose = 0;
         long skip_pages = 0;
         long use_first = 0;
+        double prefactor = 1;
 #end
 
