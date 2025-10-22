@@ -1401,6 +1401,9 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
   static double *diagElements;
   eptr = beamline->elem_twiss;
 
+  if (ibs_coulomb_log>0)
+    coulombLog = ibs_coulomb_log;
+
   if (!initialized) {
     initialized = 1;
     m_alloc(&Sigma, 6, 6);
