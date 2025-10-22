@@ -1391,7 +1391,7 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
 {
 
   ELEMENT_LIST *eptr;
-  double coulombLog;
+  double coulombLog=0;
   double Ci, betaGamma, gamma, p0;
   double g[3], dw2dts[3], length, duration, eigVal[3], u[3];
   int i, j;
