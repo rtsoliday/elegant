@@ -165,7 +165,7 @@ ifneq ($(MKLROOT),)
  MKL_CFLAG = -DMKL
  MKL_INCLUDE = -I"$(MKLROOT)/include/"
 ifeq ($(OS), Windows)
- MKL_LIB = mkl_intel_ilp64.lib mkl_intel_thread.lib mkl_core.lib libiomp5md.lib
+ MKL_LIB = mkl_intel_lp64.lib mkl_intel_thread.lib mkl_core.lib libiomp5md.lib
 else
  MKL_LIB = -Wl,--start-group \
            $(MKLROOT)/lib/intel64/libmkl_intel_lp64.a \
