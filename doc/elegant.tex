@@ -22,7 +22,7 @@
 \begin{document}
 
 \title{User's Manual for {\tt elegant}}
-\author{Program Version 2025.3\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
+\author{Program Version 2025.4\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
 \maketitle
 
 Note: another source of help for {\tt elegant} is the on-line
@@ -35,42 +35,32 @@ available from the software download page that demonstrates many features of {\t
 overview}{https://ops.aps.anl.gov/elegant.html} of {\tt elegant} is also available, which introduces the capabilities
 at a high level.
 
-\section{Highlights of What's New in Version 2025.3}
+\section{Highlights of What's New in Version 2025.4}
 
-Here is a summary of what's changed since release 2025.2  Historical change logs are collected in Section
+Here is a summary of what's changed since release 2025.3  Historical change logs are collected in Section
 \ref{sect:changeLog}.
 
 \subsection{Bug Fixes for Elements}
 
 \begin{itemize}
-\item The \verb|HCALIBRATION| and \verb|VCALIBRATION| parameters on the \verb|QUAD| element were non-functional,
-  as reported by V. Sajaev (APS).
-\item In sliced mode, the \verb|IBSCATTER| element no longer hangs in \verb|Pelegant| when a slice has fewer than
-  10 particles.
+\item None.
 \end{itemize}
 
 \subsection{Bug Fixes for Commands}
 \begin{itemize}
-\item None.
+\item For \verb|find_aperture|, the code now automatically disables \verb|WATCH| elements to prevent problems.
+  This issue was reported by forum user \verb|ranamonikaa|.
 \end{itemize}
 
 \subsection{New and Modified Elements}
 \begin{itemize}
-\item The \verb|MODRF| element (rf cavity with amplitude and phase modulation) now supports user control of the
-  modulation start and end times, as well as modulation offsets and an output file recording the voltage and
-  phase with modulation.
+\item None.
 \end{itemize}
 
 \subsection{New and Modified Commands}
 \begin{itemize}
-\item The \verb|moments_output| command now supports computation of intrabeam scattering effect using
-  the diffusion matrix \cite{KuboOide}.
-\item The \verb|alter_elements| command now supports a parameter called \verb|disable| that can be used to
-  disable a particular instance.
-\item The \verb|insert_elements| command now supports parameters \verb|occurrence_start| and \verb|occurrence_end|,
-  which provides a more convenient way to limit the insertion region.
-\item The \verb|load_parameters| command now supports a prefactor, which is applied to the parameter values before
-  assertion.
+\item The \verb|closed_orbit| command has several additional parameters that may help in cases when the orbit converges
+  poorly.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -1688,7 +1678,9 @@ to obtain correction.  In general, it is not necessary and only slows the simula
     long verbosity = 0;
     double iteration_fraction = 0.9;
     double fraction_multiplier = 1.05;
+    double fraction_divisor = 2.0;
     double multiplier_interval = 5;
+    long update_matrix = 0;
     long output_monitors_only = 0;
     long tracking_turns = 0;
     long disable = 0;
@@ -1739,8 +1731,12 @@ during the computations.
   at the price of slower convergence.e
 \item \verb|fraction_multiplier| --- Multiplier to apply to the iteration fraction if
   iteration is converging.
+\item \verb|fraction_divisor| --- Divisor to apply to the iteration fraction if
+  iteration is diverging.
 \item \verb|multiplier_interval| --- Interval in number of iterations at which to adjust
   the iteration fraction.
+\item \verb|update_matrix| --- If non-zero, the iteration matrix will be updated using the latest
+  value of the trial closed orbit. In rare cases, may help convergence at a slight extra cost in run time.
 \item \verb|output_monitors_only|  --- If non-zero, output file contains data only at beam position monitors,
   i.e., at \verb|MONI|, \verb|HMON|, and \verb|VMON| elements.
 \item \verb|tracking_turns| --- If non-zero, the number of turns to track for detemination 
@@ -8725,6 +8721,61 @@ terminal input and terminal output, respectively.
 \newpage
 
 \section{Change Log\label{sect:changeLog}}
+
+\subsection{Highlights of What's New in Version 2025.3}
+
+Here is a summary of what's changed since release 2025.2  Historical change logs are collected in Section
+\ref{sect:changeLog}.
+
+\subsubsection{Bug Fixes for Elements}
+
+\begin{itemize}
+\item The \verb|HCALIBRATION| and \verb|VCALIBRATION| parameters on the \verb|QUAD| element were non-functional,
+  as reported by V. Sajaev (APS).
+\item In sliced mode, the \verb|IBSCATTER| element no longer hangs in \verb|Pelegant| when a slice has fewer than
+  10 particles.
+\end{itemize}
+
+\subsubsection{Bug Fixes for Commands}
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{New and Modified Elements}
+\begin{itemize}
+\item The \verb|MODRF| element (rf cavity with amplitude and phase modulation) now supports user control of the
+  modulation start and end times, as well as modulation offsets and an output file recording the voltage and
+  phase with modulation.
+\end{itemize}
+
+\subsubsection{New and Modified Commands}
+\begin{itemize}
+\item The \verb|moments_output| command now supports computation of intrabeam scattering effect using
+  the diffusion matrix \cite{KuboOide}.
+\item The \verb|alter_elements| command now supports a parameter called \verb|disable| that can be used to
+  disable a particular instance.
+\item The \verb|insert_elements| command now supports parameters \verb|occurrence_start| and \verb|occurrence_end|,
+  which provides a more convenient way to limit the insertion region.
+\item The \verb|load_parameters| command now supports a prefactor, which is applied to the parameter values before
+  assertion.
+\end{itemize}
+
+\subsubsection{Changes to Examples}
+
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{Changes to Related Programs and Files}
+
+The {\tt elegant} distribution includes many programs and scripts that perform computations with {\tt elegant}
+output data, provide interfaces with other programs, or prepare data for use with {\tt elegant}. These
+are listed in Section \ref{sect:tools}. 
+
+Changes to these tools in this release include
+\begin{itemize}
+\item None.
+\end{itemize}
 
 \subsection{Highlights of What's New in Version 2025.2}
 
