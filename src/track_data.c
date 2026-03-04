@@ -206,6 +206,7 @@ char *entity_name[N_TYPES] = {
   "LGBEND",
   "CORGPLATES",
   "BEDGE",
+  "DQCOR",
 };
 
 char *madcom_name[N_MADCOMS] = {
@@ -347,7 +348,8 @@ char *entity_text[N_TYPES] = {
   "Optical stochastic cooling kicker element---applies a kick in particle momentum",
   "A multi-segment straight longitudinal dipole magnet",
   "A pair of corrugated plates, commonly used as a dechirper in linacs.",
-  "A simple dipole edge matrix"};
+  "A simple dipole edge matrix",
+  "A canonically-integrated dipole/quadrupole corrector."};
 
 QUAD quad_example;
 /* quadrupole physical parameters */
@@ -609,6 +611,7 @@ PARAMETER hmon_param[N_HMON_PARAMS] = {
   {"L", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&hmon_example.length), NULL, 0.0, 0, "length"},
   {"DX", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&hmon_example.dx), NULL, 0.0, 0, "misalignment"},
   {"DY", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&hmon_example.dy), NULL, 0.0, 0, "misalignment"},
+  {"DZ", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&hmon_example.dz), NULL, 0.0, 0, "misalignment"},
   {"WEIGHT", "", IS_DOUBLE, 0, (long)((char *)&hmon_example.weight), NULL, 1.0, 0, "weight in correction"},
   {"TILT", "", IS_DOUBLE, 0, (long)((char *)&hmon_example.tilt), NULL, 0.0, 0, "rotation about longitudinal axis"},
   {"CALIBRATION", "", IS_DOUBLE, 0, (long)((char *)&hmon_example.calibration), NULL, 1.0, 0, "calibration factor for readout"},
@@ -625,6 +628,7 @@ PARAMETER vmon_param[N_VMON_PARAMS] = {
   {"L", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&vmon_example.length), NULL, 0.0, 0, "length"},
   {"DX", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&vmon_example.dx), NULL, 0.0, 0, "misalignment"},
   {"DY", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&vmon_example.dy), NULL, 0.0, 0, "misalignment"},
+  {"DZ", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&vmon_example.dz), NULL, 0.0, 0, "misalignment"},
   {"WEIGHT", "", IS_DOUBLE, 0, (long)((char *)&vmon_example.weight), NULL, 1.0, 0, "weight in correction"},
   {"TILT", "", IS_DOUBLE, 0, (long)((char *)&vmon_example.tilt), NULL, 0.0, 0, "rotation about longitudinal axis"},
   {"CALIBRATION", "", IS_DOUBLE, 0, (long)((char *)&vmon_example.calibration), NULL, 1.0, 0, "calibration factor for readout"},
@@ -641,6 +645,7 @@ PARAMETER moni_param[N_MONI_PARAMS] = {
   {"L", "M", IS_DOUBLE, 0, (long)((char *)&moni_example.length), NULL, 0.0, 0, "length"},
   {"DX", "M", IS_DOUBLE, 0, (long)((char *)&moni_example.dx), NULL, 0.0, 0, "misalignment"},
   {"DY", "M", IS_DOUBLE, 0, (long)((char *)&moni_example.dy), NULL, 0.0, 0, "misalignment"},
+  {"DZ", "M", IS_DOUBLE, 0, (long)((char *)&moni_example.dz), NULL, 0.0, 0, "misalignment"},
   {"WEIGHT", "", IS_DOUBLE, 0, (long)((char *)&moni_example.weight), NULL, 1.0, 0, "weight in correction"},
   {"TILT", "", IS_DOUBLE, 0, (long)((char *)&moni_example.tilt), NULL, 0.0, 0, "rotation about longitudinal axis"},
   {"XCALIBRATION", "", IS_DOUBLE, 0, (long)((char *)&moni_example.xcalibration), NULL, 1.0, 0, "calibration factor for x readout"},
@@ -723,7 +728,7 @@ PARAMETER alph_param[N_ALPH_PARAMS] = {
   {"DY", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&alph_example.dy), NULL, 0.0, 0, "misalignment"},
   {"DZ", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&alph_example.dz), NULL, 0.0, 0, "misalignment"},
   {"TILT", "", IS_DOUBLE, 0, (long)((char *)&alph_example.tilt), NULL, 0.0, 0, "rotation about incoming longitudinal axis"},
-  {"PART", "", IS_SHORT, 0, (long)((char *)&alph_example.part), NULL, 0.0, 0, "0=full, 1=first half, 2=second half"},
+  {"PART", "", IS_SHORT, 0, (long)((char *)&alph_example.part), NULL, 0.0, 0, "0=full, 1=first half, 2=second half, 3=momentum filter only"},
   {"ORDER", "", IS_SHORT, PARAM_CHANGES_MATRIX, (long)((char *)&alph_example.order), NULL, 0.0, 0, "matrix order [1,3]"}};
 
 RFDF rfdf_example;
@@ -1244,8 +1249,8 @@ PARAMETER kquad_param[N_KQUAD_PARAMS] = {
   {"FSE", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&kquad_example.fse), NULL, 0.0, 0, "fractional strength error"},
   {"N_KICKS", "", IS_LONG, PARAM_CHANGES_MATRIX | PARAM_IS_DEPRECATED, (long)((char *)&kquad_example.n_kicks), NULL, 0.0, 0, "number of kicks (rounded up to next multipole of 4 if INTEGRATION_ORDER=4). Deprecated. Use N_SLICES."},
   {"N_SLICES", "", IS_LONG, PARAM_CHANGES_MATRIX, (long)((char *)&kquad_example.nSlices), NULL, 0.0, 1, "Number of slices (full integrator steps)."},
-  {"HKICK", "RAD", IS_DOUBLE, PARAM_CHANGES_MATRIX | PARAM_DIVISION_RELATED, (long)((char *)&kquad_example.xkick), NULL, 0.0, 0, "horizontal correction kick"},
-  {"VKICK", "RAD", IS_DOUBLE, PARAM_CHANGES_MATRIX | PARAM_DIVISION_RELATED, (long)((char *)&kquad_example.ykick), NULL, 0.0, 0, "vertical correction kick"},
+  {"HKICK", "RAD", IS_DOUBLE, PARAM_CHANGES_MATRIX | PARAM_DIVISION_RELATED, (long)((char *)&kquad_example.xkick), NULL, 0.0, 0, "Approximate horizontal correction kick"},
+  {"VKICK", "RAD", IS_DOUBLE, PARAM_CHANGES_MATRIX | PARAM_DIVISION_RELATED, (long)((char *)&kquad_example.ykick), NULL, 0.0, 0, "Approximate vertical correction kick"},
   {"HCALIBRATION", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&kquad_example.xKickCalibration), NULL, 1.0, 0, "calibration factor for horizontal correction kick"},
   {"VCALIBRATION", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&kquad_example.yKickCalibration), NULL, 1.0, 0, "calibration factor for vertical correction kick"},
   {"HSTEERING", "", IS_SHORT, 0, (long)((char *)&kquad_example.xSteering), NULL, 0.0, 0, "use for horizontal correction?"},
@@ -2038,6 +2043,7 @@ PARAMETER csrcsbend_param[N_CSRCSBEND_PARAMS] = {
   {"EDGE_ORDER", "", IS_SHORT, 0, (long)((char *)&csrcsbend_example.edge_order), NULL, 0.0, 1, "order to which to include edge effects"},
   {"INTEGRATION_ORDER", "", IS_SHORT, 0, (long)((char *)&csrcsbend_example.integration_order), NULL, 0.0, 4, "integration order (2, 4, or 6)"},
   {"BINS", "", IS_LONG, 0, (long)((char *)&csrcsbend_example.bins), NULL, 0.0, 0, "number of bins for CSR wake"},
+  {"BIN_SIZE", "", IS_DOUBLE, 0, (long)((char *)&csrcsbend_example.binSize), NULL, 0.0, 0, "size of bins for CSR wake (overrides BINS parameter)"},
   {"BIN_ONCE", "", IS_SHORT, 0, (long)((char *)&csrcsbend_example.binOnce), NULL, 0.0, 0, "bin only at the start of the dipole?"},
   {"BIN_RANGE_FACTOR", "", IS_DOUBLE, 0, (long)((char *)&csrcsbend_example.binRangeFactor), NULL, 1.2, 0, "Factor by which to increase the range of histogram compared to total bunch length.  Large value eliminates binning problems in CSRDRIFTs."},
   {"SG_HALFWIDTH", "", IS_SHORT, 0, (long)((char *)&csrcsbend_example.SGHalfWidth), NULL, 0.0, 0, "Savitzky-Golay filter half-width for smoothing current histogram.  If less than 1, no SG smoothing is performed."},
@@ -3128,6 +3134,8 @@ PARAMETER tfbdriver_param[N_TFBDRIVER_PARAMS] = {
   {"OUTPUT_FILE", "", IS_STRING, 0, (long)((char *)&tfbDriver_example.outputFile), NULL, 0.0, 0, "File for logging filter output and driver output"},
   {"GAIN_FACTOR_FILE", "", IS_STRING, 0, (long)((char *)&tfbDriver_example.gainFactorFile), NULL, 0.0, 0, "File providing gain factors for individual bunches."},
   {"GAIN_FACTOR_COLUMN", "", IS_STRING, 0, (long)((char *)&tfbDriver_example.gainFactorColumn), NULL, 0.0, 0, "Column from GAIN_FACTOR_FILE containing gain factors."},
+  {"GAIN_FACTOR", "", IS_DOUBLE, 0, (long)((char *)&tfbDriver_example.gainFactor0), NULL, 1.0, 0, "Combine with GAIN_CHARGE_SCALE to implement charge-dependence of the gain. See below."},
+  {"GAIN_CHARGE_SCALE", "C", IS_DOUBLE, 0, (long)((char *)&tfbDriver_example.gainChargeScale), NULL, 0.0, 0, "If non-zero, the gain is scaled with charge. See below."},
   {"DELAY", "", IS_LONG, 0, (long)((char *)&tfbDriver_example.delay), NULL, 0.0, 0, "Delay (in turns)"},
   {"A0", "", IS_DOUBLE, 0, (long)((char *)&tfbDriver_example.a[0]), NULL, 1.0, 0, "Filter coefficient"},
   {"A1", "", IS_DOUBLE, 0, (long)((char *)&tfbDriver_example.a[1]), NULL, 0.0, 0, "Filter coefficient"},
@@ -3741,6 +3749,7 @@ PARAMETER ccbend_param[N_CCBEND_PARAMS] = {
   {"EDGE_ORDER", "", IS_SHORT, 0, (long)((char *)&ccbend_example.edgeOrder), NULL, 0.0, 3, "Gives order of edge effects. Does not affect edge multipoles."},
   {"DX_DY_SIGN", "", IS_SHORT, 0, (long)((char *)&ccbend_example.dxdySign), NULL, 0.0, 1, "Prior to 2020.4, the sign of DX and DY was reversed for ANGLE<0. For backward compatibility, this is retained. Set this field to a positive value to use a consistent convention."},
   {"VERBOSE", "", IS_SHORT, 0, (long)((char *)&ccbend_example.verbose), NULL, 0.0, 0, "If nonzero, print messages showing optimized FSE and x offset."},
+  {"CENTROID_OUTPUT_FILE", NULL, IS_STRING, 0, (long)((char *)&ccbend_example.centroidOutputFile), NULL, 0.0, 0, "File for output of beam centroids in global coordinates."},
 };
 
 BOFFAXE boffaxe_example;
@@ -3941,6 +3950,7 @@ PARAMETER lgbend_param[N_LGBEND_PARAMS] = {
   {"OPTIMIZE_FSE", "", IS_SHORT, 0, (long)((char *)&lgbend_example.optimizeFse), NULL, 0.0, 1, "Optimize strength (FSE) of first and last segments to obtain the ideal deflection angle and final trajectory."},
   {"COMPENSATE_KN", "", IS_SHORT, 0, (long)((char *)&lgbend_example.compensateKn), NULL, 0.0, 1, "If nonzero, K1 and K2 strengths are adjusted to compensate for the changes in FSE needed to center the trajectory."},
   {"VERBOSE", "", IS_SHORT, 0, (long)((char *)&lgbend_example.verbose), NULL, 0.0, 0, "If nonzero, print messages showing optimized FSE and x offset."},
+  {"CENTROID_OUTPUT_FILE", NULL, IS_STRING, 0, (long)((char *)&lgbend_example.centroidOutputFile), NULL, 0.0, 0, "File for output of beam centroids in global coordinates."},
 };
 
 CORGPLATES corgplates_example;
@@ -3971,6 +3981,44 @@ PARAMETER bedge_param[N_BEND_PARAMS] = {
   {"HPOLE", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&bedge_example.hPoleFace), NULL, 0.0, 0, "pole-face curvature"},
   {"ORDER", "", IS_SHORT, PARAM_CHANGES_MATRIX, (long)((char *)&bedge_example.order), NULL, 0.0, 1, "matrix order"},
   {"EXIT", "", IS_SHORT, PARAM_CHANGES_MATRIX, (long)((char *)&bedge_example.exitEdge), NULL, 0.0, 0, "0=entrance, 1=exit"},
+};
+
+DQCOR dqcor_example;
+/* kick dipole/quadrupole corrector physical parameters */
+PARAMETER dqcor_param[N_DQCOR_PARAMS] = {
+  {"L", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX | PARAM_DIVISION_RELATED, (long)((char *)&dqcor_example.length), NULL, 0.0, 0, "length"},
+  {"K1", "1/M$a2$n", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.k1), NULL, 0.0, 0, "geometric quadrupole strength error. See notes below!"},
+  {"J1", "1/M$a2$n", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.j1), NULL, 0.0, 0, "geometric skew quadrupole strength error. See notes below!"},
+  {"N_SLICES", "", IS_LONG, 0, (long)((char *)&dqcor_example.nSlices), NULL, 0.0, 1, "Number of slices (full integrator steps)."},
+  {"INTEGRATION_ORDER", "", IS_SHORT, 0, (long)((char *)&dqcor_example.integration_order), NULL, 0.0, 4, "integration order (2, 4, or 6)"},
+  {"FSE", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.fse), NULL, 0.0, 0, "fractional strength error"},
+  {"TILT", "RAD", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.tilt), NULL, 0.0, 0, "rotation about longitudinal axis"},
+  {"PITCH", "RAD", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.pitch), NULL, 0.0, 0, "rotation about horizontal axis. Ignored if MALIGN_METHOD=0"},
+  {"YAW", "RAD", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.yaw), NULL, 0.0, 0, "rotation about vertical axis. Ignored if MALIGN_METHOD=0"},
+  {"DX", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.dx), NULL, 0.0, 0, "misalignment"},
+  {"DY", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.dy), NULL, 0.0, 0, "misalignment"},
+  {"DZ", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.dz), NULL, 0.0, 0, "misalignment"},
+  {"MALIGN_METHOD", "", IS_SHORT, 0, (long)((char *)&dqcor_example.malignMethod), NULL, 0.0, 0, "0=original, 1=new entrace-centered, 2=new body-centered"},
+  {"HKICK", "RAD", IS_DOUBLE, PARAM_CHANGES_MATRIX | PARAM_DIVISION_RELATED, (long)((char *)&dqcor_example.xkick), NULL, 0.0, 0, "horizontal correction kick"},
+  {"VKICK", "RAD", IS_DOUBLE, PARAM_CHANGES_MATRIX | PARAM_DIVISION_RELATED, (long)((char *)&dqcor_example.ykick), NULL, 0.0, 0, "vertical correction kick"},
+  {"HCALIBRATION", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.xKickCalibration), NULL, 1.0, 0, "calibration factor for horizontal correction kick"},
+  {"VCALIBRATION", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.yKickCalibration), NULL, 1.0, 0, "calibration factor for vertical correction kick"},
+  {"HSTEERING", "", IS_SHORT, 0, (long)((char *)&dqcor_example.xSteering), NULL, 0.0, 0, "use for horizontal correction?"},
+  {"VSTEERING", "", IS_SHORT, 0, (long)((char *)&dqcor_example.ySteering), NULL, 0.0, 0, "use for vertical correction?"},
+  {"SYNCH_RAD", "", IS_SHORT, 0, (long)((char *)&dqcor_example.synch_rad), NULL, 0.0, 0, "include classical, single-particle synchrotron radiation?"},
+  {"ISR", "", IS_SHORT, 0, (long)((char *)&dqcor_example.isr), NULL, 0.0, 0, "include incoherent synchrotron radiation (quantum excitation)?"},
+  {"ISR1PART", "", IS_SHORT, 0, (long)((char *)&dqcor_example.isr1Particle), NULL, 0.0, 1, "Include ISR for single-particle beam only if ISR=1 and ISR1PART=1"},
+  {"DIPOLE_SYSTEMATIC_MULTIPOLES", "", IS_STRING, 0, (long)((char *)&dqcor_example.dipoleSystematicMultipoles), NULL, 0.0, 0, "input file for systematic multipoles linked to dipole strength"},
+  {"DIPOLE_SYSTEMATIC_MULTIPOLE_FACTOR", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.dipoleSystematicMultipoleFactor), NULL, 1.0, 0, "Factor by which to multiply systematic dipole multipoles"},
+  {"QUADRUPOLE_SYSTEMATIC_MULTIPOLES", "", IS_STRING, 0, (long)((char *)&dqcor_example.quadrupoleSystematicMultipoles), NULL, 0.0, 0, "input file for systematic multipoles linked to quadrupole strength"},
+  {"QUADRUPOLE_RANDOM_MULTIPOLES", "", IS_STRING, 0, (long)((char *)&dqcor_example.quadrupoleRandomMultipoles), NULL, 0.0, 0, "input file for random multipoles linked to quadrupole strength"},
+  {"QUADRUPOLE_SYSTEMATIC_MULTIPOLE_FACTOR", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.quadrupoleSystematicMultipoleFactor), NULL, 1.0, 0, "Factor by which to multiply systematic quadrupole multipoles"},
+  {"QUADRUPOLE_RANDOM_MULTIPOLE_FACTOR", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&dqcor_example.quadrupoleRandomMultipoleFactor), NULL, 1.0, 0, "Factor by which to multiply random quadrupole multipoles"},
+  {"MIN_NORMAL_ORDER", "", IS_SHORT, 0, (long)((char *)&dqcor_example.minMultipoleOrder[0]), NULL, 0.0, -1, "If nonnegative, minimum order of systematic and random normal multipoles to use from data files."},
+  {"MIN_SKEW_ORDER", "", IS_SHORT, 0, (long)((char *)&dqcor_example.minMultipoleOrder[1]), NULL, 0.0, -1, "If nonnegative, minimum order of systematic and random skew multipoles to use from data files."},
+  {"MAX_NORMAL_ORDER", "", IS_SHORT, 0, (long)((char *)&dqcor_example.maxMultipoleOrder[0]), NULL, 0.0, -1, "If nonnegative, maximum order of systematic and random normal multipoles to use from data files."},
+  {"MAX_SKEW_ORDER", "", IS_SHORT, 0, (long)((char *)&dqcor_example.maxMultipoleOrder[1]), NULL, 0.0, -1, "If nonnegative, maximum order of systematic and random skew multipoles to use from data files."},
+  {"TRACKING_MATRIX", "", IS_SHORT, 0, (long)((char *)&dqcor_example.trackingBasedMatrix), NULL, 0.0, 0, "If nonzero, gives order of tracking-based matrix up to third order to be used for twiss parameters etc.  If zero, 2nd-order analytical matrix is used."},
 };
 
 /* END OF ELEMENT DICTIONARY ARRAYS */
@@ -4133,6 +4181,7 @@ ELEMENT_DESCRIPTION entity_description[N_TYPES] = {
   {N_LGBEND_PARAMS, MAT_LEN_NCAT, sizeof(LGBEND), lgbend_param},
   {N_CORGPLATES_PARAMS, MAY_CHANGE_ENERGY | MPALGORITHM | MAT_LEN_NCAT, sizeof(CORGPLATES), corgplates_param},
   {N_BEDGE_PARAMS, HAS_MATRIX | MATRIX_TRACKING, sizeof(BEDGE), bedge_param},
+  {N_DQCOR_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | GPU_SUPPORT | BACKTRACK, sizeof(DQCOR), dqcor_param},
 };
 
 void compute_offsets() {
