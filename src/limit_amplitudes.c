@@ -421,7 +421,7 @@ long elliptical_collimator(
         initial[itop][globalLossCoordOffset + 2] = theta;
       }
       initial[itop][4] = z;
-      initial[itop][5] = sqrt(sqr(Po * (1 + initial[itop][5])) + 1);
+      initial[itop][5] = Po * (1 + initial[itop][5]);
       if (accepted)
         swapParticles(accepted[ip], accepted[itop]);
       --itop;
@@ -459,7 +459,7 @@ long elliptical_collimator(
         initial[itop][globalLossCoordOffset + 2] = theta;
       }
       initial[itop][4] = z + length;
-      initial[itop][5] = sqrt(sqr(Po * (1 + initial[itop][5])) + 1);
+      initial[itop][5] = Po * (1 + initial[itop][5]);
       if (accepted)
         swapParticles(accepted[ip], accepted[itop]);
       --itop;
@@ -557,7 +557,7 @@ long elimit_amplitudes(
           coord[itop][globalLossCoordOffset + 2] = theta;
         }
         coord[itop][4] = z;
-        coord[itop][5] = sqrt(sqr(Po * (1 + coord[itop][5])) + 1);
+        coord[itop][5] = Po * (1 + coord[itop][5]);
         if (accepted)
           swapParticles(accepted[ip], accepted[itop]);
         --itop;
@@ -598,8 +598,8 @@ long elimit_amplitudes(
           coord[itop][globalLossCoordOffset + 2] = theta;
         }
         coord[itop][4] = z + dz;
-        coord[itop][5] = sqrt(sqr(Po * (1 + coord[itop][5])) + 1);
-        if (accepted)
+        coord[itop][5] = Po * (1 + coord[itop][5]);
+       if (accepted)
           swapParticles(accepted[ip], accepted[itop]);
         --itop;
         --ip;
