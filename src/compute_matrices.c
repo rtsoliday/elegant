@@ -57,6 +57,20 @@ void checkMatrices(char *label, ELEMENT_LIST *elem) {
   }
 }
 
+void determineDQCorReferenceFrameTilt(DQCOR *dqcor)
+{
+  double phi;
+  /* atan(2*phi) = J1/K1. The 2 is because it is a quadrupole (r^2*exp(2*i*phi)) */
+  phi = atan2(dqcor->j1, dqcor->k1)/2;
+  dqcor->K1ReferenceFrame = sqrt(sqr(dqcor->j1) + sqr(dqcor->k1));
+
+  dqcor->xKickReferenceFrame = dqcor->xkick*dqcor->xKickCalibration;
+  dqcor->yKickReferenceFrame = dqcor->ykick*dqcor->yKickCalibration;
+  rotate_xy(&(dqcor->xKickReferenceFrame), &(dqcor->yKickReferenceFrame), phi);
+
+  dqcor->phiReferenceFrame = phi;
+}
+
 double computeUndulatorFieldFromModel(double gap, double fractionOfJc, double *C, double length, long poles, char *model)
 {
 #define UND_MODEL_DEJUS_NdFeB 0
@@ -1194,6 +1208,7 @@ VMATRIX *compute_matrix(
   KOCT *koct;
   KSBEND *ksbend;
   KQUAD *kquad;
+  DQCOR *dqcor;
   NIBEND *nibend;
   NISEPT *nisept;
   KQUSE *kquse;
@@ -1230,7 +1245,7 @@ VMATRIX *compute_matrix(
   long fiducialize;
   double tStart = 0;
 
-  setTrackingContext(elem->name, elem->occurence, elem->type, run->rootname, elem);
+  setTrackingContext(elem->name, elem->occurence, elem->type, run->rootname, elem, -1);
 
   getRunControlContext(&rcContext);
   fiducialize = 1;
@@ -1631,6 +1646,33 @@ VMATRIX *compute_matrix(
       if (kquad->trackingBasedMatrix > 3)
         kquad->trackingBasedMatrix = 3;
       elem->matrix = determineMatrixHigherOrder(run, elem, NULL, NULL, MIN(run->default_order, kquad->trackingBasedMatrix));
+    }
+    break;
+  case T_DQCOR:
+    dqcor = (DQCOR *)elem->p_elem;
+    if (dqcor->nSlices < 1)
+      bombElegant("n_slices must be > 0 for DQCOR element", NULL);
+    readErrorMultipoleData(&(dqcor->quadrupoleSystematicMultipoleData),
+                           dqcor->quadrupoleSystematicMultipoles, 0);
+    readErrorMultipoleData(&(dqcor->quadrupoleRandomMultipoleData),
+                           dqcor->quadrupoleRandomMultipoles, 0);
+    readErrorMultipoleData(&(dqcor->dipoleSystematicMultipoleData),
+                           dqcor->dipoleSystematicMultipoles, 1);
+    if (dqcor->trackingBasedMatrix <= 0) {
+      determineDQCorReferenceFrameTilt(dqcor);
+      elem->matrix = dqcor_matrix(dqcor->K1ReferenceFrame, dqcor->length,
+				  (run->default_order ? run->default_order : 2),
+				  dqcor->fse, dqcor->xKickReferenceFrame, dqcor->yKickReferenceFrame);
+      if (dqcor->phiReferenceFrame)
+	tilt_matrices(elem->matrix, dqcor->phiReferenceFrame);
+      if (dqcor->dx || dqcor->dy || dqcor->dz || dqcor->tilt || dqcor->pitch || dqcor->yaw)
+        misalign_matrix(elem->matrix, dqcor->dx, dqcor->dy, dqcor->dz,
+                        dqcor->pitch, dqcor->yaw, 0.0, dqcor->tilt, 0.0, dqcor->length,
+                        dqcor->malignMethod);
+    } else {
+      if (dqcor->trackingBasedMatrix > 3)
+        dqcor->trackingBasedMatrix = 3;
+      elem->matrix = determineMatrixHigherOrder(run, elem, NULL, NULL, MIN(run->default_order, dqcor->trackingBasedMatrix));
     }
     break;
   case T_KSEXT:
@@ -3235,3 +3277,4 @@ VMATRIX *interpolateMatrixWithIdentityMatrix(VMATRIX *M0, double fraction, long 
 
   return (M);
 }
+
