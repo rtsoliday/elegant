@@ -29,7 +29,7 @@ VMATRIX *quadrupole_matrix(double K1, double lHC, long maximum_order,
                            double edge1_effects, double edge2_effects,
                            char *fringeType, double ffringe, double lEffective,
                            double *fringeIntM, double *fringeIntP,
-                           long radial) {
+			   short radial) {
   VMATRIX *M;
   VMATRIX *Mfringe, *Mtot, *Md, *tmp;
   double *C, **R, ***T, ****U;
@@ -1160,3 +1160,298 @@ VMATRIX *quse_matrix(double K1, double K2, double length, long maximum_order,
 
   return (M);
 }
+
+VMATRIX *dqcor_matrix(double K1, double L, long order, double fse, double xkick, double ykick)
+{
+  double *C, **R, ***T, K0, J0;
+  VMATRIX *M;
+
+  K1 *= 1+fse;
+
+  if (K1==0)
+    return hvcorrector_matrix(L, xkick, ykick, 0.0, 0.0, 1.0, 1.0, 0, order);
+  if (L==0)
+    bombElegant("DQCOR length can't be zero", NULL);
+  
+  computeQuadSteeringStrengths(&K0, &J0, xkick, ykick, L, K1);
+  
+  M = tmalloc(sizeof(*M));
+  initialize_matrices(M, M->order = MIN(2, order));
+  C = M->C;
+  R = M->R;
+  T = M->T;
+  
+  if (K1>0) {
+    double k, cos_kL,kp2,sin_kL,cosh_kL,sinh_kL,J0p2,K0p2,sin_2kL,kp3,sinh_2kL,cos_2kL,cosh_2kL,kp4,K0p3,Lp2,J0p3,Lp3;
+    k = sqrt(K1);
+    cos_kL = cos(k*L) ;
+    kp2 = pow(k,2) ;
+    sin_kL = sin(k*L) ;
+    cosh_kL = cosh(k*L) ;
+    sinh_kL = sinh(k*L) ;
+    J0p2 = pow(J0,2) ;
+    K0p2 = pow(K0,2) ;
+    sin_2kL = sin(2*k*L) ;
+    kp3 = pow(k,3) ;
+    sinh_2kL = sinh(2*k*L) ;
+    cos_2kL = cos(2*k*L) ;
+    cosh_2kL = cosh(2*k*L) ;
+    kp4 = pow(k,4) ;
+    K0p3 = pow(K0,3) ;
+    Lp2 = pow(L,2) ;
+    J0p3 = pow(J0,3) ;
+    Lp3 = pow(L,3);
+    
+    C[0] = -(K0/kp2) + (K0*cos_kL)/kp2;
+    C[1] = -((K0*sin_kL)/k);
+    C[2] = J0/kp2 - (J0*cosh_kL)/kp2;
+    C[3] = -((J0*sinh_kL)/k);
+    C[4] = L - (0.25*J0p2*L)/kp2 + (0.25*K0p2*L)/kp2 -  (0.125*K0p2*sin_2kL)/kp3 +  (0.125*J0p2*sinh_2kL)/kp3 ;
+
+    R[0][0] = cos_kL;
+    R[0][1] = sin_kL/k;
+    R[0][5] = (K0*L*sin_kL)/(2.*k);
+    R[1][0] = -(k*sin_kL);
+    R[1][1] = cos_kL;
+    R[1][5] = (K0*L*cos_kL)/2. + (K0*sin_kL)/(2.*k);
+    R[2][2] = cosh_kL;
+    R[2][3] = sinh_kL/k;
+    R[2][5] = (J0*L*sinh_kL)/(2.*k);
+    R[3][2] = k*sinh_kL;
+    R[3][3] = cosh_kL;
+    R[3][5] = (J0*L*cosh_kL)/2. + (J0*sinh_kL)/(2.*k);
+    R[4][0] =  + 0.5*K0*L - (0.25*K0*sin_2kL)/k;
+    R[4][1] =  - (0.25*K0)/kp2 + (0.25*K0*cos_2kL)/kp2;
+    R[4][2] =  + 0.5*J0*L - (0.25*J0*sinh_2kL)/k;
+    R[4][3] =  + (0.25*J0)/kp2 - (0.25*J0*cosh_2kL)/kp2;
+    R[4][4] = 1;
+    R[4][5] =  + (0.25*J0p2*L)/kp2 - (0.25*K0p2*L)/kp2 +  (0.125*K0p2*L*cos_2kL)/kp2 -  (0.125*J0p2*L*cosh_2kL)/kp2 +  (0.0625*K0p2*sin_2kL)/kp3 -  (0.0625*J0p2*sinh_2kL)/kp3 ;
+    R[5][5] = 1;
+
+    if (M->order > 1) {
+      T[0][0][0] = -2*K0*pow(sin((k*L)/2.),4);
+      T[0][1][0] = (K0*pow(sin((k*L)/2.),2)*sin_kL)/k;
+      T[0][1][1] = (-2*K0*pow(sin((k*L)/2.),2))/kp2 - (K0*cos_kL*pow(sin((k*L)/2.),2))/kp2 ;
+      T[0][2][0] = (2*J0*cos_kL)/5. - (2*J0*cos_kL*cosh_kL)/5. + (J0*sin_kL*sinh_kL)/5.;
+      T[0][2][1] = (3*J0*sin_kL)/(5.*k) - (2*J0*cosh_kL*sin_kL)/(5.*k) - (J0*cos_kL*sinh_kL)/(5.*k) ;
+      T[0][2][2] = K0/4. - (K0*cos_kL)/5. - (K0*cosh_2kL)/20.;
+      T[0][3][0] = (J0*sin_kL)/(5.*k) + (J0*cosh_kL*sin_kL)/(5.*k) - (2*J0*cos_kL*sinh_kL)/(5.*k) ;
+      T[0][3][1] = (J0*cos_kL)/(5.*kp2) - (J0*cos_kL*cosh_kL)/(5.*kp2) - (2*J0*sin_kL*sinh_kL)/(5.*kp2) ;
+      T[0][3][2] = (K0*sin_kL)/(10.*k) - (K0*sinh_2kL)/(20.*k);
+      T[0][3][3] = -0.25*K0/kp2 + (3*K0*cos_kL)/(10.*kp2) - (K0*cosh_2kL)/(20.*kp2) ;
+      T[0][5][0] = (3*K0p2)/(8.*kp2) - (2*J0p2*cos_kL)/(25.*kp2) - (K0p2*cos_kL)/(3.*kp2) -  (K0p2*cos_2kL)/(24.*kp2) +  (2*J0p2*cos_kL*cosh_kL)/(25.*kp2) + (k*L*sin_kL)/2. +  (J0p2*L*cosh_kL*sin_kL)/(10.*k) -  (K0p2*L*sin_2kL)/(8.*k) -  (J0p2*L*cos_kL*sinh_kL)/(5.*k) +  (3*J0p2*sin_kL*sinh_kL)/(50.*kp2) ;
+      T[0][5][1] = (-3*K0p2*L)/(8.*kp2) - (L*cos_kL)/2. + (K0p2*L*cos_2kL)/(8.*kp2) -  (J0p2*L*cos_kL*cosh_kL)/(10.*kp2) +  (2*J0p2*sin_kL)/(25.*kp3) + sin_kL/(2.*k) +  (K0p2*sin_kL)/(3.*kp3) +  (2*J0p2*cosh_kL*sin_kL)/(25.*kp3) -  (K0p2*sin_2kL)/(24.*kp3) -  (3*J0p2*cos_kL*sinh_kL)/(50.*kp3) -  (J0p2*L*sin_kL*sinh_kL)/(5.*kp2) ;
+      T[0][5][2] = (J0*K0)/(8.*kp2) - (3*J0*K0*cos_kL)/(25.*kp2) - (J0*K0*cosh_2kL)/(200.*kp2) - (J0*K0*L*sinh_2kL)/(40.*k) ;
+      T[0][5][3] = -0.125*(J0*K0*L)/kp2 - (J0*K0*L*cosh_2kL)/(40.*kp2) + (4*J0*K0*sin_kL)/(25.*kp3) - (J0*K0*sinh_2kL)/(200.*kp3) ;
+      T[0][5][5] = (3*J0p2*K0)/(16.*kp4) - K0/kp2 + (3*K0p3)/(16.*kp4) -  (J0p2*K0*Lp2)/(16.*kp2) -  (3*K0p3*Lp2)/(16.*kp2) -  (21*J0p2*K0*cos_kL)/(125.*kp4) + (K0*cos_kL)/kp2 -  (K0p3*cos_kL)/(9.*kp4) - (K0*Lp2*cos_kL)/8. -  (11*K0p3*cos_2kL)/(144.*kp4) +  (K0p3*Lp2*cos_2kL)/(16.*kp2) -  (2*J0p2*K0*cos_kL*cosh_kL)/(125.*kp4) -  (J0p2*K0*Lp2*cos_kL*cosh_kL)/(20.*kp2) -  (7*J0p2*K0*cosh_2kL)/(2000.*kp4) -  (J0p2*K0*Lp2*cosh_2kL)/(80.*kp2) +  (K0*L*sin_kL)/(8.*k) + (13*J0p2*K0*L*cosh_kL*sin_kL)/  (100.*kp3) - (K0p3*L*sin_2kL)/(24.*kp3) +  (9*J0p2*K0*L*cos_kL*sinh_kL)/(100.*kp3) -  (81*J0p2*K0*sin_kL*sinh_kL)/(500.*kp4) -  (J0p2*K0*Lp2*sin_kL*sinh_kL)/(10.*kp2) -  (J0p2*K0*L*sinh_2kL)/(200.*kp3) ;
+      T[1][0][0] = -2*k*K0*pow(sin((k*L)/2.),2)*sin_kL;
+      T[1][1][0] = K0*pow(sin((k*L)/2.),2) + 2*K0*cos_kL*pow(sin((k*L)/2.),2);
+      T[1][1][1] = (-2*K0*cos((k*L)/2.)*sin((k*L)/2.))/k - (K0*cos((3*k*L)/2.)*sin((k*L)/2.))/k;
+      T[1][2][0] = (-2*J0*k*sin_kL)/5. + (3*J0*k*cosh_kL*sin_kL)/5. - (J0*k*cos_kL*sinh_kL)/5. ;
+      T[1][2][1] = (3*J0*cos_kL)/5. - (3*J0*cos_kL*cosh_kL)/5. - (J0*sin_kL*sinh_kL)/5.;
+      T[1][2][2] = (k*K0*sin_kL)/5. - (k*K0*sinh_2kL)/10.;
+      T[1][3][0] = (J0*cos_kL)/5. - (J0*cos_kL*cosh_kL)/5. + (3*J0*sin_kL*sinh_kL)/5.;
+      T[1][3][1] = -0.2*(J0*sin_kL)/k - (J0*cosh_kL*sin_kL)/(5.*k) - (3*J0*cos_kL*sinh_kL)/(5.*k) ;
+      T[1][3][2] = (K0*cos_kL)/10. - (K0*cosh_2kL)/10.;
+      T[1][3][3] = (-3*K0*sin_kL)/(10.*k) - (K0*sinh_2kL)/(10.*k);
+      T[1][5][0] = (kp2*L*cos_kL)/2. - (K0p2*L*cos_2kL)/4. - (J0p2*L*cos_kL*cosh_kL)/10. + (2*J0p2*sin_kL)/(25.*k) +  (k*sin_kL)/2. + (K0p2*sin_kL)/(3.*k) +  (2*J0p2*cosh_kL*sin_kL)/(25.*k) -  (K0p2*sin_2kL)/(24.*k) -  (3*J0p2*cos_kL*sinh_kL)/(50.*k) +  (3*J0p2*L*sin_kL*sinh_kL)/10. ;
+      T[1][5][1] = (-3*K0p2)/(8.*kp2) + (2*J0p2*cos_kL)/(25.*kp2) +  (K0p2*cos_kL)/(3.*kp2) +  (K0p2*cos_2kL)/(24.*kp2) -  (2*J0p2*cos_kL*cosh_kL)/(25.*kp2) + (k*L*sin_kL)/2. -  (J0p2*L*cosh_kL*sin_kL)/(10.*k) -  (K0p2*L*sin_2kL)/(4.*k) -  (3*J0p2*L*cos_kL*sinh_kL)/(10.*k) -  (3*J0p2*sin_kL*sinh_kL)/(50.*kp2) ;
+      T[1][5][2] = -0.05*(J0*K0*L*cosh_2kL) + (3*J0*K0*sin_kL)/(25.*k) - (7*J0*K0*sinh_2kL)/(200.*k) ;
+      T[1][5][3] = -0.125*(J0*K0)/kp2 + (4*J0*K0*cos_kL)/(25.*kp2) - (7*J0*K0*cosh_2kL)/(200.*kp2) - (J0*K0*L*sinh_2kL)/(20.*k) ;
+      T[1][5][5] = -0.125*(J0p2*K0*L)/kp2 - (3*K0p3*L)/(8.*kp2) - (K0*L*cos_kL)/8. + (K0p3*L*cos_2kL)/(24.*kp2) +  (3*J0p2*K0*L*cos_kL*cosh_kL)/(25.*kp2) -  (7*J0p2*K0*L*cosh_2kL)/(200.*kp2) +  (21*J0p2*K0*sin_kL)/(125.*kp3) - (7*K0*sin_kL)/(8.*k) +  (K0p3*sin_kL)/(9.*kp3) + (k*K0*Lp2*sin_kL)/8. -  (2*J0p2*K0*cosh_kL*sin_kL)/(125.*kp3) -  (J0p2*K0*Lp2*cosh_kL*sin_kL)/(20.*k) +  (K0p3*sin_2kL)/(9.*kp3) -  (K0p3*Lp2*sin_2kL)/(8.*k) -  (11*J0p2*K0*cos_kL*sinh_kL)/(125.*kp3) -  (3*J0p2*K0*Lp2*cos_kL*sinh_kL)/(20.*k) -  (4*J0p2*K0*L*sin_kL*sinh_kL)/(25.*kp2) -  (3*J0p2*K0*sinh_2kL)/(250.*kp3) -  (J0p2*K0*Lp2*sinh_2kL)/(40.*k) ;
+      T[2][0][0] = J0/4. - (J0*cos_2kL)/20. - (J0*cosh_kL)/5.;
+      T[2][1][0] = -0.05*(J0*sin_2kL)/k + (J0*sinh_kL)/(10.*k);
+      T[2][1][1] = J0/(4.*kp2) + (J0*cos_2kL)/(20.*kp2) - (3*J0*cosh_kL)/(10.*kp2) ;
+      T[2][2][0] = (2*K0*cosh_kL)/5. - (2*K0*cos_kL*cosh_kL)/5. - (K0*sin_kL*sinh_kL)/5. ;
+      T[2][2][1] = (-2*K0*cosh_kL*sin_kL)/(5.*k) + (K0*sinh_kL)/(5.*k) + (K0*cos_kL*sinh_kL)/(5.*k) ;
+      T[2][2][2] = -2*J0*pow(sinh((k*L)/2.),4);
+      T[2][3][0] = -0.2*(K0*cosh_kL*sin_kL)/k + (3*K0*sinh_kL)/(5.*k) - (2*K0*cos_kL*sinh_kL)/(5.*k) ;
+      T[2][3][1] = -0.2*(K0*cosh_kL)/kp2 + (K0*cos_kL*cosh_kL)/(5.*kp2) - (2*K0*sin_kL*sinh_kL)/(5.*kp2) ;
+      T[2][3][2] = (J0*sinh_kL)/(2.*k) - (J0*sinh_2kL)/(4.*k);
+      T[2][3][3] = (-2*J0*pow(sinh((k*L)/2.),2))/kp2 - (J0*cosh_kL*pow(sinh((k*L)/2.),2))/kp2 ;
+      T[2][5][0] = -0.125*(J0*K0)/kp2 + (J0*K0*cos_2kL)/(200.*kp2) + (9*J0*K0*cosh_kL)/(25.*kp2) -  (6*J0*K0*cos_kL*cosh_kL)/(25.*kp2) -  (J0*K0*L*cosh_kL*sin_kL)/(10.*k) - (J0*K0*L*sin_2kL)/(40.*k) -  (J0*K0*L*cos_kL*sinh_kL)/(5.*k) +  (9*J0*K0*sin_kL*sinh_kL)/(50.*kp2) ;
+      T[2][5][1] = (J0*K0*L)/(8.*kp2) + (J0*K0*L*cos_2kL)/(40.*kp2) + (J0*K0*L*cos_kL*cosh_kL)/(10.*kp2) -  (6*J0*K0*cosh_kL*sin_kL)/(25.*kp3) +  (J0*K0*sin_2kL)/(200.*kp3) +  (4*J0*K0*sinh_kL)/(25.*kp3) -  (9*J0*K0*cos_kL*sinh_kL)/(50.*kp3) -  (J0*K0*L*sin_kL*sinh_kL)/(5.*kp2) ;
+      T[2][5][2] = (-3*J0p2)/(8.*kp2) + (J0p2*cosh_kL)/(3.*kp2) + (J0p2*cosh_2kL)/(24.*kp2) - (k*L*sinh_kL)/2. -  (J0p2*L*sinh_2kL)/(8.*k) ;
+      T[2][5][3] = (3*J0p2*L)/(8.*kp2) - (L*cosh_kL)/2. - (J0p2*L*cosh_2kL)/(8.*kp2) -  (J0p2*sinh_kL)/(3.*kp3) + sinh_kL/(2.*k) +  (J0p2*cosh_kL*sinh_kL)/(12.*kp3) ;
+      T[2][5][5] = (3*J0p3)/(16.*kp4) + J0/kp2 + (3*J0*K0p2)/(16.*kp4) +  (3*J0p3*Lp2)/(16.*kp2) +  (J0*K0p2*Lp2)/(16.*kp2) -  (7*J0*K0p2*cos_2kL)/(2000.*kp4) +  (J0*K0p2*Lp2*cos_2kL)/(80.*kp2) -  (J0p3*cosh_kL)/(9.*kp4) - (J0*cosh_kL)/kp2 -  (21*J0*K0p2*cosh_kL)/(125.*kp4) -  (J0*Lp2*cosh_kL)/8. -  (2*J0*K0p2*cos_kL*cosh_kL)/(125.*kp4) +  (J0*K0p2*Lp2*cos_kL*cosh_kL)/(20.*kp2) -  (11*J0p3*cosh_2kL)/(144.*kp4) -  (J0p3*Lp2*cosh_2kL)/(16.*kp2) -  (9*J0*K0p2*L*cosh_kL*sin_kL)/(100.*kp3) +  (J0*K0p2*L*sin_2kL)/(200.*kp3) + (J0*L*sinh_kL)/(8.*k) -  (13*J0*K0p2*L*cos_kL*sinh_kL)/(100.*kp3) +  (81*J0*K0p2*sin_kL*sinh_kL)/(500.*kp4) -  (J0*K0p2*Lp2*sin_kL*sinh_kL)/(10.*kp2) +  (J0p3*L*sinh_2kL)/(24.*kp3) ;
+      T[3][0][0] = (J0*k*sin_2kL)/10. - (J0*k*sinh_kL)/5.;
+      T[3][1][0] = -0.1*(J0*cos_2kL) + (J0*cosh_kL)/10.;
+      T[3][1][1] = -0.1*(J0*sin_2kL)/k - (3*J0*sinh_kL)/(10.*k);
+      T[3][2][0] = (k*K0*cosh_kL*sin_kL)/5. + (2*k*K0*sinh_kL)/5. - (3*k*K0*cos_kL*sinh_kL)/5. ;
+      T[3][2][1] = (K0*cosh_kL)/5. - (K0*cos_kL*cosh_kL)/5. - (3*K0*sin_kL*sinh_kL)/5.;
+      T[3][2][2] = -2*J0*k*pow(sinh((k*L)/2.),2)*sinh_kL;
+      T[3][3][0] = (3*K0*cosh_kL)/5. - (3*K0*cos_kL*cosh_kL)/5. + (K0*sin_kL*sinh_kL)/5. ;
+      T[3][3][1] = (-3*K0*cosh_kL*sin_kL)/(5.*k) - (K0*sinh_kL)/(5.*k) - (K0*cos_kL*sinh_kL)/(5.*k) ;
+      T[3][3][2] = (J0*cosh_kL)/2. - (J0*cosh_2kL)/2.;
+      T[3][3][3] = (-2*J0*cosh((k*L)/2.)*sinh((k*L)/2.))/k - (J0*cosh((3*k*L)/2.)*sinh((k*L)/2.))/k ;
+      T[3][5][0] = -0.05*(J0*K0*L*cos_2kL) - (3*J0*K0*L*cos_kL*cosh_kL)/10. + (8*J0*K0*cosh_kL*sin_kL)/(25.*k) - (7*J0*K0*sin_2kL)/(200.*k) +  (9*J0*K0*sinh_kL)/(25.*k) - (13*J0*K0*cos_kL*sinh_kL)/(50.*k) +  (J0*K0*L*sin_kL*sinh_kL)/10. ;
+      T[3][5][1] = (J0*K0)/(8.*kp2) + (7*J0*K0*cos_2kL)/(200.*kp2) + (4*J0*K0*cosh_kL)/(25.*kp2) -  (8*J0*K0*cos_kL*cosh_kL)/(25.*kp2) -  (3*J0*K0*L*cosh_kL*sin_kL)/(10.*k) - (J0*K0*L*sin_2kL)/(20.*k) -  (J0*K0*L*cos_kL*sinh_kL)/(10.*k) -  (13*J0*K0*sin_kL*sinh_kL)/(50.*kp2) ;
+      T[3][5][2] = -0.5*(kp2*L*cosh_kL) - (J0p2*L*cosh_2kL)/4. + (J0p2*sinh_kL)/(3.*k) - (k*sinh_kL)/2. -  (J0p2*cosh_kL*sinh_kL)/(12.*k) ;
+      T[3][5][3] = (3*J0p2)/(8.*kp2) - (J0p2*cosh_kL)/(3.*kp2) - (J0p2*pow(cosh_kL,2))/(24.*kp2) - (k*L*sinh_kL)/2. -  (J0p2*pow(sinh_kL,2))/(24.*kp2) -  (J0p2*L*sinh_2kL)/(4.*k) ;
+      T[3][5][5] = (3*J0p3*L)/(8.*kp2) + (J0*K0p2*L)/(8.*kp2) + (7*J0*K0p2*L*cos_2kL)/(200.*kp2) - (J0*L*cosh_kL)/8. -  (3*J0*K0p2*L*cos_kL*cosh_kL)/(25.*kp2) -  (J0p3*L*cosh_2kL)/(24.*kp2) +  (11*J0*K0p2*cosh_kL*sin_kL)/(125.*kp3) -  (3*J0*K0p2*Lp2*cosh_kL*sin_kL)/(20.*k) +  (3*J0*K0p2*sin_2kL)/(250.*kp3) -  (J0*K0p2*Lp2*sin_2kL)/(40.*k) -  (J0p3*sinh_kL)/(9.*kp3) - (7*J0*sinh_kL)/(8.*k) -  (21*J0*K0p2*sinh_kL)/(125.*kp3) -  (J0*k*Lp2*sinh_kL)/8. +  (2*J0*K0p2*cos_kL*sinh_kL)/(125.*kp3) -  (J0*K0p2*Lp2*cos_kL*sinh_kL)/(20.*k) -  (4*J0*K0p2*L*sin_kL*sinh_kL)/(25.*kp2) -  (J0p3*sinh_2kL)/(9.*kp3) -  (J0p3*Lp2*sinh_2kL)/(8.*k) ;
+
+      T[4][0][0] = + 0.25*kp2*L - 0.125*k*sin_2kL;
+      T[4][1][0] = -0.25 + 0.25*cos_2kL;
+      T[4][1][1] = + 0.25*L + (0.125*sin_2kL)/k;
+      T[4][2][2] = - 0.25*kp2*L + 0.125*k*sinh_2kL;
+      T[4][3][2] = -0.25 + 0.25*cosh_2kL;
+      T[4][3][3] = + 0.25*L + (0.125*sinh_2kL)/k;
+      T[4][5][0] = - 0.25*K0*L + 0.125*K0*L*cos_2kL + (0.0625*K0*sin_2kL)/k;
+      T[4][5][1] = + (0.0625*K0)/kp2 + 0.125*K0*Lp2 - (0.0625*K0*cos_2kL)/kp2 + (0.125*K0*L*sin_2kL)/k ;
+      T[4][5][2] = - 0.25*J0*L + 0.125*J0*L*cosh_2kL + (0.0625*J0*sinh_2kL)/k ;
+      T[4][5][3] = - (0.0625*J0)/kp2 + 0.125*J0*Lp2 + (0.0625*J0*cosh_2kL)/kp2 + (0.125*J0*L*sinh_2kL)/k ;
+      T[4][5][5] = - (0.0625*J0p2*L)/kp2 + (0.0625*K0p2*L)/kp2 +  0.020833333333333332*J0p2*Lp3 +  0.020833333333333332*K0p2*Lp3 -  (0.03125*K0p2*L*cos_2kL)/kp2 +  (0.03125*J0p2*L*cosh_2kL)/kp2 -  (0.015625*K0p2*sin_2kL)/kp3 +  (0.03125*K0p2*Lp2*sin_2kL)/k +  (0.015625*J0p2*sinh_2kL)/kp3 +  (0.03125*J0p2*Lp2*sinh_2kL)/k   ;
+    }
+  } else {
+    double k, cosh_kL,kp2,sinh_kL,cos_kL,sin_kL,J0p2,K0p2,sin_2kL,kp3,sinh_2kL,cosh_2kL,cos_2kL,kp4,K0p3,Lp2,J0p3,Lp3;
+    k = sqrt(-K1);
+    cosh_kL = cosh(k*L) ;
+    kp2 = pow(k,2) ;
+    sinh_kL = sinh(k*L) ;
+    cos_kL = cos(k*L) ;
+    sin_kL = sin(k*L) ;
+    J0p2 = pow(J0,2) ;
+    K0p2 = pow(K0,2) ;
+    sin_2kL = sin(2*k*L) ;
+    kp3 = pow(k,3) ;
+    sinh_2kL = sinh(2*k*L) ;
+    cosh_2kL = cosh(2*k*L) ;
+    cos_2kL = cos(2*k*L) ;
+    kp4 = pow(k,4) ;
+    K0p3 = pow(K0,3) ;
+    Lp2 = pow(L,2) ;
+    J0p3 = pow(J0,3) ;
+    Lp3 = pow(L,3);
+    
+    C[0] = K0/kp2 - (K0*cosh_kL)/kp2;
+    C[1] = -((K0*sinh_kL)/k);
+    C[2] = -(J0/kp2) + (J0*cos_kL)/kp2;
+    C[3] = -((J0*sin_kL)/k);
+    C[4] =  + L + (0.25*J0p2*L)/kp2 - (0.25*K0p2*L)/kp2 -  (0.125*J0p2*sin_2kL)/kp3 +  (0.125*K0p2*sinh_2kL)/kp3 ;
+      
+    R[0][0] = cosh_kL;
+    R[0][1] = sinh_kL/k;
+    R[0][5] = (K0*L*sinh_kL)/(2.*k);
+    R[1][0] = k*sinh_kL;
+    R[1][1] = cosh_kL;
+    R[1][5] = (K0*L*cosh_kL)/2. + (K0*sinh_kL)/(2.*k);
+    R[2][2] = cos_kL;
+    R[2][3] = sin_kL/k;
+    R[2][5] = (J0*L*sin_kL)/(2.*k);
+    R[3][2] = -(k*sin_kL);
+    R[3][3] = cos_kL;
+    R[3][5] = (J0*L*cos_kL)/2. + (J0*sin_kL)/(2.*k);
+    R[4][0] =  + 0.5*K0*L - (0.25*K0*sinh_2kL)/k;
+    R[4][1] =  + (0.25*K0)/kp2 - (0.25*K0*cosh_2kL)/kp2;
+    R[4][2] =  + 0.5*J0*L - (0.25*J0*sin_2kL)/k;
+    R[4][3] =  - (0.25*J0)/kp2 + (0.25*J0*cos_2kL)/kp2;
+    R[4][4] = 1;
+    R[4][5] =  - (0.25*J0p2*L)/kp2 + (0.25*K0p2*L)/kp2 +  (0.125*J0p2*L*cos_2kL)/kp2 -  (0.125*K0p2*L*cosh_2kL)/kp2 +  (0.0625*J0p2*sin_2kL)/kp3 -  (0.0625*K0p2*sinh_2kL)/kp3 ;
+    R[5][5] = 1;
+
+    if (M->order > 1) {
+      T[0][0][0] = -2*K0*pow(sinh((k*L)/2.),4);
+      T[0][1][0] = (K0*sinh_kL)/(2.*k) - (K0*sinh_2kL)/(4.*k);
+      T[0][1][1] = (-2*K0*pow(sinh((k*L)/2.),2))/kp2 - (K0*cosh_kL*pow(sinh((k*L)/2.),2))/kp2 ;
+      T[0][2][0] = (2*J0*cosh_kL)/5. - (2*J0*cos_kL*cosh_kL)/5. - (J0*sin_kL*sinh_kL)/5. ;
+      T[0][2][1] = -0.2*(J0*cosh_kL*sin_kL)/k + (3*J0*sinh_kL)/(5.*k) - (2*J0*cos_kL*sinh_kL)/(5.*k) ;
+      T[0][2][2] = K0/4. - (K0*cos_2kL)/20. - (K0*cosh_kL)/5.;
+      T[0][3][0] = (-2*J0*cosh_kL*sin_kL)/(5.*k) + (J0*sinh_kL)/(5.*k) + (J0*cos_kL*sinh_kL)/(5.*k) ;
+      T[0][3][1] = -0.2*(J0*cosh_kL)/kp2 + (J0*cos_kL*cosh_kL)/(5.*kp2) - (2*J0*sin_kL*sinh_kL)/(5.*kp2) ;
+      T[0][3][2] = -0.05*(K0*sin_2kL)/k + (K0*sinh_kL)/(10.*k);
+      T[0][3][3] = K0/(4.*kp2) + (K0*cos_2kL)/(20.*kp2) - (3*K0*cosh_kL)/(10.*kp2) ;
+      T[0][5][0] = (-3*K0p2)/(8.*kp2) + (2*J0p2*cosh_kL)/(25.*kp2) +  (K0p2*cosh_kL)/(3.*kp2) -  (2*J0p2*cos_kL*cosh_kL)/(25.*kp2) +  (K0p2*cosh_2kL)/(24.*kp2) -  (J0p2*L*cosh_kL*sin_kL)/(5.*k) - (k*L*sinh_kL)/2. +  (J0p2*L*cos_kL*sinh_kL)/(10.*k) +  (3*J0p2*sin_kL*sinh_kL)/(50.*kp2) -  (K0p2*L*sinh_2kL)/(8.*k) ;
+      T[0][5][1] = (3*K0p2*L)/(8.*kp2) - (L*cosh_kL)/2. + (J0p2*L*cos_kL*cosh_kL)/(10.*kp2) -  (K0p2*L*cosh_2kL)/(8.*kp2) +  (3*J0p2*cosh_kL*sin_kL)/(50.*kp3) -  (2*J0p2*sinh_kL)/(25.*kp3) + sinh_kL/(2.*k) -  (K0p2*sinh_kL)/(3.*kp3) -  (2*J0p2*cos_kL*sinh_kL)/(25.*kp3) -  (J0p2*L*sin_kL*sinh_kL)/(5.*kp2) +  (K0p2*sinh_2kL)/(24.*kp3) ;
+      T[0][5][2] = -0.125*(J0*K0)/kp2 + (J0*K0*cos_2kL)/(200.*kp2) + (3*J0*K0*cosh_kL)/(25.*kp2) - (J0*K0*L*sin_2kL)/(40.*k) ;
+      T[0][5][3] = (J0*K0*L)/(8.*kp2) + (J0*K0*L*cos_2kL)/(40.*kp2) + (J0*K0*sin_2kL)/(200.*kp3) - (4*J0*K0*sinh_kL)/(25.*kp3) ;
+      T[0][5][5] = (3*J0p2*K0)/(16.*kp4) + K0/kp2 + (3*K0p3)/(16.*kp4) +  (J0p2*K0*Lp2)/(16.*kp2) +  (3*K0p3*Lp2)/(16.*kp2) -  (7*J0p2*K0*cos_2kL)/(2000.*kp4) +  (J0p2*K0*Lp2*cos_2kL)/(80.*kp2) -  (21*J0p2*K0*cosh_kL)/(125.*kp4) -  (K0*cosh_kL)/kp2 - (K0p3*cosh_kL)/(9.*kp4) -  (K0*Lp2*cosh_kL)/8. -  (2*J0p2*K0*cos_kL*cosh_kL)/(125.*kp4) +  (J0p2*K0*Lp2*cos_kL*cosh_kL)/(20.*kp2) -  (11*K0p3*cosh_2kL)/(144.*kp4) -  (K0p3*Lp2*cosh_2kL)/(16.*kp2) -  (9*J0p2*K0*L*cosh_kL*sin_kL)/(100.*kp3) +  (J0p2*K0*L*sin_2kL)/(200.*kp3) + (K0*L*sinh_kL)/(8.*k) -  (13*J0p2*K0*L*cos_kL*sinh_kL)/(100.*kp3) +  (81*J0p2*K0*sin_kL*sinh_kL)/(500.*kp4) -  (J0p2*K0*Lp2*sin_kL*sinh_kL)/(10.*kp2) +  (K0p3*L*sinh_2kL)/(24.*kp3) ;
+      T[1][0][0] = -2*k*K0*pow(sinh((k*L)/2.),2)*sinh_kL;
+      T[1][1][0] = (K0*cosh_kL)/2. - (K0*cosh_2kL)/2.;
+      T[1][1][1] = (-2*K0*cosh((k*L)/2.)*sinh((k*L)/2.))/k - (K0*cosh((3*k*L)/2.)*sinh((k*L)/2.))/k ;
+      T[1][2][0] = (J0*k*cosh_kL*sin_kL)/5. + (2*J0*k*sinh_kL)/5. - (3*J0*k*cos_kL*sinh_kL)/5. ;
+      T[1][2][1] = (3*J0*cosh_kL)/5. - (3*J0*cos_kL*cosh_kL)/5. + (J0*sin_kL*sinh_kL)/5. ;
+      T[1][2][2] = (k*K0*sin_2kL)/10. - (k*K0*sinh_kL)/5.;
+      T[1][3][0] = (J0*cosh_kL)/5. - (J0*cos_kL*cosh_kL)/5. - (3*J0*sin_kL*sinh_kL)/5.;
+      T[1][3][1] = (-3*J0*cosh_kL*sin_kL)/(5.*k) - (J0*sinh_kL)/(5.*k) - (J0*cos_kL*sinh_kL)/(5.*k) ;
+      T[1][3][2] = -0.1*(K0*cos_2kL) + (K0*cosh_kL)/10.;
+      T[1][3][3] = -0.1*(K0*sin_2kL)/k - (3*K0*sinh_kL)/(10.*k);
+      T[1][5][0] = -0.5*(kp2*L*cosh_kL) - (J0p2*L*cos_kL*cosh_kL)/10. - (K0p2*L*cosh_2kL)/4. -  (3*J0p2*cosh_kL*sin_kL)/(50.*k) +  (2*J0p2*sinh_kL)/(25.*k) - (k*sinh_kL)/2. +  (K0p2*sinh_kL)/(3.*k) +  (2*J0p2*cos_kL*sinh_kL)/(25.*k) -  (3*J0p2*L*sin_kL*sinh_kL)/10. - (K0p2*sinh_2kL)/(24.*k) ;
+      T[1][5][1] = (3*K0p2)/(8.*kp2) - (2*J0p2*cosh_kL)/(25.*kp2) -  (K0p2*cosh_kL)/(3.*kp2) +  (2*J0p2*cos_kL*cosh_kL)/(25.*kp2) -  (K0p2*cosh_2kL)/(24.*kp2) -  (3*J0p2*L*cosh_kL*sin_kL)/(10.*k) - (k*L*sinh_kL)/2. -  (J0p2*L*cos_kL*sinh_kL)/(10.*k) -  (3*J0p2*sin_kL*sinh_kL)/(50.*kp2) -  (K0p2*L*sinh_2kL)/(4.*k) ;
+      T[1][5][2] = -0.05*(J0*K0*L*cos_2kL) - (7*J0*K0*sin_2kL)/(200.*k) + (3*J0*K0*sinh_kL)/(25.*k) ;
+      T[1][5][3] = (J0*K0)/(8.*kp2) + (7*J0*K0*cos_2kL)/(200.*kp2) - (4*J0*K0*cosh_kL)/(25.*kp2) - (J0*K0*L*sin_2kL)/(20.*k) ;
+      T[1][5][5] = (J0p2*K0*L)/(8.*kp2) + (3*K0p3*L)/(8.*kp2) + (7*J0p2*K0*L*cos_2kL)/(200.*kp2) - (K0*L*cosh_kL)/8. -  (3*J0p2*K0*L*cos_kL*cosh_kL)/(25.*kp2) -  (K0p3*L*cosh_2kL)/(24.*kp2) +  (11*J0p2*K0*cosh_kL*sin_kL)/(125.*kp3) -  (3*J0p2*K0*Lp2*cosh_kL*sin_kL)/(20.*k) +  (3*J0p2*K0*sin_2kL)/(250.*kp3) -  (J0p2*K0*Lp2*sin_2kL)/(40.*k) -  (21*J0p2*K0*sinh_kL)/(125.*kp3) - (7*K0*sinh_kL)/(8.*k) -  (K0p3*sinh_kL)/(9.*kp3) - (k*K0*Lp2*sinh_kL)/8. +  (2*J0p2*K0*cos_kL*sinh_kL)/(125.*kp3) -  (J0p2*K0*Lp2*cos_kL*sinh_kL)/(20.*k) -  (4*J0p2*K0*L*sin_kL*sinh_kL)/(25.*kp2) -  (K0p3*sinh_2kL)/(9.*kp3) -  (K0p3*Lp2*sinh_2kL)/(8.*k) ;
+      T[2][0][0] = J0/4. - (J0*cos_kL)/5. - (J0*cosh_2kL)/20.;
+      T[2][1][0] = (J0*sin_kL)/(10.*k) - (J0*sinh_2kL)/(20.*k);
+      T[2][1][1] = -0.25*J0/kp2 + (3*J0*cos_kL)/(10.*kp2) - (J0*cosh_2kL)/(20.*kp2) ;
+      T[2][2][0] = (2*K0*cos_kL)/5. - (2*K0*cos_kL*cosh_kL)/5. + (K0*sin_kL*sinh_kL)/5.;
+      T[2][2][1] = (K0*sin_kL)/(5.*k) + (K0*cosh_kL*sin_kL)/(5.*k) - (2*K0*cos_kL*sinh_kL)/(5.*k) ;
+      T[2][2][2] = -2*J0*pow(sin((k*L)/2.),4);
+      T[2][3][0] = (3*K0*sin_kL)/(5.*k) - (2*K0*cosh_kL*sin_kL)/(5.*k) - (K0*cos_kL*sinh_kL)/(5.*k) ;
+      T[2][3][1] = (K0*cos_kL)/(5.*kp2) - (K0*cos_kL*cosh_kL)/(5.*kp2) - (2*K0*sin_kL*sinh_kL)/(5.*kp2) ;
+      T[2][3][2] = (J0*pow(sin((k*L)/2.),2)*sin_kL)/k;
+      T[2][3][3] = (-2*J0*pow(sin((k*L)/2.),2))/kp2 - (J0*cos_kL*pow(sin((k*L)/2.),2))/kp2 ;
+      T[2][5][0] = (J0*K0)/(8.*kp2) - (9*J0*K0*cos_kL)/(25.*kp2) + (6*J0*K0*cos_kL*cosh_kL)/(25.*kp2) -  (J0*K0*cosh_2kL)/(200.*kp2) -  (J0*K0*L*cosh_kL*sin_kL)/(5.*k) -  (J0*K0*L*cos_kL*sinh_kL)/(10.*k) +  (9*J0*K0*sin_kL*sinh_kL)/(50.*kp2) -  (J0*K0*L*sinh_2kL)/(40.*k) ;
+      T[2][5][1] = -0.125*(J0*K0*L)/kp2 - (J0*K0*L*cos_kL*cosh_kL)/(10.*kp2) - (J0*K0*L*cosh_2kL)/(40.*kp2) -  (4*J0*K0*sin_kL)/(25.*kp3) +  (9*J0*K0*cosh_kL*sin_kL)/(50.*kp3) +  (6*J0*K0*cos_kL*sinh_kL)/(25.*kp3) -  (J0*K0*L*sin_kL*sinh_kL)/(5.*kp2) -  (J0*K0*sinh_2kL)/(200.*kp3) ;
+      T[2][5][2] = (J0p2*cos_kL)/(6.*kp2) - (J0p2*cos_2kL)/(6.*kp2) +  (J0p2*pow(sin((k*L)/2.),4))/kp2 + (k*L*sin_kL)/2. -  (J0p2*L*sin_2kL)/(8.*k) ;
+      T[2][5][3] = (-3*J0p2*L)/(8.*kp2) - (L*cos_kL)/2. + (J0p2*L*cos_2kL)/(8.*kp2) +  (J0p2*sin_kL)/(3.*kp3) + sin_kL/(2.*k) -  (J0p2*cos_kL*sin_kL)/(12.*kp3) ;
+      T[2][5][5] = (3*J0p3)/(16.*kp4) - J0/kp2 + (3*J0*K0p2)/(16.*kp4) -  (3*J0p3*Lp2)/(16.*kp2) -  (J0*K0p2*Lp2)/(16.*kp2) -  (J0p3*cos_kL)/(9.*kp4) + (J0*cos_kL)/kp2 -  (21*J0*K0p2*cos_kL)/(125.*kp4) -  (J0*Lp2*cos_kL)/8. -  (11*J0p3*cos_2kL)/(144.*kp4) +  (J0p3*Lp2*cos_2kL)/(16.*kp2) -  (2*J0*K0p2*cos_kL*cosh_kL)/(125.*kp4) -  (J0*K0p2*Lp2*cos_kL*cosh_kL)/(20.*kp2) -  (7*J0*K0p2*cosh_2kL)/(2000.*kp4) -  (J0*K0p2*Lp2*cosh_2kL)/(80.*kp2) +  (J0*L*sin_kL)/(8.*k) + (13*J0*K0p2*L*cosh_kL*sin_kL)/  (100.*kp3) - (J0p3*L*sin_2kL)/(24.*kp3) +  (9*J0*K0p2*L*cos_kL*sinh_kL)/(100.*kp3) -  (81*J0*K0p2*sin_kL*sinh_kL)/(500.*kp4) -  (J0*K0p2*Lp2*sin_kL*sinh_kL)/(10.*kp2) -  (J0*K0p2*L*sinh_2kL)/(200.*kp3) ;
+      T[3][0][0] = (J0*k*sin_kL)/5. - (J0*k*sinh_2kL)/10.;
+      T[3][1][0] = (J0*cos_kL)/10. - (J0*cosh_2kL)/10.;
+      T[3][1][1] = (-3*J0*sin_kL)/(10.*k) - (J0*sinh_2kL)/(10.*k);
+      T[3][2][0] = (-2*k*K0*sin_kL)/5. + (3*k*K0*cosh_kL*sin_kL)/5. - (k*K0*cos_kL*sinh_kL)/5. ;
+      T[3][2][1] = (K0*cos_kL)/5. - (K0*cos_kL*cosh_kL)/5. + (3*K0*sin_kL*sinh_kL)/5.;
+      T[3][2][2] = -2*J0*k*pow(sin((k*L)/2.),2)*sin_kL;
+      T[3][3][0] = (3*K0*cos_kL)/5. - (3*K0*cos_kL*cosh_kL)/5. - (K0*sin_kL*sinh_kL)/5.;
+      T[3][3][1] = -0.2*(K0*sin_kL)/k - (K0*cosh_kL*sin_kL)/(5.*k) - (3*K0*cos_kL*sinh_kL)/(5.*k) ;
+      T[3][3][2] = J0*pow(sin((k*L)/2.),2) + 2*J0*cos_kL*pow(sin((k*L)/2.),2);
+      T[3][3][3] = (-2*J0*cos((k*L)/2.)*sin((k*L)/2.))/k - (J0*cos((3*k*L)/2.)*sin((k*L)/2.))/k;
+      T[3][5][0] = (-3*J0*K0*L*cos_kL*cosh_kL)/10. - (J0*K0*L*cosh_2kL)/20. + (9*J0*K0*sin_kL)/(25.*k) - (13*J0*K0*cosh_kL*sin_kL)/(50.*k) +  (8*J0*K0*cos_kL*sinh_kL)/(25.*k) - (J0*K0*L*sin_kL*sinh_kL)/10. -  (7*J0*K0*sinh_2kL)/(200.*k) ;
+      T[3][5][1] = -0.125*(J0*K0)/kp2 - (4*J0*K0*cos_kL)/(25.*kp2) + (8*J0*K0*cos_kL*cosh_kL)/(25.*kp2) -  (7*J0*K0*cosh_2kL)/(200.*kp2) -  (J0*K0*L*cosh_kL*sin_kL)/(10.*k) -  (3*J0*K0*L*cos_kL*sinh_kL)/(10.*k) -  (13*J0*K0*sin_kL*sinh_kL)/(50.*kp2) -  (J0*K0*L*sinh_2kL)/(20.*k) ;
+      T[3][5][2] = (kp2*L*cos_kL)/2. - (J0p2*L*cos_2kL)/4. + (J0p2*sin_kL)/(3.*k) + (k*sin_kL)/2. -  (J0p2*cos_kL*sin_kL)/(12.*k) ;
+      T[3][5][3] = (-3*J0p2)/(8.*kp2) + (J0p2*cos_kL)/(3.*kp2) + (J0p2*pow(cos_kL,2))/(24.*kp2) + (k*L*sin_kL)/2. -  (J0p2*pow(sin_kL,2))/(24.*kp2) -  (J0p2*L*sin_2kL)/(4.*k) ;
+      T[3][5][5] = (-3*J0p3*L)/(8.*kp2) - (J0*K0p2*L)/(8.*kp2) - (J0*L*cos_kL)/8. + (J0p3*L*cos_2kL)/(24.*kp2) +  (3*J0*K0p2*L*cos_kL*cosh_kL)/(25.*kp2) -  (7*J0*K0p2*L*cosh_2kL)/(200.*kp2) +  (J0p3*sin_kL)/(9.*kp3) - (7*J0*sin_kL)/(8.*k) +  (21*J0*K0p2*sin_kL)/(125.*kp3) +  (J0*k*Lp2*sin_kL)/8. -  (2*J0*K0p2*cosh_kL*sin_kL)/(125.*kp3) -  (J0*K0p2*Lp2*cosh_kL*sin_kL)/(20.*k) +  (J0p3*sin_2kL)/(9.*kp3) -  (J0p3*Lp2*sin_2kL)/(8.*k) -  (11*J0*K0p2*cos_kL*sinh_kL)/(125.*kp3) -  (3*J0*K0p2*Lp2*cos_kL*sinh_kL)/(20.*k) -  (4*J0*K0p2*L*sin_kL*sinh_kL)/(25.*kp2) -  (3*J0*K0p2*sinh_2kL)/(250.*kp3) -  (J0*K0p2*Lp2*sinh_2kL)/(40.*k) ;
+      T[4][0][0] = - 0.25*kp2*L + 0.125*k*sinh_2kL;
+      T[4][1][0] = -0.25 + 0.25*cosh_2kL;
+      T[4][1][1] = + 0.25*L + (0.125*sinh_2kL)/k;
+      T[4][2][2] = + 0.25*kp2*L - 0.125*k*sin_2kL;
+      T[4][3][2] = -0.25 + 0.25*cos_2kL;
+      T[4][3][3] = + 0.25*L + (0.125*sin_2kL)/k;
+      T[4][5][0] = - 0.25*K0*L + 0.125*K0*L*cosh_2kL + (0.0625*K0*sinh_2kL)/k ;
+      T[4][5][1] = - (0.0625*K0)/kp2 + 0.125*K0*Lp2 + (0.0625*K0*cosh_2kL)/kp2 + (0.125*K0*L*sinh_2kL)/k ;
+      T[4][5][2] = - 0.25*J0*L + 0.125*J0*L*cos_2kL + (0.0625*J0*sin_2kL)/k;
+      T[4][5][3] = + (0.0625*J0)/kp2 + 0.125*J0*Lp2 - (0.0625*J0*cos_2kL)/kp2 + (0.125*J0*L*sin_2kL)/k ;
+      T[4][5][5] = + (0.0625*J0p2*L)/kp2 - (0.0625*K0p2*L)/kp2 +  0.020833333333333332*J0p2*Lp3 +  0.020833333333333332*K0p2*Lp3 -  (0.03125*J0p2*L*cos_2kL)/kp2 +  (0.03125*K0p2*L*cosh_2kL)/kp2 -  (0.015625*J0p2*sin_2kL)/kp3 +  (0.03125*J0p2*Lp2*sin_2kL)/k +  (0.015625*K0p2*sinh_2kL)/kp3 +  (0.03125*K0p2*Lp2*sinh_2kL)/k   ;
+    }
+  }
+  return M;
+}
+
+void computeQuadSteeringStrengths(double *K0, double *J0, double xkick0, double ykick0, double L, double K1)
+{
+    double xr, yr, alpha;
+    double dxp, dyp;
+    if (K1==0) {
+      *K0 = -xkick0/L;
+      *J0 = -ykick0/L;
+    } else {
+      xr = -xkick0/(K1*L);
+      yr = ykick0/(K1*L);
+      alpha = sqrt(fabs(K1));
+      if (K1>=0) {
+	dxp = alpha*xr*sin(alpha*L);
+	dyp = -alpha*yr*sinh(alpha*L);
+      } else {
+	dxp = -alpha*xr*sinh(alpha*L);
+	dyp = alpha*yr*sin(alpha*L);
+      }
+      if (xkick0 && dxp)
+	*K0 = sqr(xkick0)/dxp/L;
+      else
+	*K0 = 0;
+      if (ykick0 && dyp)
+	*J0 = sqr(ykick0)/dyp/L;
+      else
+	*J0 = 0;
+    }
+}
+
