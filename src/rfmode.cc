@@ -64,7 +64,7 @@ void track_through_rfmode(
   double VPrevious, tPrevious, phasePrevious;
   double V_sum, Vr_sum, Vi_sum, Vg_sum, Vgr_sum, Vgi_sum, Vci_sum, Vcr_sum, Vc_sum;
   double Q_sum, dgamma;
-  long n_summed, max_hist, n_occupied;
+  long n_summed, max_hist=0, n_occupied;
   double Qrp, VbImagFactor, Q = 0;
   long deltaPass;
   long np_total;
