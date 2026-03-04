@@ -1,0 +1,73 @@
+&run_setup
+   lattice = "apsKick.lte",
+   use_beamline = "RING",
+   p_central = 13698.630137,
+   default_order = 2,
+   semaphore_file = "run.done",
+&end
+
+! Make a closed orbit error
+&alter_elements name=S20A:Q1, item=DX, value=1e-5 &end
+&alter_elements name=S20A:Q1, item=DY, value=1e-5 &end
+    
+&run_control
+&end
+
+&closed_orbit
+        output = run.clo,
+&end
+
+&bunched_beam
+&end
+&track
+&end
+
+! Extract x and y positions so we can take this as the golden orbit
+&subprocess 
+    command="
+sddsprocess run.clo run.dx -match=col,ElementType=MONI -print=col,ElementParameter,DX -define=col,ParameterValue,x
+    "
+&end
+&subprocess 
+    command="
+sddsprocess run.clo run.dy -match=col,ElementType=MONI -print=col,ElementParameter,DY -define=col,ParameterValue,y
+    "
+&end
+
+! Second step
+&run_setup
+   lattice = "apsKick.lte",
+   use_beamline = "RING",
+   p_central = 13698.630137,
+   default_order = 2,
+   semaphore_file = "run.done",
+&end
+
+! Make the closed orbit "error"
+&alter_elements name=S20A:Q1, item=DX, value=1e-5 &end
+&alter_elements name=S20A:Q1, item=DY, value=1e-5 &end
+    
+! Load the DX and DY values corresponding to this error
+&load_parameters
+    filename_list = "run.dx run.dy",
+    change_defined_values = 1
+&end
+
+! Perform orbit correction. Because we've defined the closed orbit as corresponding
+! to the perturbation imposed above, the correction will do nothing.
+&correct
+    mode = orbit,
+    trajectory_output = %s.orb
+    corrector_output = %s.cor
+    n_xy_cycles = 1
+    n_iterations = 1
+&end
+
+&run_control
+&end
+
+&bunched_beam
+&end
+
+&track
+&end
