@@ -17,7 +17,9 @@
     long verbosity = 0;
     double iteration_fraction = 0.9;
     double fraction_multiplier = 1.05;
+    double fraction_divisor = 2.0;
     double multiplier_interval = 5;
+    long update_matrix = 0;
     long output_monitors_only = 0;
     long tracking_turns = 0;
     long disable = 0;
