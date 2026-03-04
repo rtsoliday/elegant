@@ -532,7 +532,7 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
     if (verbosity > 0) {
       char text[200];
       sprintf(text, "** One-turn, on-orbit matrix with%sradiation:", radiation ? " " : "out ");
-      print_matrices(stdout, text, beamline->Mld);
+      print_matrices(stdout, text, beamline->Mld, 0.0);
       fflush(stdout);
     }
     if (verbosity > 1) {
@@ -1014,10 +1014,19 @@ void computeNaturalEmittances(VMATRIX *Mld, double *sigmaMatrix, double *emittan
   N = LDA = LDVR = MATDIM;
   LDVL = 1;
   lwork = 1000;
-  dgeev_((char *)&JOBVL, (char *)&JOBVR, (int *)&N, (double *)&Mcopy,
-         (int *)&LDA, (double *)&WR, (double *)&WI, (double *)&VL,
-         (int *)&LDVL, (double *)&VR, (int *)&LDVR, (double *)&work,
-         (int *)&lwork, (int *)&info);
+  {
+    long long N_ll = (long long)N;
+    long long LDA_ll = (long long)LDA;
+    long long LDVL_ll = (long long)LDVL;
+    long long LDVR_ll = (long long)LDVR;
+    long long lwork_ll = (long long)lwork;
+    long long info_ll = 0;
+    dgeev_((char *)&JOBVL, (char *)&JOBVR, (int *)&N_ll, (double *)&Mcopy,
+           (int *)&LDA_ll, (double *)&WR, (double *)&WI, (double *)&VL,
+           (int *)&LDVL_ll, (double *)&VR, (int *)&LDVR_ll, (double *)&work,
+           (int *)&lwork_ll, (int *)&info_ll);
+    info = (int)info_ll;
+  }
 #else
   fprintf(stderr, "Error calling dgeev. You will need to install LAPACK and rebuild elegant\n");
   exitElegant(1);
