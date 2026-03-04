@@ -409,7 +409,6 @@ void setUpIonEffectsOutputFiles(long nPasses) {
   }
 }
 
-#if TURBO_FASTPOISSON
 #  include <fftw3.h>
 // FFTW makes 64byte aligned malloc for x86-64
 static void **allocateFFTWArray(uint64_t size, int n1, int n2) {
@@ -423,7 +422,6 @@ static void **allocateFFTWArray(uint64_t size, int n1, int n2) {
     ptr0[i] = buffer + i * size * n2;
   return ((void **)ptr0);
 }
-#endif
 
 void setupIonEffects(NAMELIST_TEXT *nltext, VARY *control, RUN *run) {
   /* process namelist input */
@@ -538,6 +536,7 @@ void readIonProperties(char *filename) {
   if ((ionProperties.nSpecies = SDDS_RowCount(&SDDSin)) <= 0)
     bombElegantVA((char *)"Ion properties file %s appears to have no rows.\n", filename);
 
+  sourceName = NULL;
   if (!(ionProperties.ionName = (char **)SDDS_GetColumn(&SDDSin, (char *)"IonName")) ||
       !(ionProperties.mass = SDDS_GetColumnInDoubles(&SDDSin, (char *)"Mass")) ||
       !(ionProperties.chargeState = SDDS_GetColumnInDoubles(&SDDSin, (char *)"ChargeState")) ||
@@ -689,7 +688,6 @@ void completeIonEffectsSetup(RUN *run, LINE_LIST *beamline) {
         // So,use manual align malloc calls [C99]
         // TODO: do we really need all 4? can reuse for kicks maybe?
         // TODO:
-#if TURBO_FASTPOISSON == 1 || TURBO_FASTPOISSON == 2
         ionEffects->ion2dDensity =
           (double **)allocateFFTWArray(sizeof(double), ionEffects->n2dGridIon[0], ionEffects->n2dGridIon[1]);
         ionEffects->ionPotential =
@@ -698,28 +696,6 @@ void completeIonEffectsSetup(RUN *run, LINE_LIST *beamline) {
           (double **)allocateFFTWArray(sizeof(double), ionEffects->n2dGridIon[0], ionEffects->n2dGridIon[1]);
         ionEffects->yKickPoisson =
           (double **)allocateFFTWArray(sizeof(double), ionEffects->n2dGridIon[0], ionEffects->n2dGridIon[1]);
-#elif TURBO_FASTPOISSON == 3
-        // Overallocate for in-place FFT
-        int N_y = ionEffects->n2dGridIon[1];
-        ionEffects->ion2dDensity =
-          (double **)allocateFFTWArray(sizeof(double), ionEffects->n2dGridIon[0], 2 * (N_y / 2 + 1));
-        ionEffects->ionPotential =
-          (double **)allocateFFTWArray(sizeof(double), ionEffects->n2dGridIon[0], ionEffects->n2dGridIon[1]);
-        ionEffects->xKickPoisson =
-          (double **)allocateFFTWArray(sizeof(double), ionEffects->n2dGridIon[0], ionEffects->n2dGridIon[1]);
-        ionEffects->yKickPoisson =
-          (double **)allocateFFTWArray(sizeof(double), ionEffects->n2dGridIon[0], ionEffects->n2dGridIon[1]);
-#else
-        ionEffects->ion2dDensity =
-          (double **)czarray_2d(sizeof(double), ionEffects->n2dGridIon[0], ionEffects->n2dGridIon[1]);
-        ionEffects->ionPotential =
-          (double **)czarray_2d(sizeof(double), ionEffects->n2dGridIon[0], ionEffects->n2dGridIon[1]);
-        ionEffects->xKickPoisson =
-          (double **)czarray_2d(sizeof(double), ionEffects->n2dGridIon[0], ionEffects->n2dGridIon[1]);
-        ionEffects->yKickPoisson =
-          (double **)czarray_2d(sizeof(double), ionEffects->n2dGridIon[0], ionEffects->n2dGridIon[1]);
-
-#endif
       }
     }
     eptr = eptr->succ;
@@ -1141,7 +1117,6 @@ void make2dIonHistogram(IONEFFECTS *ionEffects) {
     }
   }
   ionEffects->qTotal = qTotal;
-#if TURBO_FASTPOISSON >= 2
   //  int total_len = ionEffects->n2dGridIon[0] * ionEffects->n2dGridIon[1];
   double f = 1.0 / (delta[0] * delta[1]);
   //  double* temp = ionEffects->ion2dDensity[0];
@@ -1150,11 +1125,6 @@ void make2dIonHistogram(IONEFFECTS *ionEffects) {
   for (ix = 0; ix < ionEffects->n2dGridIon[0]; ix++)
     for (iy = 0; iy < ionEffects->n2dGridIon[1]; iy++)
       ionEffects->ion2dDensity[ix][iy] *= f;
-#else
-  for (ix = 0; ix < ionEffects->n2dGridIon[0]; ix++)
-    for (iy = 0; iy < ionEffects->n2dGridIon[1]; iy++)
-      ionEffects->ion2dDensity[ix][iy] /= delta[0] * delta[1];
-#endif
 
 #if USE_MPI
 #  if MPI_DEBUG
@@ -1409,10 +1379,8 @@ void addIon_point(IONEFFECTS *ionEffects, long iSpecies, double qToAdd, double x
   ionEffects->coordinate[iSpecies][iNew][4] = qToAdd; /* macroparticle charge */
 }
 
-#if TURBO_FADDEEVA
 // From http://ab-initio.mit.edu/wiki/index.php/Faddeeva_Package under MIT license
 #  include "Faddeeva.hh"
-#endif
 
 void gaussianBeamKick(
                       double *coord,   /* x, xp, y, yp, s, delta of kicked particle */
@@ -1427,9 +1395,6 @@ void gaussianBeamKick(
   // calculate beam kick on ion, assuming Gaussian beam
   double sx, sy, x, y, sd, Fx, Fy, C1, C2, C3, ay;
   std::complex<double> Fc, w1, w2, erf1, erf2;
-#if !TURBO_FADDEEVA
-  long flag, flag2;
-#endif
   long swapXY;
 
   kick[0] = 0;
@@ -1465,14 +1430,9 @@ void gaussianBeamKick(
   C2 = sqrt(2 * PI / (sqr(sx) - sqr(sy)));
   C3 = exp(-sqr(x) / (2 * sqr(sx)) - sqr(y) / (2 * sqr(sy)));
 
-#if TURBO_FADDEEVA
   // TODO: test relaxing relative error value (see library for details)
   erf1 = Faddeeva::w(w1);
   erf2 = Faddeeva::w(w2);
-#else
-  erf1 = complexErf(w1, &flag);
-  erf2 = complexErf(w2, &flag2);
-#endif
 
   Fc = C1 * C2 * (erf1 - C3 * erf2);
   Fx = Fc.imag();
@@ -1488,13 +1448,8 @@ void gaussianBeamKick(
     Fy = tmp;
   }
 
-#if TURBO_FASTPOISSON >= 2
   kick[0] = -Fx * (1.0 / ionMass);
   kick[1] = -Fy * (1.0 / ionMass);
-#else
-  kick[0] = -Fx / ionMass;
-  kick[1] = -Fy / ionMass;
-#endif
 }
 
 void roundGaussianBeamKick(
@@ -3017,13 +2972,7 @@ void applyIonKicksToElectronBunch(
       delta[iPlane] = 2 * ionEffects->poisson_span[iPlane] / (ionEffects->n2dGridIon[iPlane] - 1.0);
     }
 
-#if TURBO_FASTPOISSON >= 2
     // These buffers are never read, just overwritten in the wrapper, no need to clear them out
-#else
-    memset(ionEffects->ionPotential[0], 0, sizeof(double) * ionEffects->n2dGridIon[0] * ionEffects->n2dGridIon[1]);
-    memset(ionEffects->xKickPoisson[0], 0, sizeof(double) * ionEffects->n2dGridIon[0] * ionEffects->n2dGridIon[1]);
-    memset(ionEffects->yKickPoisson[0], 0, sizeof(double) * ionEffects->n2dGridIon[0] * ionEffects->n2dGridIon[1]);
-#endif
 
     poissonSolverWrapper(ionEffects->ion2dDensity, ionEffects->ionPotential,
                          ionEffects->n2dGridIon[0], ionEffects->n2dGridIon[1],
