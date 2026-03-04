@@ -95,8 +95,10 @@ long setup_closed_orbit(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
     bombElegant("closed_orbit_accuracy_requirement <= 0", NULL);
   if (closed_orbit_iterations < 1)
     bombElegant("closed_orbit_iterations < 1", NULL);
-  if (iteration_fraction < 0 || iteration_fraction > 1)
-    bombElegant("iteration_fraction must be on [0, 1]", NULL);
+  if (iteration_fraction < 0)
+    bombElegant("iteration_fraction must be >= 0", NULL);
+  if (iteration_fraction > 1)
+    printWarning("closed_orbit: iteration_fraction>1.", "This may be an error and lead to divergent orbits.");
   if (fraction_multiplier < 1)
     bombElegant("fraction_multiplier must not be less than 1", NULL);
   if (multiplier_interval < 1)
@@ -298,12 +300,30 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
                        double fraction_multiplier, long multiplier_interval,
                        double *deviation, long n_turns) {
   static MATRIX *R, *ImR, *INV_ImR, *INV_R, *C, *co, *diff, *change;
+  static VMATRIX *Mco, *Mnew;
   static double **one_part;
   static long initialized = 0;
   long i, j, n_iter = 0, bad_orbit = 0, second_try;
   long n_part, method, goodCount, convergenceProblem = 0;
-  double p, error, last_error;
-
+  double p, error, last_error, reference_error;
+#ifdef CLORB_DEBUG
+  static FILE *fpClorb = NULL;
+  if (!fpClorb) {
+    fpClorb = fopen("closed_orbit_debug.sdds", "w");
+    fprintf(fpClorb, "SDDS1\n&column name=Iteration type=short &end\n");
+    fprintf(fpClorb, "&column name=x0 type=double units=m &end\n");
+    fprintf(fpClorb, "&column name=xp0 type=double &end\n");
+    fprintf(fpClorb, "&column name=y0 type=double units=m &end\n");
+    fprintf(fpClorb, "&column name=yp0 type=double &end\n");
+    fprintf(fpClorb, "&column name=delta0 type=double &end\n");
+    fprintf(fpClorb, "&column name=p type=double &end\n");
+    fprintf(fpClorb, "&column name=fraction type=double &end\n");
+    fprintf(fpClorb, "&column name=error type=double &end\n");
+    fprintf(fpClorb, "&column name=method type=short &end\n");
+    fprintf(fpClorb, "&data mode=ascii no_row_counts=1 &end\n");
+  }
+#endif
+  
   log_entry("find_closed_orbit");
 
   if (fixed_length)
@@ -336,6 +356,10 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
     bombElegant("faulty transport matrix passed to find_closed_orbit()", NULL);
 
   if (!initialized) {
+    Mco = malloc(sizeof(*Mco));
+    Mnew = malloc(sizeof(*Mnew));
+    initialize_matrices(Mco, 1);
+    initialize_matrices(Mnew, 2);
     m_alloc(&ImR, 4, 4);
     m_alloc(&R, 4, 4);
     m_alloc(&INV_ImR, 4, 4);
@@ -357,16 +381,17 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
   }
 
   if (!m_invert(INV_ImR, ImR)) {
-    printf("error: unable to invert matrix to find closed orbit!\nThe R matrix is:");
+    printf("error: unable to invert matrix to find closed orbit (1)!\nThe transport matrix is:\n");
     fflush(stdout);
+    for (i = 0; i < 4; i++)
+      printf("C[%ld]: %le\n", i + 1, C->a[i][0]);
     for (i = 0; i < 4; i++) {
       printf("R[%ld]: ", i + 1);
-      fflush(stdout);
       for (j = 0; j < 4; j++)
         printf("%14.6e ", R->a[i][j]);
-      fflush(stdout);
       fputc('\n', stdout);
     }
+    fflush(stdout);
     for (i = 0; i < 4; i++) {
       for (j = 0; j < 4; j++) {
         INV_ImR->a[i][j] = 0;
@@ -400,7 +425,7 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
       if (method == 0 && n_turns < 0)
         continue;
       n_iter = 0;
-      error = DBL_MAX / 4;
+      reference_error = error = DBL_MAX / 4;
       bad_orbit = 0;
       second_try = 0;
       goodCount = 0;
@@ -416,7 +441,7 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
                          CLOSED_ORBIT_TRACKING + TEST_PARTICLES + TIME_DEPENDENCE_OFF + (start_from_recirc ? BEGIN_AT_RECIRC : 0),
                          1, 0,
                          NULL, NULL, NULL, NULL, NULL)) {
-#ifdef DEBUG
+#ifdef CLORB_DEBUG
           printf("particle lost while tracking for closed orbit!\n");
 #endif
           if (n_iter == 0 && !second_try) {
@@ -441,12 +466,22 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
         if (deviation)
           deviation[4] = one_part[0][4] - beamline->revolution_length;
         last_error = error;
-        if ((error = sqrt(sqr(diff->a[0][0]) + sqr(diff->a[1][0]) + sqr(diff->a[2][0]) + sqr(diff->a[3][0]))) < clorb_acc)
+        error = sqrt(sqr(diff->a[0][0]) + sqr(diff->a[1][0]) + sqr(diff->a[2][0]) + sqr(diff->a[3][0]));
+        if (error < reference_error)
+          reference_error = error;
+#ifdef CLORB_DEBUG
+        fprintf(fpClorb, "%ld %21.15le %21.15le %21.15le %21.15le %21.15le %21.15le %21.15le %21.15le %ld\n",
+                n_iter, one_part[0][0], one_part[0][1], one_part[0][2], one_part[0][3], one_part[0][5], p, change_fraction,
+                error, method);
+        fflush(fpClorb);
+#endif
+        if (error < clorb_acc)
           break;
         if (n_turns < 0)
           break;
-        if (error > 2 * last_error) {
-          change_fraction = change_fraction / 2;
+        if (error > reference_error) {
+          reference_error = error;
+          change_fraction = change_fraction / fraction_divisor;
           goodCount = -10;
           if (change_fraction < 0.01) {
             char buffer[16384];
@@ -463,8 +498,8 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
           goodCount++;
           if (goodCount > multiplier_interval) {
             change_fraction *= fraction_multiplier;
-            if (change_fraction > .99)
-              change_fraction = .99;
+            if (change_fraction > 1)
+              change_fraction = 1;
             goodCount = 0;
 #ifdef DEBUG
             printf("increased iteration fraction to %e\n", change_fraction);
@@ -486,6 +521,40 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
         }
         one_part[0][4] = 0;
         one_part[0][5] = dp;
+
+        if (update_matrix) {
+          /* Update the iteration matrix. Didn't find this helped. */
+          printf("Updating matrix\n");
+          long i, j;
+          for (i=0; i<6; i++)
+            Mco->C[i] = one_part[0][i];
+          for (i=0; i<6; i++)
+            for (j=0; j<6; j++)
+              Mco->R[i][j] = (i == j ? 1 : 0);
+          concat_matrices(Mnew, M, Mco, 0);
+          for (i = 0; i < 4; i++) {
+            C->a[i][0] = Mnew->C[i];
+            for (j = 0; j < 4; j++) {
+              R->a[i][j] = Mnew->R[i][j];
+              ImR->a[i][j] = (i == j ? 1 : 0) - R->a[i][j];
+            }
+          }
+          if (!m_invert(INV_ImR, ImR)) {
+            printf("error: unable to invert matrix to find closed orbit (2)! R matrix is:\n");
+	    for (i = 0; i < 4; i++) {
+	      printf("R[%ld]: ", i + 1);
+	      for (j = 0; j < 4; j++)
+		printf("%14.6e ", R->a[i][j]);
+	      fputc('\n', stdout);
+	    }
+	    fflush(stdout);
+            for (i = 0; i < 4; i++) {
+              for (j = 0; j < 4; j++) {
+                INV_ImR->a[i][j] = 0;
+              }
+            }
+          }
+        }
       } while (++n_iter < clorb_iter);
       if (n_iter >= clorb_iter && error > clorb_acc_requirement) {
         printf("error: closed orbit did not converge to better than %e after %ld iterations (requirement is %e)\n",
@@ -503,6 +572,7 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
         bad_orbit = 0;
         break;
       }
+
     } else {
       /* try to find a good starting point by tracking several turns */
       long turn;
