@@ -304,6 +304,8 @@ void correction_setup(
                                        _correct->CMFx->corr_limit, beamline, run, 0);
       found += add_steer_type_to_lists(&_correct->SLx, 0, T_KQUAD, item, _correct->CMFx->default_tweek,
                                        _correct->CMFx->corr_limit, beamline, run, 0);
+      found += add_steer_type_to_lists(&_correct->SLx, 0, T_DQCOR, item, _correct->CMFx->default_tweek,
+                                       _correct->CMFx->corr_limit, beamline, run, 0);
       found += add_steer_type_to_lists(&_correct->SLx, 0, T_KSEXT, item, _correct->CMFx->default_tweek,
                                        _correct->CMFx->corr_limit, beamline, run, 0);
 
@@ -331,6 +333,8 @@ void correction_setup(
       found += add_steer_type_to_lists(&_correct->SLy, 2, T_QUAD, item, _correct->CMFy->default_tweek,
                                        _correct->CMFy->corr_limit, beamline, run, 0);
       found += add_steer_type_to_lists(&_correct->SLy, 2, T_KQUAD, item, _correct->CMFy->default_tweek,
+                                       _correct->CMFy->corr_limit, beamline, run, 0);
+      found += add_steer_type_to_lists(&_correct->SLy, 2, T_DQCOR, item, _correct->CMFy->default_tweek,
                                        _correct->CMFy->corr_limit, beamline, run, 0);
       found += add_steer_type_to_lists(&_correct->SLy, 2, T_KSEXT, item, _correct->CMFy->default_tweek,
                                        _correct->CMFy->corr_limit, beamline, run, 0);
@@ -406,6 +410,8 @@ void correction_setup(
                                        _correct->CMFx->corr_limit, beamline, run, 0);
       found += add_steer_type_to_lists(&_correct->SLx, 0, T_KQUAD, item, _correct->CMFx->default_tweek,
                                        _correct->CMFx->corr_limit, beamline, run, 0);
+      found += add_steer_type_to_lists(&_correct->SLx, 0, T_DQCOR, item, _correct->CMFx->default_tweek,
+                                       _correct->CMFx->corr_limit, beamline, run, 0);
       cp_str(&item, "KICK");
       found += add_steer_type_to_lists(&_correct->SLx, 2, T_VCOR, item, _correct->CMFx->default_tweek,
                                        _correct->CMFx->corr_limit, beamline, run, 0);
@@ -420,6 +426,8 @@ void correction_setup(
       found += add_steer_type_to_lists(&_correct->SLx, 2, T_QUAD, item, _correct->CMFx->default_tweek,
                                        _correct->CMFx->corr_limit, beamline, run, 0);
       found += add_steer_type_to_lists(&_correct->SLx, 2, T_KQUAD, item, _correct->CMFx->default_tweek,
+                                       _correct->CMFx->corr_limit, beamline, run, 0);
+      found += add_steer_type_to_lists(&_correct->SLx, 2, T_DQCOR, item, _correct->CMFx->default_tweek,
                                        _correct->CMFx->corr_limit, beamline, run, 0);
       if (!found)
         bombElegant("no steering elements found", NULL);
@@ -570,17 +578,17 @@ void add_steering_element(CORRECTION *correct, LINE_LIST *beamline, RUN *run, NA
     if (!add_steer_elem_to_lists(&correct->SLx, 0, name, item, element_type, tweek, limit,
                                  start_occurence, end_occurence, occurence_step, s_start, s_end,
                                  beamline, run, 1, verbose))
-      bombElegant("no match to given element name or type", NULL);
+      bombElegant("no match to given element name or type (1)", NULL);
   } else if (plane[0] == 'v' || plane[0] == 'V') {
     if (!add_steer_elem_to_lists(&correct->SLy, 2, name, item, element_type, tweek, limit,
                                  start_occurence, end_occurence, occurence_step, s_start, s_end,
                                  beamline, run, 1, verbose))
-      bombElegant("no match to given element name or type", NULL);
+      bombElegant("no match to given element name or type (2)", NULL);
   } else if (plane[0] == 'c' || plane[0] == 'C') {
     if (!add_steer_elem_to_lists(&correct->SLx, 4, name, item, element_type, tweek, limit,
                                  start_occurence, end_occurence, occurence_step, s_start, s_end,
                                  beamline, run, 1, verbose + 10))
-      bombElegant("no match to given element name or type", NULL);
+      bombElegant("no match to given element name or type (3)", NULL);
   } else
     bombElegantVA("invalid plane %c specified for steering element", plane[0]);
 }
@@ -733,6 +741,28 @@ long add_steer_elem_to_lists(STEERING_LIST *SL, long plane, char *name, char *it
           if (!((KQUAD *)(context->p_elem))->ySteering)
             ((KQUAD *)(context->p_elem))->ySteering = forceQuadsBends;
           notNeeded = !((KQUAD *)(context->p_elem))->ySteering;
+        }
+      }
+      break;
+    case T_DQCOR:
+      if (plane == 0) {
+        if (!((DQCOR *)(context->p_elem))->xSteering)
+          ((DQCOR *)(context->p_elem))->xSteering = forceQuadsBends;
+        notNeeded = !((DQCOR *)(context->p_elem))->xSteering;
+      } else if (plane == 2) {
+        if (!((DQCOR *)(context->p_elem))->ySteering)
+          ((DQCOR *)(context->p_elem))->ySteering = forceQuadsBends;
+        notNeeded = !((DQCOR *)(context->p_elem))->ySteering;
+      } else {
+        if (strcmp(item, "HKICK") == 0) {
+          if (!((DQCOR *)(context->p_elem))->xSteering)
+            ((DQCOR *)(context->p_elem))->xSteering = forceQuadsBends;
+          notNeeded = !((DQCOR *)(context->p_elem))->xSteering;
+        }
+        if (strcmp(item, "VKICK") == 0) {
+          if (!((DQCOR *)(context->p_elem))->ySteering)
+            ((DQCOR *)(context->p_elem))->ySteering = forceQuadsBends;
+          notNeeded = !((DQCOR *)(context->p_elem))->ySteering;
         }
       }
       break;
@@ -1546,9 +1576,9 @@ void compute_trajcor_matrices(CORMON_DATA *CM, STEERING_LIST *SL, long coord, RU
       char memName[1024];
       i = CM->mon_index[i_moni];
       Mij(CM->C, i_moni, i_corr) = corrCalibration *
-        (computeMonitorReading(CM->umoni[i_moni], coord, traj1[i].centroid[0], traj1[i].centroid[2], 0) - computeMonitorReading(CM->umoni[i_moni], coord, traj0[i].centroid[0], traj0[i].centroid[2], 0));
+        (computeMonitorReading(CM->umoni[i_moni], coord, traj1[i].centroid, 0) - computeMonitorReading(CM->umoni[i_moni], coord, traj0[i].centroid, 0));
       Mij(CM->Cp, i_moni, i_corr) = corrCalibration*
-        (computeMonitorReading(CM->umoni[i_moni], coord+1, traj1[i].centroid[1], traj1[i].centroid[3], 0) - computeMonitorReading(CM->umoni[i_moni], coord+1, traj0[i].centroid[1], traj0[i].centroid[3], 0));
+	 (computeMonitorReading(CM->umoni[i_moni], coord+1, traj1[i].centroid, 0) - computeMonitorReading(CM->umoni[i_moni], coord+1, traj0[i].centroid, 0));
         
       if (rpn_store_response_matrix) {
         sprintf(memName, "%cR_%s#%ld_%s#%ld.%s", coord == 0 ? 'H' : 'V',
@@ -1626,7 +1656,7 @@ long global_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TRAJEC
   long n_part, i, sl_index;
   unsigned long tracking_flags;
   double **particle;
-  double p, x, y, reading, fraction, minFraction, param, change;
+  double p, reading, fraction, minFraction, param, change;
   MAT *Qo, *dK;
   long i_pegged;
 
@@ -1728,9 +1758,7 @@ long global_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TRAJEC
     for (i_moni = 0; i_moni < CM->nmon; i_moni++) {
       if (!(eptr = traj[CM->mon_index[i_moni]].elem))
         bombElegant("invalid element pointer in trajectory array (global_trajcor_plane)", NULL);
-      x = traj[CM->mon_index[i_moni]].centroid[0];
-      y = traj[CM->mon_index[i_moni]].centroid[2];
-      reading = computeMonitorReading(eptr, coord, x, y, 0);
+      reading = computeMonitorReading(eptr, coord, traj[CM->mon_index[i_moni]].centroid, 0);
       if (isnan(reading) || isinf(reading))
         return 0;
       CM->posi[iteration][i_moni] = reading;
@@ -1834,7 +1862,7 @@ long one_to_one_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TR
   long n_part, i;
   unsigned long tracking_flags;
   double **particle, param, fraction;
-  double p, x, y, reading;
+  double p, reading;
   double response;
 
   log_entry("one_to_one_trajcor_plane");
@@ -1886,9 +1914,7 @@ long one_to_one_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TR
     for (i_moni = 0; i_moni < CM->nmon; i_moni++) {
       if (!(eptr = traj[CM->mon_index[i_moni]].elem))
         bombElegant("invalid element pointer in trajectory array (one_to_one_trajcor_plane)", NULL);
-      x = traj[CM->mon_index[i_moni]].centroid[0];
-      y = traj[CM->mon_index[i_moni]].centroid[2];
-      CM->posi[iteration][i_moni] = computeMonitorReading(eptr, coord, x, y, 0);
+      CM->posi[iteration][i_moni] = computeMonitorReading(eptr, coord, traj[CM->mon_index[i_moni]].centroid, 0);
     }
     if (iteration == n_iterations)
       break;
@@ -1950,9 +1976,7 @@ long one_to_one_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TR
 
       if (!(eptr = traj[CM->mon_index[i_moni]].elem))
         bombElegant("invalid element pointer in trajectory array (one_to_one_trajcor_plane)", NULL);
-      x = traj[CM->mon_index[i_moni]].centroid[0];
-      y = traj[CM->mon_index[i_moni]].centroid[2];
-      reading = computeMonitorReading(eptr, coord, x, y, 0);
+      reading = computeMonitorReading(eptr, coord, traj[CM->mon_index[i_moni]].centroid, 0);
       reading += (CM->bpm_noise ? noise_value(CM->bpm_noise, CM->bpm_noise_cutoff, CM->bpm_noise_distribution) : 0);
 
 #if defined(DEBUG)
@@ -2082,10 +2106,8 @@ long thread_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TRAJEC
       fflush(stdout);
     }
     for (i_moni = 0; i_moni < CM->nmon; i_moni++) {
-      double x, y;
-      x = traj[CM->mon_index[i_moni]].centroid[0];
-      y = traj[CM->mon_index[i_moni]].centroid[2];
-      CM->posi[iteration][i_moni] = computeMonitorReading(traj[CM->mon_index[i_moni]].elem, coord, x, y, 0);
+      CM->posi[iteration][i_moni]
+	= computeMonitorReading(traj[CM->mon_index[i_moni]].elem, coord, traj[CM->mon_index[i_moni]].centroid, 0);
     }
     if (iteration == n_iterations)
       break;
@@ -2461,8 +2483,8 @@ void compute_orbcor_matrices(CORMON_DATA *CM, STEERING_LIST *SL, long coord, RUN
 #ifdef DEBUG
     printf("Tunes: %e, %e\n", beamline->tune[0], beamline->tune[1]);
     printf("Initial eta: %e, %e\n",
-           beamline->elem.twiss->etax,
-           beamline->elem.twiss->etay);
+           beamline->elem->twiss->etax,
+           beamline->elem->twiss->etay);
     printf("Final eta: %e, %e\n",
            beamline->elast->twiss->etax,
            beamline->elast->twiss->etay);
@@ -2796,8 +2818,8 @@ void compute_orbcor_matrices1(CORRECTION *_correct, long coord, RUN *run, LINE_L
     for (i_moni = 0; i_moni < CM->nmon; i_moni++) {
       i = CM->mon_index[i_moni];
       Mij(CM->C, i_moni, i_corr) = 
-        (computeMonitorReading(CM->umoni[i_moni], coord, clorb1[i].centroid[0], clorb1[i].centroid[2], 0)
-         - computeMonitorReading(CM->umoni[i_moni], coord, clorb0[i].centroid[0], clorb0[i].centroid[2], 0)) / (2 * corr_tweek);
+        (computeMonitorReading(CM->umoni[i_moni], coord, clorb1[i].centroid, 0)
+         - computeMonitorReading(CM->umoni[i_moni], coord, clorb0[i].centroid, 0)) / (2 * corr_tweek);
       if (_correct->rpn_store_response_matrix) {
         /* store result in rpn memory */
         sprintf(memName, "%sR_%s#%ld_%s#%ld.%s",
@@ -2812,8 +2834,8 @@ void compute_orbcor_matrices1(CORRECTION *_correct, long coord, RUN *run, LINE_L
       for (i_moni = 0; i_moni < CMc->nmon; i_moni++) {
         i = CMc->mon_index[i_moni];
         Mij(CMc->C, i_moni, i_corr) = 
-          (computeMonitorReading(CMc->umoni[i_moni], otherCoord, clorb1[i].centroid[0], clorb1[i].centroid[2], 0)
-           - computeMonitorReading(CMc->umoni[i_moni], otherCoord, clorb0[i].centroid[0], clorb0[i].centroid[2], 0)) / (2 * corr_tweek);
+          (computeMonitorReading(CMc->umoni[i_moni], otherCoord, clorb1[i].centroid, 0)
+           - computeMonitorReading(CMc->umoni[i_moni], otherCoord, clorb0[i].centroid, 0)) / (2 * corr_tweek);
         if (_correct->rpn_store_response_matrix) {
           /* store result in rpn memory */
           sprintf(memName, "%sR_%s#%ld_%s#%ld.%s",
@@ -3174,8 +3196,8 @@ void compute_orbcor_matrices1p(CORRECTION *_correct, RUN *run, LINE_LIST *beamli
     for (i_moni = 0; i_moni < CM->nmon; i_moni++) {
       i = CM->mon_index[i_moni];
       responseBufferSend[index++] = 
-        (computeMonitorReading(CM->umoni[i_moni], coord, clorb1[i].centroid[0], clorb1[i].centroid[2], 0)
-         - computeMonitorReading(CM->umoni[i_moni], coord, clorb0[i].centroid[0], clorb0[i].centroid[2], 0)) / (2 * corr_tweek);
+        (computeMonitorReading(CM->umoni[i_moni], coord, clorb1[i].centroid, 0)
+         - computeMonitorReading(CM->umoni[i_moni], coord, clorb0[i].centroid, 0)) / (2 * corr_tweek);
     }
     if (coupled) {
 #ifdef MPI_DEBUG
@@ -3185,8 +3207,8 @@ void compute_orbcor_matrices1p(CORRECTION *_correct, RUN *run, LINE_LIST *beamli
       for (i_moni = 0; i_moni < CMc->nmon; i_moni++) {
         i = CMc->mon_index[i_moni];
         responseBufferSend[indexc++] = 
-          (computeMonitorReading(CMc->umoni[i_moni], otherCoord, clorb1[i].centroid[0], clorb1[i].centroid[2], 0)
-           - computeMonitorReading(CMc->umoni[i_moni], otherCoord, clorb0[i].centroid[0], clorb0[i].centroid[2], 0)) / (2 * corr_tweek);
+          (computeMonitorReading(CMc->umoni[i_moni], otherCoord, clorb1[i].centroid, 0)
+           - computeMonitorReading(CMc->umoni[i_moni], otherCoord, clorb0[i].centroid, 0)) / (2 * corr_tweek);
       }
     }
 
@@ -3348,7 +3370,7 @@ long orbcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TRAJECTORY **o
   VMATRIX *M;
   long iteration, kick_offset;
   long i_moni, i_corr, i, sl_index, i_pegged;
-  double dp, x, y, reading;
+  double dp, reading;
   /* double last_rms_pos; */
   double best_rms_pos, rms_pos, corr_fraction;
   double fraction, param;
@@ -3445,11 +3467,9 @@ long orbcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TRAJECTORY **o
           bombElegant("missing monitor in closed orbit", NULL);
       }
 
-      x = clorb[i].centroid[0];
-      y = clorb[i].centroid[2];
       eptr = clorb[i].elem;
 
-      CM->posi[iteration][i_moni] = reading = computeMonitorReading(eptr, coord, x, y, 0);
+      CM->posi[iteration][i_moni] = reading = computeMonitorReading(eptr, coord, clorb[i].centroid, 0);
       Mij(Qo, i_moni, 0) = reading + (CM->bpm_noise ? noise_value(CM->bpm_noise, CM->bpm_noise_cutoff, CM->bpm_noise_distribution) : 0.0);
       rms_pos += sqr(Mij(Qo, i_moni, 0));
       if (!clorb[i].elem->succ)
@@ -3789,6 +3809,10 @@ long steering_corrector(ELEMENT_LIST *eptr, long plane) {
     if (plane == 0)
       return ((KQUAD *)(eptr->p_elem))->xSteering;
     return ((KQUAD *)(eptr->p_elem))->ySteering;
+  case T_DQCOR:
+    if (plane == 0)
+      return ((DQCOR *)(eptr->p_elem))->xSteering;
+    return ((DQCOR *)(eptr->p_elem))->ySteering;
   case T_KSEXT:
     if (plane == 0)
       return ((KSEXT *)(eptr->p_elem))->xSteering;
@@ -3831,14 +3855,19 @@ double noise_value(double xamplitude, double xcutoff, long xerror_type) {
   return (0.0);
 }
 
-double computeMonitorReading(ELEMENT_LIST *elem, long coord, double x, double y,
-                             unsigned long flags)
+double computeMonitorReading(ELEMENT_LIST *elem, long coord, double *centroid, unsigned long flags)
   /* coord = 0 is x, etc. */
 {
   double calibration, tilt, reading;
   char *equation;
   double setpoint;
+  double x, y, xp, yp;
 
+  x = centroid[0];
+  xp = centroid[1];
+  y = centroid[2];
+  yp = centroid[3];
+  
   calibration = 1;
   setpoint = 0;
   equation = NULL;
@@ -3846,8 +3875,8 @@ double computeMonitorReading(ELEMENT_LIST *elem, long coord, double x, double y,
   switch (elem->type) {
   case T_MONI:
     if (coord%2==0) {
-      x -= ((MONI *)(elem->p_elem))->dx;
-      y -= ((MONI *)(elem->p_elem))->dy;
+      x -= ((MONI *)(elem->p_elem))->dx - ((MONI*)(elem->p_elem))->dz*xp;
+      y -= ((MONI *)(elem->p_elem))->dy - ((MONI*)(elem->p_elem))->dz*yp;
     }
     switch (coord) {
     case 0:
@@ -3864,8 +3893,10 @@ double computeMonitorReading(ELEMENT_LIST *elem, long coord, double x, double y,
     tilt = ((MONI *)(elem->p_elem))->tilt;
     if (flags & COMPUTEMONITORREADING_TILT_0)
       tilt = 0;
-    if (tilt)
+    if (tilt) {
       rotate_xy(&x, &y, tilt);
+      rotate_xy(&xp, &yp, tilt);
+    }
     switch (coord) {
     case 0:
       equation = ((MONI *)(elem->p_elem))->x_readout;
@@ -3879,8 +3910,8 @@ double computeMonitorReading(ELEMENT_LIST *elem, long coord, double x, double y,
     break;
   case T_HMON:
     if (coord%2==0) {
-      x -= ((HMON *)(elem->p_elem))->dx;
-      y -= ((HMON *)(elem->p_elem))->dy;
+      x -= ((HMON *)(elem->p_elem))->dx - ((HMON*)(elem->p_elem))->dz*xp;
+      y -= ((HMON *)(elem->p_elem))->dy - ((HMON*)(elem->p_elem))->dz*yp;
     }
     if (coord==0) {
       calibration = ((HMON *)(elem->p_elem))->calibration;
@@ -3889,8 +3920,10 @@ double computeMonitorReading(ELEMENT_LIST *elem, long coord, double x, double y,
     tilt = ((HMON *)(elem->p_elem))->tilt;
     if (flags & COMPUTEMONITORREADING_TILT_0)
       tilt = 0;
-    if (tilt)
+    if (tilt) {
       rotate_xy(&x, &y, tilt);
+      rotate_xy(&xp, &yp, tilt);
+    }
     if (coord==0) {
       equation = ((HMON *)(elem->p_elem))->readout;
     }
@@ -3899,8 +3932,8 @@ double computeMonitorReading(ELEMENT_LIST *elem, long coord, double x, double y,
     break;
   case T_VMON:
     if (coord%2==0) {
-      x -= ((VMON *)(elem->p_elem))->dx;
-      y -= ((VMON *)(elem->p_elem))->dy;
+      x -= ((VMON *)(elem->p_elem))->dx - ((VMON*)(elem->p_elem))->dz*xp;
+      y -= ((VMON *)(elem->p_elem))->dy - ((VMON*)(elem->p_elem))->dz*yp;
     }
     if (coord==2) {
       calibration = ((VMON *)(elem->p_elem))->calibration;
@@ -3909,8 +3942,10 @@ double computeMonitorReading(ELEMENT_LIST *elem, long coord, double x, double y,
     tilt = ((VMON *)(elem->p_elem))->tilt;
     if (flags & COMPUTEMONITORREADING_TILT_0)
       tilt = 0;
-    if (tilt)
+    if (tilt) {
       rotate_xy(&x, &y, tilt);
+      rotate_xy(&xp, &yp, tilt);
+    }
     if (coord==2)
       equation = ((VMON *)(elem->p_elem))->readout;
     if (coord != 2 && coord!=3)
@@ -3937,11 +3972,20 @@ double computeMonitorReading(ELEMENT_LIST *elem, long coord, double x, double y,
   } else {
     switch (coord) {
     case 0:
-    case 1:
       reading = x * calibration;
       break;
-    default:
+    case 1:
+      reading = xp * calibration;
+      break;
+    case 2:
       reading = y * calibration;
+      break;
+    case 3:
+      reading = yp * calibration;
+      break;
+    default:
+      bombElegantVA("invalid coordinate index %ld in computeMonitorReading", coord);
+      reading = 0;
       break;
     }
   }
@@ -4035,6 +4079,12 @@ double getCorrectorCalibration(ELEMENT_LIST *elem, long coord) {
       value = ((KQUAD *)(elem->p_elem))->yKickCalibration;
     else
       value = ((KQUAD *)(elem->p_elem))->xKickCalibration;
+    break;
+  case T_DQCOR:
+    if (coord)
+      value = ((DQCOR *)(elem->p_elem))->yKickCalibration;
+    else
+      value = ((DQCOR *)(elem->p_elem))->xKickCalibration;
     break;
   default:
     value = 1;
@@ -4339,9 +4389,9 @@ void compute_coupled_trajcor_matrices(
       if (CM->umoni[i_moni]->type != T_HMON)
         coord = 2;
       Mij(CM->C, i_moni, i_corr) = corrCalibration *
-                                   (computeMonitorReading(CM->umoni[i_moni], coord, traj1[i].centroid[0], traj1[i].centroid[2], 0) - computeMonitorReading(CM->umoni[i_moni], coord, traj0[i].centroid[0], traj0[i].centroid[2], 0));
+	(computeMonitorReading(CM->umoni[i_moni], coord, traj1[i].centroid, 0) - computeMonitorReading(CM->umoni[i_moni], coord, traj0[i].centroid, 0));
       Mij(CM->Cp, i_moni, i_corr) = corrCalibration*
-        (computeMonitorReading(CM->umoni[i_moni], coord+1, traj1[i].centroid[1], traj1[i].centroid[3], 0) - computeMonitorReading(CM->umoni[i_moni], coord+1, traj0[i].centroid[1], traj0[i].centroid[3], 0));
+        (computeMonitorReading(CM->umoni[i_moni], coord+1, traj1[i].centroid, 0) - computeMonitorReading(CM->umoni[i_moni], coord+1, traj0[i].centroid, 0));
     }
 
     /* change the corrector back */
@@ -4411,7 +4461,7 @@ long global_coupled_trajcor(CORMON_DATA *CM, STEERING_LIST *SL, TRAJECTORY **tra
   long i_moni, i_corr;
   long n_part, i, sl_index;
   double **particle;
-  double p, x, y, reading, fraction, minFraction, param, change;
+  double p, reading, fraction, minFraction, param, change;
   MAT *Qo, *dK;
   long i_pegged;
   unsigned long tracking_flags;
@@ -4506,12 +4556,10 @@ long global_coupled_trajcor(CORMON_DATA *CM, STEERING_LIST *SL, TRAJECTORY **tra
       long coord;
       if (!(eptr = traj[CM->mon_index[i_moni]].elem))
         bombElegant("invalid element pointer in trajectory array (global_coupled_trajcor)", NULL);
-      x = traj[CM->mon_index[i_moni]].centroid[0];
-      y = traj[CM->mon_index[i_moni]].centroid[2];
       coord = 0;
       if (CM->umoni[i_moni]->type != T_HMON)
         coord = 2;
-      reading = computeMonitorReading(eptr, coord, x, y, 0);
+      reading = computeMonitorReading(eptr, coord, traj[CM->mon_index[i_moni]].centroid, 0);
       if (isnan(reading) || isinf(reading))
         return 0;
       CM->posi[iteration][i_moni] = reading;
