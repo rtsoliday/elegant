@@ -936,7 +936,7 @@ int main(int argc, char **argv) {
                             "I5", I5,
                             "taux", taux,
                             "tauy", tauy,
-			     "taudelta", taudelta)) ||
+			     "taudelta", taudelta, NULL)) ||
         (!growthRatesOnly &&
          !SDDS_SetParameters(&resultsPage, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                              "xGrowthRate", xGrowthRate,
