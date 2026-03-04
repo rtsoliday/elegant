@@ -59,6 +59,25 @@ long findMaximumOrder(const long order, const long order2,
   return maxOrder;
 }
 
+void print_multipole_data(MULTIPOLE_DATA *md, char *label)
+{
+  printf("%s:\n", label);
+  if (!md || !md->initialized) {
+    printf("not initialized!\n");
+    return;
+  }
+  printf("orders = %ld, referenceRadius = %le, referenceOrder = %ld\n",
+	 (long)md->orders, md->referenceRadius, (long)md->referenceOrder);
+  printf("%5s %13s %13s %13s %13s \n", "order", "an", "bn", "KnL", "JnL");
+  for (int i=0; i<md->orders; i++) {
+    printf("%5d %13.6e %13.6e %13.6e %13.6e\n", md->order[i],
+	   md->an ? md->an[i] : NAN,
+	   md->bn ? md->bn[i] : NAN,
+	   md->KnL ? md->KnL[i] : NAN,
+	   md->JnL ? md->JnL[i] : NAN );
+  }
+}
+
 long searchForStoredMultipoleData(char *multFile) {
   long i;
   /* should use a hash table ! */
@@ -688,7 +707,9 @@ long multipole_tracking2(
   KSEXT *ksext;
   KQUSE *kquse;
   KOCT *koct;
+  DQCOR *dqcor;
   double lEffective = -1, lEnd = 0;
+  double K0, J0;
   short doEndDrift = 0, malignMethod;
 
   MULTIPOLE_DATA *multData = NULL, *steeringMultData = NULL, *edgeMultData = NULL;
@@ -792,6 +813,10 @@ long multipole_tracking2(
     multData = &(kquad->totalMultipoleData);
     edgeMultData = &(kquad->edgeMultipoleData);
     steeringMultData = &(kquad->steeringMultipoleData);
+    /*
+    print_multipole_data(multData, "KQUAD systematic");
+    print_multipole_data(steeringMultData, "KQUAD steering");
+    */
     break;
   case T_KSEXT:
     ksext = ((KSEXT *)elem->p_elem);
@@ -948,6 +973,76 @@ long multipole_tracking2(
     KnL[1] = kquse->k2 * kquse->length * (1 + kquse->fse2);
     order[1] = 2;
     break;
+  case T_DQCOR:
+    dqcor = ((DQCOR *)elem->p_elem);
+    n_kicks = 0;
+    nSlices = dqcor->nSlices;
+    expandHamiltonian = 0;
+    KnL[0] = dqcor->k1 * dqcor->length * (1 + dqcor->fse);
+    order[0] = 1;
+    skew[0] = 0;
+    KnL[1] = dqcor->j1 * dqcor->length * (1 + dqcor->fse);
+    order[1] = 1;
+    skew[1] = 1;
+    tilt = dqcor->tilt;
+    drift = dqcor->length;
+    pitch = dqcor->pitch;
+    yaw = dqcor->yaw;
+    dx = dqcor->dx;
+    dy = dqcor->dy;
+    dz = dqcor->dz;
+    malignMethod = dqcor->malignMethod;
+    determineDQCorReferenceFrameTilt(dqcor);
+    computeQuadSteeringStrengths(&K0, &J0,
+				 dqcor->xKickReferenceFrame * dqcor->xKickCalibration,
+				 dqcor->yKickReferenceFrame * dqcor->yKickCalibration,
+				 dqcor->length, dqcor->K1ReferenceFrame);
+    xkick = -K0*dqcor->length;
+    ykick = -J0*dqcor->length;
+    rotate_xy(&xkick, &ykick, -dqcor->phiReferenceFrame);
+    integ_order = dqcor->integration_order;
+    if (dqcor->synch_rad)
+      rad_coef = sqr(particleCharge) * pow3(Po) / (6 * PI * epsilon_o * sqr(c_mks) * particleMass);
+    isr_coef = particleRadius * sqrt(55.0 / (24 * sqrt(3)) * pow5(Po) * 137.0359895);
+    if (!dqcor->isr || (dqcor->isr1Particle == 0 && n_part == 1))
+      /* Minus sign indicates we accumulate into sigmaDelta^2 only, don't perturb particles */
+      isr_coef *= -1;
+    if (dqcor->length < 1e-6 && (dqcor->isr || dqcor->synch_rad)) {
+      rad_coef = isr_coef = 0; /* avoid unphysical results */
+      printWarningForTracking("DQCOR with length < 1e-6 has SYNCH_RAD=0 and ISR=0 forced to avoid unphysical results.",
+                              NULL);
+    }
+    if (!dqcor->multipolesInitialized) {
+      readErrorMultipoleData(&(dqcor->quadrupoleSystematicMultipoleData),
+                             dqcor->quadrupoleSystematicMultipoles, 0);
+      readErrorMultipoleData(&(dqcor->quadrupoleRandomMultipoleData),
+                             dqcor->quadrupoleRandomMultipoles, 0);
+      readErrorMultipoleData(&(dqcor->dipoleSystematicMultipoleData),
+                             dqcor->dipoleSystematicMultipoles, 1);
+      dqcor->multipolesInitialized = 1;
+    }
+    if (!dqcor->totalMultipolesComputed) {
+      computeTotalErrorMultipoleFields(&(dqcor->totalMultipoleData),
+                                       &(dqcor->quadrupoleSystematicMultipoleData),
+				       dqcor->quadrupoleSystematicMultipoleFactor,
+				       NULL,
+                                       NULL,
+                                       &(dqcor->quadrupoleRandomMultipoleData),
+				       dqcor->quadrupoleRandomMultipoleFactor,
+                                       &(dqcor->dipoleSystematicMultipoleData),
+				       dqcor->dipoleSystematicMultipoleFactor,
+                                       KnL[0], 1, 1,
+                                       dqcor->minMultipoleOrder, dqcor->maxMultipoleOrder);
+      dqcor->totalMultipolesComputed = 1;
+    }
+    multData = &(dqcor->totalMultipoleData);
+    edgeMultData = NULL;
+    steeringMultData = &(dqcor->dipoleSystematicMultipoleData);
+    /*
+    print_multipole_data(multData, "DQCOR systematic");
+    print_multipole_data(steeringMultData, "DQCOR steering");
+    */
+    break;
   default:
     printf("error: multipole_tracking2() called for element %s--not supported!\n", elem->name);
     fflush(stdout);
@@ -1089,12 +1184,8 @@ long multipole_tracking2(
 #define FILLX fillPowerArray
 #define FILLY fillPowerArray
 
-#if TURBO_APPLY_KICKS_FAST
 #define DO_MKICKS_RET apply_canonical_multipole_kicks_ret
 #define DO_MKICKS_NORET apply_canonical_multipole_kicks_noret
-#else
-#define DO_MKICKS apply_canonical_multipole_kicks
-#endif
 
 int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xkick, double ykick,
                                   double Po, double rad_coef, double isr_coef,
@@ -1192,33 +1283,22 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
   maxOrder = findMaximumOrder(order[0], order[1] > order[2] ? order[1] : order[2], edgeMultData, steeringMultData, multData);
   xpow = tmalloc(sizeof(*xpow) * (maxOrder + 1));
   ypow = tmalloc(sizeof(*ypow) * (maxOrder + 1));
-#if TURBO_APPLY_KICKS_FAST >= 2
   // Core loop only goes to 3, ignore higher KnL
   double KnLp[3];
   for (int i = 0; i < 3; i++)
     KnLp[i] = KnL[i] / n_parts;
-#endif
 
   if (i_part <= 0) {
     if (edgeMultData && edgeMultData->orders) {
       FILLX(x, xpow, maxOrder);
       FILLY(y, ypow, maxOrder);
       for (imult = 0; imult < edgeMultData->orders; imult++) {
-#if TURBO_APPLY_KICKS_FAST
         DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                                         edgeMultData->order[imult],
                                         edgeMultData->KnL[imult], 0);
         DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                                         edgeMultData->order[imult],
                                         edgeMultData->JnL[imult], 1);
-#else
-        DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                  edgeMultData->order[imult],
-                  edgeMultData->KnL[imult], 0);
-        DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                  edgeMultData->order[imult],
-                  edgeMultData->JnL[imult], 1);
-#endif
       }
     }
   }
@@ -1264,42 +1344,19 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
       if (!radial) {
         for (iOrder = 0; iOrder < 3; iOrder++)
           if (KnL[iOrder])
-#if TURBO_APPLY_KICKS_FAST
-#if TURBO_APPLY_KICKS_FAST >= 2
             DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
                           order[iOrder], KnLp[iOrder] * kickFrac[step], skew[iOrder]);
-#else
-            DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
-                        order[iOrder], KnL[iOrder] / n_parts * kickFrac[step], skew[iOrder]);
-#endif
-#else
-            DO_MKICKS(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
-                      order[iOrder], KnL[iOrder] / n_parts * kickFrac[step], skew[iOrder]);
-#endif
       } else {
-#if TURBO_APPLY_KICKS_FAST >= 2
         applyRadialCanonicalMultipoleKicks(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
                                            order[0], KnLp[0] * kickFrac[step], 0);
-#else
-        applyRadialCanonicalMultipoleKicks(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
-                                           order[0], KnL[0] / n_parts * kickFrac[step], 0);
-#endif
       }
-#if TURBO_APPLY_KICKS_FAST
       if (xkick)
         DO_MKICKS_NORET(&qx, &qy, xpow, ypow, 0, -xkick * kickFrac[step], 0);
       if (ykick)
         DO_MKICKS_NORET(&qx, &qy, xpow, ypow, 0, -ykick * kickFrac[step], 1);
-#else
-      if (xkick)
-        DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow, 0, -xkick * kickFrac[step], 0);
-      if (ykick)
-        DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow, 0, -ykick * kickFrac[step], 1);
-#endif
       if (steeringMultData && steeringMultData->orders) {
         /* apply steering corrector multipoles */
         for (imult = 0; imult < steeringMultData->orders; imult++) {
-#if TURBO_APPLY_KICKS_FAST
           if (steeringMultData->KnL[imult])
             DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                       steeringMultData->order[imult],
@@ -1308,23 +1365,12 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
             DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                       steeringMultData->order[imult],
                       steeringMultData->JnL[imult] * ykick * kickFrac[step], 1);
-#else
-          if (steeringMultData->KnL[imult])
-            DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                                            steeringMultData->order[imult],
-                                            steeringMultData->KnL[imult] * xkick * kickFrac[step], 0);
-          if (steeringMultData->JnL[imult])
-            DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                                            steeringMultData->order[imult],
-                                            steeringMultData->JnL[imult] * ykick * kickFrac[step], 1);
-#endif
         }
       }
 
       if (multData) {
         /* do kicks for spurious multipoles */
         for (imult = 0; imult < multData->orders; imult++) {
-#if TURBO_APPLY_KICKS_FAST
           if (multData->KnL && multData->KnL[imult]) {
             DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                       multData->order[imult],
@@ -1337,20 +1383,6 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
                       multData->JnL[imult] * kickFrac[step] / n_parts,
                       1);
           }
-#else
-          if (multData->KnL && multData->KnL[imult]) {
-            DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                                            multData->order[imult],
-                                            multData->KnL[imult] * kickFrac[step] / n_parts,
-                                            0);
-          }
-          if (multData->JnL && multData->JnL[imult]) {
-            DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                                            multData->order[imult],
-                                            multData->JnL[imult] * kickFrac[step] / n_parts,
-                                            1);
-          }
-#endif
         }
       }
 
@@ -1406,21 +1438,12 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
       FILLX(x, xpow, maxOrder);
       FILLY(y, ypow, maxOrder);
       for (imult = 0; imult < edgeMultData->orders; imult++) {
-#if TURBO_APPLY_KICKS_FAST
         DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                                         edgeMultData->order[imult],
                                         edgeMultData->KnL[imult], 0);
         DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                                         edgeMultData->order[imult],
                                         edgeMultData->JnL[imult], 1);
-#else
-        DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                                        edgeMultData->order[imult],
-                                        edgeMultData->KnL[imult], 0);
-        DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                                        edgeMultData->order[imult],
-                                        edgeMultData->JnL[imult], 1);
-#endif
       }
     }
   }
@@ -1796,3 +1819,4 @@ long checkMultAperture(double xInput, double yInput, double zLocal, MULT_APERTUR
 
   return 1;
 }
+
