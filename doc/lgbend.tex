@@ -54,3 +54,9 @@ This can require some time, so {\tt elegant} will cache the matrices and re-use 
 identical elements.
 Still, there is a performance benefit to be had from using the parallel version, particularly
 when assignment of errors prevents sharing of results among many elements.
+
+{\bf Centroid output}
+
+The \verb|CENTROID_OUTPUT_FILE| allows recording the beam centroids in the {\em global} coordinate
+system. At present, this feature assumes that there is no vertical bending in the system and
+only works in the serial version.
