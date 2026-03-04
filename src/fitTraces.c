@@ -695,11 +695,9 @@ void find_trajectory_bpm_readouts(
     if (yActual)
       yActual[iBPM] = trajBuffer[latticeIndex[iBPM]].centroid[2];
     xReadout[iBPM] = computeMonitorReading(bpmElement[iBPM], 0,
-                                           trajBuffer[latticeIndex[iBPM]].centroid[0],
-                                           trajBuffer[latticeIndex[iBPM]].centroid[2], 0);
+                                           trajBuffer[latticeIndex[iBPM]].centroid, 0);
     yReadout[iBPM] = computeMonitorReading(bpmElement[iBPM], 2,
-                                           trajBuffer[latticeIndex[iBPM]].centroid[0],
-                                           trajBuffer[latticeIndex[iBPM]].centroid[2], 0);
+                                           trajBuffer[latticeIndex[iBPM]].centroid, 0);
   }
 }
 
@@ -1432,6 +1430,7 @@ double fit_trace_calibrateMonitors(
   double rmsError, calibration;
   long checkLimits, nxCals, nyCals;
   double sum1, sum2, reading, xCalSum, yCalSum, xdCalAverage = 0.0, ydCalAverage = 0.0;
+  double centroid[6] = {0,0,0,0,0,0};
 
   /* find the new trajectory */
   rmsError = fit_trace_findReadbackErrors(readbackVector, traceData, beamline, run);
@@ -1460,10 +1459,9 @@ double fit_trace_calibrateMonitors(
       }
       if ((iParam = traceData->xParamIndex[iBPM]) >= 0) {
         for (iTrace = sum1 = sum2 = 0; iTrace < traceData->traces; iTrace++) {
-          reading = computeMonitorReading(traceData->element[iBPM], 0,
-                                          traceData->xSim[iTrace][iBPM],
-                                          traceData->ySim[iTrace][iBPM],
-                                          COMPUTEMONITORREADING_CAL_1);
+          centroid[0] = traceData->xSim[iTrace][iBPM];
+          centroid[2] = traceData->ySim[iTrace][iBPM];
+          reading = computeMonitorReading(traceData->element[iBPM], 0, centroid, COMPUTEMONITORREADING_CAL_1);
           sum1 += traceData->x[iTrace][iBPM] * reading;
           sum2 += reading * reading;
         }
@@ -1507,10 +1505,9 @@ double fit_trace_calibrateMonitors(
       }
       if ((iParam = traceData->yParamIndex[iBPM]) >= 0) {
         for (iTrace = sum1 = sum2 = 0; iTrace < traceData->traces; iTrace++) {
-          reading = computeMonitorReading(traceData->element[iBPM], 2,
-                                          traceData->xSim[iTrace][iBPM],
-                                          traceData->ySim[iTrace][iBPM],
-                                          COMPUTEMONITORREADING_CAL_1);
+          centroid[0] = traceData->xSim[iTrace][iBPM];
+          centroid[2] = traceData->ySim[iTrace][iBPM];
+          reading = computeMonitorReading(traceData->element[iBPM], 2, centroid, COMPUTEMONITORREADING_CAL_1);
           sum1 += traceData->y[iTrace][iBPM] * reading;
           sum2 += reading * reading;
         }
