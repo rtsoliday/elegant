@@ -455,7 +455,7 @@ long do_aperture_search_mp(
         coord[iy][ic] += orbit[ic];
     n_survived = do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                              accepted, NULL, NULL, NULL, run, control->i_step,
-                             SILENT_RUNNING, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+                             SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     if (verbosity > 1) {
       printf("    %ld particles survived\n", n_survived);
       fflush(stdout);
@@ -534,7 +534,7 @@ long do_aperture_search_mp(
         coord[iy][ic] += orbit[ic];
     n_survived = do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                              accepted, NULL, NULL, NULL, run, control->i_step,
-                             SILENT_RUNNING, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+                             SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     if (verbosity > 1) {
       printf("    %ld particles survived\n", n_survived);
       fflush(stdout);
@@ -592,6 +592,7 @@ long do_aperture_search_mp(
 
   log_entry("do_aperture_search_mp.5");
 
+  SDDS_ClearErrors();
   if (!SDDS_StartTable(&SDDS_aperture, n_left + n_right)) {
     SDDS_SetError("Unable to start SDDS table (do_aperture_search)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -705,7 +706,7 @@ long do_aperture_search_sp(
       n_trpoint = 1;
       if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                       NULL, NULL, NULL, NULL, run, control->i_step,
-                      SILENT_RUNNING, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
+                      SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
         /* stable */
         if (fpSearchOutput)
           fprintf(fpSearchOutput, "%ld\n%le\n%le\n0\n1\n", control->i_step, x, y);
@@ -738,7 +739,7 @@ long do_aperture_search_sp(
           n_trpoint = 1;
           if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                           NULL, NULL, NULL, NULL, run, control->i_step,
-                          SILENT_RUNNING, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
+                          SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
             n_stable++;
             x1 = x; /* stable */
             if (fpSearchOutput)
@@ -793,7 +794,7 @@ long do_aperture_search_sp(
       n_trpoint = 1;
       if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                       NULL, NULL, NULL, NULL, run, control->i_step,
-                      SILENT_RUNNING, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
+                      SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
         /* stable */
         if (fpSearchOutput)
           fprintf(fpSearchOutput, "%ld\n%le\n%le\n1\n1\n", control->i_step, x, y);
@@ -826,7 +827,7 @@ long do_aperture_search_sp(
           n_trpoint = 1;
           if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                           NULL, NULL, NULL, NULL, run, control->i_step,
-                          SILENT_RUNNING, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
+                          SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
             n_stable++;
             x1 = x; /* stable */
             if (fpSearchOutput)
@@ -904,6 +905,7 @@ long do_aperture_search_sp(
   }
   if (isMaster) {
 #endif
+  SDDS_ClearErrors();
   if (!SDDS_StartTable(&SDDS_aperture, n_left + n_right)) {
     SDDS_SetError("Unable to start SDDS table (do_aperture_search)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -1070,6 +1072,7 @@ long do_aperture_search_line(
   }
 
   if (output) {
+    SDDS_ClearErrors();
     if (!SDDS_StartTable(&SDDS_aperture, lines)) {
       SDDS_SetError("Unable to start SDDS table (do_aperture_search)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -1136,7 +1139,7 @@ long do_aperture_search_line(
           n_trpoint = 1;
           if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                           NULL, NULL, NULL, NULL, run, control->i_step,
-                          SILENT_RUNNING, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL) != 1) {
+                          SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL) != 1) {
             if (verbosity >= 2) {
               if (!slope_mode)
                 printf("particle lost for x=%e, y=%e\n", index * dx + x0, index * dy + y0);
@@ -1242,9 +1245,9 @@ long do_aperture_search_grid
  LINE_LIST *beamline,
  double *returnValue
  ) {
-  double **coord;
+  double **coord = NULL;
   double p_central;
-  long ip, np, nLeft;
+  long ip, np=0, nLeft;
   long effort;
   double area;
   double orbit[6] = {0, 0, 0, 0, 0, 0};
@@ -1256,6 +1259,8 @@ long do_aperture_search_grid
   double du, dv; /* step sizes for u and v */
   double umin, umax, vmin, vmax;
 
+  uLimit = vLimit = vLimit1 = xLost = yLost = sLost = deltaLost = NULL;
+  
 #if USE_MPI
   return do_aperture_search_grid_p(run, control, referenceCoord, errcon, beamline, returnValue);
 #endif
@@ -1314,6 +1319,7 @@ long do_aperture_search_grid
   }
 
   if (output) {
+    SDDS_ClearErrors();
     if (!SDDS_StartTable(&SDDS_aperture, 2*nu*nv)) {
       SDDS_SetError("Unable to start SDDS table (do_aperture_search)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -1390,7 +1396,7 @@ long do_aperture_search_grid
     effort = 0;
     nLeft = do_tracking(NULL, coord, np, &effort, beamline, &p_central,
                         NULL, NULL, NULL, NULL, run, control->i_step,
-                        SILENT_RUNNING, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+                        SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     if (verbosity >= 1) {
       long pid;
       printf("%ld particles left\n", nLeft);
@@ -1507,14 +1513,15 @@ long do_aperture_search_grid
   
   *returnValue = area;
 
-  free(uLimit);
-  free(vLimit);
-  free(vLimit1);
-  free(xLost);
-  free(yLost);
-  free(sLost);
-  free(deltaLost);
-  free_czarray_2d((void **)coord, np, totalPropertiesPerParticle);
+  if (uLimit) free(uLimit);
+  if (vLimit) free(vLimit);
+  if (vLimit1) free(vLimit1);
+  if (xLost) free(xLost);
+  if (yLost) free(yLost);
+  if (sLost) free(sLost);
+  if (deltaLost) free(deltaLost);
+  if (coord)
+    free_czarray_2d((void **)coord, np, totalPropertiesPerParticle);
 
   return (1);
 }
@@ -1599,6 +1606,7 @@ long do_aperture_search_grid_p
   }
 
   if (output && myid==0) {
+    SDDS_ClearErrors();
     if (!SDDS_StartTable(&SDDS_aperture, 2*nu*nv)) {
       SDDS_SetError("Unable to start SDDS table (do_aperture_search)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -1692,7 +1700,7 @@ long do_aperture_search_grid_p
     
     nLeftLocal = do_tracking(NULL, coord, npLocal, NULL, beamline, &p_central,
                              NULL, NULL, NULL, NULL, run, control->i_step,
-                             SILENT_RUNNING, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+                             SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     
     long *npVector = (long*)malloc(sizeof(long)*n_processors);
     long *nLeftVector = (long*)malloc(sizeof(long)*n_processors);
@@ -2076,6 +2084,7 @@ long do_aperture_search_line_p(
   }
 
   if (isMaster && output) {
+    SDDS_ClearErrors();
     if (!SDDS_StartTable(&SDDS_aperture, lines)) {
       SDDS_SetError("Unable to start SDDS table (do_aperture_search)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -2165,7 +2174,7 @@ long do_aperture_search_line_p(
         n_trpoint = 1;
         if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                         NULL, NULL, NULL, NULL, run, control->i_step,
-                        SILENT_RUNNING, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL) != 1) {
+                        SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL) != 1) {
           /* Particle lost, so record information */
           xLost2[line][step] = coord[0][0];
           yLost2[line][step] = coord[0][2];
