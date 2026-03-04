@@ -26,12 +26,8 @@ void computeTotalSteeringMultipoleErrors(MULTIPOLE_DATA *steeringMult, double sy
 #define FILLX fillPowerArray
 #define FILLY fillPowerArray
 
-#if TURBO_APPLY_KICKS_FAST
 #define DO_MKICKS_RET apply_canonical_multipole_kicks_ret
 #define DO_MKICKS_NORET apply_canonical_multipole_kicks_noret
-#else
-#define DO_MKICKS apply_canonical_multipole_kicks
-#endif
 
 int applySteeringMultipoleKicks(
   double *coord,
@@ -62,7 +58,6 @@ int applySteeringMultipoleKicks(
   FILLY(coord[2], ypow, maxOrder);
 
   for (imult = 0; imult < multData->orders; imult++) {
-#if TURBO_APPLY_KICKS_FAST
     if (xkick)
       DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                                       multData->order[imult],
@@ -71,16 +66,6 @@ int applySteeringMultipoleKicks(
       DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                                       multData->order[imult],
                                       multData->JnL[imult] * ykick, 1);
-#else
-    if (xkick)
-      DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                                      multData->order[imult],
-                                      multData->KnL[imult] * xkick, 0);
-    if (ykick)
-      DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                                      multData->order[imult],
-                                      multData->JnL[imult] * ykick, 1);
-#endif
   }
   if ((denom = sqr(1 + delta) - sqr(qx) - sqr(qy)) <= 0)
     return 0;
