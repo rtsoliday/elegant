@@ -298,6 +298,11 @@ typedef struct {
     } BEAM_SUMS;
 
 typedef struct {
+  double centroid[6]; /* X, theta, Y, phi, Z, delta */
+  long n_part;
+} GLOBAL_BEAM_SUMS;
+  
+typedef struct {
     double c1, c2;          /* centroids for two coordinate planes */
     double min1, min2;      /* minimum value for each plane */
     double max1, max2;      /* maximum value for each plane */
@@ -347,9 +352,7 @@ typedef struct element_list {
     double coulombLog;
     double *accumD;       /* accumulated radiation+IBS diffusion matrix up to end of this element */
     long divisions;    /* if element was subdivided, how many times */
-#if TURBO_STRLEN
     size_t namelen;
-#endif
     } ELEMENT_LIST;
 
 extern char *chamberShapeChoice[N_CHAMBER_SHAPES];
@@ -871,20 +874,12 @@ typedef struct {
 #endif
 
 typedef AL struct {
-#if TURBO_STRINGS
   char *elementName;
-#else
-  char elementName[CONTEXT_BUFSIZE+1] AL;
-#endif
-  long elementOccurrence, step, elementType;
+  long iPass, elementOccurrence, step, elementType;
   ELEMENT_LIST *element;
   SLICE_OUTPUT *sliceAnalysis;
   double zStart, zEnd;
-#if TURBO_STRINGS
   char *rootname;
-#else
-  char rootname[CONTEXT_BUFSIZE+1] AL;
-#endif
   unsigned long flags;
 #if USE_MPI
   int myid;
@@ -1066,7 +1061,8 @@ extern char *final_unit[N_FINAL_QUANTITIES];
 #define T_LGBEND 133
 #define T_CORGPLATES 134
 #define T_BEDGE 135
-#define N_TYPES  136
+#define T_DQCOR 136
+#define N_TYPES 137
 
 extern char *entity_name[N_TYPES];
 extern char *madcom_name[N_MADCOMS];
@@ -1086,9 +1082,9 @@ extern char *entity_text[N_TYPES];
 #define N_VCOR_PARAMS 11
 #define N_RFCA_PARAMS 19
 #define N_ELSE_PARAMS 0
-#define N_HMON_PARAMS 11
-#define N_VMON_PARAMS 11
-#define N_MONI_PARAMS 14
+#define N_HMON_PARAMS 12
+#define N_VMON_PARAMS 12
+#define N_MONI_PARAMS 15
 #define N_RCOL_PARAMS 7
 #define N_ECOL_PARAMS 9
 #define N_MARK_PARAMS 3
@@ -1144,7 +1140,7 @@ extern char *entity_text[N_TYPES];
 #define N_CHARGE_PARAMS 3
 #define N_PFILTER_PARAMS 6
 #define N_HISTOGRAM_PARAMS 15
-#define N_CSRCSBEND_PARAMS 72
+#define N_CSRCSBEND_PARAMS 73
 #define N_CSRDRIFT_PARAMS 27
 #define N_REMCOR_PARAMS 6
 #define N_MAPSOLENOID_PARAMS 18
@@ -1161,7 +1157,7 @@ extern char *entity_text[N_TYPES];
 #define N_FRFMODE_PARAMS  14
 #define N_FTRFMODE_PARAMS 17
 #define N_TFBPICKUP_PARAMS 40
-#define N_TFBDRIVER_PARAMS 50
+#define N_TFBDRIVER_PARAMS 52
 #define N_LSCDRIFT_PARAMS  14
 #define N_DSCATTER_PARAMS 14
 #define N_LSRMDLTR_PARAMS 27
@@ -1194,7 +1190,7 @@ extern char *entity_text[N_TYPES];
 #define N_SLICE_POINT_PARAMS 13
 #define N_IONEFFECTS_PARAMS 18
 #define N_SPEEDBUMP_PARAMS 9
-#define N_CCBEND_PARAMS 73
+#define N_CCBEND_PARAMS 74
 #define N_HKPOLY_PARAMS (2*49+7*7*7+8)
 #define N_BOFFAXE_PARAMS (19+5)
 #define N_APCONTOUR_PARAMS 15
@@ -1206,9 +1202,10 @@ extern char *entity_text[N_TYPES];
 #define N_BEAMBEAM_PARAMS 6
 #define N_CPICKUP_PARAMS 7
 #define N_CKICKER_PARAMS 17
-#define N_LGBEND_PARAMS 23
+#define N_LGBEND_PARAMS 24
 #define N_CORGPLATES_PARAMS 13
 #define N_BEDGE_PARAMS 7
+#define N_DQCOR_PARAMS 33
 
 /* END OF LIST FOR NUMBERS OF PARAMETERS */
 
@@ -1524,7 +1521,7 @@ extern PARAMETER moni_param[N_MONI_PARAMS] ;
 #define IS_MONITOR(type) ((type)==T_MONI || (type)==T_HMON || (type)==T_VMON)
 
 typedef struct {
-    double length, dx, dy, weight, tilt, calibration, setpoint;
+    double length, dx, dy, dz, weight, tilt, calibration, setpoint;
     short order;
     char *readout;   /* rpn equation for x readout as function of x and y */
     short coFitpoint;
@@ -1533,7 +1530,7 @@ typedef struct {
     long coMemoryNumber[2], tbtMemoryNumber[2];
     } HMON;
 typedef struct {
-    double length, dx, dy, weight, tilt, calibration, setpoint;
+    double length, dx, dy, dz, weight, tilt, calibration, setpoint;
     short order;
     char *readout;   /* rpn equation for y readout as function of x and y */
     short coFitpoint;
@@ -1542,7 +1539,7 @@ typedef struct {
     long coMemoryNumber[2], tbtMemoryNumber[2];
     } VMON;
 typedef struct {
-    double length, dx, dy, weight, tilt, xcalibration, ycalibration, xsetpoint, ysetpoint;
+    double length, dx, dy, dz, weight, tilt, xcalibration, ycalibration, xsetpoint, ysetpoint;
     short order;
     char *x_readout, *y_readout; /* rpn equations for x and y readouts as function of actual x and y */
     short coFitpoint;
@@ -2137,7 +2134,7 @@ typedef struct {
     } MKICKER;
 
 /* names and storage structure for kick sextupole physical parameters */
-extern PARAMETER sext_param[N_SEXT_PARAMS];
+extern PARAMETER ksext_param[N_KSEXT_PARAMS];
 
 typedef struct {
     double length, k2, k1, j1, tilt, pitch, yaw, bore, B;
@@ -2520,9 +2517,10 @@ typedef struct {
     short synch_rad, isr, isr1Particle, distributionBasedRadiation, includeOpeningAngle, synchRadInOrdinaryMatrix;
     short optimizeFse, optimizeDx, optimizeFseOnce, optimizeDxOnce, compensateKn, referenceCorrection;
     short edgeOrder, dxdySign, verbose;
+    char *centroidOutputFile;
     /* for internal use only: */
     short optimized, edgeFlip;
-    double fseOffset, dxOffset, KnDelta, xAdjust;
+    double fseOffset, dxOffset, KnDelta, xAdjust, extraTilt;
     double referenceData[6]; /* length, angle, K1, K2, yaw, tilt */
     double referenceTrajectory[5];
     short multipolesInitialized;
@@ -2532,6 +2530,8 @@ typedef struct {
     MULTIPOLE_DATA randomMultipoleData;
     short totalMultipolesComputed;
     MULTIPOLE_DATA totalMultipoleData;  /* generated when randomization takes place */
+    short centroidsRequested;  /* non-zero on all workers */
+    SDDS_DATASET *SDDScen;     /* non-null only on myid==1 */
     } CCBEND;
 
 /* names and storage structure for canonically-integrated bending magnet with CSR physical parameters */
@@ -2549,6 +2549,7 @@ typedef struct {
     short edge_effects[2],  edge_order;
     short integration_order;
     long bins;
+    double binSize;
     short binOnce;
     double binRangeFactor;
     short SGHalfWidth, SGOrder, SGDerivHalfWidth, SGDerivOrder, trapazoidIntegration;
@@ -3416,6 +3417,7 @@ typedef struct {
   char *ID;
   double strength, kickLimit, frequency, driveFrequency, clockFrequency, clockOffset, phase, RaOverQ, QLoaded;
   char *outputFile, *gainFactorFile, *gainFactorColumn;
+  double gainFactor0, gainChargeScale;
   long delay;
   double a[TFB_FILTER_LENGTH];
   long updateInterval, outputInterval;
@@ -3504,6 +3506,32 @@ typedef struct {
     long n_kicks, nSlices;
     short integration_order, synch_rad, isr, isr1Particle, matrixTracking, expandHamiltonian;
   } KQUSE;
+
+/* names and storage structure for dipole/quadrupole corrector physical parameters */
+extern PARAMETER dqcor_param[N_DQCOR_PARAMS];
+
+typedef struct {
+  double length, k1, j1;
+  long nSlices;
+  short integration_order;
+  double fse, tilt, pitch, yaw, dx, dy, dz;
+  short malignMethod;
+  double xkick, ykick;
+  double xKickCalibration, yKickCalibration;
+  short xSteering, ySteering;
+  short synch_rad, isr, isr1Particle;
+  char *dipoleSystematicMultipoles;
+  double dipoleSystematicMultipoleFactor;
+  char *quadrupoleSystematicMultipoles, *quadrupoleRandomMultipoles;
+  double quadrupoleSystematicMultipoleFactor, quadrupoleRandomMultipoleFactor;
+  short minMultipoleOrder[2], maxMultipoleOrder[2]; /* normal, skew */
+  short trackingBasedMatrix;
+  /* for internal use */
+  double K1ReferenceFrame, xKickReferenceFrame, yKickReferenceFrame, phiReferenceFrame;
+  short multipolesInitialized, totalMultipolesComputed;
+  MULTIPOLE_DATA dipoleSystematicMultipoleData; 
+  MULTIPOLE_DATA quadrupoleSystematicMultipoleData, quadrupoleRandomMultipoleData, totalMultipoleData;
+} DQCOR;
 
 /* names and storage structure for kick map physical parameters */
 extern PARAMETER ukickmap_param[N_UKICKMAP_PARAMS];
@@ -3754,6 +3782,7 @@ typedef struct {
   short integration_order, edgeOrder;
   short synch_rad, isr, isr1Particle, synchRadInOrdinaryMatrix, distributionBasedRadiation, includeOpeningAngle;
   short optimizeFse, compensateKn, verbose;
+  char *centroidOutputFile;
   /* for internal use only: */
   double xVertex, zVertex, xEntry, zEntry, xExit, zExit; /* from configuration file */
   short initialized;
@@ -3764,6 +3793,8 @@ typedef struct {
   short optimized, wasFlipped;
   double predrift, postdrift;
   APERTURE_DATA *localApertureData;
+  short centroidsRequested;  /* non-zero on all workers */
+  SDDS_DATASET *SDDScen;     /* non-null only on myid==1 */
 } LGBEND;
 
 /* names and storage structure for longitudinal corrugated-plates wake physical parameters */
@@ -3994,6 +4025,7 @@ void setupSliceAnalysis(NAMELIST_TEXT *nltext, RUN *run,
 			OUTPUT_FILES *output_data);
 
 /* prototypes for compute_matrices13.c: */
+extern void determineDQCorReferenceFrameTilt(DQCOR *dqcor);
 extern VMATRIX *full_matrix(ELEMENT_LIST *elem, RUN *run, long order);
 extern VMATRIX *append_full_matrix(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long order);
 extern VMATRIX *accumulate_matrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long order, long full_matrix_only);
@@ -4054,8 +4086,7 @@ extern void copy_particles(double **copy, double **original, long n_particles);
  
 /* prototypes for correct.c: */
 extern void finish_response_output(void);
-double computeMonitorReading(ELEMENT_LIST *elem, long coord, double x, double y, 
-                             unsigned long flags);
+double computeMonitorReading(ELEMENT_LIST *elem, long coord, double *centroid, unsigned long flags);
 #define COMPUTEMONITORREADING_TILT_0 0x0001UL
 #define COMPUTEMONITORREADING_CAL_1  0x0002UL
 void setMonitorCalibration(ELEMENT_LIST *elem, double calib, long coord);
@@ -4085,7 +4116,7 @@ extern void recordLostParticles(BEAM *beam, double **coord, long nLeft, long nLo
 extern void resetElementTiming();
 extern void reportElementTiming();
 
-extern void setTrackingContext(char *name, long occurence, long type, char *rootname, ELEMENT_LIST *eptr);
+extern void setTrackingContext(char *name, long occurence, long type, char *rootname, ELEMENT_LIST *eptr, long iPass);
 extern void getTrackingContext(TRACKING_CONTEXT *trackingContext);
 extern TRACKING_CONTEXT trackingContext;
 
@@ -4458,8 +4489,8 @@ extern void offsetParticlesForBodyCenteredMisalignmentLinearized(VMATRIX **VM, d
                                                           double ax, double ay, double az, double tilt,
                                                           double thetaBend, double length, short face);
 /* prototypes for matrix7.c: */
-extern void print_matrices(FILE *fp, char *string, VMATRIX *M);
-extern void print_matrices1(FILE *fp, char *string, char *format, VMATRIX *M);
+extern void print_matrices(FILE *fp, char *string, VMATRIX *M, double suppressBelow);
+extern void print_matrices1(FILE *fp, char *string, char *format, VMATRIX *M, double suppressBelow);
 extern void initialize_matrices(VMATRIX *M, long order);
 extern void null_matrices(VMATRIX *M, unsigned long flags);
 extern void remove_s_dependent_matrix_elements(VMATRIX *M, long order);
@@ -4560,8 +4591,10 @@ VMATRIX *quadrupole_matrix(double K1, double lHC, long maximum_order,
                            double edge1_effects, double edge2_effects,
                            char *fringeType, double ffringe, double lEffective,
                            double *fringeIntM, double *fringeIntP,
-			   long radial
+			   short radial
                            );
+VMATRIX *dqcor_matrix(double K1, double L, long maximum_order, double fse, double xkick, double ykick);
+void computeQuadSteeringStrengths(double *K0, double *J0, double xkick0, double ykick0, double L, double K1);
 extern VMATRIX *quad_fringe(double l, double ko, long order, long reverse, double fse);
 extern void qfringe_R_matrix(double *R11, double *R21, double *R12, double *R22, double dk_dz, double l);
 extern void qfringe_T_matrix(double *T116, double *T126, double *T216, double *T226,
@@ -4820,29 +4853,10 @@ long track_through_ccbend(double **particle, long n_part, ELEMENT_LIST *eptr, CC
 void addCcbendRadiationIntegrals(CCBEND *ccbend, double *startingCoord, double pCentral,
                                  double eta0, double etap0, double beta0, double alpha0,
                                  double *I1, double *I2, double *I3, double *I4, double *I5, ELEMENT_LIST *elem);
-int integrate_kick_KnL(double *coord,
-                       const double dx,
-                       const double dy,
-                       const double Po,
-                       const double rad_coef,
-                       const double isr_coef,
-                       const double *KnLFull,
-                       const long nTerms,
-                       const long integration_order,
-                       const long n_parts,
-                       const long iPart,
-                       long iFinalSlice,
-                       double drift,
-                       MULTIPOLE_DATA *multData,
-                       MULTIPOLE_DATA *edge1MultData,
-                       MULTIPOLE_DATA *edge2MultData,
-                       MULT_APERTURE_DATA *apData,
-                       double *dzLoss,
-                       double *sigmaDelta2,
-                       double *lastRho1,
-                       double refTilt,
-                       const double ZOffset,
-                       ELEMENT_LIST *eptr);
+int integrate_kick_KnL(double *coord, const double dx, const double dy, const double Po, const double rad_coef, const double isr_coef, const double *KnLFull, const long nTerms,
+                       const long integration_order, const long n_parts, const long iPart, 
+                       long iFinalSlice, double drift, MULTIPOLE_DATA *multData, MULTIPOLE_DATA *edge1MultData, MULTIPOLE_DATA *edge2MultData, MULT_APERTURE_DATA *apData,
+                       double *dzLoss, double *sigmaDelta2, double *lastRho1, double refTilt, double ZOffset, ELEMENT_LIST *eptr, GLOBAL_BEAM_SUMS *beamSums);
 
 long track_through_lgbend(double **particle, long n_part, ELEMENT_LIST *eptr, LGBEND *lgbend, double Po,
                           double **accepted, double z_start, double *sigmaDelta2, char *rootname,
@@ -4926,9 +4940,10 @@ extern void dump_watch_particles(WATCH *watch, long step, long pass, double **pa
 extern void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, double **particle, long particles, 
 				  long original_particles,  double Po, double revolutionLength, double z, double mp_charge);
 extern void dump_watch_FFT(WATCH *watch, long step, long pass, long n_passes, double **particle, long particles,
-                           long original_particles,  double Po);
+                           long original_particles,  double Po, double length);
 extern void do_watch_FFT(double **data, long n_data, long slot, long window_code);
-extern void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double **particle, long particles, long step);
+extern void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral,
+		  double **particle, long particles, long step, double length);
 extern void dump_centroid(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline, long n_elements, long bunch,
                           double p_central, short bpmsOnly);
 extern void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, long particles, long step, double Po,
@@ -5048,7 +5063,7 @@ void dump_scattered_loss_particles(SDDS_TABLE *SDDS_table, double **particleLos,
 
 void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part, long np, long pass, double Po, long idSlotsPerBunch);
 void initializeTransverseFeedbackPickup(TFBPICKUP *tfbp);
-void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part, long np, LINE_LIST *beamline, long pass, long n_passes, char *rootname, double Po, long idSlotsPerBunch);
+void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part, long np, LINE_LIST *beamline, long pass, long n_passes, char *rootname, double Po, long idSlotsPerBunch, CHARGE *charge);
 void initializeTransverseFeedbackDriver(TFBDRIVER *tfbd, LINE_LIST *beamline, long n_passes, char *rootname);
 
 void coolerPickup(CPICKUP *tfbp, double **part, long np, long pass, double Po, long idSlotsPerBunch);
