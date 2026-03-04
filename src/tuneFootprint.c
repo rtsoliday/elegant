@@ -93,8 +93,8 @@ void determineDeltaTuneFootprint(DELTA_TF_DATA *deltaTfData, long nDelta, double
   printf("id0 = %ld, nux = %le, nuy = %le\n", id0, deltaTfData[id0].nu[0], deltaTfData[id0].nu[1]);
 #endif
 
+  id1 = id2 = -1;
   for (coord = 0; coord < 2; coord++) {
-    id1 = id2 = -1;
     delta1 = delta2 = 0;
     for (id = id0; id >= 0; id--) {
       /* scan to negative delta side from center until we find a place where the 
