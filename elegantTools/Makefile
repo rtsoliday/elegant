@@ -58,6 +58,7 @@ SCRIPTS = analyzeMagnets \
 	weightedBunch
 
 PROD = astra2elegant \
+	centroid2floor \
 	computeCBGGE \
 	computeRBGGE \
 	csrImpedance \
@@ -81,6 +82,7 @@ PROD = astra2elegant \
 	sddsmatchtwiss \
 	sddsrandmult \
 	sddsresdiag \
+	sddsupsample \
 	straightDipoleFringeCalc \
 	touschekLifetime
 
@@ -94,12 +96,12 @@ else
   SVN_VERSION=GIT_$(shell git log --oneline | wc -l | sed 's/^[[:space:]]*//')
 endif
 
-CFLAGS +=  -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I../physics -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\"
-CCFLAGS +=  -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I../physics -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\"
+CFLAGS +=  -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I../physics -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" 
+CCFLAGS +=  -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I../physics -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -I.
 
 ifeq ($(OS), Linux)
   CFLAGS += -fopenmp $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
-  CCFLAGS += -fopenmp $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
+  CCFLAGS += -fopenmp -I/usr/include/eigen3 $(GSL_INC_LOCAL)
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -fopenmp $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -loagphy
