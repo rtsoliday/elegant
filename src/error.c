@@ -482,7 +482,7 @@ double parameter_value(char *pname, long elem_type, long param, LINE_LIST *beaml
       return ((double)sresult);
     case IS_STRING:
     default:
-      bombElegant("unknown/invalid variable quantity", NULL);
+      bombElegant("unknown/invalid variable quantity (parameter_value)", NULL);
       exitElegant(1);
     }
   }
