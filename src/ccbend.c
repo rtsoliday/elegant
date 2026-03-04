@@ -65,7 +65,7 @@ long track_through_ccbend(
   long i_part, i_top;
   double *coef;
   double fse, etilt, epitch, eyaw, tilt, rad_coef, isr_coef, dzLoss = 0;
-  double rho0, arcLength, length, angle, yaw, angleSign, extraTilt;
+  double rho0, arcLength, length, angle, yaw, angleSign;
   MULTIPOLE_DATA *multData = NULL, *edge1MultData = NULL, *edge2MultData = NULL;
   long freeMultData = 0;
   MULT_APERTURE_DATA apertureData;
@@ -73,6 +73,10 @@ long track_through_ccbend(
   double gK[2];
   double fringeInt1[N_CCBEND_FRINGE_INT], fringeInt2[N_CCBEND_FRINGE_INT];
   double lastRho1;
+  GLOBAL_BEAM_SUMS *beamSums = NULL;
+  short disableSums = 1;
+  TRACKING_CONTEXT context;
+  getTrackingContext(&context);
 
   if (!particle)
     bombTracking("particle array is null (track_through_ccbend)");
@@ -104,6 +108,34 @@ long track_through_ccbend(
     fringeInt2[0] *= -1;
     fringeInt2[3] *= -1;
     fringeInt2[5] *= -1;
+  }
+
+  ccbend->centroidsRequested = (ccbend->centroidOutputFile && strlen(ccbend->centroidOutputFile));
+  if (ccbend->centroidsRequested && !ccbend->SDDScen
+#if USE_MPI
+      && myid==1 
+#endif    
+      ) {
+    ccbend->SDDScen = tmalloc(sizeof(SDDS_DATASET));
+    if (!SDDS_InitializeOutputElegant(ccbend->SDDScen, SDDS_BINARY, 1, NULL, NULL, compose_filename(ccbend->centroidOutputFile, context.rootname)) ||
+          0 > SDDS_DefineParameter(ccbend->SDDScen, "SVNVersion", NULL, NULL, "SVN version number", NULL, SDDS_STRING, SVN_VERSION) ||
+          !SDDS_DefineSimpleParameter(ccbend->SDDScen, "Step", NULL, SDDS_LONG) ||
+          !SDDS_DefineSimpleParameter(ccbend->SDDScen, "Pass", NULL, SDDS_LONG) ||
+          !SDDS_DefineSimpleParameter(ccbend->SDDScen, "pCentral", "m$be$nc", SDDS_DOUBLE) ||
+          !SDDS_DefineSimpleParameter(ccbend->SDDScen, "ElementName", NULL, SDDS_STRING) ||
+          !SDDS_DefineSimpleParameter(ccbend->SDDScen, "ElementOccurence", NULL, SDDS_LONG) ||
+          SDDS_DefineColumn(ccbend->SDDScen, "Z", NULL, "m", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(ccbend->SDDScen, "Slice", NULL, NULL, NULL, NULL, SDDS_LONG, 0) < 0 ||
+          SDDS_DefineColumn(ccbend->SDDScen, "CX", NULL, "m", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(ccbend->SDDScen, "theta", NULL, "", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(ccbend->SDDScen, "CY", NULL, "m", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(ccbend->SDDScen, "phi", NULL, "", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(ccbend->SDDScen, "Cdelta", NULL, "", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(ccbend->SDDScen, "Particles", NULL, "", NULL, NULL, SDDS_LONG, 0) < 0 ||
+          !SDDS_WriteLayout(ccbend->SDDScen)) {
+        SDDS_SetError("Problem setting up centroid output file for CCBEND");
+        SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+    }
   }
 
   if ((ccbend->optimizeFse || ccbend->optimizeDx) && ccbend->optimized != -1 && ccbend->angle != 0) {
@@ -274,10 +306,10 @@ long track_through_ccbend(
     angle = -angle;
     rho0 = -rho0;
     yaw = -ccbend->yaw * (ccbend->edgeFlip ? -1 : 1);
-    extraTilt = PI;
+    ccbend->extraTilt = PI;
   } else {
     angleSign = 1;
-    extraTilt = 0;
+    ccbend->extraTilt = 0;
     yaw = ccbend->yaw * (ccbend->edgeFlip ? -1 : 1);
   }
   if (ccbend->systematic_multipoles || ccbend->edge_multipoles || ccbend->random_multipoles ||
@@ -394,7 +426,7 @@ long track_through_ccbend(
   if (!(coef = expansion_coefficients(2)))
     bombTracking("expansion_coefficients(2) returned NULL pointer (track_through_ccbend)");
 
-  tilt = ccbend->tilt + extraTilt;
+  tilt = ccbend->tilt + ccbend->extraTilt;
   etilt = ccbend->eTilt;
   eyaw = ccbend->eYaw;
   epitch = ccbend->ePitch;
@@ -448,6 +480,15 @@ long track_through_ccbend(
       break;
     }
 
+  if (iPart>0 || iFinalSlice>0 || context.flags&TEST_PARTICLES || context.iPass<0 || ccbend->optimized!=1 ||
+      !ccbend->centroidsRequested)
+    disableSums = 1;
+  else {
+    disableSums = 0;
+    if (!(beamSums=tmalloc((nSlices+1)*sizeof(*beamSums)))) 
+      bombElegantVA("Problem allocating beam sums array for centroid output file for CCBEND %s", eptr->name);
+  }
+
   if (sigmaDelta2)
     *sigmaDelta2 = 0;
   i_top = n_part - 1;
@@ -455,7 +496,8 @@ long track_through_ccbend(
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!integrate_kick_KnL(particle[i_part], dx, dy, Po, rad_coef, isr_coef, KnL, nTerms,
                             integ_order, nSlices, iPart, iFinalSlice, length, multData, edge1MultData, edge2MultData,
-                            &apertureData, &dzLoss, sigmaDelta2, &lastRho1, tilt, 0.0, eptr)) {
+                            &apertureData, &dzLoss, sigmaDelta2, &lastRho1, tilt, 0.0, eptr,
+			    disableSums?NULL:&beamSums[0])) {
       swapParticles(particle[i_part], particle[i_top]);
       if (accepted)
         swapParticles(accepted[i_part], accepted[i_top]);
@@ -531,6 +573,54 @@ long track_through_ccbend(
       /* use n_part here so lost particles get rotated back */
       rotateBeamCoordinatesForMisalignment(particle, n_part, -tilt);
   }
+  
+  if (ccbend->centroidsRequested && !disableSums) {
+    long iRow = 0;
+    if (ccbend->SDDScen) {
+      if (!SDDS_StartPage(ccbend->SDDScen, nSlices+1)) {
+	SDDS_SetError("Problem starting page for centroid output file for CCBEND");
+	SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+      }
+      if (!SDDS_SetParameters(ccbend->SDDScen, SDDS_SET_BY_NAME|SDDS_PASS_BY_VALUE,
+			      "Step", context.step, "Pass", context.iPass, "pCentral", Po,
+			      "ElementName", eptr->name, "ElementOccurence", eptr->occurence, NULL)) {
+	SDDS_SetError("Problem preparing parameter data for centroid output file for CCBEND");
+	SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+      }
+    }
+    for (int iSlice=0; iSlice<=ccbend->nSlices; iSlice++, iRow++) {
+#if USE_MPI
+      MPI_Allreduce(MPI_IN_PLACE, &beamSums[iRow].n_part, 1, MPI_LONG, MPI_SUM, workers);
+      MPI_Allreduce(MPI_IN_PLACE, beamSums[iRow].centroid, 6, MPI_DOUBLE, MPI_SUM, workers);
+#endif
+      if (beamSums[iRow].n_part) {
+	for (int i=0; i<5; i++)
+	  beamSums[iRow].centroid[i] /= beamSums[iRow].n_part;
+      }
+      if (ccbend->SDDScen &&
+	  !SDDS_SetRowValues(ccbend->SDDScen, SDDS_SET_BY_INDEX|SDDS_PASS_BY_VALUE, iRow,
+			     0, beamSums[iRow].centroid[4],
+			     1, iSlice,
+			     2, beamSums[iRow].centroid[0], 
+			     3, beamSums[iRow].centroid[1], 
+			     4, beamSums[iRow].centroid[2], 
+			     5, beamSums[iRow].centroid[3], 
+			     6, beamSums[iRow].centroid[5],
+			     7, beamSums[iRow].n_part,
+			     -1)) {
+	SDDS_SetError("Problem preparing column data for centroid output file for CCBEND");
+	SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+      }
+    }
+    if (ccbend->SDDScen &&
+	!SDDS_WritePage(ccbend->SDDScen)) {
+      SDDS_SetError("Problem writing page for centroid output file for CCBEND");
+      SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+    }
+    free(beamSums);
+    beamSums = NULL;
+  }
+
 
   if (angleSign < 0) {
     lastRho *= -1;
@@ -577,23 +667,9 @@ static long findMaximumStepOrder(const long order2, MULTIPOLE_DATA *multData) {
 #define FILLXY fillPowerArrays
 #define DO_MKICKS apply_canonical_multipole_kicks
 
-#if TURBO_APPLY_KICKS_FAST == 5
-#  define DO_MKICKS_RET mkicks_fast
-#  define FILLX fillPowerArrayReverse
-#  define FILLY fillPowerArray
-#  define DO_ALLKICKS_NORET apply_all_kicks_noret
-#elif TURBO_APPLY_KICKS_FAST == 4
 #  define DO_MKICKS_RET apply_canonical_multipole_kicks_ret
 #  define DO_MKICKS_NORET apply_canonical_multipole_kicks_noret
 #  define DO_ALLKICKS_NORET apply_all_kicks_noret
-#elif TURBO_APPLY_KICKS_FAST == 3
-#  define DO_MKICKS_RET apply_canonical_multipole_kicks_ret
-#  define DO_MKICKS_NORET apply_canonical_multipole_kicks_noret
-#  define DO_ALLKICKS_NORET apply_all_kicks_noret
-#elif TURBO_APPLY_KICKS_FAST == 1 || TURBO_APPLY_KICKS_FAST == 2
-#  define DO_MKICKS_RET apply_canonical_multipole_kicks_ret
-#  define DO_MKICKS_NORET apply_canonical_multipole_kicks_noret
-#endif
 
 int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
                        const double dx,        /* misalignments, needed for aperture checks */
@@ -620,28 +696,21 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
                        double *lastRho,               /* needed for radiation integrals */
                        double refTilt,
                        const double dZOffset, /* offset of start of present segment relative to Z coordinate of entry plane */
-                       ELEMENT_LIST *eptr) {
+                       ELEMENT_LIST *eptr,
+		       GLOBAL_BEAM_SUMS *beamSums) {
   double p, qx, qy, denom, beta0, beta1, dp, s;
   double x, y, xp, yp, delta_qx, delta_qy;
   double xSum;
   long i_kick, step, iMult, nSum;
   double dsh;
   long maxOrder;
-#if !TURBO_CCBEND_STATICS
-  long iTerm;
-#endif
 
-#if TURBO_CCBEND_STATICS
   // Only go up to K8 => 9 terms max length (same as in parent methods)
 #  define MAX_MULT_ORDER 9
   // ccbend2 has maxOrder=19...
   static double xpow[MAX_EXTRA_ORDER];
   static double ypow[MAX_EXTRA_ORDER];
-#else
-  double *xpow, *ypow;
-#endif
 
-#if TURBO_CCBEND_STATICS
   double KnL[MAX_MULT_ORDER];
   double KnLActive[MAX_MULT_ORDER];
   int KnLIdx[MAX_MULT_ORDER];
@@ -654,11 +723,6 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
       kidx++;
     }
   }
-#else
-  double *KnL = tmalloc(sizeof(double) * nTerms);
-  for (iTerm = 0; iTerm < nTerms; iTerm++)
-    KnL[iTerm] = KnLFull[iTerm] / n_parts;
-#endif
 
   static double driftFrac2[2] = {
     0.5, 0.5};
@@ -685,9 +749,7 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
     0.784513610477560, 0.235573213359357, -1.17767998417887, 1.3151863206839063,
     -1.17767998417887, 0.235573213359357, 0.784513610477560, 0};
 
-#if TURBO_CCBEND_REFACTOR == 2
   static double driftBuf[8] = {0};
-#endif
 
 #ifdef DEBUG1
   static FILE *fpdeb = NULL;
@@ -718,35 +780,23 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
   switch (integration_order) {
   case 2:
     nSubsteps = 2;
-#if TURBO_CCBEND_REFACTOR == 2
     driftFrac = driftBuf;
     for (int i = 0; i < nSubsteps; i++)
       driftFrac[i] = drift * driftFrac2[i];
-#else
-    driftFrac = driftFrac2;
-#endif
     kickFrac = kickFrac2;
     break;
   case 4:
     nSubsteps = 4;
-#if TURBO_CCBEND_REFACTOR == 2
     driftFrac = driftBuf;
     for (int i = 0; i < nSubsteps; i++)
       driftFrac[i] = drift * driftFrac4[i];
-#else
-    driftFrac = driftFrac4;
-#endif
     kickFrac = kickFrac4;
     break;
   case 6:
     nSubsteps = 8;
-#if TURBO_CCBEND_REFACTOR == 2
     driftFrac = driftBuf;
     for (int i = 0; i < nSubsteps; i++)
       driftFrac[i] = drift * driftFrac6[i];
-#else
-    driftFrac = driftFrac6;
-#endif
     kickFrac = kickFrac6;
     break;
   default:
@@ -784,44 +834,23 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
 #endif
 
   maxOrder = findMaximumOrder(1, nTerms, edge1MultData, edge2MultData, multData);
-#if TURBO_APPLY_KICKS_FAST >= 1
   int maxOrderSteps = findMaximumStepOrder(nTerms, multData);
   int maxOrderEdge1 = findMaximumStepOrder(1, edge1MultData);
   int maxOrderEdge2 = findMaximumStepOrder(1, edge2MultData);
-#endif
 
-#if TURBO_CCBEND_STATICS
   // static allocation
   if (maxOrder > MAX_EXTRA_ORDER - 1)
     bombElegantVA("max order %ld is greater than MAX_EXTRA_ORDER", maxOrder);
-#else
-  xpow = tmalloc(sizeof(*xpow) * (maxOrder + 1));
-  ypow = tmalloc(sizeof(*ypow) * (maxOrder + 1));
-#endif
 
   if (iPart <= 0 && edge1MultData && edge1MultData->orders) {
-#if TURBO_APPLY_KICKS_FAST >= 3
     FILLXY(x, xpow, y, ypow, maxOrderEdge1);
-#else
-    FILLX(x, xpow, maxOrder);
-    FILLY(y, ypow, maxOrder);
-#endif
     for (iMult = 0; iMult < edge1MultData->orders; iMult++) {
-#if TURBO_APPLY_KICKS_FAST
       DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                       edge1MultData->order[iMult],
                       edge1MultData->KnL[iMult], 0);
       DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                       edge1MultData->order[iMult],
                       edge1MultData->JnL[iMult], 1);
-#else
-      DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                edge1MultData->order[iMult],
-                edge1MultData->KnL[iMult], 0);
-      DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                edge1MultData->order[iMult],
-                edge1MultData->JnL[iMult], 1);
-#endif
     }
     edgeMultActive[0] = 1;
   }
@@ -832,11 +861,6 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
   if (denom <= 0) {
     coord[0] = x;
     coord[2] = y;
-#if TURBO_CCBEND_STATICS == 0
-    free(xpow);
-    free(ypow);
-    free(KnL);
-#endif
     return 0;
   }
   denom = sqrt(denom);
@@ -855,6 +879,23 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
   xSum = x;
   nSum = 1;
   for (i_kick = 0; i_kick < iFinalSlice; i_kick++) {
+    coord[0] = x;
+    coord[1] = xp;
+    coord[2] = y;
+    coord[3] = yp;
+    if (beamSums) {
+      double X, Y, Z, theta;
+      convertLocalCoordinatesToGlobal(&Z, &X, &Y, &theta,
+				      GLOBAL_LOCAL_MODE_DZ, coord, eptr, dZOffset + i_kick * drift, i_kick, n_parts);
+      
+      beamSums[i_kick].centroid[0] += X;
+      beamSums[i_kick].centroid[1] += theta;
+      beamSums[i_kick].centroid[2] += Y;
+      beamSums[i_kick].centroid[3] += atan(coord[3]);
+      beamSums[i_kick].centroid[4] += Z;
+      beamSums[i_kick].centroid[5] += coord[5];
+      beamSums[i_kick].n_part += 1;
+    }
 #ifdef DEBUG
     double H0;
     if (logHamiltonian && fpHam) {
@@ -885,11 +926,6 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
         coord[globalLossCoordOffset + 1] = Z;
         coord[globalLossCoordOffset + 2] = theta;
       }
-#if TURBO_CCBEND_STATICS == 0
-      free(xpow);
-      free(ypow);
-      free(KnL);
-#endif
       return 0;
     }
     if (insideObstruction_xyz(x, xp, y, yp, coord[particleIDIndex],
@@ -897,58 +933,22 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
                               refTilt, GLOBAL_LOCAL_MODE_DZ, dZOffset + i_kick * drift, i_kick, n_parts)) {
       coord[0] = x;
       coord[2] = y;
-#if TURBO_CCBEND_STATICS == 0
-      free(xpow);
-      free(ypow);
-      free(KnL);
-#endif
       return 0;
     }
 
     for (step = 0; step < nSubsteps; step++) {
-#if TURBO_CCBEND_REFACTOR == 2
       dsh = driftFrac[step];
       s += dsh * sqrt(1 + sqr(xp) + sqr(yp));
       x += xp * dsh;
       y += yp * dsh;
-#elif TURBO_CCBEND_REFACTOR == 1
-      dsh = drift * driftFrac[step];
-      x += xp * dsh;
-      y += yp * dsh;
-      s += dsh * sqrt(1 + sqr(xp) + sqr(yp));
-#else
-      if (drift) {
-        dsh = drift * driftFrac[step];
-        x += xp * dsh;
-        y += yp * dsh;
-        // [PERF] 7% of runtime
-        s += dsh * sqrt(1 + sqr(xp) + sqr(yp));
-        *dsLoss = s; /* Ideally, we'd use the path length of the reference particle at this slice, but that isn't known to us */
-      }
-#endif
       // if (!kickFrac[step])
       //   break;
       //  kickfrac is 0 on last substep only
       if (step == nSubsteps - 1) {
-#if TURBO_CCBEND_REFACTOR
         *dsLoss = s;
-#endif
         break;
       }
 
-#if TURBO_APPLY_KICKS_FAST >= 5
-      if (step == nSubsteps - 2) {
-        FILLXY(x, xpow, y, ypow, maxOrderSteps);
-        delta_qx = delta_qy = 0;
-        for (int i = 0; i < nTerms; i++)
-          if (KnL[i])
-            DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
-                          i, KnL[i] * kickFrac[step], 0);
-      } else {
-        DO_ALLKICKS_NORET(&qx, &qy, x, y, KnLIdx, KnLActive,
-                          kickFrac[step], maxOrderSteps, kidx, 0);
-      }
-#elif TURBO_APPLY_KICKS_FAST >= 4
       FILLXY(x, xpow, y, ypow, maxOrderSteps);
       delta_qx = delta_qy = 0;
       for (int i = 0; i < kidx; i++) {
@@ -964,47 +964,10 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
         //}
       }
 
-#elif TURBO_APPLY_KICKS_FAST == 3
-      FILLXY(x, xpow, y, ypow, maxOrderSteps);
-      if (step == nSubsteps - 2) {
-        delta_qx = delta_qy = 0;
-        for (int i = 0; i < kidx; i++)
-          DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
-                        KnLIdx[i], KnLActive[i] * kickFrac[step], 0);
-        //        for (int i = 0; i < nTerms; i++)
-        //          if (KnL[i])
-        //            DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
-        //                          i, KnL[i] * kickFrac[step], 0);
-      } else {
-        for (int i = 0; i < kidx; i++)
-          DO_MKICKS_NORET(&qx, &qy, xpow, ypow, KnLIdx[i], KnLActive[i] * kickFrac[step], 0);
-      }
-#elif TURBO_APPLY_KICKS_FAST == 1 || TURBO_APPLY_KICKS_FAST == 2
-      FILLXY(x, xpow, y, ypow, maxOrderSteps);
-      if (step == nSubsteps - 2) {
-        delta_qx = delta_qy = 0;
-        for (int i = 0; i < nTerms; i++)
-          if (KnL[i])
-            DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
-                          i, KnL[i] * kickFrac[step], 0);
-      } else {
-        for (int i = 0; i < nTerms; i++)
-          if (KnL[i])
-            DO_MKICKS_NORET(&qx, &qy, xpow, ypow, i, KnL[i] * kickFrac[step], 0);
-      }
-#else
-      FILLX(x, xpow, maxOrder);
-      FILLY(y, ypow, maxOrder);
-      delta_qx = delta_qy = 0;
-      for (iTerm = 0; iTerm < nTerms; iTerm++)
-        if (KnL[iTerm])
-          DO_MKICKS(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow, iTerm, KnL[iTerm] * kickFrac[step], 0);
-#endif
 
       if (multData) {
         /* do kicks for spurious multipoles */
         for (iMult = 0; iMult < multData->orders; iMult++) {
-#if TURBO_APPLY_KICKS_FAST
           if (multData->KnL && multData->KnL[iMult]) {
             DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                             multData->order[iMult],
@@ -1017,20 +980,6 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
                             multData->JnL[iMult] * kickFrac[step] / n_parts,
                             1);
           }
-#else
-          if (multData->KnL && multData->KnL[iMult]) {
-            DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                      multData->order[iMult],
-                      multData->KnL[iMult] * kickFrac[step] / n_parts,
-                      0);
-          }
-          if (multData->JnL && multData->JnL[iMult]) {
-            DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                      multData->order[iMult],
-                      multData->JnL[iMult] * kickFrac[step] / n_parts,
-                      1);
-          }
-#endif
         }
       }
 
@@ -1039,12 +988,6 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
       if (denom <= 0) {
         coord[0] = x;
         coord[2] = y;
-#if TURBO_CCBEND_STATICS == 0
-        free(xpow);
-        free(ypow);
-        free(KnL);
-#endif
-#if TURBO_CCBEND_REFACTOR == 2
         *dsLoss = s;
         if (step > 0) {
           // Recompute lastRho from last step
@@ -1055,7 +998,6 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
           else if (nTerms > 2)
             *lastRho = 1 / (KnL[0] / drift + lastX * (KnL[1] / drift) + lastX * lastX * (KnL[2] / drift) / 2);
         }
-#endif
         return 0;
       }
 
@@ -1070,9 +1012,7 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
 #endif
 
       /* these three quantities are needed for radiation integrals */
-#if TURBO_CCBEND_REFACTOR == 2
       if (step == nSubsteps - 2) {
-#endif
 #if TURBO_RECIPROCALS
         if (nTerms == 1)
           *lastRho = drift / KnL[0];
@@ -1088,9 +1028,7 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
         else if (nTerms > 2)
           *lastRho = 1 / (KnL[0] / drift + x * (KnL[1] / drift) + x * x * (KnL[2] / drift) / 2);
 #endif
-#if TURBO_CCBEND_REFACTOR == 2
       }
-#endif
       lastX = x;
       lastXp = xp;
     }
@@ -1148,11 +1086,6 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
       coord[globalLossCoordOffset + 1] = Z;
       coord[globalLossCoordOffset + 2] = theta;
     }
-#if TURBO_CCBEND_STATICS == 0
-    free(xpow);
-    free(ypow);
-    free(KnL);
-#endif
     return 0;
   }
   if (insideObstruction_xyz(x, xp, y, yp, coord[particleIDIndex],
@@ -1160,37 +1093,18 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
                             refTilt, GLOBAL_LOCAL_MODE_DZ, dZOffset + i_kick * drift, i_kick, n_parts)) {
     coord[0] = x;
     coord[2] = y;
-#if TURBO_CCBEND_STATICS == 0
-    free(xpow);
-    free(ypow);
-    free(KnL);
-#endif
     return 0;
   }
 
   if ((iPart < 0 || iPart == n_parts) && (iFinalSlice == n_parts) && edge2MultData && edge2MultData->orders) {
-#if TURBO_APPLY_KICKS_FAST >= 3
     FILLXY(x, xpow, y, ypow, maxOrderEdge2);
-#else
-    FILLX(x, xpow, maxOrder);
-    FILLY(y, ypow, maxOrder);
-#endif
     for (iMult = 0; iMult < edge2MultData->orders; iMult++) {
-#if TURBO_APPLY_KICKS_FAST
       DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                       edge2MultData->order[iMult],
                       edge2MultData->KnL[iMult], 0);
       DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
                       edge2MultData->order[iMult],
                       edge2MultData->JnL[iMult], 1);
-#else
-      DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                edge2MultData->order[iMult],
-                edge2MultData->KnL[iMult], 0);
-      DO_MKICKS(&qx, &qy, NULL, NULL, xpow, ypow,
-                edge2MultData->order[iMult],
-                edge2MultData->JnL[iMult], 1);
-#endif
     }
     edgeMultActive[1] = 1;
   }
@@ -1198,11 +1112,6 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
   if (denom <= 0) {
     coord[0] = x;
     coord[2] = y;
-#if TURBO_CCBEND_STATICS == 0
-    free(xpow);
-    free(ypow);
-    free(KnL);
-#endif
     return 0;
   }
 
@@ -1215,11 +1124,6 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
   yp = qy / denom;
 #endif
 
-#if TURBO_CCBEND_STATICS == 0
-  free(xpow);
-  free(ypow);
-  free(KnL);
-#endif
 
   coord[0] = x;
   coord[1] = xp;
@@ -1232,6 +1136,19 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
   } else
     coord[4] += s;
   coord[5] = dp;
+
+  if (beamSums) {
+    double X, Y, Z, theta;
+    convertLocalCoordinatesToGlobal(&Z, &X, &Y, &theta,
+				    GLOBAL_LOCAL_MODE_DZ, coord, eptr, dZOffset + i_kick * drift, i_kick, n_parts);
+    beamSums[i_kick].centroid[0] += X;
+    beamSums[i_kick].centroid[1] += theta;
+    beamSums[i_kick].centroid[2] += Y;
+    beamSums[i_kick].centroid[3] += atan(coord[3]);
+    beamSums[i_kick].centroid[4] += Z;
+    beamSums[i_kick].centroid[5] += coord[5];
+    beamSums[i_kick].n_part += 1;
+  }
 
 #if defined(IEEE_MATH)
   if (isnan(x) || isnan(xp) || isnan(y) || isnan(yp)) {
