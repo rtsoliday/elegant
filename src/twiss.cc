@@ -1019,8 +1019,9 @@ static SDDS_DEFINITION column_definition[N_COLUMNS_WRI] = {
 };
 
 #define IP_STEP 0
-#define IP_SVN 1
-#define IP_NUX (IP_SVN + 1)
+#define IP_SVN (IP_STEP+1)
+#define IP_PASSLENGTH (IP_SVN+1)
+#define IP_NUX (IP_PASSLENGTH + 1)
 #define IP_DNUXDP (IP_NUX + 1)
 #define IP_DNUXDP2 (IP_DNUXDP + 1)
 #define IP_DNUXDP3 (IP_DNUXDP2 + 1)
@@ -1105,6 +1106,7 @@ static SDDS_DEFINITION column_definition[N_COLUMNS_WRI] = {
 static SDDS_DEFINITION parameter_definition[N_PARAMETERS] = {
   {(char *)"Step", (char *)"&parameter name=Step, type=long, description=\"Simulation step\" &end"},
   {(char *)"SVNVersion", (char *)"&parameter name=SVNVersion, type=string, description=\"SVN version number\", fixed_value=" SVN_VERSION " &end"},
+  {(char *)"PassLength", (char *)"&parameter name=PassLength, type=double, description=\"Length of a single pass\" &end"},
   {(char *)"nux", (char *)"&parameter name=nux, symbol=\"$gn$r$bx$n\", type=double, units=\"1/(2$gp$r)\", description=\"Horizontal tune\" &end"},
   {(char *)"dnux/dp", (char *)"&parameter name=dnux/dp, symbol=\"$gx$r$bx$n\", type=double, units=\"1/(2$gp$r)\", description=\"Horizontal chromaticity\" &end"},
   {(char *)"dnux/dp2", (char *)"&parameter name=dnux/dp2, symbol=\"$gx$r$bx2$n\", type=double, units=\"1/(2$gp$r)\", description=\"Horizontal 2nd-order chromaticity\" &end"},
@@ -1333,7 +1335,7 @@ void dump_twiss_parameters(
 
   compute_twiss_statistics(beamline, &twiss_ave, &twiss_min, &twiss_max);
   if (!SDDS_SetParameters(&SDDS_twiss, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE,
-                          IP_STEP, twiss_count, IP_STAGE, stage,
+                          IP_STEP, twiss_count, IP_STAGE, stage, IP_PASSLENGTH, beamline->revolution_length,
                           IP_NUX, tune[0], IP_DNUXDP, chromaticity[0], IP_AX, acceptance[0], IP_AXLOC, acceptance[2],
                           IP_AXNAME, acceptanceElementName[0],
                           IP_NUY, tune[1], IP_DNUYDP, chromaticity[1], IP_AY, acceptance[1], IP_AYLOC, acceptance[3],
@@ -2137,7 +2139,13 @@ void compute_twiss_parameters(RUN *run, LINE_LIST *beamline, double *starting_co
         M1->R[i][i] = 1;
       }
       fill_in_matrices(beamline->elem_twiss, run);
+      if (beamline->matrix) {
+        free_matrices(beamline->matrix);
+        free(beamline->matrix);
+      }
       beamline->matrix = append_full_matrix(beamline->elem_twiss, run, M1, twissConcatOrder);
+      free_matrices(M1);
+      free(M1);
     } else
       beamline->matrix = full_matrix(beamline->elem_twiss, run, twissConcatOrder);
   }
