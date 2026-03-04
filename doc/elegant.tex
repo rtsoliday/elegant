@@ -3,12 +3,23 @@
 %   dvi2ps elegant | lpr [-P<postscript-printer-name>]
 %
 \documentclass[11pt]{article}
+\usepackage{html}
 \usepackage{hyperref}
 \usepackage{longtable}
 %\usepackage{subfigure} 
 \usepackage{amsmath}
 \usepackage{breqn}
 \usepackage{graphicx}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{courier}
+\usepackage[T1]{fontenc}
+\usepackage{textcomp}
+\usepackage{lmodern}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{parskip}
+\usepackage{booktabs}
 \pagestyle{plain}
 %\voffset=-0.75in
 \newenvironment{req}{\begin{equation} \rm}{\end{equation}}
@@ -22,7 +33,7 @@
 \begin{document}
 
 \title{User's Manual for {\tt elegant}}
-\author{Program Version 2025.4\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
+\author{Program Version 2026.1\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
 \maketitle
 
 Note: another source of help for {\tt elegant} is the on-line
@@ -35,38 +46,52 @@ available from the software download page that demonstrates many features of {\t
 overview}{https://ops.aps.anl.gov/elegant.html} of {\tt elegant} is also available, which introduces the capabilities
 at a high level.
 
-\section{Highlights of What's New in Version 2025.4}
+Starting in Version 2025.4, AI coding assistants have been used for addition of new features and generation
+of documentation.
 
-Here is a summary of what's changed since release 2025.3  Historical change logs are collected in Section
+\section{Highlights of What's New in Version 2026.1}
+
+Here is a summary of what's changed since release 2025.4  Historical change logs are collected in Section
 \ref{sect:changeLog}.
 
 \subsection{Bug Fixes for Elements}
 
 \begin{itemize}
-\item None.
+\item Fixed bug in \verb|BMXYZ| element when the field length is greater than the insertion length.
+\item Fixed a bug in loss logging (\verb|run_setup| command \verb|losses| file) that resulted in
+  logging of $\gamma$ instead of $\beta\gamma$ in the \verb|p| column for some loss mechanisms.
+  This bug was reported by forum user \verb|galnander|.
 \end{itemize}
 
 \subsection{Bug Fixes for Commands}
 \begin{itemize}
-\item For \verb|find_aperture|, the code now automatically disables \verb|WATCH| elements to prevent problems.
-  This issue was reported by forum user \verb|ranamonikaa|.
+\item None.
 \end{itemize}
 
 \subsection{New and Modified Elements}
 \begin{itemize}
-\item None.
+\item The \verb|TFBDRIVER| element, which implements a turn-by-turn feedback driver, now supports optional charge
+  scaling of the kicks using the newly-added \verb|GAIN_FACTOR| and \verb|GAIN_CHARGE_SCALE| parameters.
+\item Added the \verb|DQCOR| element, which implements a combined dipole/quadrupole corrector including normal
+  and skew components.
+\item Add the \verb|BIN_SIZE| parameter to \verb|CSRCSBEND|, to allow specifying a fixed bin size instead of a
+  fixed number of bins.
+\item The \verb|LGBEND| and \verb|CCBEND| element now support output of centroid coordinates in the global coordinate system.
+\item The \verb|MONI|, \verb|HMON|, and \verb|VMON| elements now support longitudinal misalignment, which affects the
+  response matrix and related operations. This was requested by V. Sajaev (ANL).
 \end{itemize}
 
 \subsection{New and Modified Commands}
 \begin{itemize}
-\item The \verb|closed_orbit| command has several additional parameters that may help in cases when the orbit converges
-  poorly.
+\item For loss logging (\verb|run_setup| command \verb|losses| file), the file now contains the
+  \verb|pCentral| parameter.
+  This was requested by forum user \verb|galnander|.
 \end{itemize}
 
 \subsection{Changes to Examples}
 
 \begin{itemize}
-\item None.
+\item Added example of implementing a Wien filter using a \verb|SCRIPT| element.
 \end{itemize}
 
 \subsection{Changes to Related Programs and Files}
@@ -77,7 +102,10 @@ are listed in Section \ref{sect:tools}.
 
 Changes to these tools in this release include
 \begin{itemize}
-\item None.
+\item Added \verb|sddsupsample|, a program to up-sample particle distributions. Written by GPT-5.2-Codex guided by M. Borland.
+\item Added Emacs modes for command and lattice file editing. See documentation below. Written by GPT-5.2-Codex guided by M. Borland.
+\item Added \verb|centroid2floor|, a program to combine reference floor-coordinate and centroid data to make a file
+  with the beam path in global (floor) coordinates.
 \end{itemize}
 
 \subsection{Known Bugs, Problems, and Limitations}
@@ -111,8 +139,7 @@ Changes to these tools in this release include
 \section{Credits}
 
 Contributors to {\tt elegant} include M. Borland, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, 
-R. Lindberg,
-V. Sajaev, R. Soliday, Y.-P. Sun, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.
+N. Kuklev, R. Lindberg, V. Sajaev, R. Soliday, Y.-P. Sun, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.
 Contributors to related programs and scripts include M. Borland, R. Dejus, L. Emery, A. Petrenko, H. Shang, Y. Wang, 
 A. Xiao, and B. Yang.
 R. Soliday is responsible for multi-platform builds and distribution.
@@ -6671,6 +6698,9 @@ arithmetic.
 \item \verb|disable| --- If nonzero, the command is ignored.
 \end{itemize}
 
+\input{emacs-mode.tex}
+\input{emacs-lattice-mode.tex}
+
 \newpage
 \section{Specialized Tools for Use with {\tt elegant}\label{sect:tools}}
 
@@ -6699,6 +6729,8 @@ up-to-date than these manual pages.
 \item {\tt bremsstrahlungLifetimeDetailed} --- Computes gas bremsstrahlung lifetime from local momentum acceptance and Twiss 
   parameter output, using a user-supplied, s-dependent gas pressure.
   (Program by M. Borland.)
+\item {\tt centroid2floor} --- Combines reference floor-coordinate and centroid data to make a file
+  with the beam path in global (floor) coordinates.
 \item {\tt computeCoherentFraction} --- Computes the coherent fraction for undulator radiation.
 \item {\tt computeCBGGE} --- Computes generalized gradients from data on a circular cylinder
   for use with the \verb|BGGEXP| element. 
@@ -6836,10 +6868,11 @@ up-to-date than these manual pages.
 \item {\tt sddsrandmult} --- Simulates the effect of random mechanical errors in a quadrupole or sextupole,
   generating multipole error data that can be used with {\tt elegant}'s {\tt KQUAD} and {\tt KSEXT}
   elements. (Program by M. Borland.)
-\item {\tt sddssampledist} --- This program allows creating particle
+\item {\tt sddssampledist} --- Allows creating particle
         distributions from user-designed distribution functions.  It is thus a more flexible alternative
         to \verb|bunched_beam|.  This program is part of the SDDS toolkit.  See the SDDS toolkit
         manual for documentation.  (Program by M. Borland and H. Shang.)
+\item {\tt sddsupsample} --- Allows up-sampling a particle distribution to improve statistics in tracking runs. (Program by GPT-5.2-Codex and M. Borland.)
 \item {\tt smoothDist6s} --- Increases the number of particles in an input particle distribution.  At the same
  time, smooths the distribution and adds optional energy and density modulation.   Intended to be used to increase the number of particles
  produced by a photoinjector simulation to improve stability of CSR and LSC simulations.  Also useful in studying 
@@ -8083,6 +8116,131 @@ The namelist command is {\tt perturbations}.  It has the following fields:
 \item {\bf author:} M. Borland, ANL/APS.
 \end{itemize}
 
+%\begin{latexonly}
+\newpage
+\begin{center}{\Large\verb|sddsupsample|}\end{center}
+%\end{latexonly}
+\subsection{sddsupsample}
+\label{sddsupsample}
+\begin{itemize}
+  \item \textbf{description:} \verb|sddsupsample| provides for up-sampling of particle distributions from \verb|elegant|.
+  \item \textbf{examples:} Multiply the number of particles by 100 while preserving thin filaments
+    \begin{verbatim}
+      sddsupsample input.sdds output.sdds \
+      --mode tangent --k 8 --alpha 0.01 --beta 0 --tan-cap-frac 0.02
+      --ortho-factor 0.5 --reject-factor 1.01 --max-tries 100
+    \end{verbatim}
+  \item \textbf{synposis:}
+\begin{verbatim}
+Usage:
+  sddsupsample in.sdds out.sdds --multiplier M [options]
+
+Required:
+  --multiplier M        upsample factor (>1)
+
+Options:
+  --mode MODE           tangent|interp (default tangent)
+  --k K                 kNN neighborhood (default 32)
+  --seed S              RNG seed (default 12345)
+
+Tangent mode options:
+  --alpha A             ||dx_tan|| ~ A*r_k (default 0.02)
+  --beta B              ||dx_orth|| ~ B*sigma_o (default 0.0)
+  --tan-cap-frac F      cap ||dx_tan|| <= F*r_k (default 0.05; 0 disables)
+  --ortho-factor F      require ||dx_orth|| <= F*sigma_o (default 0.5; 0 disables)
+  --var-keep V          tangent variance fraction (default 0.99)
+  --reject-factor R     require ||dx|| <= R*r_k (default 1.01)
+  --max-tries T         attempts per new particle (default 50)
+
+Interp mode options:
+  --noise S             Gaussian noise (whitened), default 0.02; 0 disables
+
+\end{verbatim}
+
+\item \textbf{Positional arguments:}
+  \begin{description}
+  \item[\texttt{in.sdds}] Input SDDS file containing particle coordinates. Must include columns
+    \texttt{x}, \texttt{xp}, \texttt{y}, \texttt{yp}, \texttt{t}, \texttt{p}.
+  \item[\texttt{out.sdds}] Output SDDS file to write the upsampled particle set.
+  \end{description}
+\item \textbf{Required arguments:}
+\begin{description}
+  \item[\texttt{--multiplier M} (or \texttt{-M})] Upsampling factor. If the input has $N$ particles, the output will have $M N$ particles. Example: $M=100$ turns $10^5$ particles into $10^7$ particles.
+\end{description}
+\item \textbf{Global options (apply to both modes):}
+\begin{description}
+  \item[\texttt{--mode \{tangent|interp\}}] Chooses how new particles are generated:
+  \begin{itemize}
+    \item \texttt{tangent}: ``jitter along the local filament/manifold'' (best for preserving thin structures).
+    \item \texttt{interp}: ``interpolate between nearby particles'' (fills gaps; can smooth/blur filaments if overused).
+  \end{itemize}
+
+  \item[\texttt{--k K}] Number of neighbors used to define ``local.'' Intuitively, this sets the size of the neighborhood from which local geometry is inferred.
+  \begin{itemize}
+    \item Smaller $K$ (8--16): more local, better at following tight curvature and keeping thin filaments thin, but can be noisier.
+    \item Larger $K$ (32--64): smoother/more stable estimates, but more likely to mix nearby strands and blur fine structure.
+  \end{itemize}
+
+  \item[\texttt{--seed S}] Random number seed for reproducibility. Same seed + same input + same options $\Rightarrow$ same output.
+\end{description}
+
+\item \textbf{Tangent mode options (\texttt{--mode tangent}):}
+Tangent mode tries to keep particles inside a thin ``tube'' around the original structure.
+\begin{description}
+  \item[\texttt{--alpha A}] Controls how far you step \emph{along} the local filament/manifold, relative to the local neighborhood scale. Larger $A$ spreads points farther along the structure; too large can smear details or jump across features. Practical: start small (0.005--0.05).
+
+  \item[\texttt{--beta B}] Controls how much you step \emph{across} the filament (perpendicular thickness), relative to the measured local thickness.
+  \begin{itemize}
+    \item $B=0$: do not thicken filaments at all (safest for very thin structures).
+    \item Small $B$ (0.05--0.2): allows slight ``fuzz'' if the real distribution has thickness.
+  \end{itemize}
+  Too large will inflate/blur filaments.
+
+  \item[\texttt{--tan-cap-frac F}] Hard cap on the along-filament step length, as a fraction of the neighborhood radius. Even if random draws would produce a large tangent move, this prevents big jumps that smear filaments. Smaller $F$ preserves fine detail better (e.g.\ 0.01--0.05). Setting $F=0$ disables the cap (not recommended for filamentary data).
+
+  \item[\texttt{--ortho-factor F}] Hard cap on the perpendicular step, in units of the local perpendicular thickness. Think: ``don't let the new point leave the tube.'' Smaller $F$ is stricter. Setting $F=0$ disables the perpendicular rejection test.
+
+  \item[\texttt{--var-keep V}] Controls how many ``tangent directions'' are considered part of the filament/manifold. Local PCA finds directions of variation; $V$ decides how many are treated as ``along the structure.''
+  \begin{itemize}
+    \item Higher $V$ (0.99--0.999): more directions counted as tangent (can accidentally include thickness directions).
+    \item Lower $V$ (0.95--0.99): fewer tangent directions (often safer for thin filaments).
+  \end{itemize}
+
+  \item[\texttt{--reject-factor R}] Overall maximum step length, relative to the neighborhood radius. Smaller $R$ keeps new points very close to their base particle; larger $R$ allows more spread (and risk of smearing).
+
+  \item[\texttt{--max-tries T}] How many times the code will resample a proposed step if it violates the caps/rejection tests. Larger $T$ increases the chance of finding an acceptable point in very tight tubes, but costs runtime.
+\end{description}
+
+\item \textbf{Interp mode options (\texttt{--mode interp}):}
+  Interp mode makes new points by interpolating between a point and one of its neighbors.
+\begin{description}
+  \item[\texttt{--noise S}] Adds small Gaussian jitter after interpolation (in normalized/whitened units).
+  \begin{itemize}
+    \item $S=0$: pure interpolation (points lie exactly on chords between neighbors).
+    \item Small $S$ adds slight variation; too large blurs fine structures.
+  \end{itemize}
+\end{description}
+
+\item \textbf{Practical presets:}
+\paragraph{Preserve extremely thin filaments}
+\begin{verbatim}
+--mode tangent --k 8 --alpha 0.01 --beta 0 --tan-cap-frac 0.02
+--ortho-factor 0.5 --reject-factor 1.01 --max-tries 100
+\end{verbatim}
+
+\paragraph{Moderate filament thickness (allow slight cross-section)}
+\begin{verbatim}
+--mode tangent --k 16 --alpha 0.02 --beta 0.1 --tan-cap-frac 0.05
+--ortho-factor 1.0 --reject-factor 1.02
+\end{verbatim}
+
+\paragraph{Fill gaps smoothly (less emphasis on thin filaments)}
+\begin{verbatim}
+--mode interp --k 32 --noise 0.01
+\end{verbatim}
+\item {\bf authors:} GPT-Codex-5.2, M. Borland (ANL).
+\end{itemize}
+
 \newpage
 %\begin{latexonly}
 \newpage
@@ -8721,6 +8879,51 @@ terminal input and terminal output, respectively.
 \newpage
 
 \section{Change Log\label{sect:changeLog}}
+
+\subsection{Highlights of What's New in Version 2025.4}
+
+Here is a summary of what's changed since release 2025.3  Historical change logs are collected in Section
+\ref{sect:changeLog}.
+
+\subsubsection{Bug Fixes for Elements}
+
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{Bug Fixes for Commands}
+\begin{itemize}
+\item For \verb|find_aperture|, the code now automatically disables \verb|WATCH| elements to prevent problems.
+  This issue was reported by forum user \verb|ranamonikaa|.
+\end{itemize}
+
+\subsubsection{New and Modified Elements}
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{New and Modified Commands}
+\begin{itemize}
+\item The \verb|closed_orbit| command has several additional parameters that may help in cases when the orbit converges
+  poorly.
+\end{itemize}
+
+\subsubsection{Changes to Examples}
+
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{Changes to Related Programs and Files}
+
+The {\tt elegant} distribution includes many programs and scripts that perform computations with {\tt elegant}
+output data, provide interfaces with other programs, or prepare data for use with {\tt elegant}. These
+are listed in Section \ref{sect:tools}. 
+
+Changes to these tools in this release include
+\begin{itemize}
+\item None.
+\end{itemize}
 
 \subsection{Highlights of What's New in Version 2025.3}
 
