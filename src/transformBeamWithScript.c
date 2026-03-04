@@ -446,7 +446,7 @@ long transformBeamWithScript_s(SCRIPT *script, double pCentral, CHARGE *charge,
   if (pID) {
     /* The new particle IDs replace the pre-existing ones */
     for (j = 0; j < npNew; j++)
-      part[j][i] = pID[j];
+      part[j][6] = pID[j];
     free(pID);
     pID = NULL;
   } else {
@@ -829,7 +829,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
       fflush(stdout);
 #  endif
       for (j = 0; j < npNew; j++)
-        part[j][i] = pID[j];
+        part[j][6] = pID[j];
       pID = NULL;
     }
   } else {
