@@ -213,7 +213,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
     long order;
     order = M->order;
     M->order = 1;
-    print_matrices(stdout, "One-turn matrix:", M);
+    print_matrices(stdout, "One-turn matrix:", M, 0.0);
     M->order = order;
   }
 
@@ -260,10 +260,19 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
   LDVR = matDim;
   lwork = 204;
 #if defined(LAPACK) || defined(CLAPACK) || defined(MKL)
-  dgeev_((char *)&JOBVL, (char *)&JOBVR, (int *)&N, (double *)&A,
-         (int *)&LDA, (double *)&WR, (double *)&WI, (double *)&VL,
-         (int *)&LDVL, (double *)&VR, (int *)&LDVR, (double *)&work,
-         (int *)&lwork, (int *)&info);
+  {
+    long long N_ll = (long long)N;
+    long long LDA_ll = (long long)LDA;
+    long long LDVL_ll = (long long)LDVL;
+    long long LDVR_ll = (long long)LDVR;
+    long long lwork_ll = (long long)lwork;
+    long long info_ll = 0;
+    dgeev_((char *)&JOBVL, (char *)&JOBVR, (int *)&N_ll, (double *)&A,
+           (int *)&LDA_ll, (double *)&WR, (double *)&WI, (double *)&VL,
+           (int *)&LDVL_ll, (double *)&VR, (int *)&LDVR_ll, (double *)&work,
+           (int *)&lwork_ll, (int *)&info_ll);
+    info = (int)info_ll;
+  }
 #else
   fprintf(stderr, "Error calling dgeev. You will need to install LAPACK and rebuild elegant\n");
   return (1);
