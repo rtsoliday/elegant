@@ -126,6 +126,7 @@ ifeq ($(OS), Darwin)
 endif
 
 ifeq ($(OS), Windows)
+	PROD := $(filter-out sddsupsample,$(PROD))
   CFLAGS += -I$(SDDS_REPO)/lzma -I../../gsl -wd4244
   CCFLAGS += -I$(SDDS_REPO)/lzma -I../../gsl -wd4244
   PROD_LIBS = oagphy.lib
