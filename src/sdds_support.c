@@ -134,10 +134,11 @@ void SDDS_ElegantOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, 
   log_exit("SDDS_ElegantOutputSetup");
 }
 
-#define STANDARD_PARAMETERS 2
+#define STANDARD_PARAMETERS 3
 static SDDS_DEFINITION standard_parameter[STANDARD_PARAMETERS] = {
   {"Step", "&parameter name=Step, type=long, description=\"Simulation step\" &end"},
   {"SVNVersion", "&parameter name=SVNVersion, type=string, description=\"SVN version number\", fixed_value=" SVN_VERSION " &end"},
+  {"PassLength", (char *)"&parameter name=PassLength, type=double, description=\"Length of a single pass\" &end"},
 };
 
 #define ELEMENT_COLUMNS 4
@@ -197,6 +198,14 @@ void SDDS_PhaseSpaceSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, lon
   log_exit("SDDS_PhaseSpaceSetup");
 }
 
+#define BEAM_LOSS_PARAMETERS 4
+static SDDS_DEFINITION beam_loss_parameter[BEAM_LOSS_PARAMETERS] = {
+  {"Step", "&parameter name=Step, type=long, description=\"Simulation step\" &end"},
+  {"SVNVersion", "&parameter name=SVNVersion, type=string, description=\"SVN version number\", fixed_value=" SVN_VERSION " &end"},
+  {"PassLength", (char *)"&parameter name=PassLength, type=double, description=\"Length of a single pass\" &end"},
+  {"pCentral", "&parameter name=pCentral, symbol=\"p$bcen$n\", units=\"m$be$nc\", type=double, description=\"Reference beta*gamma\" &end"},
+};
+
 #define BEAM_LOSS_COLUMNS_BASIC 8
 #define BEAM_LOSS_COLUMNS_EXTRA 3
 
@@ -224,7 +233,7 @@ void SDDS_BeamLossSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long 
 #endif
 
   SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, contents, command_file, lattice_file,
-                          standard_parameter, STANDARD_PARAMETERS, beam_loss_column,
+                          beam_loss_parameter, BEAM_LOSS_PARAMETERS, beam_loss_column,
                           BEAM_LOSS_COLUMNS_BASIC + (includeGlobal ? BEAM_LOSS_COLUMNS_EXTRA : 0),
                           caller, SDDS_EOS_NEWFILE | SDDS_EOS_COMPLETE);
   log_exit("SDDS_BeamLossSetup");
@@ -1165,7 +1174,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
     if (!SDDS_SetParameters(watch->SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
-                            "Step", step, "s", z, NULL)) {
+                            "Step", step, "s", z, "PassLength", revolutionLength, NULL)) {
       SDDS_SetError("Problem setting parameter values for SDDS table (dump_watch_parameters)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
@@ -1206,7 +1215,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
 }
 
 void dump_watch_FFT(WATCH *watch, long step, long pass, long n_passes, double **particle, long particles,
-                    long original_particles, double Po) {
+                    long original_particles, double Po, double revolutionLength) {
   long sample_index, i, samples;
   double sum_x, sum_y, sum_dp, *sample[4];
 
@@ -1279,7 +1288,7 @@ void dump_watch_FFT(WATCH *watch, long step, long pass, long n_passes, double **
     for (i = 0; i < 4; i++)
       free(sample[i]);
     if (!SDDS_SetParameters(watch->SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
-                            "Step", step, NULL)) {
+                            "Step", step, "PassLength", revolutionLength, NULL)) {
       SDDS_SetError("Problem setting parameter values for SDDS table (dump_watch_FFT)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
@@ -1629,7 +1638,8 @@ static int comp_IDs1(const void **coord1, const void **coord2) {
 }
 #endif
 
-void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double **particle, long particles, long step) {
+void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral, double **particle, long particles,
+			 long step, double length) {
   long i, row, badPID;
 #if USE_MPI && MPI_DEBUG
   printf("dump_lost_particles: running\n");
@@ -1740,7 +1750,8 @@ void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double **partic
   printf("dump_lost_particles: set row values for %ld particles\n", particles);
   fflush(stdout);
 #endif
-  if (!SDDS_SetParameters(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, "Step", step, NULL)) {
+  if (!SDDS_SetParameters(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, "Step", step, "PassLength", length,
+			  "pCentral", pCentral, NULL)) {
     SDDS_SetError("Problem setting SDDS parameters (dump_lost_particles)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
@@ -1799,7 +1810,7 @@ void dump_centroid(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline,
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
   if (!SDDS_SetParameters(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
-                          "Step", step, NULL)) {
+                          "Step", step, "PassLength", beamline->revolution_length, NULL)) {
     SDDS_SetError("Problem setting parameter values for SDDS table (dump_centroid)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
@@ -1942,7 +1953,7 @@ void dump_sigma(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline, lo
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
   if (!SDDS_SetParameters(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
-                          "Step", step, NULL)) {
+                          "Step", step, "PassLength", beamline->revolution_length, NULL)) {
     SDDS_SetError("Problem setting parameter values for SDDS table (dump_sigma)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
