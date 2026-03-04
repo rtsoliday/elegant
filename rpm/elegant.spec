@@ -6,9 +6,9 @@ URL:		https://www.aps.anl.gov/Accelerator-Operations-Physics
 Packager:	Robert Soliday <soliday@aps.anl.gov>
 Prefix:		%{_bindir}
 Autoreq:	0
-Version:	2025.3.0
+Version:	2026.1.0
 Release:	1
-Source:		elegant-2025.3.0.tar.gz
+Source:		elegant-2026.1.0.tar.gz
 
 %define debug_package %{nil}
 %undefine __check_files
@@ -37,6 +37,8 @@ install    -m 755 beamLifetimeCalc %{buildroot}%{_bindir}/beamLifetimeCalc
 install    -m 755 bremsstrahlungLifetime %{buildroot}%{_bindir}/bremsstrahlungLifetime
 install    -m 755 bremsstrahlungLifetimeDetailed %{buildroot}%{_bindir}/bremsstrahlungLifetimeDetailed
 install    -m 755 brightnessEnvelope %{buildroot}%{_bindir}/brightnessEnvelope
+install    -m 755 bucketParameters %{buildroot}%{_bindir}/bucketParameters
+install -s -m 755 centroid2floor %{buildroot}%{_bindir}/centroid2floor
 install    -m 755 computeCoherentFraction %{buildroot}%{_bindir}/computeCoherentFraction
 install    -m 755 computeGeneralizedGradients %{buildroot}%{_bindir}/computeGeneralizedGradients
 install    -m 755 computeQuadFringeIntegrals %{buildroot}%{_bindir}/computeQuadFringeIntegrals
@@ -101,6 +103,7 @@ install -s -m 755 sddsemitmeas %{buildroot}%{_bindir}/sddsemitmeas
 install -s -m 755 sddsemitproc %{buildroot}%{_bindir}/sddsemitproc
 install -s -m 755 sddsfindresonances %{buildroot}%{_bindir}/sddsfindresonances
 install -s -m 755 sddsfluxcurve %{buildroot}%{_bindir}/sddsfluxcurve
+install -s -m 755 sddsfresnel %{buildroot}%{_bindir}/sddsfresnel
 install -s -m 755 sddsmatchtwiss %{buildroot}%{_bindir}/sddsmatchtwiss
 install -s -m 755 sddsmatchmoments %{buildroot}%{_bindir}/sddsmatchmoments
 install -s -m 755 sddsrandmult %{buildroot}%{_bindir}/sddsrandmult
@@ -167,6 +170,8 @@ install -m 444 undulatorTuningCurve.spin %{buildroot}%{_prefix}/local/oag/apps/c
 %{_bindir}/bremsstrahlungLifetime
 %{_bindir}/bremsstrahlungLifetimeDetailed
 %{_bindir}/brightnessEnvelope
+%{_bindir}/bucketParameters
+%{_bindir}/centroid2floor
 %{_bindir}/computeCoherentFraction
 %{_bindir}/computeGeneralizedGradients
 %{_bindir}/computeQuadFringeIntegrals
@@ -231,6 +236,7 @@ install -m 444 undulatorTuningCurve.spin %{buildroot}%{_prefix}/local/oag/apps/c
 %{_bindir}/sddsemitproc
 %{_bindir}/sddsfindresonances
 %{_bindir}/sddsfluxcurve
+%{_bindir}/sddsfresnel
 %{_bindir}/sddsmatchtwiss
 %{_bindir}/sddsmatchmoments
 %{_bindir}/sddsrandmult
