@@ -21,6 +21,12 @@ many-term filters, the {\tt DELAY} feature must be used.
 The output of the filter is multiplied by the {\tt STRENGTH} parameter
 to get the kick to apply to the beam.  The {\tt KICK\_LIMIT} parameter
 provides a very basic way to simulate saturation of the kicker output.
+A file may be given with the \verb|GAIN_FACTOR_COLUMN| option
+that allows applying a different gain (strength multiplier) for
+each bunch.
+Further modification of the gain is available from the \verb|GAIN_CHARGE_OFFSET| ($G_o$) and
+\verb|GAIN_CHARGE_SCALE| ($G_s$) parameters, if the latter is non-zero; in that case, the
+strength is multiplied by $G_o + Q/G_s$, where $Q$ is the bunch charge.
 
 The plane that the \verb|TFBDRIVER| kicks is determined by the 
 \verb|PLANE| parameter on the corresponding \verb|TFBPICKUP| element, and
