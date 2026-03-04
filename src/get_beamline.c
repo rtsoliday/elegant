@@ -1500,7 +1500,7 @@ void change_defined_parameter_values(char **elem_name, long *param_number, long 
         break;
       case IS_STRING:
       default:
-        bombElegant("unknown/invalid variable quantity", NULL);
+        bombElegant("unknown/invalid variable quantity (change_defined_parameter_values)", NULL);
         exitElegant(1);
       }
     }
@@ -1632,7 +1632,8 @@ void change_defined_parameter_divopt(char *elem_name, long param, long elem_type
         *((char **)(p_elem + entity_description[elem_type].parameter[param].offset)) = NULL;
       break;
     default:
-      bombElegant("unknown/invalid variable quantity", NULL);
+      fprintf(stderr, "unknown/invalid variable quantity for element name %s, param = %ld, elem_type = %ld\n",
+	      elem_name, param, elem_type);
       exitElegant(1);
     }
   }
@@ -1767,7 +1768,7 @@ void change_used_parameter_divopt(LINE_LIST *beamline, char *elem_name, long par
         *((char **)(p_elem + entity_description[elem_type].parameter[param].offset)) = NULL;
       break;
     default:
-      bombElegant("unknown/invalid variable quantity", NULL);
+      bombElegant("unknown/invalid variable quantity (change_used_parameter_divopt)", NULL);
       exitElegant(1);
     }
   }
