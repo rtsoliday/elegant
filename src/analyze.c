@@ -7,7 +7,7 @@
 * in the file LICENSE that is included with this distribution. 
 \*************************************************************************/
 
-#define STORED_MATRIX_TYPE(type) ((type) == T_CCBEND || (type) == T_BRAT || (type) == T_BMAPXY || (type) == T_BMAPXYZ || (type) == T_CSBEND || (type) == T_FMULT || (type) == T_KQUAD || (type) == T_BGGEXP || (type) == T_LGBEND)
+#define STORED_MATRIX_TYPE(type) ((type) == T_CCBEND || (type) == T_BRAT || (type) == T_BMAPXY || (type) == T_BMAPXYZ || (type) == T_CSBEND || (type) == T_FMULT || (type) == T_KQUAD || (type) == T_BGGEXP || (type) == T_LGBEND || type == (T_DQCOR))
 
 /* file: analyze.c
  * purpose: Do tracking to find transfer matrix and tunes.
@@ -602,7 +602,7 @@ void printMapAnalysisResults(FILE *fp, long printoutOrder, char *printoutFormat,
   long saveOrder;
   saveOrder = M->order;
   M->order = printout_order > 3 ? 3 : printout_order;
-  print_matrices1(fp, "Matrix from fitting:", printoutFormat, M);
+  print_matrices1(fp, "Matrix from fitting:", printoutFormat, M, 0.0);
   M->order = saveOrder;
   fprintf(fp, "determinant of R = 1 + %14.6e\n", data[DETR_OFFSET] - 1);
   if (delta_dp && center_on_orbit)
@@ -669,7 +669,7 @@ VMATRIX *determineMatrix(RUN *run, ELEMENT_LIST *eptr, double *startingCoord, do
   long ltmp1, ltmp2;
   double dgamma, dtmp1, dP[3];
 
-  setTrackingContext(eptr->name, eptr->occurence, eptr->type, run->rootname, eptr);
+  setTrackingContext(eptr->name, eptr->occurence, eptr->type, run->rootname, eptr, -1);
 
 #if USE_MPI
   long notSinglePart_saved = notSinglePart;
@@ -970,7 +970,7 @@ VMATRIX *determineMatrixHigherOrder(RUN *run, ELEMENT_LIST *eptr, double *starti
   long my_nTrack, my_offset;
   int hasSDependence = 0;
 
-  setTrackingContext(eptr->name, eptr->occurence, eptr->type, run->rootname, eptr);
+  setTrackingContext(eptr->name, eptr->occurence, eptr->type, run->rootname, eptr, -1);
 
   memcpy(defaultStep, trackingMatrixStepSize, sizeof(double) * 6);
 
@@ -1087,6 +1087,7 @@ VMATRIX *determineMatrixHigherOrder(RUN *run, ELEMENT_LIST *eptr, double *starti
           break;
         case T_HKPOLY:
         case T_KQUAD:
+        case T_DQCOR:
         case T_BMAPXY:
         case T_BMAPXYZ:
           copied = 1;
@@ -1351,6 +1352,14 @@ VMATRIX *determineMatrixHigherOrder(RUN *run, ELEMENT_LIST *eptr, double *starti
       ((KQUAD *)eptr->p_elem)->isr = ltmp1;
       ((KQUAD *)eptr->p_elem)->synch_rad = ltmp2;
       break;
+    case T_DQCOR:
+      ltmp1 = ((DQCOR *)eptr->p_elem)->isr;
+      ltmp2 = ((DQCOR *)eptr->p_elem)->synch_rad;
+      ((DQCOR *)eptr->p_elem)->isr = 0;
+      multipole_tracking2(finalCoord + my_offset, my_nTrack, eptr, 0, run->p_central, NULL, 0.0, NULL, NULL, NULL, NULL, -1);
+      ((DQCOR *)eptr->p_elem)->isr = ltmp1;
+      ((DQCOR *)eptr->p_elem)->synch_rad = ltmp2;
+      break;
     default:
       printf("*** Error: determineMatrixHigherOrder called for element that is not supported!\n");
       printf("***        Please report to developers.\n");
@@ -1610,6 +1619,7 @@ void determineRadiationMatrix(VMATRIX *Mr, RUN *run, ELEMENT_LIST *eptr, double 
   CCBEND ccbend;
   LGBEND lgbend;
   KQUAD kquad;
+  DQCOR dqcor;
   QUAD *quad;
   CWIGGLER cwig;
   BGGEXP bggexp;
@@ -1640,7 +1650,7 @@ void determineRadiationMatrix(VMATRIX *Mr, RUN *run, ELEMENT_LIST *eptr, double 
   fprintf(fpdeb, "&data mode=ascii no_row_counts=1 &end\n");
 */
 
-  setTrackingContext(eptr->name, eptr->occurence, eptr->type, run->rootname, eptr);
+  setTrackingContext(eptr->name, eptr->occurence, eptr->type, run->rootname, eptr, -1);
 
   /* Accumulated diffusion matrix */
   accumD1 = tmalloc(21 * sizeof(*(accumD1)));
@@ -1701,8 +1711,10 @@ void determineRadiationMatrix(VMATRIX *Mr, RUN *run, ELEMENT_LIST *eptr, double 
     if (nSlices < ((KQUAD *)eptr->p_elem)->nSlices)
       nSlices = ((KQUAD *)eptr->p_elem)->nSlices;
     break;
-  case T_QUAD:
-    nSlices = fabs(((QUAD *)eptr->p_elem)->k1 * ((QUAD *)eptr->p_elem)->length * 10);
+  case T_DQCOR:
+    nSlices = fabs(((DQCOR *)eptr->p_elem)->k1 * ((DQCOR *)eptr->p_elem)->length * 10);
+    if (nSlices < ((DQCOR *)eptr->p_elem)->nSlices)
+      nSlices = ((DQCOR *)eptr->p_elem)->nSlices;
     break;
   case T_KSEXT:
     nSlices = fabs(((KSEXT *)eptr->p_elem)->k2 * ((KSEXT *)eptr->p_elem)->length * 10);
@@ -1869,6 +1881,16 @@ void determineRadiationMatrix(VMATRIX *Mr, RUN *run, ELEMENT_LIST *eptr, double 
         elem.type = T_KQUAD;
         elem.p_elem = (void *)&kquad;
         kquad.integration_order = 6;
+      }
+      break;
+    case T_DQCOR:
+      if (slice == 0) {
+        memcpy(&dqcor, (DQCOR *)eptr->p_elem, sizeof(DQCOR));
+        dqcor.isr = 0;
+        dqcor.nSlices = nSlices;
+        elem.type = T_DQCOR;
+        elem.p_elem = (void *)&dqcor;
+        dqcor.integration_order = 6;
       }
       break;
     case T_QUAD:
@@ -2191,6 +2213,7 @@ void determineRadiationMatrix1(VMATRIX *Mr, RUN *run, ELEMENT_LIST *elem, double
   CCBEND *ccbend;
   LGBEND *lgbend;
   KQUAD *kquad;
+  DQCOR *dqcor;
   KSEXT *ksext;
   double **coord, pCentral;
   long n_track, i, j;
@@ -2220,7 +2243,7 @@ void determineRadiationMatrix1(VMATRIX *Mr, RUN *run, ELEMENT_LIST *elem, double
       D[i] = 0;
   }
   sigmaDelta2 = 0;
-  setTrackingContext(elem->name, elem->occurence, elem->type, run->rootname, elem);
+  setTrackingContext(elem->name, elem->occurence, elem->type, run->rootname, elem, -1);
   setObstructionsMode(0);
   switch (elem->type) {
   case T_CSBEND:
@@ -2245,6 +2268,11 @@ void determineRadiationMatrix1(VMATRIX *Mr, RUN *run, ELEMENT_LIST *elem, double
   case T_KQUAD:
     kquad = (KQUAD *)elem->p_elem;
     multipole_tracking2(coord, n_track, elem, 0.0, run->p_central, NULL, elem->end_pos - kquad->length,
+                        NULL, NULL, NULL, &sigmaDelta2, iSlice);
+    break;
+  case T_DQCOR:
+    dqcor = (DQCOR *)elem->p_elem;
+    multipole_tracking2(coord, n_track, elem, 0.0, run->p_central, NULL, elem->end_pos - dqcor->length,
                         NULL, NULL, NULL, &sigmaDelta2, iSlice);
     break;
   case T_KSEXT:
