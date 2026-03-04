@@ -29,11 +29,11 @@
 #  include <gpu_matrix.h>
 #endif
 
-void print_matrices(FILE *fp, char *string, VMATRIX *M) {
-  print_matrices1(fp, string, "%22.15e ", M);
+void print_matrices(FILE *fp, char *string, VMATRIX *M, double suppressBelow) {
+  print_matrices1(fp, string, "%22.15e ", M, suppressBelow);
 }
 
-void print_matrices1(FILE *fp, char *string, char *format, VMATRIX *M) {
+void print_matrices1(FILE *fp, char *string, char *format, VMATRIX *M, double suppressBelow) {
   long i, j, k, l;
   double *C;
   double **R;
@@ -46,13 +46,13 @@ void print_matrices1(FILE *fp, char *string, char *format, VMATRIX *M) {
 
   fprintf(fp, "%s\nC:   ", string);
   for (i = 0; i < 6; i++)
-    fprintf(fp, format, C[i]);
+    fprintf(fp, format, fabs(C[i])<suppressBelow ? 0.0 : C[i]);
   fputc('\n', fp);
 
   for (i = 0; i < 6; i++) {
     fprintf(fp, "R%ld: ", i + 1);
     for (j = 0; j < 6; j++)
-      fprintf(fp, format, R[i][j]);
+      fprintf(fp, format, fabs(R[i][j])<suppressBelow ? 0.0 : R[i][j]);
     fputc('\n', fp);
   }
 
@@ -61,7 +61,7 @@ void print_matrices1(FILE *fp, char *string, char *format, VMATRIX *M) {
       for (j = 0; j < 6; j++) {
         fprintf(fp, "T%ld%ld: ", i + 1, j + 1);
         for (k = 0; k <= j; k++)
-          fprintf(fp, format, T[i][j][k]);
+          fprintf(fp, format, fabs(T[i][j][k])<suppressBelow ? 0.0 : T[i][j][k]);
         fputc('\n', fp);
       }
     }
@@ -73,7 +73,7 @@ void print_matrices1(FILE *fp, char *string, char *format, VMATRIX *M) {
         for (k = 0; k <= j; k++) {
           fprintf(fp, "Q%ld%ld%ld: ", i + 1, j + 1, k + 1);
           for (l = 0; l <= k; l++)
-            fprintf(fp, format, Q[i][j][k][l]);
+            fprintf(fp, format, fabs(Q[i][j][k][l])<suppressBelow ? 0.0 : Q[i][j][k][l]);
           fputc('\n', fp);
         }
       }
@@ -114,7 +114,6 @@ void initialize_matrices(VMATRIX *M, long order) {
   }
 
   M->C = C = tmalloc(sizeof(*C) * 6);
-#if TURBO_MATRICES
   double *Rb = (double *)tmalloc(sizeof(double) * (6+36));
   M->R = R = (double **)Rb;
   double *Rbuf = Rb+6;
@@ -124,10 +123,6 @@ void initialize_matrices(VMATRIX *M, long order) {
 //  if (order >= 3)
 //    s += (6+36+126+336);
 
-#else
-  M->R = R = (double **)tmalloc(sizeof(double*) * 6);
-  double *Rbuf = (double *)tmalloc(sizeof(double) * 36);
-#endif
   for (i = 0; i < 6; i++)
     R[i] = Rbuf + i*6;
 
@@ -135,16 +130,10 @@ void initialize_matrices(VMATRIX *M, long order) {
   if (order >= 2) {
     // Tijk is ragged, Tijk and Tikj for k<j have been combined
     // So we need sum(i:0-5,j:0-5,k:j+1) = 6*sum((j+1),j:0-5) = 6 * (1+2+3+4+5+6) = 126
-#if TURBO_MATRICES
     double *Tb = tmalloc(sizeof(double) * (126) + sizeof(char*)*(6+36));
     M->T = T = (double ***)Tb;
     double **T2 = (double **)(Tb+6);
     double *Tbuf = (Tb+6+36);
-#else
-    M->T = T = tmalloc(sizeof(*T) * 6);
-    double **T2 = (double **)tmalloc(sizeof(double*) * 36);
-    double *Tbuf = (double *)tmalloc(sizeof(double) * 126);
-#endif
     long pos = 0;
     for (i = 0; i < 6; i++) {
       T[i] = T2 + i*6;
@@ -163,18 +152,11 @@ void initialize_matrices(VMATRIX *M, long order) {
   if (order >= 3) {
     // sum(i:0-5;j:0-5;k:0-j;l:k+1) = 336 (data)
     // sum(i:0-5;j:0-5;k:j+1) = 126 (last level pointers)
-#if TURBO_MATRICES
     double *Qb = tmalloc(sizeof(double) * (336) + sizeof(char*)*(6+36+126));
     M->Q = Q = (double ****)Qb;
     double ***Q2 = (double ***)(Qb+6);
     double **Q3 = (double **)(Qb+6+36);
     double *Qbuf = (Qb+6+36+126);
-#else
-    M->Q = Q = tmalloc(sizeof(*Q) * 6);
-    double ***Q2 = (double ***)tmalloc(sizeof(double**) * 36);
-    double **Q3 = (double **)tmalloc(sizeof(double*) * 126);
-    double *Qbuf = (double *)tmalloc(sizeof(double) * 336);
-#endif
     long pos = 0;
     long pos3 = 0;
     for (i = 0; i < 6; i++) {
@@ -226,9 +208,6 @@ void track_particles(double **final, VMATRIX *M, double **initial,
                      long n_part) {
   double sum1;
   double *Tij, sum, coord_j;
-#if !TURBO_FASTMATTRACK
-  double *ini_k, **Ti, *Ri;
-#endif
   long k, j;
   long i, l, i_part;
   double coord_k, coord_jk;
@@ -321,29 +300,9 @@ void track_particles(double **final, VMATRIX *M, double **initial,
     }
     break;
   case 2:
-#if TURBO_FASTMATTRACK
     for (i_part = 0; i_part < n_part; i_part++) {
       fin = final[i_part];
       ini = initial[i_part];
-#else
-    if (!C)
-      bombElegant("NULL C pointer (track_particles)", NULL);
-    if (!R)
-      bombElegant("NULL R pointer (track_particles)", NULL);
-    if (!T)
-      bombElegant("NULL T pointer (track_particles)", NULL);
-    for (i_part = n_part - 1; i_part >= 0; i_part--) {
-      if (!(fin = final[i_part])) {
-        printf("error: final coordinate pointer is NULL for particle %ld (track_particles)\n", i_part);
-        fflush(stdout);
-        abort();
-      }
-      if (!(ini = initial[i_part])) {
-        printf("error: final coordinate pointer is NULL for particle %ld (track_particles)\n", i_part);
-        fflush(stdout);
-        abort();
-      }
-#endif
       fin[6] = ini[6]; /* copy particle ID # */
 
       //Because Tijk is not a standard matrix we have to do pointer walking
@@ -355,34 +314,6 @@ void track_particles(double **final, VMATRIX *M, double **initial,
       //sum(sum(sum())) i*(i+1)*(i+2)*(i+3)/24
       //offset = i*(i+1)*(i+2)*(i+3)/24 + j*(j+1)*(j+2)/6 + k*(k+1)/2 + k
       //offset_simple = i*21 + j*(j+1)/2 + k
-#if TURBO_FASTMATTRACK == 1
-      // Refactor in order=3 style
-      for (i = 5; i >= 0; i--) {
-        sum = C[i];
-        for (j = 5; j >= 0; j--) {
-          coord_j = ini[j];
-          if (coord_j != 0) {
-            sum1 = R[i][j];
-            for (k = j; k >= 0; k--)
-              sum1 += T[i][j][k] * ini[k];
-            sum += sum1 * coord_j;
-          }
-        }
-        temp[i] = sum;
-      }
-#elif TURBO_FASTMATTRACK == 2
-      // Remove conditional, saves ~15%
-      for (i = 5; i >= 0; i--) {
-        sum = C[i];
-        for (j = 5; j >= 0; j--) {
-          sum1 = R[i][j];
-          for (k = j; k >= 0; k--)
-            sum1 += T[i][j][k] * ini[k];
-          sum += sum1 * ini[j];
-        }
-        temp[i] = sum;
-      }
-#elif TURBO_FASTMATTRACK == 3
       // Force unroll backwards loop
       // This halves runtime
       for (i = 5; i >= 0; i--) {
@@ -395,40 +326,6 @@ void track_particles(double **final, VMATRIX *M, double **initial,
         }
         temp[i] = sum;
       }
-#elif TURBO_FASTMATTRACK == 4
-      // Swap increment order
-      // Now, loop is unrolled automatically
-      // Changes output, about 5% better than v3
-      for (i = 0; i <= 5; i++) {
-        sum = C[i];
-        for (j = 0; j <= 5; j++) {
-          sum1 = R[i][j];
-          for (k = 0; k <= j; k++)
-            sum1 += T[i][j][k] * ini[k];
-          sum += sum1 * ini[j];
-        }
-        temp[i] = sum;
-      }
-#else
-      for (i = 5; i >= 0; i--) {
-        sum = C[i];
-        if (!(Ri = R[i] + 5))
-          bombElegant("NULL R[i] pointer (track_particles)", NULL);
-        if (!(Ti = T[i] + 5))
-          bombElegant("NULL T[i] pointer (track_particles)", NULL);
-        for (j = 5; j >= 0; j--, Ri--, Ti--) {
-          if ((coord_j = *(ini_k = ini + j))) {
-            sum1 = *Ri;
-            if (!(Tij = *Ti + j))
-              bombElegant("NULL T[i][j] pointer (tracking_particles)", NULL);
-            for (k = j; k >= 0; k--, Tij--, ini_k--)
-              sum1 += *Tij * *ini_k;
-            sum += sum1 * coord_j;
-          }
-        }
-        temp[i] = sum;
-      }
-#endif
       for (i = 5; i >= 0; i--)
         fin[i] = temp[i];
     }
@@ -450,23 +347,12 @@ void track_particles(double **final, VMATRIX *M, double **initial,
         abort();
       }
       fin[6] = ini[6]; /* copy particle ID # */
-#if TURBO_FASTMATTRACK
       for (i = 5; i >= 0; i--) {
         sum = C[i];
         for (j = 5; j >= 0; j--)
           sum += R[i][j] * ini[j];
         temp[i] = sum;
       }
-#else
-      for (i = 5; i >= 0; i--) {
-        sum = C[i];
-        if (!(Ri = R[i] + 5))
-          bombElegant("NULL R[i] pointer (track_particles)", NULL);
-        for (j = 5; j >= 0; Ri--, j--)
-          sum += *Ri * ini[j];
-        temp[i] = sum;
-      }
-#endif
       for (i = 5; i >= 0; i--)
         fin[i] = temp[i];
     }
@@ -508,9 +394,6 @@ void free_matrices(VMATRIX *M) {
   if (M->order >= 1) {
     if (!R || !C)
       bombElegant("NULL R or C entry for matrix (free_matrices)", NULL);
-#if !(TURBO_MATRICES)
-    tfree(*R);
-#endif
     tfree(C);
     tfree(R);
   }
@@ -520,10 +403,6 @@ void free_matrices(VMATRIX *M) {
       bombElegant("NULL T entry for matrix (free_matrices)", NULL);
     if (!T[0])
       bombElegant("NULL T[0] entry for matrix (free_matrices)", NULL);
-#if !(TURBO_MATRICES)
-    tfree(**T);
-    tfree(*T);
-#endif
     tfree(T);
   }
 
@@ -534,11 +413,6 @@ void free_matrices(VMATRIX *M) {
       bombElegant("NULL Q[0] entry for matrix (free_matrices)", NULL);
     if (!Q[0][0])
       bombElegant("NULL Q[0][0] entry for matrix (free_matrices)", NULL);
-#if !(TURBO_MATRICES)
-    tfree(***Q);
-    tfree(**Q);
-    tfree(*Q);
-#endif
     tfree(Q);
   }
 
@@ -559,21 +433,12 @@ void free_matrices_above_order(VMATRIX *M, long order) {
     return;
 
   if (M->order == 3 && order < 3) {
-#if !(TURBO_MATRICES)
-    tfree(***Q);
-    tfree(**Q);
-    tfree(*Q);
-#endif
     tfree(Q);
     M->Q = NULL;
     M->order = 2;
   }
 
   if (M->order == 2 && order < 2) {
-#if !(TURBO_MATRICES)
-    tfree(**T);
-    tfree(*T);
-#endif
     tfree(T);
     M->T = NULL;
     M->order = 1;
