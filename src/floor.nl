@@ -14,6 +14,7 @@
     double phi0 = 0.0;
     double psi0 = 0.0;
     long include_vertices = 0;
+    long include_arc_centers = 0;
     long vertices_only = 0;
     long magnet_centers = 0;
     long store_vertices = 0;
