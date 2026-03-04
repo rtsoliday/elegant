@@ -1,4 +1,4 @@
-/*************************************************************************\
+/************************************************************************* \
 * Copyright (c) 2002 The University of Chicago, as Operator of Argonne
 * National Laboratory.
 * Copyright (c) 2002 The Regents of the University of California, as
@@ -841,7 +841,7 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
       csbend0.refAngle = csbend0.angle;
       /* This forces us into the next branch on the next call to this routine */
       csbend0.refTrajectoryChangeSet = 1;
-      setTrackingContext("csbend0", 0, T_CSBEND, "none", NULL);
+      setTrackingContext("csbend0", 0, T_CSBEND, "none", NULL, -1);
       track_through_csbend(part0, 1, &csbend0, p_error, Po, NULL, 0, NULL, NULL, maxamp, apContour, apFileData, -1, eptr);
       csbend->refTrajectoryChangeSet = 2; /* indicates that reference trajectory has been determined */
 
@@ -2345,21 +2345,6 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
       !(dGamma = SDDS_Realloc(dGamma, sizeof(*dGamma) * nBins)))
     bombElegant("memory allocation failure (track_through_csbendCSR)", NULL);
 
-  /* prepare some data for CSRDRIFT */
-  csrWake.dGamma = dGamma;
-  csrWake.bins = nBins;
-  csrWake.ds0 = csbend->length / csbend->nSlices;
-  csrWake.zLast = csrWake.z0 = z_end;
-  csrWake.highFrequencyCutoff0 = csbend->highFrequencyCutoff0;
-  csrWake.highFrequencyCutoff1 = csbend->highFrequencyCutoff1;
-  csrWake.lowFrequencyCutoff0 = csbend->lowFrequencyCutoff0;
-  csrWake.lowFrequencyCutoff1 = csbend->lowFrequencyCutoff1;
-  csrWake.clipNegativeBins = csbend->clipNegativeBins;
-  csrWake.wffValues = csbend->wffValues;
-  csrWake.wffFreqValue = csbend->wffFreqValue;
-  csrWake.wffRealFactor = csbend->wffRealFactor;
-  csrWake.wffImagFactor = csbend->wffImagFactor;
-
 #if !defined(PARALLEL)
   multipoleKicksDone += n_part * csbend->nSlices * (csbend->integration_order == 4 ? 4 : 1);
 #endif
@@ -2588,12 +2573,27 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 #endif
       /* compute CSR potential function */
       if (kick == 0 || !csbend->binOnce) {
+	long lastMaxBins;
+	lastMaxBins = maxBins;
         /* - first make a density histogram */
-        ctLower = ctUpper = dct = 0;
+        ctLower = ctUpper = 0;
+	if ((dct = c_mks*csbend->binSize) > 0) {
+	  /* maxBins = nBins; */
+	  nBins = 0;
+	}
         nBinned = binParticleCoordinate(&ctHist, &maxBins,
                                         &ctLower, &ctUpper, &dct, &nBins,
                                         csbend->binRangeFactor < 1.1 ? 1.1 : csbend->binRangeFactor,
                                         part, n_part, 4);
+	if (lastMaxBins<maxBins) {
+	  if (!(ctHistDeriv = SDDS_Realloc(ctHistDeriv, sizeof(*ctHistDeriv) * maxBins)) ||
+	      !(denom = SDDS_Realloc(denom, sizeof(*denom) * maxBins)) ||
+	      !(T1 = SDDS_Realloc(T1, sizeof(*T1) * maxBins)) ||
+	      !(T2 = SDDS_Realloc(T2, sizeof(*T2) * maxBins)) ||
+	      !(dGamma = SDDS_Realloc(dGamma, sizeof(*dGamma) * maxBins))) {
+	    bombElegant("memory allocation failure (track_through_csbendCSR)", NULL);
+	  }
+	}
 #if (!USE_MPI)
         if (nBinned != n_part) {
           printf("Only %ld of %ld particles binned for CSRCSBEND (z0=%le, kick=%ld, BRF=%le)\n",
@@ -2890,6 +2890,9 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 
   if (!csbend->binOnce && n_partMoreThanOne && !csrInhibit && !csbend->csrBlock) {
     /* prepare some data for use by CSRDRIFT element */
+#ifdef DEBUG
+    fprintf(stderr, "Preparing data for CSRDRIFT, in case one follows\n");
+#endif
     csrWake.dctBin = dct;
     ctLower = ctUpper = dct = 0;
 
@@ -3098,6 +3101,21 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
     /* accumulate the bending angle just in case the same type of dipole follows */
     accumulatedAngle += fabs(angle);
 
+  /* prepare some data for CSRDRIFT */
+  csrWake.dGamma = dGamma;
+  csrWake.bins = nBins;
+  csrWake.ds0 = csbend->length / csbend->nSlices;
+  csrWake.zLast = csrWake.z0 = z_end;
+  csrWake.highFrequencyCutoff0 = csbend->highFrequencyCutoff0;
+  csrWake.highFrequencyCutoff1 = csbend->highFrequencyCutoff1;
+  csrWake.lowFrequencyCutoff0 = csbend->lowFrequencyCutoff0;
+  csrWake.lowFrequencyCutoff1 = csbend->lowFrequencyCutoff1;
+  csrWake.clipNegativeBins = csbend->clipNegativeBins;
+  csrWake.wffValues = csbend->wffValues;
+  csrWake.wffFreqValue = csbend->wffFreqValue;
+  csrWake.wffRealFactor = csbend->wffRealFactor;
+  csrWake.wffImagFactor = csbend->wffImagFactor;
+
 #if defined(MINIMIZE_MEMORY)
   /* leave dGamma out of this because that memory is used by CSRDRIFT */
   free(beta0);
@@ -3129,27 +3147,38 @@ long binParticleCoordinate(double **hist, long *maxBins,
                            double *lower, double *upper, double *binSize, long *bins,
                            double expansionFactor,
                            double **particleCoord, long nParticles, long coordinateIndex) {
-  long iBin, iParticle, nBinned;
+  long iBin, iParticle, nBinned, count;
   double value;
-
+#ifdef DEBUG
+  fprintf(stderr, "binParticleCoordinate: maxBins = %ld, bins = %ld, binSize = %le\n",
+	  *maxBins, *bins, *binSize);
+#endif
+  
   if (*binSize <= 0 && *bins < 1)
     return -1;
   if (*binSize > 0 && *bins > 1)
     return -2;
 
   /* if (*lower==*upper)  This condition will be removed */
+  count = 0;
   if (isSlave || !notSinglePart) {
     /* find range of points */
     *upper = -(*lower = DBL_MAX);
     for (iParticle = 0; iParticle < nParticles; iParticle++) {
-      value = particleCoord[iParticle][coordinateIndex];
+      if (isinf(value = particleCoord[iParticle][coordinateIndex]) ||
+	  isnan(value))
+	continue;
+      count++;
       if (value < *lower)
         *lower = value;
       if (value > *upper)
         *upper = value;
     }
   }
-
+#ifdef DEBUG
+  fprintf(stderr, "count = %ld, lower = %le, upper = %le\n", count, *lower, *upper);
+#endif
+  
 #if USE_MPI
   /* find the global maximum and minimum */
   if (notSinglePart) {
@@ -3159,7 +3188,13 @@ long binParticleCoordinate(double **hist, long *maxBins,
   }
 #endif
 
-  if (expansionFactor > 1) {
+  if (*lower==DBL_MAX || *upper==-DBL_MAX) {
+    *lower = -sqrt(DBL_MAX);
+    *upper = sqrt(DBL_MAX);
+    *binSize = 0;
+    *bins = 10;
+    return 0;
+  } else if (expansionFactor > 1) {
     double center, range;
     center = (*lower + *upper) / 2;
     range = (*upper - *lower) * expansionFactor;
@@ -3177,6 +3212,11 @@ long binParticleCoordinate(double **hist, long *maxBins,
       !(*hist = SDDS_Realloc(*hist, sizeof(**hist) * (*maxBins = *bins))))
     bombElegant("Memory allocation failure (binParticleCoordinate)", NULL);
 
+#ifdef DEBUG
+  fprintf(stderr, "range: [%le, %le] (%le) : bins => %ld, binSize => %le; maxBins = %ld\n",
+	  *lower, *upper, *upper-*lower, *bins, *binSize, *maxBins);
+#endif
+  
   for (iBin = 0; iBin < *bins; iBin++)
     (*hist)[iBin] = 0;
   nBinned = 0;
@@ -5459,7 +5499,7 @@ double pickNormalizedPhotonEnergy(double RN) {
 
 void addCorrectorRadiationKick(double **coord, long np, ELEMENT_LIST *elem, long type, double Po, double *sigmaDelta2, long disableISR) {
   double F2;
-  double kick, length;
+  double kick=0, length=0;
   double isrCoef, radCoef, dp, p, beta0, beta1, deltaFactor;
   short isr, sr;
   long i;
