@@ -354,29 +354,69 @@ MAT *matrix_mult(MAT *mat1, MAT *mat2) {
   ldb = MAX(1, mat2->m);
   new_mat = matrix_get(mat1->m, mat2->n);
 #  if defined(_WIN32) && defined(CLAPACK)
+  {
+    long long m_ll = (long long)new_mat->m;
+    long long n_ll = (long long)new_mat->n;
+    long long k_ll = (long long)kk;
+    long long lda_ll = (long long)lda;
+    long long ldb_ll = (long long)ldb;
+    long long ldc_ll = (long long)new_mat->m;
   f2c_dgemm("N", "N",
-            &new_mat->m, &new_mat->n, &kk, &alpha, mat1->base,
-            &lda, mat2->base, &ldb, &beta, new_mat->base, &new_mat->m);
+            (integer *)&m_ll, (integer *)&n_ll, (integer *)&k_ll, &alpha, mat1->base,
+            (integer *)&lda_ll, mat2->base, (integer *)&ldb_ll, &beta, new_mat->base, (integer *)&ldc_ll);
+  }
 #  else
 #    if defined(LAPACK)
+  {
+    long long m_ll = (long long)new_mat->m;
+    long long n_ll = (long long)new_mat->n;
+    long long k_ll = (long long)kk;
+    long long lda_ll = (long long)lda;
+    long long ldb_ll = (long long)ldb;
+    long long ldc_ll = (long long)new_mat->m;
   dgemm_("N", "N",
-         (integer *)(&new_mat->m), (integer *)(&new_mat->n), &kk, &alpha, mat1->base,
-         &lda, mat2->base, &ldb, &beta, new_mat->base, (integer *)(&new_mat->m));
+         (integer *)&m_ll, (integer *)&n_ll, (integer *)&k_ll, &alpha, mat1->base,
+         (integer *)&lda_ll, mat2->base, (integer *)&ldb_ll, &beta, new_mat->base, (integer *)&ldc_ll);
+  }
 #    else
 #      if defined(MKL)
-  dgemm_("N", "N",
-         (MKL_INT *)&new_mat->m, (MKL_INT *)&new_mat->n, (MKL_INT *)&kk, &alpha, mat1->base,
-         (MKL_INT *)&lda, mat2->base, (MKL_INT *)&ldb, &beta, new_mat->base, (MKL_INT *)&new_mat->m);
+  {
+    MKL_INT m_mkl = (MKL_INT)new_mat->m;
+    MKL_INT n_mkl = (MKL_INT)new_mat->n;
+    MKL_INT k_mkl = (MKL_INT)kk;
+    MKL_INT lda_mkl = (MKL_INT)lda;
+    MKL_INT ldb_mkl = (MKL_INT)ldb;
+    MKL_INT ldc_mkl = (MKL_INT)new_mat->m;
+    dgemm_("N", "N",
+           &m_mkl, &n_mkl, &k_mkl, &alpha, mat1->base,
+           &lda_mkl, mat2->base, &ldb_mkl, &beta, new_mat->base, &ldc_mkl);
+  }
 #      else
 #        if defined(ACCELERATE_NEW_LAPACK)
+  {
+    long long m_ll = (long long)new_mat->m;
+    long long n_ll = (long long)new_mat->n;
+    long long k_ll = (long long)kk;
+    long long lda_ll = (long long)lda;
+    long long ldb_ll = (long long)ldb;
+    long long ldc_ll = (long long)new_mat->m;
   dgemm_("N", "N",
-         (__LAPACK_int *)&new_mat->m, (__LAPACK_int *)&new_mat->n, &kk, &alpha, mat1->base,
-         (__LAPACK_int *)&lda, mat2->base, &ldb, &beta, new_mat->base, (__LAPACK_int *)&new_mat->m);
+         (__LAPACK_int *)&m_ll, (__LAPACK_int *)&n_ll, (__LAPACK_int *)&k_ll, &alpha, mat1->base,
+         (__LAPACK_int *)&lda_ll, mat2->base, (__LAPACK_int *)&ldb_ll, &beta, new_mat->base, (__LAPACK_int *)&ldc_ll);
+  }
 #        else
 
-  dgemm_("N", "N",
-         &new_mat->m, &new_mat->n, &kk, &alpha, mat1->base,
-         &lda, mat2->base, &ldb, &beta, new_mat->base, &new_mat->m);
+  {
+    long long m_ll = (long long)new_mat->m;
+    long long n_ll = (long long)new_mat->n;
+    long long k_ll = (long long)kk;
+    long long lda_ll = (long long)lda;
+    long long ldb_ll = (long long)ldb;
+    long long ldc_ll = (long long)new_mat->m;
+    dgemm_("N", "N",
+           (integer *)&m_ll, (integer *)&n_ll, (integer *)&k_ll, (doublereal *)&alpha, mat1->base,
+           (integer *)&lda_ll, mat2->base, (integer *)&ldb_ll, (doublereal *)&beta, new_mat->base, (integer *)&ldc_ll);
+  }
 #        endif
 #      endif
 #    endif
@@ -414,20 +454,17 @@ MAT *matrix_invert(
   VEC *SValue = NULL, *SValueUsed = NULL, *InvSValue = NULL;
   double max, min;
   char deletedVectors[1024];
-  int info;
   /*use economy svd method i.e. U matrix is rectangular not square matrix */
   char calcMode = 'S';
 #endif
 #if defined(CLAPACK) || defined(MKL)
   double *work;
-  long lwork;
   long lda;
   double alpha = 1.0, beta = 0.0;
   int kk, ldb;
 #endif
 #if defined(LAPACK)
   doublereal *work;
-  integer lwork;
   integer lda;
   double alpha = 1.0, beta = 0.0;
   int kk, ldb;
@@ -467,99 +504,162 @@ MAT *matrix_invert(
   }
 #  if defined(CLAPACK) && !defined(ACCELERATE_NEW_LAPACK)
   work = (double *)malloc(sizeof(double) * 1);
-  lwork = -1;
-  lda = MAX(1, A->m);
-  dgesvd_((char *)&calcMode, (char *)&calcMode, (long *)&A->m, (long *)&A->n,
-          (double *)A->base, (long *)&lda,
-          (double *)SValue->ve,
-          (double *)U->base, (long *)&A->m,
-          (double *)Vt->base, (long *)&A->n,
-          (double *)work, (long *)&lwork,
-          (long *)&info);
-
-  lwork = work[0];
-  work = (double *)realloc(work, sizeof(double) * lwork);
-
-  dgesvd_((char *)&calcMode, (char *)&calcMode, (long *)&A->m, (long *)&A->n,
-          (double *)A->base, (long *)&lda,
-          (double *)SValue->ve,
-          (double *)U->base, (long *)&A->m,
-          (double *)Vt->base, (long *)&A->n,
-          (double *)work, (long *)&lwork,
-          (long *)&info);
+  {
+    long long m_ll = (long long)A->m;
+    long long n_ll = (long long)A->n;
+    long long lda_ll = (long long)MAX(1, A->m);
+    long long ldu_ll = (long long)A->m;
+    long long ldvt_ll = (long long)A->n;
+    long long lwork_ll = -1;
+    long long info_ll = 0;
+    dgesvd_((char *)&calcMode, (char *)&calcMode, (long *)&m_ll, (long *)&n_ll,
+            (double *)A->base, (long *)&lda_ll,
+            (double *)SValue->ve,
+            (double *)U->base, (long *)&ldu_ll,
+            (double *)Vt->base, (long *)&ldvt_ll,
+            (double *)work, (long *)&lwork_ll,
+            (long *)&info_ll);
+    if (info_ll < 0) {
+      char msg[256];
+      snprintf(msg, sizeof(msg), "Error calling dgesvd (workspace query) in matrix_invert: argument %lld illegal (possible LAPACK ABI mismatch LP64/ILP64).", -info_ll);
+      SDDS_Bomb(msg);
+    }
+    lwork_ll = (long long)work[0];
+    if (lwork_ll < 1)
+      SDDS_Bomb("Invalid workspace size returned by dgesvd in matrix_invert.");
+    work = (double *)realloc(work, sizeof(double) * (size_t)lwork_ll);
+    dgesvd_((char *)&calcMode, (char *)&calcMode, (long *)&m_ll, (long *)&n_ll,
+            (double *)A->base, (long *)&lda_ll,
+            (double *)SValue->ve,
+            (double *)U->base, (long *)&ldu_ll,
+            (double *)Vt->base, (long *)&ldvt_ll,
+            (double *)work, (long *)&lwork_ll,
+            (long *)&info_ll);
+    if (info_ll < 0) {
+      char msg[256];
+      snprintf(msg, sizeof(msg), "Error calling dgesvd in matrix_invert: argument %lld illegal (possible LAPACK ABI mismatch LP64/ILP64).", -info_ll);
+      SDDS_Bomb(msg);
+    }
+  }
   free(work);
 #  endif
 #  if defined(CLAPACK) && defined(ACCELERATE_NEW_LAPACK)
   work = (double *)malloc(sizeof(double) * 1);
-  lwork = -1;
-  lda = MAX(1, A->m);
-  dgesvd_((char *)&calcMode, (char *)&calcMode, (__LAPACK_int *)&A->m, (__LAPACK_int *)&A->n,
-          (double *)A->base, (__LAPACK_int *)&lda,
-          (double *)SValue->ve,
-          (double *)U->base, (__LAPACK_int *)&A->m,
-          (double *)Vt->base, (__LAPACK_int *)&A->n,
-          (double *)work, (__LAPACK_int *)&lwork,
-          (__LAPACK_int *)&info);
+  {
+    long long m_ll = (long long)A->m;
+    long long n_ll = (long long)A->n;
+    long long lda_ll = (long long)MAX(1, A->m);
+    long long ldu_ll = (long long)A->m;
+    long long ldvt_ll = (long long)A->n;
+    long long lwork_ll = -1;
+    long long info_ll = 0;
 
-  lwork = work[0];
-  work = (double *)realloc(work, sizeof(double) * lwork);
+    dgesvd_((char *)&calcMode, (char *)&calcMode, (__LAPACK_int *)&m_ll, (__LAPACK_int *)&n_ll,
+            (double *)A->base, (__LAPACK_int *)&lda_ll,
+            (double *)SValue->ve,
+            (double *)U->base, (__LAPACK_int *)&ldu_ll,
+            (double *)Vt->base, (__LAPACK_int *)&ldvt_ll,
+            (double *)work, (__LAPACK_int *)&lwork_ll,
+            (__LAPACK_int *)&info_ll);
 
-  dgesvd_((char *)&calcMode, (char *)&calcMode, (__LAPACK_int *)&A->m, (__LAPACK_int *)&A->n,
-          (double *)A->base, (__LAPACK_int *)&lda,
-          (double *)SValue->ve,
-          (double *)U->base, (__LAPACK_int *)&A->m,
-          (double *)Vt->base, (__LAPACK_int *)&A->n,
-          (double *)work, (__LAPACK_int *)&lwork,
-          (__LAPACK_int *)&info);
+    lwork_ll = (long long)work[0];
+    if (lwork_ll < 1)
+      SDDS_Bomb("Invalid workspace size returned by dgesvd in matrix_invert.");
+    work = (double *)realloc(work, sizeof(double) * (size_t)lwork_ll);
+
+    dgesvd_((char *)&calcMode, (char *)&calcMode, (__LAPACK_int *)&m_ll, (__LAPACK_int *)&n_ll,
+            (double *)A->base, (__LAPACK_int *)&lda_ll,
+            (double *)SValue->ve,
+            (double *)U->base, (__LAPACK_int *)&ldu_ll,
+            (double *)Vt->base, (__LAPACK_int *)&ldvt_ll,
+            (double *)work, (__LAPACK_int *)&lwork_ll,
+            (__LAPACK_int *)&info_ll);
+  }
   free(work);
 #  endif
 #  if defined(MKL)
-  work = (double *)malloc(sizeof(double) * 1);
-  lwork = -1;
-  lda = MAX(1, A->m);
-  dgesvd_((char *)&calcMode, (char *)&calcMode, (MKL_INT *)&A->m, (MKL_INT *)&A->n,
-          (double *)A->base, (MKL_INT *)&lda,
-          (double *)SValue->ve,
-          (double *)U->base, (MKL_INT *)&A->m,
-          (double *)Vt->base, (MKL_INT *)&A->n,
-          (double *)work, (MKL_INT *)&lwork,
-          (MKL_INT *)&info);
+  {
+    MKL_INT m_mkl = (MKL_INT)A->m;
+    MKL_INT n_mkl = (MKL_INT)A->n;
+    MKL_INT lda_mkl = (MKL_INT)MAX(1, A->m);
+    MKL_INT ldu_mkl = (MKL_INT)A->m;
+    MKL_INT ldvt_mkl = (MKL_INT)A->n;
+    MKL_INT lwork_mkl = (MKL_INT)-1;
+    MKL_INT info_mkl = 0;
 
-  lwork = work[0];
-  work = (double *)realloc(work, sizeof(double) * lwork);
+    work = (double *)malloc(sizeof(double) * 1);
+    dgesvd_((char *)&calcMode, (char *)&calcMode, &m_mkl, &n_mkl,
+            (double *)A->base, &lda_mkl,
+            (double *)SValue->ve,
+            (double *)U->base, &ldu_mkl,
+            (double *)Vt->base, &ldvt_mkl,
+            (double *)work, &lwork_mkl,
+            &info_mkl);
 
-  dgesvd_((char *)&calcMode, (char *)&calcMode, (MKL_INT *)&A->m, (MKL_INT *)&A->n,
-          (double *)A->base, (MKL_INT *)&lda,
-          (double *)SValue->ve,
-          (double *)U->base, (MKL_INT *)&A->m,
-          (double *)Vt->base, (MKL_INT *)&A->n,
-          (double *)work, (MKL_INT *)&lwork,
-          (MKL_INT *)&info);
-  free(work);
+    if (info_mkl != 0)
+      SDDS_Bomb("Error calling dgesvd (workspace query) in matrix_invert.");
+
+    lwork_mkl = (MKL_INT)work[0];
+    if (lwork_mkl < 1)
+      SDDS_Bomb("Invalid workspace size returned by dgesvd in matrix_invert.");
+    work = (double *)realloc(work, sizeof(double) * (size_t)lwork_mkl);
+
+    dgesvd_((char *)&calcMode, (char *)&calcMode, &m_mkl, &n_mkl,
+            (double *)A->base, &lda_mkl,
+            (double *)SValue->ve,
+            (double *)U->base, &ldu_mkl,
+            (double *)Vt->base, &ldvt_mkl,
+            (double *)work, &lwork_mkl,
+            &info_mkl);
+    free(work);
+
+  }
 #  endif
 #  if defined(LAPACK)
   work = (doublereal *)malloc(sizeof(doublereal) * 1);
-  lwork = -1;
-  lda = MAX(1, A->m);
+  {
+    long long m_ll = (long long)A->m;
+    long long n_ll = (long long)A->n;
+    long long lda_ll = (long long)MAX(1, A->m);
+    long long ldu_ll = (long long)A->m;
+    long long ldvt_ll = (long long)A->n;
+    long long lwork_ll = -1;
+    long long info_ll = 0;
 
-  dgesvd_((char *)&calcMode, (char *)&calcMode, (integer *)&A->m, (integer *)&A->n,
-          (doublereal *)A->base, (integer *)&lda,
-          (doublereal *)SValue->ve,
-          (doublereal *)U->base, (integer *)&A->m,
-          (doublereal *)Vt->base, (integer *)&A->n,
-          (doublereal *)work, (integer *)&lwork,
-          (integer *)&info);
+    dgesvd_((char *)&calcMode, (char *)&calcMode, (integer *)&m_ll, (integer *)&n_ll,
+            (doublereal *)A->base, (integer *)&lda_ll,
+            (doublereal *)SValue->ve,
+            (doublereal *)U->base, (integer *)&ldu_ll,
+            (doublereal *)Vt->base, (integer *)&ldvt_ll,
+            (doublereal *)work, (integer *)&lwork_ll,
+            (integer *)&info_ll);
 
-  lwork = work[0];
-  work = (doublereal *)realloc(work, sizeof(doublereal) * lwork);
+    if (info_ll < 0) {
+      char msg[256];
+      snprintf(msg, sizeof(msg), "Error calling dgesvd (workspace query) in matrix_invert: argument %lld illegal (possible LAPACK ABI mismatch LP64/ILP64).", -info_ll);
+      SDDS_Bomb(msg);
+    }
 
-  dgesvd_((char *)&calcMode, (char *)&calcMode, (integer *)&A->m, (integer *)&A->n,
-          (doublereal *)A->base, (integer *)&lda,
-          (doublereal *)SValue->ve,
-          (doublereal *)U->base, (integer *)&A->m,
-          (doublereal *)Vt->base, (integer *)&A->n,
-          (doublereal *)work, (integer *)&lwork,
-          (integer *)&info);
+    lwork_ll = (long long)work[0];
+    if (lwork_ll < 1)
+      SDDS_Bomb("Invalid workspace size returned by dgesvd in matrix_invert.");
+    work = (doublereal *)realloc(work, sizeof(doublereal) * (size_t)lwork_ll);
+
+    dgesvd_((char *)&calcMode, (char *)&calcMode, (integer *)&m_ll, (integer *)&n_ll,
+            (doublereal *)A->base, (integer *)&lda_ll,
+            (doublereal *)SValue->ve,
+            (doublereal *)U->base, (integer *)&ldu_ll,
+            (doublereal *)Vt->base, (integer *)&ldvt_ll,
+            (doublereal *)work, (integer *)&lwork_ll,
+            (integer *)&info_ll);
+
+    if (info_ll < 0) {
+      char msg[256];
+      snprintf(msg, sizeof(msg), "Error calling dgesvd in matrix_invert: argument %lld illegal (possible LAPACK ABI mismatch LP64/ILP64).", -info_ll);
+      SDDS_Bomb(msg);
+    }
+
+  }
   free(work);
 #  endif
 
@@ -671,32 +771,48 @@ MAT *matrix_invert(
   kk = MIN(U->n, V->m);
   lda = MAX(1, U->m);
   ldb = MAX(1, V->m);
-#  if defined(_WIN32) && defined(CLAPACK)
-  f2c_dgemm("N", "N",
-            &U->m, &V->n, &kk, &alpha, U->base,
-            &lda, V->base, &ldb, &beta, Invt->base, &U->m);
+#  if defined(MKL)
+  {
+    MKL_INT um_mkl = (MKL_INT)U->m;
+    MKL_INT vn_mkl = (MKL_INT)V->n;
+    MKL_INT kk_mkl = (MKL_INT)kk;
+    MKL_INT lda_mkl = (MKL_INT)lda;
+    MKL_INT ldb_mkl = (MKL_INT)ldb;
+    MKL_INT ldc_mkl = (MKL_INT)U->m;
+    dgemm_("N", "N",
+           &um_mkl, &vn_mkl, &kk_mkl, &alpha, U->base,
+           &lda_mkl, V->base, &ldb_mkl, &beta, Invt->base, &ldc_mkl);
+  }
 #  else
-#    if defined(LAPACK)
-  dgemm_("N", "N",
-         (integer *)(&U->m), (integer *)(&V->n), (integer *)(&kk), &alpha, U->base,
-         &lda, V->base, (integer *)(&ldb), &beta, Invt->base, (integer *)(&U->m));
+  {
+    long long um_ll = (long long)U->m;
+    long long vn_ll = (long long)V->n;
+    long long kk_ll = (long long)kk;
+    long long lda_ll = (long long)lda;
+    long long ldb_ll = (long long)ldb;
+    long long ldc_ll = (long long)U->m;
+#    if defined(_WIN32) && defined(CLAPACK)
+    f2c_dgemm("N", "N",
+              (integer *)&um_ll, (integer *)&vn_ll, (integer *)&kk_ll, &alpha, U->base,
+              (integer *)&lda_ll, V->base, (integer *)&ldb_ll, &beta, Invt->base, (integer *)&ldc_ll);
 #    else
-#      if defined(MKL)
-  dgemm_("N", "N",
-         (MKL_INT *)&U->m, (MKL_INT *)&V->n, (MKL_INT *)&kk, &alpha, U->base,
-         (MKL_INT *)&lda, V->base, (MKL_INT *)&ldb, &beta, Invt->base, (MKL_INT *)&U->m);
+#      if defined(LAPACK)
+    dgemm_("N", "N",
+           (integer *)&um_ll, (integer *)&vn_ll, (integer *)&kk_ll, &alpha, U->base,
+           (integer *)&lda_ll, V->base, (integer *)&ldb_ll, &beta, Invt->base, (integer *)&ldc_ll);
 #      else
 #        if defined(ACCELERATE_NEW_LAPACK)
-  dgemm_("N", "N",
-         (__LAPACK_int *)&U->m, (__LAPACK_int *)&V->n, &kk, &alpha, U->base,
-         (__LAPACK_int *)&lda, V->base, &ldb, &beta, Invt->base, (__LAPACK_int *)&U->m);
+    dgemm_("N", "N",
+           (__LAPACK_int *)&um_ll, (__LAPACK_int *)&vn_ll, (__LAPACK_int *)&kk_ll, &alpha, U->base,
+           (__LAPACK_int *)&lda_ll, V->base, (__LAPACK_int *)&ldb_ll, &beta, Invt->base, (__LAPACK_int *)&ldc_ll);
 #        else
-  dgemm_("N", "N",
-         &U->m, &V->n, &kk, &alpha, U->base,
-         &lda, V->base, &ldb, &beta, Invt->base, &U->m);
+    dgemm_("N", "N",
+           (integer *)&um_ll, (integer *)&vn_ll, (integer *)&kk_ll, (doublereal *)&alpha, U->base,
+           (integer *)&lda_ll, V->base, (integer *)&ldb_ll, (doublereal *)&beta, Invt->base, (integer *)&ldc_ll);
 #        endif
 #      endif
 #    endif
+  }
 #  endif
   matrix_free(V);
   if (Vt_matrix) {
@@ -820,11 +936,25 @@ double matrix_det(MAT *A) {
   lda = A->m;
   n = A->n;
   m = A->m;
-  ipvt = calloc(n, sizeof(*ipvt));
+  /* Allocate pivots large enough for ILP64 runtimes (INTEGER*8). */
+  ipvt = calloc((size_t)n, 8);
+  if (!ipvt)
+    SDDS_Bomb("Memory allocation failure in matrix_det (ipvt). Possible out-of-memory.");
   B = matrix_copy(A);
   /*LU decomposition*/
 #  if defined(MKL)
-  dgetrf_((MKL_INT *)&m, (MKL_INT *)&n, B->base, (MKL_INT *)&lda, (MKL_INT *)ipvt, (MKL_INT *)&info);
+  {
+    MKL_INT m_mkl = (MKL_INT)m;
+    MKL_INT n_mkl = (MKL_INT)n;
+    MKL_INT lda_mkl = (MKL_INT)lda;
+    MKL_INT info_mkl = 0;
+    MKL_INT *ipvt_mkl = (MKL_INT *)calloc((size_t)n_mkl, sizeof(*ipvt_mkl));
+    if (!ipvt_mkl)
+      SDDS_Bomb("Memory allocation failure in matrix_det (ipvt_mkl).");
+    dgetrf_(&m_mkl, &n_mkl, B->base, &lda_mkl, ipvt_mkl, &info_mkl);
+    info = (long)info_mkl;
+    free(ipvt_mkl);
+  }
 #  else
   dgetrf_(&m, &n, B->base, &lda, ipvt, &info);
 #  endif
