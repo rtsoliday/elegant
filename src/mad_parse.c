@@ -259,9 +259,7 @@ void fill_elem(ELEMENT_LIST *eptr, char *s, long type, FILE *fp_input) {
   }
 
   eptr->name = get_token_t(s, " ,\011");
-#if TURBO_STRLEN
   eptr->namelen = strlen(eptr->name);
-#endif
   if (((long)strlen(eptr->name)) > max_name_length) {
     char warningText[1024];
     snprintf(warningText, 1024, "Element name truncated to %ld  characters",
