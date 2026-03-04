@@ -81,7 +81,6 @@ static inline double* expansion_coefficients(const long n) {
   static double expansion_coef_1[] = {+1., +1.};
   static double expansion_coef_2[] = {+1./2, +1., -1./2};
 
-#if TURBO_COEF_CACHE
   static double UNUSED expansion_coef_3[] = {+1./6, +1./2, -1./2, -1./6};
   static double UNUSED expansion_coef_4[] = {+1./24, +1./6, -1./(2*2), -1./6, +1./24};
   static double UNUSED expansion_coef_5[] = {+1./120, +1./24, -1./(2*6), -1./(6*2), +1./24, +1./120};
@@ -89,7 +88,6 @@ static inline double* expansion_coefficients(const long n) {
                                       +1./(24*2), +1./120, -1./720};
   static double UNUSED expansion_coef_7[] = {+1./5040, +1./720, -1./(2*120), -1./(6*24),
                                       +1./(24*6), +1./(120*2), -1./720, -1./5040};
-#endif
 
   switch (n) {
     case 0:
@@ -98,20 +96,6 @@ static inline double* expansion_coefficients(const long n) {
       return expansion_coef_1;
     case 2:
       return expansion_coef_2;
-#if TURBO_COEF_CACHE >= 3
-    case 3:
-      return expansion_coef_3;
-#endif
-#if TURBO_COEF_CACHE >= 4
-    case 4:
-      return expansion_coef_4;
-    case 5:
-      return expansion_coef_5;
-    case 6:
-      return expansion_coef_6;
-    case 7:
-      return expansion_coef_7;
-#endif
     default:
 #define N_DEFAULT_ORDER 8
       if (maxOrder == -1) {
@@ -144,160 +128,9 @@ static inline double* expansion_coefficients(const long n) {
   }
 }
 
-#if TURBO_APPLY_KICKS_FAST == 0
-static void apply_canonical_multipole_kicks(double *restrict qx, double *restrict qy,
-                                     double *restrict delta_qx_return, double *restrict delta_qy_return,
-                                     double *restrict xpow, double *restrict ypow,
-                                     const long order, const double KnL, const long skew) {
-  long i;
-  double sum_Fx, sum_Fy;
-  double *coef;
 
-  coef = expansion_coefficients(order);
-  sum_Fx = sum_Fy = 0;
 
-  //even
-  for (i = 0; i <= order; i += 2)
-    sum_Fy += coef[i] * xpow[order - i] * ypow[i];
-  //odd
-  for (i = 1; i <= order; i += 2)
-    sum_Fx += coef[i] * xpow[order - i] * ypow[i];
-  if (skew) {
-    SWAP_DOUBLE(sum_Fx, sum_Fy);
-    sum_Fx = -sum_Fx;
-  }
-  /* add the kicks */
-  *qx -= KnL * sum_Fy;
-  *qy += KnL * sum_Fx;
-  if (delta_qx_return)
-    *delta_qx_return -= KnL * sum_Fy;
-  if (delta_qy_return)
-    *delta_qy_return += KnL * sum_Fx;
-}
-#endif
 
-#if TURBO_APPLY_KICKS_FAST == 6
-static void mkicks_fast_ret(double *qx, double *qy,
-                        double *delta_qx_return, double *delta_qy_return,
-                        double *xpow, double *ypow,
-                        const long order, const double KnL, const long skew) {
-  double sum_Fx = 0, sum_Fy = 0;
-  double *coef;
-  int i;
-  // Do we ever go above 8? Yes we do...to 19...
-  // Assume that xpow is reversed such that highest order is at index 0
-  //printf("mkicks_fast order (%ld) skew (%ld)\n", order, skew);
-  switch (order) {
-    case 0:
-      coef = expansion_coef_0;
-      sum_Fy += coef[0] * xpow[0] * ypow[0];
-      break;
-    case 1:
-      coef = expansion_coef_1;
-      sum_Fy += coef[0] * xpow[0] * ypow[0];
-      sum_Fx += coef[1] * xpow[1] * ypow[1];
-      break;
-    case 2:
-      coef = expansion_coef_2;
-      sum_Fy += coef[0] * xpow[0] * ypow[0];
-      sum_Fx += coef[1] * xpow[1] * ypow[1];
-      sum_Fy += coef[2] * xpow[2] * ypow[2];
-      break;
-    case 3:
-      coef = expansion_coef_3;
-      sum_Fy += coef[0] * xpow[0] * ypow[0];
-      sum_Fx += coef[1] * xpow[1] * ypow[1];
-      sum_Fy += coef[2] * xpow[2] * ypow[2];
-      sum_Fx += coef[3] * xpow[3] * ypow[3];
-      break;
-    case 4:
-      coef = expansion_coef_4;
-      sum_Fy += coef[0] * xpow[0] * ypow[0];
-      sum_Fx += coef[1] * xpow[1] * ypow[1];
-      sum_Fy += coef[2] * xpow[2] * ypow[2];
-      sum_Fx += coef[3] * xpow[3] * ypow[3];
-      sum_Fy += coef[4] * xpow[4] * ypow[4];
-      break;
-    default:
-      coef = expansion_coefficients(order);
-      //odd
-      for (i = 1; i <= order; i += 2)
-        sum_Fx += coef[i] * xpow[i] * ypow[i];
-      //even
-      for (i = 0; i <= order; i += 2)
-        sum_Fy += coef[i] * xpow[i] * ypow[i];
-  }
-  if (skew) {
-    SWAP_DOUBLE(sum_Fx, sum_Fy);
-    sum_Fx = -sum_Fx;
-  }
-  /* add the kicks */
-  *qx -= KnL * sum_Fy;
-  *qy += KnL * sum_Fx;
-  if (delta_qx_return)
-    *delta_qx_return -= KnL * sum_Fy;
-  if (delta_qy_return)
-    *delta_qy_return += KnL * sum_Fx;
-}
-#endif
-
-#if TURBO_APPLY_KICKS_FAST == 6
-static void apply_canonical_multipole_kicks_ret_rev(double *restrict qx, double *restrict qy,
-                                            double *restrict delta_qx_return, double *restrict delta_qy_return,
-                                            double *restrict xpow, double *restrict ypow,
-                                            const long order, const double KnL, const long skew) {
-  long i;
-  double sum_Fx, sum_Fy;
-  double *coef;
-
-  coef = expansion_coefficients(order);
-  sum_Fx = sum_Fy = 0;
-
-  //even
-  for (i = 0; i <= order; i += 2)
-    sum_Fy += coef[i] * xpow[i] * ypow[i];
-  //odd
-  for (i = 1; i <= order; i += 2)
-    sum_Fx += coef[i] * xpow[i] * ypow[i];
-
-  if (skew) {
-    SWAP_DOUBLE(sum_Fx, sum_Fy);
-    sum_Fx = -sum_Fx;
-  }
-  /* add the kicks */
-  *qx -= KnL * sum_Fy;
-  *qy += KnL * sum_Fx;
-  *delta_qx_return -= KnL * sum_Fy;
-  *delta_qy_return += KnL * sum_Fx;
-}
-
-static void apply_canonical_multipole_kicks_noret_rev(double *restrict qx, double *restrict qy,
-                                            double *restrict xpow, double *restrict ypow,
-                                            const long order, const double KnL, const long skew) {
-  long i;
-  double sum_Fx, sum_Fy;
-  double *coef;
-
-  coef = expansion_coefficients(order);
-  sum_Fx = sum_Fy = 0;
-
-  //even
-  for (i = 0; i <= order; i += 2)
-    sum_Fy += coef[i] * xpow[i] * ypow[i];
-  //odd
-  for (i = 1; i <= order; i += 2)
-    sum_Fx += coef[i] * xpow[i] * ypow[i];
-  if (skew) {
-    SWAP_DOUBLE(sum_Fx, sum_Fy);
-    sum_Fx = -sum_Fx;
-  }
-  /* add the kicks */
-  *qx -= KnL * sum_Fy;
-  *qy += KnL * sum_Fx;
-}
-#endif
-
-#if TURBO_APPLY_KICKS_FAST >= 4
 UNUSED
 static void apply_all_kicks_noret(double *restrict qx,
                                   double *restrict qy,
@@ -348,46 +181,8 @@ static void apply_all_kicks_noret(double *restrict qx,
   *qx += qxt;
   *qy += qyt;
 }
-#endif
 
-#if TURBO_APPLY_KICKS_FAST == 3
-static void apply_all_kicks_noret(double *restrict qx, double *restrict qy,
-                                  double *restrict xpow, double *restrict ypow,
-                                  double *restrict KnL, double kickFrac,
-                                  int nTerms,
-                                  const long skew) {
-  double sum_Fx, sum_Fy;
-  double *coef;
-  double qxt = 0, qyt = 0;
 
-  for (int order = 0; order < nTerms; order++) {
-    if (!KnL[order])
-      continue;
-
-    coef = expansion_coefficients(order);
-    sum_Fx = sum_Fy = 0;
-
-    for (int i = 0; i <= order; i += 1) {
-      double f = coef[i] * xpow[order-i] * ypow[i];
-      if (i & 1) {
-        sum_Fx += f;
-      } else {
-        sum_Fy += f;
-      }
-    }
-    qxt -= KnL[order] * kickFrac * sum_Fy;
-    qyt += KnL[order] * kickFrac * sum_Fx;
-  }
-  if (skew) {
-    SWAP_DOUBLE(qxt, qyt);
-    qyt = -qyt;
-  }
-  *qx += qxt;
-  *qy += qyt;
-}
-#endif
-
-#if TURBO_APPLY_KICKS_FAST >= 1
 static void UNUSED apply_canonical_multipole_kicks_ret(double *restrict qx, double *restrict qy,
                                             double *restrict delta_qx_return, double *restrict delta_qy_return,
                                             double *restrict xpow, double *restrict ypow,
@@ -440,7 +235,6 @@ static void UNUSED apply_canonical_multipole_kicks_noret(double *restrict qx, do
   *qx -= KnL * sum_Fy;
   *qy += KnL * sum_Fx;
 }
-#endif
 
 
 extern unsigned short expandHamiltonian;
