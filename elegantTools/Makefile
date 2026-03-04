@@ -82,7 +82,6 @@ PROD = astra2elegant \
 	sddsmatchtwiss \
 	sddsrandmult \
 	sddsresdiag \
-	sddsupsample \
 	straightDipoleFringeCalc \
 	touschekLifetime
 
@@ -99,7 +98,14 @@ endif
 CFLAGS +=  -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I../physics -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" 
 CCFLAGS +=  -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I../physics -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -I.
 
+ifneq ($(OS), Linux)
+  PROD += sddsupsample
+endif
+
 ifeq ($(OS), Linux)
+  ifneq ($(wildcard /usr/include/eigen3/Eigen/Dense),)
+    PROD += sddsupsample
+  endif
   CFLAGS += -fopenmp $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
   CCFLAGS += -fopenmp -I/usr/include/eigen3 $(GSL_INC_LOCAL)
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -fopenmp $(LDFLAGS)
