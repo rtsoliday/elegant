@@ -224,7 +224,7 @@ void initializeTransverseFeedbackPickup(TFBPICKUP *tfbp) {
   tfbp->initialized = 1;
 }
 
-void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LIST *beamline, long pass, long nPasses, char *rootname, double Po, long idSlotsPerBunch) {
+void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LIST *beamline, long pass, long nPasses, char *rootname, double Po, long idSlotsPerBunch, CHARGE *charge) {
   double kick, nomKick;
   long i, j;
   double *time0 = NULL;    /* array to record arrival time of each particle */
@@ -236,7 +236,8 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
   double tAve, rfFactor, phase = 0;
   std::complex<double> Zc, Ig, iu;
   double V, Vp, tMax = -DBL_MAX;
-
+  double qBunch;
+  
 #if USE_MPI
   MPI_Status mpiStatus;
   double buffer[5];
@@ -365,6 +366,22 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
       kick = SIGN(kick) * tfbd->kickLimit;
     phase = tfbd->phase * PI / 180;
 
+    if (tfbd->gainChargeScale>0) {
+      if (!charge)
+        bombElegant("TFBDRIVER GAIN_CHARGE_SCALE>0 but no CHARGE element seen.", NULL);
+#if USE_MPI
+      long npTotal=0, np1=0;
+      if (myid!=0)
+	np1 = npBucket[iBucket];
+      MPI_Allreduce(&np1, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+      qBunch = npTotal*charge->macroParticleCharge;
+#else
+      qBunch = npBucket[iBucket]*charge->macroParticleCharge;
+#endif
+      kick *= tfbd->gainFactor0 + qBunch/tfbd->gainChargeScale;
+    } else {
+      kick *= tfbd->gainFactor0;
+    }
     if (isSlave || !notSinglePart) {
       tAve = 0;
       rfFactor = 1;
