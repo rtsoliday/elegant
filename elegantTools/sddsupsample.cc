@@ -267,7 +267,7 @@ static std::vector<LocalModel> precompute_local_models(
 // - Tangent step magnitude is set by alpha * r_k (NOT by sqrt(eigenvalue)).
 // - Tangent step is capped at tan_cap_frac * r_k (0 disables).
 // - Optional orthogonal step magnitude is set by beta * sigma_o (sigma_o = orth thickness).
-static Eigen::RowVector<double, 6> sample_tangent_step(
+static Eigen::Matrix<double, 1, 6> sample_tangent_step(
     const LocalModel& m,
     std::mt19937_64& gen,
     std::normal_distribution<double>& ndist,
@@ -590,9 +590,9 @@ static void process_page(SDDS_TABLE* in, SDDS_TABLE* out, const Args& args) {
             lam[(size_t)j] = 0.0;
 
             const LocalModel& m = models[(size_t)b];
-            const Eigen::RowVector<double, 6> x0 = Xw.row(b);
+            const Eigen::Matrix<double, 1, 6> x0 = Xw.row(b);
 
-            Eigen::RowVector<double, 6> cand = x0;
+            Eigen::Matrix<double, 1, 6> cand = x0;
             bool ok = false;
 
             const double rk = std::max(m.r_k, 1e-14);
@@ -611,7 +611,7 @@ static void process_page(SDDS_TABLE* in, SDDS_TABLE* out, const Args& args) {
             const double ortho_lim = ortho_enabled ? (args.ortho_factor * sigma_o) : 0.0;
 
             for (int ttry = 0; ttry < args.max_tries; ++ttry) {
-                Eigen::RowVector<double, 6> step =
+                Eigen::Matrix<double, 1, 6> step =
                     sample_tangent_step(m, gen, ndist, args.alpha, args.beta, args.tan_cap_frac);
 
                 Eigen::Matrix<double,6,1> s = step.transpose();
@@ -631,7 +631,7 @@ static void process_page(SDDS_TABLE* in, SDDS_TABLE* out, const Args& args) {
                 }
             }
             if (!ok) {
-                Eigen::RowVector<double, 6> step =
+                Eigen::Matrix<double, 1, 6> step =
                     sample_tangent_step(m, gen, ndist, 0.25 * args.alpha, 0.0, args.tan_cap_frac);
                 cand = x0 + step;
             }
@@ -646,9 +646,9 @@ static void process_page(SDDS_TABLE* in, SDDS_TABLE* out, const Args& args) {
             double l = uni01(gen);
             lam[(size_t)j] = l;
 
-            Eigen::RowVector<double, 6> x0 = Xw.row(b);
-            Eigen::RowVector<double, 6> x1 = Xw.row(nidx);
-            Eigen::RowVector<double, 6> cand = x0 + l * (x1 - x0);
+            Eigen::Matrix<double, 1, 6> x0 = Xw.row(b);
+            Eigen::Matrix<double, 1, 6> x1 = Xw.row(nidx);
+            Eigen::Matrix<double, 1, 6> cand = x0 + l * (x1 - x0);
 
             if (args.noise > 0.0)
                 for (int d = 0; d < 6; ++d) cand(d) += args.noise * ndist(gen);
