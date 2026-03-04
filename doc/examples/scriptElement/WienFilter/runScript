@@ -1,0 +1,8 @@
+#!/bin/bash
+
+elegant run.ele 
+
+sddsplot \
+    -column=p,x run.bun run.out -graph=dot,vary -end \
+    -column=p,xp run.bun run.out -graph=dot,vary -end
+
