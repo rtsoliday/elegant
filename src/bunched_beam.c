@@ -923,8 +923,8 @@ void do_track_beam_output(RUN *run, VARY *control,
     printf("Dumping lost particles: n_to_track = %ld, n_lost = %ld, n_particles = %ld\n",
            beam->n_to_track, beam->n_lost, beam->n_particle);
     fflush(stdout);
-    dump_lost_particles(&output->SDDS_losses, run->lossLimit, beam->particle + beam->n_accepted,
-                        beam->n_lost, control->i_step);
+    dump_lost_particles(&output->SDDS_losses, run->lossLimit, p_central0, beam->particle + beam->n_accepted,
+                        beam->n_lost, control->i_step, beamline->revolution_length);
     beam->n_lost = 0;
     if (!(flags & SILENT_RUNNING)) {
       printf("done.\n");
