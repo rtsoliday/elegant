@@ -207,7 +207,7 @@ void setup_bpm_output(char *filename, RUN *run) {
 
 void dump_bpm_data(TRAJECTORY *traj, long n_elems, char *description, long step) {
   long i, j, n, occurence;
-  double position, x, y, xReading, yReading;
+  double position, xReading, yReading;
   char *name;
 
   if (!SDDS_bpm_initialized)
@@ -240,13 +240,11 @@ void dump_bpm_data(TRAJECTORY *traj, long n_elems, char *description, long step)
     position = traj[i].elem->end_pos;
     name = traj[i].elem->name;
     occurence = traj[i].elem->occurence;
-    x = traj[i].centroid[0];
-    y = traj[i].centroid[2];
     xReading = yReading = 0;
     if (traj[i].elem->type == T_MONI || traj[i].elem->type == T_HMON)
-      xReading = computeMonitorReading(traj[i].elem, 0, x, y, 0);
+      xReading = computeMonitorReading(traj[i].elem, 0, traj[i].centroid, 0);
     if (traj[i].elem->type == T_MONI || traj[i].elem->type == T_VMON)
-      yReading = computeMonitorReading(traj[i].elem, 2, x, y, 0);
+      yReading = computeMonitorReading(traj[i].elem, 2, traj[i].centroid, 0);
 
     if (!SDDS_SetRowValues(&SDDS_bpm, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, j,
                            ICB_S, position, ICB_X, xReading, ICB_Y, yReading,
