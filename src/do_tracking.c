@@ -311,11 +311,7 @@ long do_tracking(
 #ifdef DEBUG_CRASH
   printMessageAndTime(stdout, "do_tracking checkpoint 0\n");
 #endif
-#if TURBO_STRINGS
   trackingContext.rootname = run->rootname;
-#else
-  strncpy(trackingContext.rootname, run->rootname, CONTEXT_BUFSIZE);
-#endif
   if (!coord && !beam)
     bombElegant("Null particle coordinate array and null beam pointer! (do_tracking)", NULL);
   if (coord && beam)
@@ -790,11 +786,8 @@ long do_tracking(
 #ifdef DEBUG_CRASH
         printMessageAndTime(stdout, "do_tracking checkpoint 0.9.9\n");
 #endif
-#if TURBO_TRACKING
         bool skippable = !(flags & (TEST_PARTICLES + CLOSED_ORBIT_TRACKING + OPTIMIZING));
-#endif
         while (eptr && (nToTrack || (USE_MPI && notSinglePart))) {
-#if TURBO_TRACKING
           if (skippable) {
             if (run->checkBeamStructure && beam)
               checkBeamStructure(beam);
@@ -802,14 +795,6 @@ long do_tracking(
               eptr = eptr->succ;
             }
           }
-#else
-          if (run->checkBeamStructure && beam && !(flags & (TEST_PARTICLES + CLOSED_ORBIT_TRACKING + OPTIMIZING)))
-            checkBeamStructure(beam);
-          if (eptr->ignore && !(flags & (TEST_PARTICLES + CLOSED_ORBIT_TRACKING + OPTIMIZING))) {
-            eptr = eptr->succ;
-            continue;
-          }
-#endif
 #ifdef DEBUG_CRASH
           printMessageAndTime(stdout, "do_tracking checkpoint 1: ");
           printf("element %s#%ld, %ld particles, %ld left\n", eptr->name, eptr->occurence, nToTrack, nLeft);
@@ -1073,18 +1058,10 @@ long do_tracking(
             z += eptr->end_pos - eptr->beg_pos;
             z_travel += eptr->end_pos - eptr->beg_pos;
           }
-#if TURBO_NOFLUSH
-#else
-          fflush(stdout);
-#endif
           /* fill a structure that can be used to pass to other routines
            * information on the tracking context
            */
-#if TURBO_STRINGS
           trackingContext.elementName = eptr->name;
-#else
-          strncpy(trackingContext.elementName, eptr->name, CONTEXT_BUFSIZE);
-#endif
           trackingContext.element = eptr;
           trackingContext.elementOccurrence = eptr->occurence;
           trackingContext.sliceAnalysis = sliceAnalysis ? (sliceAnalysis->finalValuesOnly ? NULL : sliceAnalysis) : NULL;
@@ -1093,7 +1070,8 @@ long do_tracking(
           trackingContext.step = step;
           trackingContext.elementType = eptr->type;
           trackingContext.flags = flags;
-
+	  trackingContext.iPass = i_pass;
+	  
           log_exit("do_tracking.2.2.1");
           if (eptr->p_elem || eptr->matrix) {
 #ifdef DEBUG_CRASH
@@ -1228,7 +1206,7 @@ long do_tracking(
                   fflush(stdout);
                   if (run->print_statistics > 2) {
                     print_elem(stdout, eptr);
-                    print_matrices(stdout, "", eptr->matrix);
+                    print_matrices(stdout, "", eptr->matrix, 0.0);
                   }
                 }
                 if (flags & CLOSED_ORBIT_TRACKING) {
@@ -1655,7 +1633,8 @@ long do_tracking(
                           gatherParticles(&coord, &nToTrack, &nLost, &accepted, n_processors, myid, &round);
                           if (isMaster)
 #endif
-                            dump_watch_FFT(watch, step, i_pass, n_passes, coord, nToTrack, nOriginal, *P_central);
+                            dump_watch_FFT(watch, step, i_pass, n_passes, coord, nToTrack, nOriginal, *P_central,
+					   beamline->revolution_length);
 #if SDDS_MPI_IO
                           if (!partOnMaster && notSinglePart) {
 #  if USE_MPI && MPI_DEBUG
@@ -2025,6 +2004,17 @@ long do_tracking(
                   if (flags & TEST_PARTICLES)
                     ((KSEXT *)eptr->p_elem)->isr = saveISR;
                   break;
+                case T_DQCOR:
+                  if (flags & TEST_PARTICLES) {
+                    saveISR = ((DQCOR *)eptr->p_elem)->isr;
+                    ((DQCOR *)eptr->p_elem)->isr = 0;
+                  }
+                  nLeft = multipole_tracking2(coord, nToTrack, eptr, 0.0,
+                                              *P_central, accepted, last_z, maxamp, apcontour,
+                                              &(run->apertureData), NULL, -1);
+                  if (flags & TEST_PARTICLES)
+                    ((DQCOR *)eptr->p_elem)->isr = saveISR;
+                  break;
                 case T_KOCT:
                   if (flags & TEST_PARTICLES) {
                     saveISR = ((KOCT *)eptr->p_elem)->isr;
@@ -2288,7 +2278,9 @@ long do_tracking(
                   break;
                 case T_TFBDRIVER:
                   if (!(flags & TEST_PARTICLES))
-                    transverseFeedbackDriver((TFBDRIVER *)eptr->p_elem, coord, nToTrack, beamline, i_pass, n_passes, run->rootname, *P_central, beam ? beam->id_slots_per_bunch : 0);
+                    transverseFeedbackDriver((TFBDRIVER *)eptr->p_elem, coord, nToTrack, beamline, i_pass, n_passes, run->rootname,
+                                             *P_central, beam ? beam->id_slots_per_bunch : 0,
+                                             charge);
                   feedbackDriverSeen = 1;
 #ifdef MPI_DEBUG
                   printf("Returned from TFBDRIVER\n");
@@ -2866,7 +2858,8 @@ long do_tracking(
 #ifdef HAVE_GPU
                         coord = forceParticlesToCpu("dump_watch_FFT");
 #endif
-                        dump_watch_FFT(watch, step, i_pass, n_passes, coord, nToTrack, nOriginal, *P_central);
+                        dump_watch_FFT(watch, step, i_pass, n_passes, coord, nToTrack, nOriginal, *P_central,
+				       beamline->revolution_length);
                         break;
                       }
                     }
@@ -4020,7 +4013,6 @@ long do_tracking(
       void storeBPMReading(ELEMENT_LIST *eptr, double **coord, long np, double Po) {
         BEAM_SUMS *sums;
         char s[1000];
-        double x, y;
         MONI *moni;
         HMON *hmon;
         VMON *vmon;
@@ -4032,21 +4024,7 @@ long do_tracking(
         sums = allocateBeamSums(0, 1);
         zero_beam_sums(sums, 1);
         accumulate_beam_sums(sums, coord, np, Po, 0.0, NULL, 0.0, 0.0, -1, -1, 0);
-        /*
-          #if USE_MPI
-          if (parallelStatus==trueParallel && partOnMaster && notSinglePart)
-          MPI_Allreduce(&np, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-          else
-          npTotal = np;
-          #else
-          npTotal = np;
-          #endif
-        */
-
-        x = sums->centroid[0];
-        y = sums->centroid[2];
         n = sums->n_part;
-        freeBeamSums(sums, 1);
 
         switch (eptr->type) {
         case T_MONI:
@@ -4060,8 +4038,8 @@ long do_tracking(
             moni->tbtMemoryNumber[2] = rpn_create_mem(s, 0);
             moni->initialized |= 2;
           }
-          rpn_store(computeMonitorReading(eptr, 0, x, y, 0), NULL, moni->tbtMemoryNumber[0]);
-          rpn_store(computeMonitorReading(eptr, 2, x, y, 0), NULL, moni->tbtMemoryNumber[1]);
+          rpn_store(computeMonitorReading(eptr, 0, sums->centroid, 0), NULL, moni->tbtMemoryNumber[0]);
+          rpn_store(computeMonitorReading(eptr, 2, sums->centroid, 0), NULL, moni->tbtMemoryNumber[1]);
           rpn_store(n, NULL, moni->tbtMemoryNumber[2]);
           break;
         case T_HMON:
@@ -4073,7 +4051,7 @@ long do_tracking(
             hmon->tbtMemoryNumber[1] = rpn_create_mem(s, 0);
             hmon->initialized |= 2;
           }
-          rpn_store(computeMonitorReading(eptr, 0, x, y, 0), NULL, hmon->tbtMemoryNumber[0]);
+          rpn_store(computeMonitorReading(eptr, 0, sums->centroid, 0), NULL, hmon->tbtMemoryNumber[0]);
           rpn_store(n, NULL, hmon->tbtMemoryNumber[1]);
           break;
         case T_VMON:
@@ -4085,10 +4063,11 @@ long do_tracking(
             vmon->tbtMemoryNumber[1] = rpn_create_mem(s, 0);
             vmon->initialized |= 2;
           }
-          rpn_store(computeMonitorReading(eptr, 2, x, y, 0), NULL, vmon->tbtMemoryNumber[0]);
+          rpn_store(computeMonitorReading(eptr, 2, sums->centroid, 0), NULL, vmon->tbtMemoryNumber[0]);
           rpn_store(n, NULL, vmon->tbtMemoryNumber[1]);
           break;
         }
+        freeBeamSums(sums, 1);
       }
 
       ELEMENT_LIST *findBeamlineMatrixElement(ELEMENT_LIST *eptr) {
