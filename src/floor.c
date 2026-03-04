@@ -132,7 +132,9 @@ void output_floor_coordinates(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamli
     print_namelist(stdout, &floor_coordinates);
 
   if (magnet_centers && vertices_only)
-    bombElegant("you can simultaneously request magnet centers and vertices only output", NULL);
+    bombElegant("you can't simultaneously request magnet centers and vertices-only output", NULL);
+  if (include_arc_centers && vertices_only)
+    bombElegant("you can't simultaneously request arc centers and vertices-only output", NULL);
   if (isMaster) {
     if (filename)
       filename = compose_filename(filename, run->rootname);
@@ -149,7 +151,7 @@ void output_floor_coordinates(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamli
   if (vertices_only)
     n_points = 2;
   last_elem = NULL;
-  if (include_vertices || vertices_only) {
+  if (include_vertices || vertices_only || include_arc_centers) {
     elem = beamline->elem;
     while (elem) {
       switch (elem->type) {
@@ -160,7 +162,10 @@ void output_floor_coordinates(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamli
       case T_CSRCSBEND:
       case T_CCBEND:
       case T_BRAT:
-        n_points++;
+	if (include_vertices || vertices_only)
+	  n_points++;
+	if (include_arc_centers)
+	  n_points++;
         break;
       case T_FTABLE:
         if (((FTABLE *)elem->p_elem)->angle)
@@ -425,6 +430,33 @@ long advanceFloorCoordinates(MATRIX *V1, MATRIX *W1, MATRIX *V0, MATRIX *W0,
     }
   }
 
+  if (include_arc_centers && SDDS_floor && IS_BEND(elem->type)) {
+    /* compute the arc center and save */
+    double theta1, phi1, psi1;
+    R->a[0][0] = -SIGN(angle)*rho;
+    R->a[1][0] = R->a[2][0] = 0;
+    m_identity(T);
+    T->a[0][0] = T->a[1][1] = cos(tilt);
+    T->a[1][0] = -(T->a[0][1] = -sin(tilt));
+    m_mult(tempV, T, R);
+    m_mult(R, W0, tempV);
+    m_add(tempV, V0, R);
+    theta1 = *theta;
+    phi1 = *phi;
+    psi1 = *psi;
+    computeSurveyAngles(&theta1, &phi1, &psi1, W0, elem->name);
+    sprintf(label, "%s-AC", elem->name);
+    if (!SDDS_SetRowValues(SDDS_floor, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row_index++,
+			   IC_S, 0.0, IC_DS, 0.0, IC_X, tempV->a[0][0], IC_Y, tempV->a[1][0], IC_Z, tempV->a[2][0],
+			   IC_THETA, theta1, IC_PHI, phi1, IC_PSI, theta1,
+			   IC_ELEMENT, label, IC_OCCURENCE, elem->occurence, IC_TYPE,
+			   "ARC-CENTER", IC_NEXT_ELEMENT, "", IC_NEXT_TYPE, "",
+			   -1)) {
+      SDDS_SetError("Unable to set SDDS row (output_floor_coordinates.1)");
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    }
+  }
+  
   if (include_vertices || vertices_only) {
     ELEMENT_LIST *preceeds;
 
@@ -1071,7 +1103,7 @@ void convertLocalCoordinatesToGlobal(
     *Z = Z1 + dX * sin(theta1) + dZ * cos(theta1);
     *X = X1 + dX * cos(theta1) - dZ * sin(theta1);
     *Y = coord[2];
-    *thetaX = -theta1 - lgptr->segment[0].entryAngle + atan(coord[1]);
+    *thetaX = -theta1 + atan(coord[1]);
 #ifdef DEBUG
     if (!lgptr->optimizeFse || lgptr->optimized == 1) {
       fprintf(fpdeb, "%le %le %le %le  %le %le %s\n",
@@ -1098,7 +1130,7 @@ void convertLocalCoordinatesToGlobal(
     *Z = Z1 + dX * sin(theta1) + dZ * cos(theta1);
     *X = X1 + dX * cos(theta1) - dZ * sin(theta1);
     *Y = coord[2];
-    *thetaX = -theta1 + atan(coord[1]);
+    *thetaX = -theta1 + cos(ccptr->extraTilt)*atan(coord[1]);
 #ifdef DEBUG
     if ((!ccptr->optimizeFse && !ccptr->optimizeDx) || ccptr->optimized == 1) {
       fprintf(fpdeb, "%le %le %le %le  %le %le %s\n",
