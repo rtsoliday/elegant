@@ -25,7 +25,6 @@ VMATRIX *transformMatrixBetweenMomentumAndSlopes(VMATRIX *VM);
 //  int n, m;
 //} MATRIX;
 
-#if TURBO_MATLOCAL
 #undef m_mult
 #define m_mult(C,A,B) local_mat_mult(C,A,B)
 static int local_mat_mult(MATRIX *C, const MATRIX *A, const MATRIX *B) {
@@ -38,7 +37,6 @@ static int local_mat_mult(MATRIX *C, const MATRIX *A, const MATRIX *B) {
   if (m != B->n || n != C->n || p != C->m)
     return 0;
 
-#if TURBO_MATLOCAL == 1
   double c_i_j;
   for (int i=0; i<n; i++) {
     for (int j=0; j<p; j++) {
@@ -49,61 +47,13 @@ static int local_mat_mult(MATRIX *C, const MATRIX *A, const MATRIX *B) {
       C->a[i][j] = c_i_j;
     }
   }
-#endif
 
-#if TURBO_MATLOCAL == 3
-  for (int i=0; i<n; i++) {
-    for (int j=0; j<p; j++) {
-      C->a[i][j] = 0;
-    }
-  }
-  for (int i=0; i<n; i++) {
-    for (int k=0; k<m; k++) {
-      for (int j=0; j<p; j++) {
-        C->a[i][j] += (A->a[i][k])*(B->a[k][j]);
-      }
-    }
-  }
-#endif
 
-#if TURBO_MATLOCAL == 4
-  for (int i=0; i<n; i++) {
-    for (int j=0; j<p; j++) {
-      C->a[0][i*n+j] = 0;
-    }
-  }
-
-  for (int i=0; i<n; i++) {
-    for (int k=0; k<m; k++) {
-      for (int j=0; j<p; j++) {
-        C->a[0][i*n+j] += A->a[0][i*m+k] * B->a[0][k*p+j];
-      }
-    }
-  }
-#endif
 
   return 1;
 }
-#endif
 
 
-#if TURBO_MATLOCAL >= 4
-#undef m_alloc
-#define m_alloc(A,n,m) local_mat_alloc(A,n,m)
-static void local_mat_alloc(MATRIX **A, const int n, const int m) {
-  *A = (MATRIX*)tmalloc(sizeof(**A));
-  (*A)->a = (double**)tmalloc(sizeof(double*)*n);
-  (*A)->n = n;
-  (*A)->m = m;
-//  double *buf = (double*)tmalloc(sizeof(double)*n*m);
-//  for (int i=0; i<n; i++) {
-//    (*A)->a[i] = buf+i*m;
-//  }
-  for (int i=0; i<n; i++) {
-    (*A)->a[i] = (double*)tmalloc(sizeof(double)*m);
-  }
-}
-#endif
 
 /* Modify a matrix to include misalignments */
 void misalign_matrix(
