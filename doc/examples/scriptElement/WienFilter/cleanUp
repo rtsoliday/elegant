@@ -1,0 +1,3 @@
+#!/bin/bash
+
+\rm run.out run.bun 
