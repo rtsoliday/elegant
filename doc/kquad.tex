@@ -61,6 +61,12 @@ such sextupole contributions in the computation of the chromaticity
 via the {\tt twiss\_output} command.  However, these chromatic effects
 will be seen in tracking.
 
+{\bf Steering}
+
+Steering kicks are specified using the \verb|HKICK| and \verb|VKICK| parameters, which provide the horizontal and vertical kicks
+in the limit \verb|K1=0| and \verb|TILT=0|.
+For strong quadrupoles, the actual change in $x^\prime$ and $y^\prime$ may differ considerably from the specified values.
+
 {\bf Apertures}
 
 Apertures specified via an upstream \verb|MAXAMP| element or an \verb|aperture_input|
