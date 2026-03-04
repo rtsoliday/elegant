@@ -38,27 +38,16 @@ void quadFringe(double **coord,
   double x, px, y, py, delta, xp, yp, denom;
   double *vec;
   double a, dx, dpx, dy, dpy, ds;
-#if TURBO_QUADFRINGE
   static VMATRIX *M1;
   static VMATRIX *M2;
-#else
-  VMATRIX *M1 = NULL, *M2 = NULL;
-#endif
 
   if (linearFlag) {
-#if TURBO_QUADFRINGE
     if (!M1) {
       M1 = tmalloc(sizeof(*M1));
       initialize_matrices(M1, 1);
       M2 = tmalloc(sizeof(*M2));
       initialize_matrices(M2, 1);
     }
-#else
-    M1 = tmalloc(sizeof(*M1));
-    initialize_matrices(M1, 1);
-    M2 = tmalloc(sizeof(*M2));
-    initialize_matrices(M2, 1);
-#endif
 
     /* determine linear matrix for this delta */
     quadPartialFringeMatrix(M1, K1, 1, fringeIntM0, 1);
@@ -191,23 +180,12 @@ void quadFringe(double **coord,
       vec[1] = vec[3] = DBL_MAX;
   }
 
-#if TURBO_QUADFRINGE
 //  if (M1) {
 //    null_matrices(M1, 0);
 //  }
 //  if (M2) {
 //    null_matrices(M2, 0);
 //  }
-#else
-  if (M1) {
-    free_matrices(M1);
-    free(M1);
-  }
-  if (M2) {
-    free_matrices(M2);
-    free(M2);
-  }
-#endif
 
 }
 
