@@ -27,7 +27,6 @@ ELEMENT_LIST *find_element(char *elem_name, ELEMENT_LIST **context, ELEMENT_LIST
     eptr = elem;
   else
     eptr = (*context)->succ;
-#if TURBO_STRLEN
   size_t search_len = strlen(elem_name);
   while (eptr) {
      if (eptr->namelen == 0)
@@ -38,10 +37,6 @@ ELEMENT_LIST *find_element(char *elem_name, ELEMENT_LIST **context, ELEMENT_LIST
       break;
     eptr = eptr->succ;
   }
-#else
-  while (eptr && strcmp(eptr->name, elem_name) != 0)
-    eptr = eptr->succ;
-#endif
   log_exit("find_element");
   if (context)
     return *context = eptr;
