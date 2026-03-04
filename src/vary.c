@@ -682,7 +682,7 @@ void reset_parameter_values(char **elem_name, long *param_number, long *type, lo
         break;
       case IS_STRING:
       default:
-        bombElegant("unknown/invalid variable quantity", NULL);
+        bombElegant("unknown/invalid variable quantity (reset_parameter_values)", NULL);
         exitElegant(1);
       }
     }
@@ -746,7 +746,7 @@ void assert_parameter_values(char **elem_name, long *param_number, long *type, d
         break;
       case IS_STRING:
       default:
-        bombElegant("unknown/invalid variable quantity", NULL);
+        bombElegant("unknown/invalid variable quantity (assert_parameter_values)", NULL);
         exitElegant(1);
       }
     }
@@ -788,7 +788,7 @@ long get_parameter_value(double *value, char *elem_name, long param_number, long
       log_exit("get_parameter_value");
       return (0);
     default:
-      bombElegant("unknown/invalid variable quantity", NULL);
+      bombElegant("unknown/invalid variable quantity (get_parameter_value)", NULL);
       exitElegant(1);
       break;
     }
@@ -943,7 +943,7 @@ void assert_perturbations(char **elem_name, long *param_number, long *type, long
         break;
       case IS_STRING:
       default:
-        bombElegant("unknown/invalid variable quantity", NULL);
+        bombElegant("unknown/invalid variable quantity (assert_perturbations)", NULL);
         exitElegant(1);
       }
       if (i_group++ == 0)
