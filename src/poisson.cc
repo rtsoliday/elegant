@@ -83,7 +83,6 @@ void subtract_const(int N_x, int N_y, double **vec_c) {
 
   //vector<vector<double> > vec_x(N_x, vector<double> (N_y, 0));
   c00 = vec_c[0][0];
-#if TURBO_FASTPOISSON >= 2
   int f = N_x*N_y; //assuming no overflow
   // If nx/ny are powers of two, floating point math can represent this exactly with no accuracy loss
   double df = 1.0 / f;
@@ -92,13 +91,6 @@ void subtract_const(int N_x, int N_y, double **vec_c) {
       vec_c[i][j] = (vec_c[i][j] - c00) * df;
     }
   }
-#else
-  for ( int i=0; i<N_x; i++ ) {
-    for ( int j=0; j<N_y; j++ ) {
-      vec_c[i][j] = (vec_c[i][j] - c00) / N_x / N_y;
-    }
-  }
-#endif
 }
 
 
@@ -142,16 +134,7 @@ void poisson_solver(double **vec_rhs, double x_domain, double y_domain, int N_x,
   static short p1Created = 0;
   static fftw_plan p1;
 
-#if TURBO_FASTPOISSON == 4
-  // Doesn't work if sequential MKL is used, which is the default for elegant build
-  if (!p1Created) {
-    fftw_init_threads();
-    fftw_plan_with_nthreads(8);
-    printf("Threaded FFTW initialized\n"); fflush(stdout);
-  }
-#endif
 
-#if TURBO_FASTPOISSON == 1 || TURBO_FASTPOISSON == 2
   //reuse plan on different arrays
   //http://www.fftw.org/doc/New_002darray-Execute-Functions.html
   if (!p1Created || parametersChanged) {
@@ -164,42 +147,14 @@ void poisson_solver(double **vec_rhs, double x_domain, double y_domain, int N_x,
     printf("Plan 1 created\n"); fflush(stdout);
   }
   fftw_execute_dft_r2c(p1, vec_rhs[0], fftwIn);
-#elif TURBO_FASTPOISSON == 3
-  if (!p1Created || parametersChanged) {
-    p1 = fftw_plan_dft_r2c_2d(N_x, N_y, vec_rhs[0], (fftw_complex*) vec_rhs[0], FFTW_MEASURE);
-    if (!p1) {
-      printf("Plan 1 inplace failed\n");
-      exit(1);
-    }
-    p1Created = 1;
-    printf("Plan 1 inplace created\n"); fflush(stdout);
-  }
-  fftw_execute_dft_r2c(p1, vec_rhs[0], (fftw_complex*) vec_rhs[0]);
-#else
-  static double **p1Buffer = NULL;
-  if (!p1Created || parametersChanged) {
-    p1Buffer = (double**)czarray_2d(sizeof(double), N_x, N_y);
-    memcpy(&(p1Buffer[0][0]), &(vec_rhs[0][0]), sizeof(double)*N_x*N_y);
-    p1 = fftw_plan_dft_r2c_2d(N_x, N_y, &(p1Buffer[0][0]), fftwIn, FFTW_MEASURE);
-    p1Created = 1;
-    printf("FFTW_MEASURE plan 1 created\n"); fflush(stdout);
-  }
-  memcpy(&(p1Buffer[0][0]), &(vec_rhs[0][0]), sizeof(double)*N_x*N_y);
-  fftw_execute(p1);
-#endif
 
-#if TURBO_FASTPOISSON == 3
-  divide_fftw_vec(N_x, N_y, (fftw_complex*) vec_rhs[0], k_square);
-#else
   divide_fftw_vec(N_x, N_y, fftwIn, k_square);
-#endif
   //p = fftw_plan_dft_2d(N_x, N_y, fftwIn, fftwIn,
   //		       FFTW_BACKWARD, FFTW_MEASURE);
 
   static short p2Created = 0;
   static fftw_plan p2;
 
-#if TURBO_FASTPOISSON == 1 || TURBO_FASTPOISSON == 2
   if (!p2Created || parametersChanged) {
     int n0 = N_x * (N_y / 2 + 1);
     fftw_complex *fftwTmp = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * n0);
@@ -215,42 +170,6 @@ void poisson_solver(double **vec_rhs, double x_domain, double y_domain, int N_x,
     printf("Plan 2 created\n"); fflush(stdout);
   }
   fftw_execute_dft_c2r(p2, fftwIn, u_fft[0]);
-#elif TURBO_FASTPOISSON == 3
-  if (!p2Created || parametersChanged) {
-    int n0 = N_x * (N_y / 2 + 1);
-    fftw_complex *fftwTmp = NULL;
-    fftwTmp = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * n0);
-    memcpy(fftwTmp, vec_rhs[0], sizeof(fftw_complex) * n0);
-    p2 = fftw_plan_dft_c2r_2d(N_x, N_y, (fftw_complex*) vec_rhs[0], vec_rhs[0], FFTW_MEASURE);
-    if (!p2) {
-      printf("Plan 2 inplace failed\n");
-      exit(1);
-    }
-    p2Created = 1;
-    memcpy(vec_rhs[0], fftwTmp, sizeof(fftw_complex) * n0);
-    fftw_free(fftwTmp);
-    printf("Plan 2 inplace created\n"); fflush(stdout);
-  }
-  fftw_execute_dft_c2r(p2, (fftw_complex*) vec_rhs[0], vec_rhs[0]);
-  for (int i=0; i < N_x*N_y; i++)
-    u_fft[0][i] = vec_rhs[0][i];
-#else
-  static double **p2Buffer = NULL;
-  if (!p2Created || parametersChanged) {
-    p2Buffer = (double**)czarray_2d(sizeof(double), N_x, N_y);
-    fftw_complex *fftwTmp = NULL;
-    int n0 = N_x * (N_y / 2 + 1);
-    fftwTmp = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * n0);
-    memcpy(&(fftwTmp[0][0]), &(fftwIn[0][0]), sizeof(fftw_complex)*n0);
-    p2 = fftw_plan_dft_c2r_2d(N_x, N_y, fftwIn, &(p2Buffer[0][0]), FFTW_MEASURE);
-    p2Created = 1;
-    memcpy(&(fftwIn[0][0]), &(fftwTmp[0][0]), sizeof(fftw_complex)*n0);
-    fftw_free(fftwTmp);
-    printf("FFTW_MEASURE plan 2 created\n"); fflush(stdout);
-  }
-  fftw_execute(p2);
-  memcpy(&(u_fft[0][0]), &(p2Buffer[0][0]), sizeof(double)*N_x*N_y);
-#endif
 
   /*
   for (int i=0; i<N_x; i++) {
@@ -277,7 +196,6 @@ void poisson_solver(double **vec_rhs, double x_domain, double y_domain, int N_x,
 void divide_fftw_vec(int N_x, int N_y, fftw_complex *fftwIn, double **vec_x) {
    int jmax = N_y / 2 + 1;
 
-#if TURBO_FASTPOISSON >= 2
      for ( int i=0; i<N_x; i++ ) {
        for ( int j=0; j<jmax; j++ ) {
          double f = 1 / vec_x[i][j];
@@ -285,14 +203,6 @@ void divide_fftw_vec(int N_x, int N_y, fftw_complex *fftwIn, double **vec_x) {
          fftwIn[i*jmax+j][1] = fftwIn[i*jmax+j][1] * f;
        }
      }
-#else
-   for ( int i=0; i<N_x; i++ ) {
-     for ( int j=0; j<jmax; j++ ) {
-       fftwIn[i*jmax+j][0] = fftwIn[i*jmax+j][0] / vec_x[i][j];
-       fftwIn[i*jmax+j][1] = fftwIn[i*jmax+j][1] / vec_x[i][j];
-     }
-   }
-#endif
 
    return;
 }
