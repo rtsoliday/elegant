@@ -5,6 +5,9 @@ endif
 
 include ../Makefile.rules
 
+EIGEN3_DIR = $(firstword $(wildcard /opt/local/include/eigen3 /opt/homebrew/include/eigen3 /usr/local/include/eigen3 /usr/include/eigen3))
+EIGEN3_INC = $(if $(EIGEN3_DIR),-I$(EIGEN3_DIR),)
+
 SCRIPTS = analyzeMagnets \
 	beamLifetimeCalc \
 	bremsstrahlungLifetime \
@@ -103,11 +106,11 @@ ifneq ($(OS), Linux)
 endif
 
 ifeq ($(OS), Linux)
-  ifneq ($(wildcard /usr/include/eigen3/Eigen/Dense),)
+	ifneq ($(wildcard $(EIGEN3_DIR)/Eigen/Dense),)
     PROD += sddsupsample
   endif
   CFLAGS += -fopenmp $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
-  CCFLAGS += -fopenmp -I/usr/include/eigen3 $(GSL_INC_LOCAL)
+	CCFLAGS += -fopenmp $(EIGEN3_INC) $(GSL_INC_LOCAL)
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -fopenmp $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -loagphy
@@ -115,6 +118,7 @@ ifeq ($(OS), Linux)
 endif
 
 ifeq ($(OS), Darwin)
+	CCFLAGS += $(EIGEN3_INC)
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -loagphy
