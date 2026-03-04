@@ -1,0 +1,206 @@
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible
+}
+
+\section{{\tt elegant} Command-file Mode for Emacs}
+
+\subsection{Introduction}
+
+This document describes the installation and features of a custom
+\texttt{elegant-mode} for GNU Emacs.
+The mode provides structured editing support for
+\texttt{.ele} input files used by {\tt elegant}.
+
+The mode includes:
+\begin{itemize}[noitemsep]
+\item Syntax highlighting for namelists and qualifiers
+\item Auto-completion of namelist names
+\item Auto-completion of qualifiers within namelist blocks
+\item Automatic insertion of \texttt{\&end}
+\item Automatic indentation (4 spaces for qualifier lines)
+\item Automatic activation for \texttt{.ele} files
+\end{itemize}
+
+No external Emacs packages are required.
+
+\subsection{Features}
+
+\subsubsection{Namelist Completion}
+
+For illustration, we use the \verb|run_setup| command. The same techniques apply to all
+commands.
+When typing:
+\begin{lstlisting}
+&run_
+\end{lstlisting}
+then pressing \texttt{TAB} completes from the list of known {\tt elegant}
+namelists (e.g. \texttt{run_setup}).
+
+Typing
+\begin{lstlisting}
+&run_setup
+\end{lstlisting}
+then pressing \texttt{RET} produces:
+\begin{lstlisting}
+&run_setup
+    <cursor here>
+&end
+\end{lstlisting}
+The cursor is positioned inside the block, ready for qualifier entry.
+
+\subsubsection{Qualifier Completion}
+
+Inside a namelist block, pressing \texttt{TAB} completes qualifier names
+specific to that namelist:
+\begin{lstlisting}
+&run_setup
+    latt<TAB>
+&end
+\end{lstlisting}
+Completes to:
+\begin{lstlisting}
+    lattice =
+\end{lstlisting}
+
+\subsection{Indentation Rules}
+
+\begin{itemize}[noitemsep]
+\item Namelist headers begin at column 0.
+\item \texttt{\&end} begins at column 0.
+\item Qualifier lines are indented 4 spaces.
+\item Pressing \texttt{RET} maintains indentation.
+\end{itemize}
+
+\subsection{Installation}
+
+\subsubsection{Directory Structure}
+
+Create the following directory structure in your home directory:
+\begin{lstlisting}
+/home/<username>/.emacs
+/home/<username>/.emacs.d/elegant/
+\end{lstlisting}
+
+The files required are:
+\begin{lstlisting}
+~/.emacs
+~/.emacs.d/elegant/elegant-mode.el
+~/.emacs.d/elegant/elegant-namelists.el
+\end{lstlisting}
+
+\subsubsection{Step 1: Generate Namelist Tables}
+
+This part is usually done by the {\tt elegant} developers. If you install {\tt elegant} from source,
+you may also wish to do this step. Use the provided Python script (in {\tt elegantTools}):
+\begin{lstlisting}
+cat *.nl > elegant-namelists.txt
+python3 gen_elegant_elisp.py elegant-namelists.txt \
+  > ~/.emacs.d/elegant/elegant-namelists.el
+\end{lstlisting}
+
+This creates:
+\begin{itemize}[noitemsep]
+\item \texttt{elegant-namelist-commands}
+\item \texttt{elegant-namelist-qualifiers}
+\end{itemize}
+
+These are required for completion.
+
+\subsubsection{Step 2: Install elegant-mode.el}
+
+Copy the provided \texttt{elegant-mode.el} file into:
+\begin{lstlisting}
+~/.emacs.d/elegant/
+\end{lstlisting}
+
+\subsubsection{Step 3: Configure Emacs}
+
+Edit or create:
+\begin{lstlisting}
+/home/<username>/.emacs
+\end{lstlisting}
+
+\noindent
+Add:\\
+{\tt
+(add-to-list \textquotesingle load-path "~/.emacs.d/elegant") \\
+(load "elegant-namelists.el" nil t) \\
+(load "elegant-mode.el" nil t)\\
+(add-to-list \textquotesingle auto-mode-alist \textquotesingle ("\textbackslash\textbackslash .ele\textbackslash\textbackslash\textquotesingle " . elegant-mode)) \\
+(setq completion-cycle-threshold 1) \\
+(setq tab-always-indent \textquotesingle complete) \\
+(define-key global-map (kbd "TAB") \#\textquotesingle completion-at-point) \\
+}
+
+\subsubsection{Step 4: Restart Emacs}
+
+Start Emacs normally:
+
+\begin{lstlisting}
+emacs run.ele
+\end{lstlisting}
+
+The mode line should display {\tt {\tt elegant}}.
+To confirm correct installation:
+
+\begin{enumerate}[noitemsep]
+\item Open a \texttt{.ele} file.
+\item Type \texttt{\&run_setup} and press \texttt{RET}.
+\item Confirm that \texttt{\&end} is inserted automatically.
+\item Type part of a qualifier and press \texttt{TAB}.
+\item Confirm completion suggestions appear.
+\end{enumerate}
+
+\subsection{Customization}
+
+Indentation width may be adjusted:
+\begin{lstlisting}
+(setq elegant-indent-offset 4)
+\end{lstlisting}
+
+This variable can be changed to any desired indentation width.
+
+\subsection{Troubleshooting}
+
+\subsubsection{Mode Not Activating}
+
+Verify:
+\begin{lstlisting}
+M-x describe-variable RET auto-mode-alist RET
+\end{lstlisting}
+
+Ensure:
+\begin{lstlisting}
+("\\.ele\\' " . elegant-mode)
+\end{lstlisting}
+is present.
+
+\subsubsection{Completion Not Working}
+
+Verify:
+\begin{lstlisting}
+M-: elegant-namelist-commands RET
+\end{lstlisting}
+returns a list of namelists.
+
+If it returns \texttt{nil}, confirm that
+\texttt{elegant-namelists.el} was generated and loaded.
+
+\subsection{Conclusion}
+
+\texttt{elegant-mode} provides a lightweight, self-contained editing
+environment for {\tt elegant} input files with:
+
+\begin{itemize}[noitemsep]
+\item Structured completion
+\item Automatic block management
+\item Clean indentation
+\item Zero external dependencies
+\end{itemize}
+
+It integrates seamlessly into standard Emacs installations and requires only three files.
+
+
