@@ -1,0 +1,18 @@
+Example of redefining the golden orbit.
+
+M. Borland (ANL)
+
+
+# Run simulation. See embedded comments for details
+elegant run.ele
+
+# Show that the reference orbit is maintained
+sddsplot -graph=line,vary \
+ -column=s,x run.clo -legend=spec="Reference" \
+ -column=s,x run.orb -legend=spec="Confirmation" -split=page -match=param,Stage=corrected
+
+# Show that the correctors are not significantly powered
+sddsplot -col=s,Kick run.cor -graph=sym -title="Corrector effort to reach golden orbit"
+
+# clean up
+\rm run.[a-df-z]*
