@@ -1,0 +1,2 @@
+s1: script,command="WienFilter-dt.py %i %o --B 0.1 --E 5.757578839173989e+06 --length 0.01 --steps 1000"
+bl: line=(s1)
