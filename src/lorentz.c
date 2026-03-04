@@ -355,7 +355,7 @@ long lorentz(
     BMAPXYZ *bmxyz;
     bmxyz = (BMAPXYZ *)field;
     verbosity = bmxyz->verbosity;
-    if ((bmxyz->fieldLength > 0 && bmxyz->length> bmxyz->fieldLength) && !bmxyz->injectAtZero)
+    if ((bmxyz->fieldLength > 0 && bmxyz->length != bmxyz->fieldLength) && !bmxyz->injectAtZero)
       exactDrift(part, n_part, (bmxyz->length - bmxyz->fieldLength) / 2);
   }
 
@@ -411,7 +411,7 @@ long lorentz(
   if (field_type == T_BMAPXYZ) {
     BMAPXYZ *bmxyz;
     bmxyz = (BMAPXYZ *)field;
-    if ((bmxyz->fieldLength > 0 && bmxyz->length > bmxyz->fieldLength) && !bmxyz->injectAtZero)
+    if ((bmxyz->fieldLength > 0 && bmxyz->length != bmxyz->fieldLength) && !bmxyz->injectAtZero)
       exactDrift(part, i_top + 1, (bmxyz->length - bmxyz->fieldLength) / 2);
     if (bmxyz->discardMap && iStoredBmapxyzData>=0) {
       STORED_BMAPXYZ_DATA mapData;
