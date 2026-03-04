@@ -1,0 +1,246 @@
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible,
+  frame=single,
+  keepspaces=true
+}
+
+\section{Lattice Mode for Emacs}
+
+\subsection{Introduction}
+
+This section describes the installation, configuration, and technical operation of a custom Emacs major mode designed for editing ELEGANT lattice files (typically \texttt{.lte} and \texttt{.lat}).  
+The goal of this mode is to provide:
+\begin{itemize}
+\item Structured editing support for lattice definitions
+\item Context-sensitive autocompletion of element types
+\item Context-sensitive autocompletion of element parameters
+\item Immediate access to parameter metadata via \texttt{=TAB}
+\item Automatic activation for lattice file extensions
+\end{itemize}
+
+The implementation integrates tightly with Emacs’ native completion system and derives its semantic knowledge directly from ELEGANT’s source code.
+
+\subsection{System Architecture}
+
+The mode consists of two primary components:
+\begin{enumerate}
+\item \textbf{Major Mode Implementation}  
+      \texttt{elegant-lattice-mode.el}
+
+\item \textbf{Generated Data File}  
+      \texttt{elegant-lattice-data.el}
+\end{enumerate}
+
+The data file is automatically generated from ELEGANT’s \texttt{track\_data.c} using a standalone Python script:
+
+\begin{center}
+\texttt{generate\_elegant\_lattice\_data\_el.py}
+\end{center}
+
+This separation ensures that:
+
+\begin{itemize}
+\item The editor remains synchronized with the ELEGANT source
+\item Updates to ELEGANT require only regeneration of the data file
+\item The Emacs mode remains stable and version-independent
+\end{itemize}
+
+\subsection{Data Extraction from \texttt{track\_data.c}}
+
+The generator script parses several parallel arrays defined in \texttt{track\_data.c}:
+
+\begin{itemize}
+\item \texttt{entity\_name[]} — element type identifiers
+\item \texttt{entity\_text[]} — short textual descriptions
+\item \texttt{entity\_description[]} — parameter array linkage
+\item \texttt{<type>\_param[]} — parameter definitions
+\end{itemize}
+
+For each element type, the script performs:
+
+\begin{enumerate}
+\item Extraction of the canonical element name
+\item Retrieval of the descriptive text
+\item Identification of the associated parameter array
+\item Parsing of each parameter entry to obtain:
+      \begin{itemize}
+      \item Parameter name
+      \item Units
+      \item Parameter type (if present)
+      \item Description string
+      \end{itemize}
+\end{enumerate}
+
+The script then emits four Emacs Lisp variables:
+
+\begin{itemize}
+\item \texttt{elegant-lattice-element-types}
+\item \texttt{elegant-lattice-element-docs}
+\item \texttt{elegant-lattice-element-params}
+\item \texttt{elegant-lattice-param-docs}
+\end{itemize}
+
+These structures form the semantic backend for both completion and documentation display.
+
+\section{Installation Procedure}
+
+\subsection{Directory Layout}
+
+It is recommended to install the mode in a dedicated directory:
+
+\begin{lstlisting}
+~/.emacs.d/elegant-lattice/
+\end{lstlisting}
+
+Place the following files in this directory:
+
+\begin{lstlisting}
+elegant-lattice-mode.el
+elegant-lattice-data.el
+\end{lstlisting}
+
+\subsubsection{Generating Completion Data}
+
+Generate the data file using:
+
+\begin{lstlisting}
+python3 generate_elegant_lattice_data_el.py /path/to/track_data.c \
+  -o ~/.emacs.d/elegant-lattice/elegant-lattice-data.el
+\end{lstlisting}
+
+This step should be repeated whenever ELEGANT is updated.
+
+\subsubsection{Emacs Configuration}
+
+Add the directory to your \texttt{load-path} and require the mode:
+
+\begin{lstlisting}
+(add-to-list 'load-path (expand-file-name "~/.emacs.d/elegant-lattice"))
+(require 'elegant-lattice-mode)
+\end{lstlisting}
+
+Ensure automatic activation:
+
+\begin{lstlisting}
+(add-to-list 'auto-mode-alist '("\\.lte\\'" . elegant-lattice-mode))
+(add-to-list 'auto-mode-alist '("\\.lat\\'" . elegant-lattice-mode))
+\end{lstlisting}
+
+Restart Emacs after editing your initialization file.
+
+\subsection{Completion Behavior}
+
+The mode integrates with Emacs’ native \texttt{completion-at-point} (CAPF) mechanism.
+
+\subsubsection{Element Type Completion}
+
+Example:
+
+\begin{lstlisting}
+Q1: qu
+\end{lstlisting}
+
+Invoke completion with:
+
+\begin{lstlisting}
+M-TAB
+\end{lstlisting}
+
+\subsubsection{Parameter Completion}
+
+Example:
+
+\begin{lstlisting}
+Q1: quad, k
+\end{lstlisting}
+
+Invoke:
+
+\begin{lstlisting}
+M-TAB
+\end{lstlisting}
+
+Completion is case-insensitive but preserves user typing style.
+
+\subsection{Parameter Documentation Using \texttt{=TAB}}
+
+The mode provides contextual documentation lookup for parameter assignments.
+
+Example:
+
+\begin{lstlisting}
+Q1: quad, k1=
+\end{lstlisting}
+
+Placing the cursor immediately after the equals sign and pressing:
+
+\begin{lstlisting}
+TAB
+\end{lstlisting}
+
+produces echo-area output such as:
+
+\begin{lstlisting}
+QUAD.K1  units=1/m^2  type=double  normalized quadrupole strength
+\end{lstlisting}
+
+This mechanism:
+
+\begin{itemize}
+\item Extracts the element type from the current line
+\item Identifies the parameter preceding the equals sign
+\item Looks up metadata in \texttt{elegant-lattice-param-docs}
+\item Displays units, parameter type, and description
+\end{itemize}
+
+If metadata is unavailable, a minimal fallback message is displayed.
+
+This feature enables rapid inspection of parameter meaning without leaving the editing buffer.
+
+\subsection{Optional Popup Completion Interfaces}
+
+For graphical Emacs users, popup completion frontends may be used.
+
+\subsubsection*{Corfu}
+
+\begin{lstlisting}
+(require 'corfu)
+(global-corfu-mode 1)
+(setq corfu-auto t)
+(setq corfu-cycle t)
+\end{lstlisting}
+
+\subsubsection*{Company}
+
+\begin{lstlisting}
+(require 'company)
+(global-company-mode 1)
+(setq company-idle-delay 0.0)
+(setq company-minimum-prefix-length 1)
+\end{lstlisting}
+
+Both integrate seamlessly with the mode’s CAPF backend.
+
+\subsection{Key Binding Summary}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Key} & \textbf{Function} \\
+\midrule
+\texttt{M-TAB} & Complete element type or parameter \\
+\texttt{TAB} after \texttt{=} & Show parameter metadata \\
+\texttt{TAB} elsewhere & Indent line \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Conclusion}
+
+This Emacs lattice mode provides a structured, source-synchronized editing environment for ELEGANT lattice files. By
+deriving semantic information directly from \texttt{track\_data.c}, it ensures long-term maintainability and version
+consistency while significantly improving editing efficiency.
+
