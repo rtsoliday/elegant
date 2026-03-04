@@ -21,6 +21,7 @@
     STRING start_from = NULL;
     long start_from_occurence = 1;
     STRING SDDS_output_match = NULL;
+    double suppress_below = 0;
 #end
 
 
