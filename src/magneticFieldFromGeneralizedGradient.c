@@ -287,10 +287,11 @@ long trackBGGExpansion(double **part, long np, BGGEXP *bgg, double pCentral, dou
 
 #if !USE_MPI
     if (bgg->particleOutputFile && !bgg->SDDSpo) {
+      char *filename;
       bgg->SDDSpo = tmalloc(sizeof(*(bgg->SDDSpo)));
-      bgg->particleOutputFile = compose_filename(bgg->particleOutputFile, tcontext.rootname);
+      filename = compose_filename(bgg->particleOutputFile, tcontext.rootname);
       if (!SDDS_InitializeOutputElegant(bgg->SDDSpo, SDDS_BINARY, 1,
-                                        NULL, NULL, bgg->particleOutputFile) ||
+                                        NULL, NULL, filename) ||
           0 > SDDS_DefineParameter(bgg->SDDSpo, "SVNVersion", NULL, NULL, "SVN version number", NULL, SDDS_STRING, SVN_VERSION) ||
           !SDDS_DefineSimpleParameter(bgg->SDDSpo, "ElementName", NULL, SDDS_STRING) ||
           !SDDS_DefineSimpleParameter(bgg->SDDSpo, "particleID", NULL, SDDS_ULONG64) ||
@@ -320,6 +321,7 @@ long trackBGGExpansion(double **part, long np, BGGEXP *bgg, double pCentral, dou
         SDDS_SetError("Problem setting up particle output file for BGGEXP");
         SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
       }
+      free(filename);
     }
 #endif
   }
