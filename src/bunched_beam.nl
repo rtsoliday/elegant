@@ -24,6 +24,7 @@
     double alpha_y = 0.0;
     double eta_y   = 0.0;
     double etap_y  = 0.0;
+    double spin[3] = {0.0, 0.0, 1.0};
     long use_twiss_command_values = 0;
     long use_moments_output_values = 0;
     double Po = 0.0;
