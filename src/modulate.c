@@ -115,6 +115,7 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
     modData->expression = SDDS_Realloc(modData->expression, sizeof(*modData->expression) * (n_items + 1));
     modData->parameterNumber = SDDS_Realloc(modData->parameterNumber, sizeof(*modData->parameterNumber) * (n_items + 1));
     modData->flags = SDDS_Realloc(modData->flags, sizeof(*modData->flags) * (n_items + 1));
+    modData->factor = SDDS_Realloc(modData->factor, sizeof(*modData->factor)*(n_items+1));
     modData->verboseThreshold = SDDS_Realloc(modData->verboseThreshold, sizeof(*modData->verboseThreshold) * (n_items + 1));
     modData->lastVerboseValue = SDDS_Realloc(modData->lastVerboseValue, sizeof(*modData->lastVerboseValue) * (n_items + 1));
     modData->unperturbedValue = SDDS_Realloc(modData->unperturbedValue, sizeof(*modData->unperturbedValue) * (n_items + 1));
@@ -128,6 +129,8 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
     modData->convertPassToTime = SDDS_Realloc(modData->convertPassToTime, sizeof(*modData->convertPassToTime) * (n_items + 1));
     modData->startPass = SDDS_Realloc(modData->startPass, sizeof(*modData->startPass) * (n_items + 1));
     modData->endPass = SDDS_Realloc(modData->endPass, sizeof(*modData->endPass) * (n_items + 1));
+    modData->passDelay = SDDS_Realloc(modData->passDelay, sizeof(*modData->passDelay) * (n_items + 1));
+    modData->timeDelay = SDDS_Realloc(modData->timeDelay, sizeof(*modData->timeDelay) * (n_items + 1));
 
     modData->element[n_items] = context;
     modData->flags[n_items] = (multiplicative ? MULTIPLICATIVE_MOD : 0) + (differential ? DIFFERENTIAL_MOD : 0) + (verbose ? VERBOSE_MOD : 0) + (refresh_matrix ? REFRESH_MATRIX_MOD : 0);
@@ -140,6 +143,11 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
     modData->convertPassToTime[n_items] = convert_pass_to_time;
     modData->startPass[n_items] = start_pass;
     modData->endPass[n_items] = end_pass;
+    modData->passDelay[n_items] = pass_delay;
+    modData->timeDelay[n_items] = time_delay;
+    modData->factor[n_items] = factor;
+    if (pass_delay!=0 && !convert_pass_to_time) 
+      bombElegant("If pass_delay is non-zero, must set convert_pass_to_time=1.", NULL);
 
     if (filename) {
       if ((modData->dataIndex[n_items] = firstIndexInGroup) == -1) {
@@ -290,9 +298,10 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
     if (modData->convertPassToTime[iMod]) {
       double s0;
       s0 = modData->beamline->elem_recirc ? modData->beamline->elem_recirc->end_pos : 0;
-      t = (iPass * modData->beamline->revolution_length + (modData->element[iMod]->end_pos - s0)) / (beta * c_mks);
+      t = ((iPass - modData->passDelay[iMod]) * modData->beamline->revolution_length + (modData->element[iMod]->end_pos - s0)) / (beta * c_mks);
     } else
       t = tBeam;
+    t -= modData->timeDelay[iMod];
 #ifdef DEBUG
     printf("applyElementModulations: t = %le\n", t);
     fflush(stdout);
@@ -326,7 +335,7 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
     fflush(stdout);
 #endif
     if (!modData->expression[iMod]) {
-      jMod = iMod;
+      jMod = iMod; /* jMod is the index of the modulation that stores the tabular data, which may be shared */
       if (modData->dataIndex[iMod] != -1)
         jMod = modData->dataIndex[iMod];
       code = 1;
@@ -348,7 +357,7 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
         modulation = interp(modData->modulationData[jMod], modData->timeData[jMod], modData->nData[jMod], t, 0, 1, &code);
       if (code == 0) {
         fprintf(stderr, "Error: interpolation failed for t=%21.15le for element %s, parameter %s\n",
-                t, modData->element[jMod]->name, entity_description[type].parameter[param].name);
+                         t, modData->element[jMod]->name, entity_description[type].parameter[param].name);
         exitElegant(1);
       }
       /* modulationValid = 1; */
@@ -374,6 +383,8 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
 #endif
     }
 
+    modulation *= modData->factor[iMod];
+    
     if (modData->flags[iMod] & DIFFERENTIAL_MOD) {
       if (modData->flags[iMod] & MULTIPLICATIVE_MOD)
         value = (1 + modulation) * value;
