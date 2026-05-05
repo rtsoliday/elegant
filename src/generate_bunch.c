@@ -127,7 +127,6 @@ long generate_bunch(
         particle[i_particle][6] = particleID++;
         particle[i_particle][lossPassIndex] = -1;
         particle[i_particle][bunchIndex] = 0;
-        particle[i_particle][weightIndex] = 1;
       }
     }
 #if SDDS_MPI_IO
@@ -484,7 +483,7 @@ long generate_bunch(
   /* incorporate dispersion and centroid shifts into (x, x', y, y') */
   /* also add particle ID */
 #if !SDDS_MPI_IO
-  /* This should be involved after both centroid and sigma have been forced */
+  /* This should be invoked after both centroid and sigma have been forced */
   if (remaining_sequence_No <= 1) {
     for (i_particle = 0; i_particle < total_n_particles; i_particle++) {
       first_particle_address[i_particle][4] += longit->cent_s;
@@ -497,7 +496,6 @@ long generate_bunch(
       first_particle_address[i_particle][6] = particleID++;
       first_particle_address[i_particle][lossPassIndex] = -1;
       first_particle_address[i_particle][bunchIndex] = 0;
-      first_particle_address[i_particle][weightIndex] = 1;
       if (longit->chirp) {
         delta_p = longit->chirp * first_particle_address[i_particle][4];
         first_particle_address[i_particle][5] += delta_p;
@@ -522,7 +520,6 @@ long generate_bunch(
     particle[i_particle][6] = particleID++;
     particle[i_particle][lossPassIndex] = -1;
     particle[i_particle][bunchIndex] = 0;
-    particle[i_particle][weightIndex] = 1;
     if (longit->chirp) {
       delta_p = longit->chirp * particle[i_particle][4];
       particle[i_particle][5] += delta_p;
@@ -547,10 +544,18 @@ long generate_bunch(
   }
 #endif
 
+  /*
+  if (spinCoordOffset) {
+    for (i_particle=0; i_particle<n_particles; i_particle++)
+      particle[i_particle][spinCoordOffset+2] = 1; 
+  }
+  */
+  
   first_call = 0;
 #if SDDS_MPI_IO
   tfree(offset);
 #endif
+
   return (n_particles);
 }
 
@@ -1331,4 +1336,94 @@ void enforceTwissValues(double **part, long np, TWISSBEAM *twiss, long offset, d
     part[i][offset + 1] = part[i][offset] * R21 + part[i][offset + 1] * R22;
     part[i][offset + 0] = part[i][offset] * R11;
   }
+}
+
+double sincFunction(double x)
+{
+  if (x==0)
+    return 1;
+  return sin(x)/x;
+}
+
+void polarizeBeam(double **part, long np, POLAR *polar) {
+  char *polarizationModeOption[3] = {"twostate", "narrowcone", "widecone"};
+  double phi, cos_theta, sin_theta, rx, ry, theta, theta1, angle;
+  if (spinCoordOffset>0) {
+    long ip, i;
+    double *coord, cut, psign, e[3], emag, p;
+    if ((p=polar->polarization)<0) {
+      printWarningForTracking("POLAR element has POLARIZATION<0.", "Polarization set to 0");
+      p = 0;
+    } else if (p>1) {
+      printWarningForTracking("POLAR element has POLARIZATION>1.", "Polarization set to 1");
+      p = 1;
+    }
+    memcpy(e, polar->e, sizeof(*e)*3);
+    if ((emag = sqrt(e[0]*e[0] + e[1]*e[1] + e[2]*e[2]))!=1) {
+      if (emag==0)
+	bombElegant("polarization direction vector has zero length", NULL);
+      for (i=0; i<3; i++)
+  	e[i] /= emag;
+    }
+    switch (match_string(polar->mode, polarizationModeOption, 3, 0)) {
+    case 0:
+      /* two state */
+      cut = (p+1)/2;
+      for (ip=0; ip<np; ip++) {
+        coord = part[ip];
+        if (random_4(1)<cut)
+  	  psign = 1;
+        else
+  	  psign = -1;
+        for (i=0; i<3; i++)
+      	  coord[spinCoordOffset+i] = e[i]*psign;
+      }
+      break;
+    case 1:
+      /* narrow cone */
+      cos_theta = p;
+      sin_theta = sin(acos(p));
+      /* set up rotation to defined axis */
+      angle = acos(e[2]);
+      rx = -e[1]/sqrt(sqr(e[0])+sqr(e[1]))*angle;
+      ry = e[0]/sqrt(sqr(e[0])+sqr(e[1]))*angle;
+      for (ip=0; ip<np; ip++) {
+        coord = part[ip];
+	phi = PIx2*random_4(1);
+	coord[spinCoordOffset+0] = sin_theta*cos(phi);
+	coord[spinCoordOffset+1] = sin_theta*sin(phi);
+	coord[spinCoordOffset+2] = cos_theta;
+	performQuaternionRotation(coord+spinCoordOffset, rx, ry, 0.0);
+      }
+      break;
+    case 2:
+      /* wide cone */
+      if (p==0)
+	theta1 = PI/2;
+      else if (p==1)
+	theta1 = 0;
+      else
+	theta1 = zeroNewton(sincFunction, p, PI/4, PI/40, 10, 1e-6);
+      /* set up rotation to defined axis */
+      angle = acos(e[2]);
+      rx = -e[1]/sqrt(sqr(e[0])+sqr(e[1]))*angle;
+      ry = e[0]/sqrt(sqr(e[0])+sqr(e[1]))*angle;
+      for (ip=0; ip<np; ip++) {
+	theta = random_4(1)*theta1;
+        cos_theta = cos(theta);
+	sin_theta = sin(theta);
+        coord = part[ip];
+	phi = PIx2*random_4(1);
+	coord[spinCoordOffset+0] = sin_theta*cos(phi);
+	coord[spinCoordOffset+1] = sin_theta*sin(phi);
+	coord[spinCoordOffset+2] = cos_theta;
+	performQuaternionRotation(coord+spinCoordOffset, rx, ry, 0.0);
+      }
+      break;
+    default:
+      bombElegantVA("unknown mode for POLAR element: %s\n", polar->mode);
+      break;
+    }
+  } else
+    printWarningForTracking("POLAR elements ignored", "POLAR elements ignored if spin-tracking not enabled");
 }
