@@ -75,29 +75,29 @@ extern "C" {
 /* Convert B*lambda to K with this factor */
 #define UNDULATOR_K_FACTOR (1/(RIGIDITY_FACTOR*PIx2))
 
-extern double particleMass, particleCharge, particleMassMV, particleRadius, particleRelSign;
+extern double particleMass, particleCharge, particleMassMV, particleRadius, particleRelSign,
+   particleAnomalousMagneticMoment;
 extern long particleIsElectron;
 
   /* coordinates are (x, xp, y, yp, s, delta) */
 #define COORDINATES_PER_PARTICLE 6
   /* input/output coordinates are (x, xp, y, yp, s, delta, particle ID) */
 #define IO_COORDINATES_PER_PARTICLE 7
-  /* Basic properties are particle ID, pass of loss, bunch number, weight. They are always present. 
+  /* Basic properties are particle ID, pass of loss, bunch number. They are always present. 
    * If pass of loss is negative, particle is active */
-#define BASIC_PROPERTIES_PER_PARTICLE 4
+#define BASIC_PROPERTIES_PER_PARTICLE 3
 #define particleIDIndex COORDINATES_PER_PARTICLE
 #define lossPassIndex (COORDINATES_PER_PARTICLE+1)
 #define bunchIndex (COORDINATES_PER_PARTICLE+2)
-  /* Not used yet, except to assign place-holder values. */
-#define weightIndex (COORDINATES_PER_PARTICLE+3)
-  /* These values will be determined when program is initialized */
   /* Global loss properties are X, Z, thetaX, of loss. Memory for these won't be allocated unless requested. *
    * NB: we presently assume that the beamline is in the Y=0 plane, so Y=y and thetaY=atan(yp) */
 #define GLOBAL_LOSS_PROPERTIES_PER_PARTICLE 3
+  /* Spin properties are (Sx, Sy, Sz) */
+#define SPIN_PROPERTIES_PER_PARTICLE 3
   /* This can be used to safely over-size arrays when we don't care about saving space */
-#define MAX_PROPERTIES_PER_PARTICLE (COORDINATES_PER_PARTICLE+BASIC_PROPERTIES_PER_PARTICLE+GLOBAL_LOSS_PROPERTIES_PER_PARTICLE)
+#define MAX_PROPERTIES_PER_PARTICLE (COORDINATES_PER_PARTICLE+BASIC_PROPERTIES_PER_PARTICLE+GLOBAL_LOSS_PROPERTIES_PER_PARTICLE+SPIN_PROPERTIES_PER_PARTICLE)
   /* These will be computed based on run-time needs */
-extern int totalPropertiesPerParticle, globalLossCoordOffset;
+extern int totalPropertiesPerParticle, globalLossCoordOffset, spinCoordOffset;
 extern size_t sizeOfParticle;
 
 /* number of sigmas for gaussian random numbers in radiation emission simulation in CSBEND, KQUAD, etc. */
@@ -288,8 +288,14 @@ typedef struct {
 } BEAM_SUMS2;
 
 typedef struct {
+  double centroid[3];
+  double sigma[3][3];
+} SPIN_SUMS;
+  
+typedef struct {
     double centroid[7];  /* centroid[i] = Sum(x[i]/n), i=6 is time */
     BEAM_SUMS2 *beamSums2; /* second-order correlations, etc. */
+    SPIN_SUMS *spinSums;   /* centroid and rms for spin */
     long n_part;         /* number of particles */
     double z;            /* z location */
     double p0;           /* reference momentum (beta*gamma) */
@@ -335,6 +341,7 @@ typedef struct element_list {
 #define SUPERELLIPTICAL_CHAMBER 3
 #define UNKNOWN_CHAMBER 4
 #define N_CHAMBER_SHAPES 5
+    short reversed; /* used only when saving a beamline with output_seq!=0 */
     double Pref_input, Pref_output;
     double Pref_output_fiducial;
     VMATRIX *matrix;      /* pure matrix of this element */
@@ -515,6 +522,7 @@ typedef struct {
 #define MULTIPLICATIVE_MOD 0x02UL
 #define VERBOSE_MOD        0x04UL
 #define REFRESH_MATRIX_MOD 0x08UL
+    double *factor;              /* factor by which to multiply the modulation */
     double *verboseThreshold;    /* fractional change for verbose output */
     double *lastVerboseValue;    /* last value for which a change was announced */
     double *unperturbedValue;    /* value without modulation */
@@ -522,11 +530,12 @@ typedef struct {
     long *dataIndex;             /* used for sharing of data tables */
     long *nData;                 /* number of data elements */
     double **timeData;           /* time values */
+    double *timeDelay;
     double **modulationData;     /* amplitude values */
     char **record;               /* output filenames */
     long *flushRecord;           /* passes between flushing the record file */
     FILE **fpRecord;             /* output file structures */
-    long *startPass, *endPass;
+    long *startPass, *endPass, *passDelay;
     long *convertPassToTime;
   } MODULATION_DATA;
 
@@ -813,7 +822,7 @@ typedef struct {
   /* user-provided parameters */
   char *filename;
   long startPID, endPID, PIDInterval;
-  short include[3]; /* x, y, delta */
+  short include[4]; /* x, y, delta, spin */
   long segmentLength, startPass;
   /* Conversion of particle ID to particle index. This is needed because particles get reordered when losses occur. */
   htab *indexHash;
@@ -850,7 +859,7 @@ typedef struct {
     long default_order, concat_order, print_statistics;
     long combine_bunch_statistics, wrap_around, tracking_updates, final_pass; 
     long always_change_p0, stopTrackingParticleLimit, load_balancing_on, random_sequence_No, checkBeamStructure;
-    long showElementTiming, monitorMemoryUsage, backtrack, lossesIncludeGlobalCoordinates;
+    long showElementTiming, monitorMemoryUsage, backtrack, lossesIncludeGlobalCoordinates, spinTracking;
     double lossLimit[2]; /* loss recording only between these limits */
     char *runfile, *lattice, *acceptance, *centroid, *bpmCentroid, *sigma, 
       *final, *output, *rootname, *losses, *tuneFile;
@@ -1062,7 +1071,8 @@ extern char *final_unit[N_FINAL_QUANTITIES];
 #define T_CORGPLATES 134
 #define T_BEDGE 135
 #define T_DQCOR 136
-#define N_TYPES 137
+#define T_POLAR 137
+#define N_TYPES 138
 
 extern char *entity_name[N_TYPES];
 extern char *madcom_name[N_MADCOMS];
@@ -1206,6 +1216,7 @@ extern char *entity_text[N_TYPES];
 #define N_CORGPLATES_PARAMS 13
 #define N_BEDGE_PARAMS 7
 #define N_DQCOR_PARAMS 33
+#define N_POLAR_PARAMS 6
 
 /* END OF LIST FOR NUMBERS OF PARAMETERS */
 
@@ -1291,7 +1302,8 @@ typedef struct {
 #define BACKTRACK    0x00020000UL
   /* Indicates that a matrix is used, but also something else */
 #define HYBRID_TRACKING  0x00040000UL
-
+#define SPIN_TRACKING    0x00080000UL
+  
 typedef struct {
     long n_params;
     unsigned long flags;
@@ -1858,7 +1870,7 @@ typedef struct {
     /* internal variables for SDDS output */
     short initialized;
     long count, mode_code, window_code;
-    long xIndex[2], yIndex[2], longitIndex[3], IDIndex;
+    long xIndex[2], yIndex[2], longitIndex[3], spinIndex[3], IDIndex;
     SDDS_TABLE *SDDS_table;
     double t0Last, t0LastError;
     long passLast, flushSample;
@@ -3278,6 +3290,14 @@ typedef struct {
   long idSlotsPerBunch; /* copied from BEAM structure by do_tracking */
 } CHARGE;
 
+/* Names and storage structure for POLARization element */  
+extern PARAMETER polar_param[N_POLAR_PARAMS];
+typedef struct {
+  double polarization, e[3];
+  char *mode;
+  long onPass;
+} POLAR;
+  
 /* names and storage structure for PFILTER element */
 extern PARAMETER pfilter_param[N_PFILTER_PARAMS];
 typedef struct {
@@ -3905,6 +3925,7 @@ void gaussian_distribution(double **particle, long n_particles,
                            long offset, double s1, double s2, long symmetrize, long *haltonID, long haltonOpt, double limit,
                            double limit_invar, double beta, long halo);
 void enforce_sigma_values(double **coord, long n_part, long offset, double s1d, double s2d);
+void polarizeBeam(double **part, long np, POLAR *polar);
 
 /* prototypes for alpha_matrix.c: */
 extern VMATRIX *alpha_magnet_matrix(double gradient, double xgamma, long maximum_order,
@@ -4847,6 +4868,14 @@ long applyLowPassFilter(double *histogram, long bins, double start, double end);
 long applyLHPassFilters(double *histogram, long bins, double startHP, double endHP,
 			double startLP, double endLP, long clipNegative);
 
+void updateSpinQuaternionLocalFS(double S[3], double Bx, double By, double Bz,
+				 double x, double y, double xp, double yp, double ds, double h, double p,
+				 double charge, double mass, double a);
+void performQuaternionRotation(double S[3], double rx, double ry, double rz);
+void rotateSpinCoordinateSystem(double *S, double cos_t, double sin_t);
+void rotateSpinsCoordinateSystem(double **particle, long np, double t);
+void updateSpinForSolenoid(double **coord, long np, double Po, SOLE *sole);
+  
 long track_through_ccbend(double **particle, long n_part, ELEMENT_LIST *eptr, CCBEND *ccbend, double Po,
                           double **accepted, double z_start, double *sigmaDelta2, char *rootname,
                           MAXAMP *maxamp, APCONTOUR *apContour, APERTURE_DATA *apFileData, long iSlice, long iFinalSlice);
@@ -4922,7 +4951,7 @@ extern void SDDS_BeamLossSetup(SDDS_TABLE *SDDS_table, char *filename, long mode
                                char *command_file, char *lattice_file, long includeGlobalCoordinates, char *caller);
 extern void SDDS_SigmaMatrixSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row,
                            char *command_file, char *lattice_file, char *caller);
-extern void SDDS_WatchPointSetup(WATCH *waatch, long mode, long lines_per_row,
+  extern void SDDS_WatchPointSetup(WATCH *watch, char *filename, long mode, long lines_per_row,
                                  char *command_file, char *lattice_file, char *caller, char *qualifier, 
                                  char *previousElementName, long previousElementOccurence);
 extern int32_t SDDS_InitializeOutputElegant(SDDS_DATASET *SDDS_dataset, int32_t data_mode,
@@ -4931,7 +4960,7 @@ extern int32_t SDDS_InitializeOutputElegant(SDDS_DATASET *SDDS_dataset, int32_t 
 extern int32_t SDDS_Parallel_InitializeOutputElegant(SDDS_DATASET *SDDS_dataset, const char *description,
                                               const char *contents, const char *filename);
 
-void SDDS_HistogramSetup(HISTOGRAM *histogram, long mode, long lines_per_row,
+void SDDS_HistogramSetup(HISTOGRAM *histogram, char *filename, long mode, long lines_per_row,
                          char *command_file, char *lattice_file, char *caller);
 void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double **particle, long particles, 
                              double Po, double length, double charge, double z);
