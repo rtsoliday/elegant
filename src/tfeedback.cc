@@ -662,10 +662,11 @@ void initializeTransverseFeedbackDriver(TFBDRIVER *tfbd, LINE_LIST *beamline, lo
   if (myid == 0)
 #endif
     if (tfbd->outputFile) {
-      tfbd->outputFile = compose_filename(tfbd->outputFile, rootname);
+      char *filename;
+      filename = compose_filename(tfbd->outputFile, rootname);
       if (!tfbd->SDDSout)
         tfbd->SDDSout = (SDDS_DATASET *)tmalloc(sizeof(*(tfbd->SDDSout)));
-      if (!SDDS_InitializeOutputElegant(tfbd->SDDSout, SDDS_BINARY, 1, NULL, NULL, tfbd->outputFile) ||
+      if (!SDDS_InitializeOutputElegant(tfbd->SDDSout, SDDS_BINARY, 1, NULL, NULL, filename) ||
           !SDDS_DefineSimpleColumn(tfbd->SDDSout, "Pass", NULL, SDDS_LONG) ||
           !SDDS_DefineSimpleColumn(tfbd->SDDSout, "Bunch", NULL, SDDS_LONG) ||
           !SDDS_DefineSimpleColumn(tfbd->SDDSout, "PickupOutput", NULL, SDDS_DOUBLE) ||
@@ -678,6 +679,7 @@ void initializeTransverseFeedbackDriver(TFBDRIVER *tfbd, LINE_LIST *beamline, lo
         SDDS_PrintErrors(stdout, SDDS_VERBOSE_PrintErrors);
         SDDS_Bomb((char *)"Problem setting up TFBDRIVER output file");
       }
+      free(filename);
     }
   tfbd->dataWritten = tfbd->outputIndex = 0;
 
