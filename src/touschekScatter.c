@@ -612,7 +612,7 @@ void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
       if (verbosity)
         report_stats(stdout, "After particle generation: ");
       if (tsptr->simuCount == 0)
-        bombElegant("It appears that the Touschek lifetime is extremely wrong and there is no need to perform Touschek simulation.\n If you think this is a wrong statement, send input to developers for evaluation.\n", NULL);
+        bombElegant("It appears that the Touschek lifetime is extremely long and there is no need to perform Touschek simulation.\n If you think this is a wrong statement, send input to developers for evaluation.\n", NULL);
 
       if (total_event / tsptr->simuCount > 20) {
         if (distribution_cutoff[0] < 5 || distribution_cutoff[1] < 5)
