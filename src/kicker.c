@@ -27,6 +27,7 @@ void track_through_kicker(
   double time, time_offset, angle, t0, *coord, amplitude, ds;
   //double sum_amp;
   double x, xp, y, yp, dp, s, curv, dx;
+  double xp0, yp0;
   double theta_i, alpha_i, alpha_f;
   double xpFactor, ypFactor;
 
@@ -152,6 +153,8 @@ void track_through_kicker(
     dp = coord[5];
 
     if (kicker->n_kicks <= 0) {
+      xp0 = xp;
+      yp0 = yp;
       if (kicker->length != 0) {
         curv = sin(-angle) / kicker->length / (1 + dp);
         theta_i = atan(xp);
@@ -169,11 +172,22 @@ void track_through_kicker(
       } else {
         xp += angle / (1 + dp);
       }
+      if (spinCoordOffset) {
+        /* Use the kick values to infer the spin rotations. Note that FS frame rotation is not subtracted. */
+	double P = p_central*(1+coord[5]);
+	double gamma = sqrt(P*P+1);
+	performQuaternionRotation(coord+spinCoordOffset,
+				  -(1+particleAnomalousMagneticMoment*gamma)*(yp-yp0),
+				  (1+particleAnomalousMagneticMoment*gamma)*(xp-xp0),
+				  0);
+      }
     } else if (!kicker->deflectionMap) {
       double l1, x0, y0;
       l1 = kicker->length / kicker->n_kicks;
       if (l1 != 0) {
         for (i = 0; i < kicker->n_kicks; i++) {
+	  xp0 = xp;
+	  yp0 = yp;
           curv = sin(-angle) / kicker->length / (1 + dp) * (1 + kicker->b2 * (x * x - y * y));
           theta_i = atan(xp);
           alpha_i = -theta_i;
@@ -192,9 +206,29 @@ void track_through_kicker(
           y += l1 * yp;
           y0 = (y + y0) / 2;
           yp += -2 * sin(angle) / kicker->length / (1 + dp) * ds * x0 * y0 * kicker->b2;
+	  if (spinCoordOffset) {
+            /* Use the kick values to infer the spin rotations. Note that FS frame rotation is not subtracted. */
+	    double P = p_central*(1+coord[5]);
+	    double gamma = sqrt(P*P+1);
+	    performQuaternionRotation(coord+spinCoordOffset,
+				  -(1+particleAnomalousMagneticMoment*gamma)*(yp-yp0),
+				  (1+particleAnomalousMagneticMoment*gamma)*(xp-xp0),
+				  0);
+	  }
         }
       } else {
+        xp0 = xp;
+	yp0 = yp;
         xp += angle / (1 + dp);
+        if (spinCoordOffset) {
+          /* Use the kick values to infer the spin rotations. Note that FS frame rotation is not subtracted. */
+          double P = p_central*(1+coord[5]);
+          double gamma = sqrt(P*P+1);
+          performQuaternionRotation(coord+spinCoordOffset,
+				  -(1+particleAnomalousMagneticMoment*gamma)*(yp-yp0),
+				  (1+particleAnomalousMagneticMoment*gamma)*(xp-xp0),
+				  0);
+	}
       }
     } else {
       double l1, l2;
@@ -203,6 +237,8 @@ void track_through_kicker(
       angle /= kicker->n_kicks;
       /* deflection map mode */
       for (i = 0; i < kicker->n_kicks; i++) {
+	xp0 = xp;
+	yp0 = yp;
         if (i == 0) {
           /* half drift */
           s += l2 * (1 + (sqr(xp) + sqr(yp)) / 2.);
@@ -218,6 +254,15 @@ void track_through_kicker(
         interpolateDeflectionMap(&xpFactor, &ypFactor, kicker, x, y);
         xp += angle * xpFactor / (1 + dp);
         yp += angle * ypFactor / (1 + dp);
+        if (spinCoordOffset) {
+          /* Use the kick values to infer the spin rotations. Note that FS frame rotation is not subtracted. */
+          double P = p_central*(1+coord[5]);
+          double gamma = sqrt(P*P+1);
+          performQuaternionRotation(coord+spinCoordOffset,
+				  -(1+particleAnomalousMagneticMoment*gamma)*(yp-yp0),
+				  (1+particleAnomalousMagneticMoment*gamma)*(xp-xp0),
+				  0);
+	}
       }
       /* half drift */
       s += l2 * (1 + (sqr(xp) + sqr(yp)) / 2.);
