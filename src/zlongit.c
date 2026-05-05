@@ -715,17 +715,19 @@ void set_up_zlongit(ZLONGIT *zlongit, RUN *run, long pass, long particles, CHARG
   if (myid == 1) {
 #endif
     if (zlongit->wakes) {
-      zlongit->wakes = compose_filename(zlongit->wakes, run->rootname);
+      char *filename;
+      filename = compose_filename(zlongit->wakes, run->rootname);
       zlongit->SDDS_wake = tmalloc(sizeof(*(zlongit->SDDS_wake)));
       if (zlongit->broad_band)
-        SDDS_ElegantOutputSetup(zlongit->SDDS_wake, zlongit->wakes, SDDS_BINARY, 1, "longitudinal wake",
+        SDDS_ElegantOutputSetup(zlongit->SDDS_wake, filename, SDDS_BINARY, 1, "longitudinal wake",
                                 run->runfile, run->lattice, wake_parameter, BB_WAKE_PARAMETERS,
                                 wake_column, WAKE_COLUMNS, "set_up_zlongit", SDDS_EOS_NEWFILE | SDDS_EOS_COMPLETE);
       else {
-        SDDS_ElegantOutputSetup(zlongit->SDDS_wake, zlongit->wakes, SDDS_BINARY, 1, "longitudinal wake",
+        SDDS_ElegantOutputSetup(zlongit->SDDS_wake, filename, SDDS_BINARY, 1, "longitudinal wake",
                                 run->runfile, run->lattice, wake_parameter, NBB_WAKE_PARAMETERS,
                                 wake_column, WAKE_COLUMNS, "set_up_zlongit", SDDS_EOS_NEWFILE | SDDS_EOS_COMPLETE);
       }
+      free(filename);
 #if USE_MPI
       if (!SDDS_WriteLayout(zlongit->SDDS_wake)) {
 #  ifndef MPI_DEBUG
