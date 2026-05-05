@@ -37,7 +37,7 @@ int applySteeringMultipoleKicks(
   long imult, maxOrder;
   double denom, qx, qy, delta;
   double *xpow, *ypow;
-
+  
   if (!xkick && !ykick)
     return 1;
 
@@ -82,7 +82,7 @@ int applySteeringMultipoleKicks(
 long trackThroughExactCorrector(double **part, long n_part, ELEMENT_LIST *eptr, double Po, double **accepted, double z_start, double *sigmaDelta2) {
   long i_part, i_top;
   double xkick, ykick, kick, tilt, length, *coord, rho0, theta0, rho, theta, alpha, arg;
-  double dx = 0, dy = 0, dz = 0;
+  double dx = 0, dy = 0, dz = 0, rigidity0 = 0;
   MULTIPOLE_DATA *multData;
   long isr, sr;
   EHCOR *ehcor;
@@ -209,6 +209,10 @@ long trackThroughExactCorrector(double **part, long n_part, ELEMENT_LIST *eptr, 
   if (length < 0) /* back tracking */
     tilt += PI;
 
+  // The minus sign is because the sign of particleCharge*particleRelSign is positive for electrons
+  // There is no factor of (1+delta) here. See AOP-TN-2010-029, Rev. 2
+  rigidity0 = -Po*particleMass*c_mks/particleCharge*particleRelSign;
+
   if (sigmaDelta2)
     *sigmaDelta2 = 0;
 
@@ -240,13 +244,26 @@ long trackThroughExactCorrector(double **part, long n_part, ELEMENT_LIST *eptr, 
           alpha = atan(coord[1]);
           rho = rho0 * (1 + coord[5]);
           if (rho > 0 && (arg = length / rho + sin(alpha)) <= 1 && arg >= -1) {
-            double dyf;
+            double dyf, lprod;
             theta = asin(arg) - alpha;
             dyf = coord[3] / sqrt(1 + sqr(coord[1]) - sqr(coord[3]));
             coord[2] += dyf * theta * rho;
-            coord[4] += theta * rho * sqrt(1 + sqr(dyf));
+	    // Guard against underflow
+	    lprod = theta * rho * sqrt(1 + sqr(dyf));
+	    if (lprod<length)
+	      lprod = length;
+	    coord[4] += lprod;
             coord[0] += rho * (cos(alpha) - cos(theta + alpha));
             coord[1] = tan(theta + alpha);
+	    if (spinCoordOffset) {
+	      updateSpinQuaternionLocalFS(coord+spinCoordOffset,
+					  0.0, -rigidity0/rho0, 0.0,
+					  0.0, 0.0, 0.0, 0.0, /* effective length already computed in lprod */
+					  lprod,
+					  0.0, /* suppresses FS frame rotation term */
+					  Po,
+					  -particleCharge*particleRelSign, particleMass, particleAnomalousMagneticMoment);
+	    }
           } else
             lost = 1;
         }
