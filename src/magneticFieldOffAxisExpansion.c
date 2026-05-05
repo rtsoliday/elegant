@@ -222,10 +222,11 @@ long trackMagneticFieldOffAxisExpansion(double **part, long np, BOFFAXE *boa, do
     if (boa->fieldOutputFile)
       outputBOFFAXEDataOnGrid(boa);
     if (boa->particleOutputFile && !boa->SDDSpo) {
+      char *filename;
       boa->SDDSpo = tmalloc(sizeof(*(boa->SDDSpo)));
-      boa->particleOutputFile = compose_filename(boa->particleOutputFile, tcontext.rootname);
+      filename = compose_filename(boa->particleOutputFile, tcontext.rootname);
       if (!SDDS_InitializeOutputElegant(boa->SDDSpo, SDDS_BINARY, 1,
-                                        NULL, NULL, boa->particleOutputFile) ||
+                                        NULL, NULL, filename) ||
           0 > SDDS_DefineParameter(boa->SDDSpo, "SVNVersion", NULL, NULL, "SVN version number", NULL, SDDS_STRING, SVN_VERSION) ||
           !SDDS_DefineSimpleParameter(boa->SDDSpo, "particleID", NULL, SDDS_LONG) ||
           !SDDS_DefineSimpleParameter(boa->SDDSpo, "pCentral", "m$be$nc", SDDS_DOUBLE) ||
@@ -242,6 +243,7 @@ long trackMagneticFieldOffAxisExpansion(double **part, long np, BOFFAXE *boa, do
         SDDS_SetError("Problem setting up particle output file for BOFFAXE");
         SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
       }
+      free(filename);
     }
 #endif
   }
