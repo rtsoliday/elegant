@@ -1,0 +1,18 @@
+This element assigns spin vectors to the particles to provide a specified degree of
+polarization $P$ in a specified direction $\hat{v}=\vec{V}/V$, where
+$\vec{V}=(VX,VY,VZ)$.
+It has no effect if \verb|spin_tracking=0| in \verb|run_setup|.
+
+
+There are three available modes, controlled by the \verb|MODE| parameter:
+\begin{itemize}
+\item \verb|twostate| --- All spin vectors are along $\hat{v}$ or $-\hat{v}$,
+  with the two states being randomly assigned so as to approximately produce the specified polarization.
+  For example, for $P=0.85$ (85\% polarization) 92.5\% of the spins vectors are $\hat{v}$ and
+  7.5\% are $-\hat{v}$.
+\item \verb|narrowcone| --- All spins are oriented in the direction $\hat{v}$, but with a polar angle $\theta$ such
+  that $\cos\theta=P$. The azimuthal angle is uniformly distributed over $[0, 2\pi)$. 
+\item \verb|widecone| --- All spins are oriented in the direction $\hat{v}$, but with a randomly-chosen, uniformly-distributed polar angle
+  $\theta$ in the range $[0,\theta_1]$, with $\theta_1$ chosen so that that $\langle \cos\theta\rangle=P$. The
+  azimuthal angle is uniformly distributed over $[0, 2\pi)$.
+\end{itemize}
