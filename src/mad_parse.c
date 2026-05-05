@@ -560,6 +560,10 @@ void copy_element(ELEMENT_LIST *e1, ELEMENT_LIST *e2, long reverse, long divisio
   e1->ignore = e2->ignore;
   e1->p_elem = tmalloc(entity_description[e1->type].structure_size);
   e1->p_elem0 = tmalloc(entity_description[e1->type].structure_size);
+  if (reverse)
+    e1->reversed = !e2->reversed;
+  else
+    e1->reversed = e2->reversed;
   copy_p_elem(e1->p_elem, e2->p_elem, e1->type);
   copy_p_elem(e1->p_elem0, e2->p_elem, e1->type);
   e1->divisions = 1;
