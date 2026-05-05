@@ -32,5 +32,6 @@
      double slope_limit = SLOPE_LIMIT;
      double coord_limit = COORD_LIMIT;
      STRING search_path = NULL;
+     long namelist_buffer_size_factor = 1;
 #end
 
