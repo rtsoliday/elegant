@@ -604,11 +604,12 @@ void set_up_trfmode(TRFMODE *trfmode, char *element_name, double element_z,
 #endif
     if (trfmode->record && !trfmode->fileInitialized) {
       /* long n = n_passes/trfmode->sample_interval; */
-      trfmode->record = compose_filename(trfmode->record, run->rootname);
+      char *filename;
+      filename = compose_filename(trfmode->record, run->rootname);
       if (!trfmode->perParticleOutput && trfmode->binless) {
         if (!trfmode->SDDSrec)
           trfmode->SDDSrec = tmalloc(sizeof(*(trfmode->SDDSrec)));
-        if (!SDDS_InitializeOutputElegant(trfmode->SDDSrec, SDDS_BINARY, 1, NULL, NULL, trfmode->record) ||
+        if (!SDDS_InitializeOutputElegant(trfmode->SDDSrec, SDDS_BINARY, 1, NULL, NULL, filename) ||
             !SDDS_DefineSimpleColumn(trfmode->SDDSrec, "Pass", NULL, SDDS_LONG) ||
             !SDDS_DefineSimpleColumn(trfmode->SDDSrec, "t", "s", SDDS_DOUBLE) ||
             !SDDS_DefineSimpleColumn(trfmode->SDDSrec, "VxMax", "V", SDDS_DOUBLE) ||
@@ -622,7 +623,7 @@ void set_up_trfmode(TRFMODE *trfmode, char *element_name, double element_z,
       } else {
         if (!trfmode->SDDSrec)
           trfmode->SDDSrec = tmalloc(sizeof(*(trfmode->SDDSrec)));
-        if (!SDDS_InitializeOutputElegant(trfmode->SDDSrec, SDDS_BINARY, 1, NULL, NULL, trfmode->record) ||
+        if (!SDDS_InitializeOutputElegant(trfmode->SDDSrec, SDDS_BINARY, 1, NULL, NULL, filename) ||
             !SDDS_DefineSimpleColumn(trfmode->SDDSrec, "Pass", NULL, SDDS_LONG) ||
             !SDDS_DefineSimpleColumn(trfmode->SDDSrec, "t", "s", SDDS_DOUBLE) ||
             !SDDS_DefineSimpleColumn(trfmode->SDDSrec, "Vx", "V", SDDS_DOUBLE) ||
@@ -632,6 +633,7 @@ void set_up_trfmode(TRFMODE *trfmode, char *element_name, double element_z,
           SDDS_Bomb("problem setting up TRFMODE record file");
         }
       }
+      free(filename);
       trfmode->fileInitialized = 1;
     }
 }
