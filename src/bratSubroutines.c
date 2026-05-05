@@ -183,16 +183,18 @@ long trackBRAT(double **part, long np, BRAT *brat, double pCentral, double **acc
 
 #ifndef ABRAT_PROGRAM
     if (brat->particleOutput && strlen(brat->particleOutput) && isSlave) {
+      char *filename;
 #  if USE_MPI
-      brat->particleOutput = compose_filename_per_processor(brat->particleOutput, tcontext.rootname);
+      filename = compose_filename_per_processor(brat->particleOutput, tcontext.rootname);
 #  else
-      brat->particleOutput = compose_filename(brat->particleOutput, tcontext.rootname);
+      filename = compose_filename(brat->particleOutput, tcontext.rootname);
 #  endif
       brat->SDDSparticleOutput = tmalloc(sizeof(SDDS_DATASET));
-      if (!SDDS_InitializeOutput(brat->SDDSparticleOutput, SDDS_BINARY, 0, NULL, NULL, brat->particleOutput)) {
+      if (!SDDS_InitializeOutput(brat->SDDSparticleOutput, SDDS_BINARY, 0, NULL, NULL, filename)) {
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
         exitElegant(1);
       }
+      free(filename);
       if (!SDDS_DefineSimpleColumn(brat->SDDSparticleOutput, "x", "m", SDDS_FLOAT) ||
           !SDDS_DefineSimpleColumn(brat->SDDSparticleOutput, "y", "m", SDDS_FLOAT) ||
           !SDDS_DefineSimpleColumn(brat->SDDSparticleOutput, "z", "m", SDDS_FLOAT) ||
@@ -412,7 +414,7 @@ long trackBRAT(double **part, long np, BRAT *brat, double pCentral, double **acc
 #ifndef ABRAT_PROGRAM
     iOut = ip;
     if (isLost) {
-      if (globalLossCoordOffset != -1)
+      if (globalLossCoordOffset > 0)
         for (ic = 0; ic < GLOBAL_LOSS_PROPERTIES_PER_PARTICLE; ic++)
           part[ip][globalLossCoordOffset + ic] = lossCoordinates[ic];
       part[ip][2] = lossCoordinates[3];
