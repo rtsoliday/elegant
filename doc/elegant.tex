@@ -3,7 +3,7 @@
 %   dvi2ps elegant | lpr [-P<postscript-printer-name>]
 %
 \documentclass[11pt]{article}
-\usepackage{html}
+\newcommand{\htmladdnormallink}[2]{\href{#2}{#1}}
 \usepackage{hyperref}
 \usepackage{longtable}
 %\usepackage{subfigure} 
@@ -33,7 +33,7 @@
 \begin{document}
 
 \title{User's Manual for {\tt elegant}}
-\author{Program Version 2026.1\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
+\author{Program Version 2026.2\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
 \maketitle
 
 Note: another source of help for {\tt elegant} is the on-line
@@ -49,49 +49,52 @@ at a high level.
 Starting in Version 2025.4, AI coding assistants have been used for addition of new features and generation
 of documentation.
 
-\section{Highlights of What's New in Version 2026.1}
+\section{Highlights of What's New in Version 2026.2}
 
-Here is a summary of what's changed since release 2025.4  Historical change logs are collected in Section
+Here is a summary of what's changed since release 2026.1.  Historical change logs are collected in Section
 \ref{sect:changeLog}.
+
+The major change is support for spin tracking. This is invoked by setting \verb|spin_tracking=1| in the \verb|run_setup|
+command.
 
 \subsection{Bug Fixes for Elements}
 
 \begin{itemize}
-\item Fixed bug in \verb|BMXYZ| element when the field length is greater than the insertion length.
-\item Fixed a bug in loss logging (\verb|run_setup| command \verb|losses| file) that resulted in
-  logging of $\gamma$ instead of $\beta\gamma$ in the \verb|p| column for some loss mechanisms.
-  This bug was reported by forum user \verb|galnander|.
+\item Several elements (e.g., \verb|WATCH|) had a bug in which incomplete filenames (e.g., \verb|%s.w1|) were expanded
+  and then saved in parameter and lattice files.
+\item There was a bug in \verb|EHKICK|, \verb|EVKICK|, and \verb|EKICKER| that resulted in failure to include the
+  path-length increase when then deflection angle was very small.
 \end{itemize}
 
 \subsection{Bug Fixes for Commands}
 \begin{itemize}
-\item None.
+\item The \verb|save_lattice| command incorrectly handled element reflections when \verb|output_seq| was non-zero.
+  This was reported by M. Abo-Bakr (HZB).
 \end{itemize}
 
 \subsection{New and Modified Elements}
 \begin{itemize}
-\item The \verb|TFBDRIVER| element, which implements a turn-by-turn feedback driver, now supports optional charge
-  scaling of the kicks using the newly-added \verb|GAIN_FACTOR| and \verb|GAIN_CHARGE_SCALE| parameters.
-\item Added the \verb|DQCOR| element, which implements a combined dipole/quadrupole corrector including normal
-  and skew components.
-\item Add the \verb|BIN_SIZE| parameter to \verb|CSRCSBEND|, to allow specifying a fixed bin size instead of a
-  fixed number of bins.
-\item The \verb|LGBEND| and \verb|CCBEND| element now support output of centroid coordinates in the global coordinate system.
-\item The \verb|MONI|, \verb|HMON|, and \verb|VMON| elements now support longitudinal misalignment, which affects the
-  response matrix and related operations. This was requested by V. Sajaev (ANL).
+\item \verb|BUMPER|, \verb|CSBEND|, \verb|DQCOR|, \verb|EHKICK|, \verb|EKICK|, \verb|EVKICK|, \verb|KQUAD|, \verb|KQUSE|, \verb|KSEXT|,
+  \verb|FMULT|, \verb|ROTATE|, and \verb|SOLE| elements support spin tracking. 
+\item The new \verb|POLAR| element can be used to polarize the beam.
+\item The \verb|WATCH| element will output data related to spin when spin-tracking is enabled.
 \end{itemize}
 
 \subsection{New and Modified Commands}
 \begin{itemize}
-\item For loss logging (\verb|run_setup| command \verb|losses| file), the file now contains the
-  \verb|pCentral| parameter.
-  This was requested by forum user \verb|galnander|.
+\item The \verb|bunched_beam| and \verb|bunched_beam_moments| commands now support specification of the (common) spin vector.
+\item The \verb|modulate_elements| command now supports time- and pass-based modulation delays, as well as a convenience
+  factor for the modulation amplitude.
+\item The \verb|centroid|, \verb|final|, \verb|output|, and \verb|sigma| output files from \verb|run_setup| include
+  spin-related quantities when spin tracking is enabled.
+\item Optimization of spin-related quantities is supported.
+\item The \verb|particle_tunes| command has the option to include spin tune.
 \end{itemize}
 
 \subsection{Changes to Examples}
 
 \begin{itemize}
-\item Added example of implementing a Wien filter using a \verb|SCRIPT| element.
+\item None.
 \end{itemize}
 
 \subsection{Changes to Related Programs and Files}
@@ -1061,6 +1064,7 @@ Recommended value: ``\%s.kaf''.
     double alpha_y = 0.0;
     double eta_y   = 0.0;
     double etap_y  = 0.0;
+    double spin[3] = {0.0, 0.0, 1.0};
     long use_twiss_command_values = 0;
     long use_moments_output_values = 0;
     double Po = 0.0;
@@ -1100,6 +1104,8 @@ are to be computed.
 \item \verb|emit_X| --- RMS emittance for the X plane.
 \item \verb|emit_nX| --- RMS normalized emittance for the X plane.  Ignored if \verb|emit_X| is nonzero.
 \item \verb|beta_X|, \verb|alpha_X|, \verb|eta_X|, \verb|etap_X| --- Twiss parameters for the X plane.
+\item \verb|spin| --- Provide the components of the spin vector to use for all particles. Ignored if
+  \verb|spin_tracking=0| in \verb|run_setup|. The vector is normalized to have unit magnitude.a
 \item \verb|use_twiss_command_values| --- If nonzero, then the values for $\beta$, $\alpha$, 
         $\eta$, and $\eta^\prime$ are taken from the \verb|twiss_output| command.  It is an error if
         no \verb|twiss_output| command has been given.
@@ -1281,6 +1287,7 @@ particles.
     double S5 = 0;
     double S6 = 0;
     double S56 = 0;
+    double spin[3] = {0.0, 0.0, 1.0};
     double time_start = 0;
     double Po = 0.0;
     long one_random_bunch = 1;
@@ -1326,6 +1333,9 @@ where $x_\beta$ is the betatron component, $\delta$ is the fractional momentum d
 \item \verb|S6| --- Fractional bunch length.
 \item \verb|S56| --- $\Sigma_{56}$.
 \item \verb|S|{\em i}{\em j}\verb|_beta| --- Element of the beam sigma matrix for betatron coordinates.
+
+\item \verb|spin| --- Provide the components of the spin vector to use for all particles. Ignored if
+  \verb|spin_tracking=0| in \verb|run_setup|. The vector is normalized to have unit magnitude.a
 
 \item \verb|one_random_bunch| --- If non-zero, then only one random
 particle distribution is generated.  Otherwise, a new distribution
@@ -2708,7 +2718,7 @@ programs such as TRACY and MAD \cite{BuesingPC}.
 \begin{verbatim}
 &global_settings
     long inhibit_fsync = 0;
-    long allow_overwriting = 1;
+    long allow_overwrite = 1;
     long echo_namelists = 1;
     long mpi_randomization_mode = 3;
     long exact_normalized_emittance = 0;
@@ -3807,6 +3817,11 @@ the values are \verb|-1| if the matrix is not determined by tracking.
     long refresh_matrix = 0;
     long differential = 1;
     long multiplicative = 0;
+    double factor = 1;
+    long start_pass = 0;
+    long end_pass = LONG_MAX;
+    long pass_delay = 0;
+    double time_delay = 0;
     long start_occurence = 0;
     long end_occurence = 0;
     double s_start = -1;
@@ -3852,14 +3867,22 @@ is modulated.
   normally update the matrix for the element as it modulates the element, since that may involve
   a significant time penalty.  If this parameter is set to a non-zero value, the matrix will
   be updated.  For elements that use a matrix for tracking, the matrix is always updated.
-\item \verb|differential|, \verb|multiplicative| --- Determine how the amplitude function
-  $A(t)$ is used to obtain the new value of the parameter.  There are four cases
+\item \verb|differential|, \verb|multiplicative|, \verb|factor| --- Determine how the amplitude function
+  $A(t)$ is used to obtain the new value of the parameter vs time $v(t)$.  There are four cases
   \begin{itemize}
-    \item \verb|differential=1|, \verb|multiplicative=0|: $v(t) = v_0 + A(t)$ (default).
-    \item \verb|differential=0|, \verb|multiplicative=0|: $v(t) = A(t)$.  
-    \item \verb|differential=1|, \verb|multiplicative=1|: $v(t) = v_0 + v_0 A(t)$.  
-    \item \verb|differential=0|, \verb|multiplicative=1|: $v(t) = v_0 A(t)$.  
-  \end{itemize}
+    \item \verb|differential=1|, \verb|multiplicative=0|: $v(t) = v_0 + f A(t)$ (default).
+    \item \verb|differential=0|, \verb|multiplicative=0|: $v(t) = f A(t)$.  
+    \item \verb|differential=1|, \verb|multiplicative=1|: $v(t) = v_0 + v_0 f A(t)$.  
+    \item \verb|differential=0|, \verb|multiplicative=1|: $v(t) = v_0 f A(t)$.  
+    \end{itemize}
+    where $v_0$ is the original value and $f$ is the factor. The factor is convenient when $A(t)$ is
+    from a file and one wants to quickly change the amplitude of the modulation but not its shape.
+\item \verb|start_pass|, \verb|end_pass| --- Specifies the starting and ending pass between which the
+modulation will be applied. 
+\item  \verb|pass_delay|, \verb|time_delay| --- Specifies pass- and time-based delay of the modulation
+  function. When given, equivalent to changing the time value $t$ that is used for function evaluation
+  to $t- P_d T_0 - T_d$, where $P_d$ is
+  the pass delay, $T_0$ is the revolution time, and $T_d$ is the time delay.
 \item \verb|start_occurence|, \verb|end_occurence| --- If nonzero, these give the starting and
  ending occurrence numbers of elements that will be modulated. N.B.: if wildcards are used, occurrence
  number counting is for each set of identically-named elements separately, rather than for the sequence
@@ -4430,6 +4453,10 @@ V} (vertical) and {\em corrParam} is the parameter of the corrector
 used for changing the orbit (e.g., {\tt HKICK} or {\tt VKICK} for a
 {\tt KICKER} element).
 
+If spin tracking is requested, the quantities \verb|Cspx|, \verb|Cspy|, and \verb|Cspz|, giving
+the centroid (average) values of the three spin vector components, may be used in optimization
+expressions.
+
 Many quantities are made available for optimization if \verb|twiss_output| command is given
 with \verb|output_at_each_step=1|:
 \begin{itemize} 
@@ -4736,6 +4763,7 @@ to a very large number to use this rule as the stop condition alone.
           short include_x = 1;
           short include_y = 1;
           short include_s = 0;
+          short include_spin = 0;
           long start_pass = 0;
           long segment_length = 0;
 &end
@@ -4749,6 +4777,7 @@ to a very large number to use this rule as the stop condition alone.
 \item \verb|include_x|--- If non-zero, $\nu_x$ is computed.
 \item \verb|include_y|--- If non-zero, $\nu_y$ is computed.
 \item \verb|include_s|--- If non-zero, $\nu_s$ is computed.
+\item \verb|include_spin| --- If non-zero, $\nu_{sp}$ is computed using the $x$ and $z$ components.
 \item \verb|start_pass|--- The pass on which to begin tune analysis.
 \item \verb|segment_length|--- The length of the segment for tune analysis. A tune value is produced for every
   \verb|segment_length| turns.
@@ -5375,6 +5404,7 @@ in \verb|run_setup|.
     long load_balancing_on = 0;
     long back_tracking = 0;
     double s_start = 0;
+    short spin_tracking = 0;
 &end
 \end{verbatim}
 
@@ -5491,6 +5521,8 @@ tracking.
 \item \verb|s_start| --- The initial $s$ coordinate. Changing this will affect not only output data (e.g., the \verb|s|
   values in files from \verb|twiss_output| and \verb|floor_coordinates|), but also the behavior of commands (e.g., \verb|alter_elements|)
   the provide $s$-based filtering.
+\item \verb|spin_tracking| --- If non-zero, spin coordinates are present and spin-aware elements will propagate spins appropriately, while
+  other elements leave spins unchanged.
 \end{itemize}
 
 %\begin{latexonly}
@@ -8879,6 +8911,65 @@ terminal input and terminal output, respectively.
 \newpage
 
 \section{Change Log\label{sect:changeLog}}
+
+\subsection{Highlights of What's New in Version 2026.1}
+
+Here is a summary of what's changed since release 2025.4  Historical change logs are collected in Section
+\ref{sect:changeLog}.
+
+\subsubsection{Bug Fixes for Elements}
+
+\begin{itemize}
+\item Fixed bug in \verb|BMXYZ| element when the field length is greater than the insertion length.
+\item Fixed a bug in loss logging (\verb|run_setup| command \verb|losses| file) that resulted in
+  logging of $\gamma$ instead of $\beta\gamma$ in the \verb|p| column for some loss mechanisms.
+  This bug was reported by forum user \verb|galnander|.
+\end{itemize}
+
+\subsubsection{Bug Fixes for Commands}
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{New and Modified Elements}
+\begin{itemize}
+\item The \verb|TFBDRIVER| element, which implements a turn-by-turn feedback driver, now supports optional charge
+  scaling of the kicks using the newly-added \verb|GAIN_FACTOR| and \verb|GAIN_CHARGE_SCALE| parameters.
+\item Added the \verb|DQCOR| element, which implements a combined dipole/quadrupole corrector including normal
+  and skew components.
+\item Add the \verb|BIN_SIZE| parameter to \verb|CSRCSBEND|, to allow specifying a fixed bin size instead of a
+  fixed number of bins.
+\item The \verb|LGBEND| and \verb|CCBEND| element now support output of centroid coordinates in the global coordinate system.
+\item The \verb|MONI|, \verb|HMON|, and \verb|VMON| elements now support longitudinal misalignment, which affects the
+  response matrix and related operations. This was requested by V. Sajaev (ANL).
+\end{itemize}
+
+\subsubsection{New and Modified Commands}
+\begin{itemize}
+\item For loss logging (\verb|run_setup| command \verb|losses| file), the file now contains the
+  \verb|pCentral| parameter.
+  This was requested by forum user \verb|galnander|.
+\end{itemize}
+
+\subsubsection{Changes to Examples}
+
+\begin{itemize}
+\item Added example of implementing a Wien filter using a \verb|SCRIPT| element.
+\end{itemize}
+
+\subsubsection{Changes to Related Programs and Files}
+
+The {\tt elegant} distribution includes many programs and scripts that perform computations with {\tt elegant}
+output data, provide interfaces with other programs, or prepare data for use with {\tt elegant}. These
+are listed in Section \ref{sect:tools}. 
+
+Changes to these tools in this release include
+\begin{itemize}
+\item Added \verb|sddsupsample|, a program to up-sample particle distributions. Written by GPT-5.2-Codex guided by M. Borland.
+\item Added Emacs modes for command and lattice file editing. See documentation below. Written by GPT-5.2-Codex guided by M. Borland.
+\item Added \verb|centroid2floor|, a program to combine reference floor-coordinate and centroid data to make a file
+  with the beam path in global (floor) coordinates.
+\end{itemize}
 
 \subsection{Highlights of What's New in Version 2025.4}
 
