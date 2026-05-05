@@ -151,7 +151,8 @@ static SDDS_DEFINITION element_column[ELEMENT_COLUMNS] = {
 };
 
 #define PHASE_SPACE_COLUMNS 7
-static SDDS_DEFINITION phase_space_column[PHASE_SPACE_COLUMNS] = {
+#define SPIN_COLUMNS 3
+static SDDS_DEFINITION phase_space_column[PHASE_SPACE_COLUMNS+SPIN_COLUMNS] = {
   {"x", "&column name=x, units=m, type=double &end"},
   {"xp", "&column name=xp, symbol=\"x'\", type=double &end"},
   {"y", "&column name=y, units=m, type=double &end"},
@@ -159,6 +160,9 @@ static SDDS_DEFINITION phase_space_column[PHASE_SPACE_COLUMNS] = {
   {"t", "&column name=t, units=s, type=double &end"},
   {"p", "&column name=p, units=\"m$be$nc\", type=double &end"},
   {"particleID", "&column name=particleID, type=ulong64 &end"},
+  {"spx", "&column name=spx, type=double &end"},
+  {"spy", "&column name=spy, type=double &end"},
+  {"spz", "&column name=spz, type=double &end"},
 };
 
 #define PHASE_SPACE_PARAMETERS 8
@@ -189,7 +193,8 @@ void SDDS_PhaseSpaceSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, lon
 #  endif
 #endif
   SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, contents, command_file, lattice_file,
-                          phase_space_parameter, PHASE_SPACE_PARAMETERS - 2, phase_space_column, PHASE_SPACE_COLUMNS,
+                          phase_space_parameter, PHASE_SPACE_PARAMETERS - 2,
+			  phase_space_column, PHASE_SPACE_COLUMNS + (spinCoordOffset>0 ? SPIN_COLUMNS : 0),
                           caller, SDDS_EOS_NEWFILE | SDDS_EOS_COMPLETE);
 #if MPI_DEBUG
   printf("SDDS_ElegantOutputSetup done\n");
@@ -223,6 +228,12 @@ static SDDS_DEFINITION beam_loss_column[BEAM_LOSS_COLUMNS_BASIC + BEAM_LOSS_COLU
   {"thetaX", "&column name=thetaX, type=double &end"},
 };
 
+static SDDS_DEFINITION spin_column[3] = {
+  {"spx", "&column name=spx, type=double &end"},
+  {"spy", "&column name=spy, type=double &end"},
+  {"spz", "&column name=spz, type=double &end"},
+};
+
 void SDDS_BeamLossSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row, char *contents,
                         char *command_file, char *lattice_file, long includeGlobal, char *caller) {
   log_entry("SDDS_BeamLossSetup");
@@ -235,7 +246,11 @@ void SDDS_BeamLossSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long 
   SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, contents, command_file, lattice_file,
                           beam_loss_parameter, BEAM_LOSS_PARAMETERS, beam_loss_column,
                           BEAM_LOSS_COLUMNS_BASIC + (includeGlobal ? BEAM_LOSS_COLUMNS_EXTRA : 0),
-                          caller, SDDS_EOS_NEWFILE | SDDS_EOS_COMPLETE);
+                          caller, SDDS_EOS_NEWFILE | (spinCoordOffset?0:SDDS_EOS_COMPLETE));
+  if (spinCoordOffset)
+    SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, contents, command_file, lattice_file,
+			    NULL, 0, spin_column, 3, caller, SDDS_EOS_COMPLETE);
+  
   log_exit("SDDS_BeamLossSetup");
 }
 
@@ -256,6 +271,13 @@ static SDDS_DEFINITION centroid_column[CENTROID_COLUMNS_WITH_WEIGHTS] = {
   {"yBPMWeight", "&column name=yBPMWeight, description=\"Vertical-plane BPM weight\", type=double &end"},
 };
 
+#define SPIN_CENTROID_COLUMNS 3
+static SDDS_DEFINITION spin_centroid_column[SPIN_CENTROID_COLUMNS] = {
+  {"Cspx", "&column name=Cspx, symbol=\"<Spinx>\", type=double, description=\"Mean x-direction spin component\" &end"},
+  {"Cspy", "&column name=Cspy, symbol=\"<Spiny>\", type=double, description=\"Mean y-direction spin component\" &end"},
+  {"Cspz", "&column name=Cspz, symbol=\"<Spinz>\", type=double, description=\"Mean z-direction spin component\" &end"},
+};
+
 void SDDS_CentroidOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row, char *contents,
                               char *command_file, char *lattice_file, char *caller, short bpmsOnly) {
   log_entry("SDDS_CentroidOutputSetup");
@@ -270,6 +292,11 @@ void SDDS_CentroidOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode,
   SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, contents, command_file, lattice_file,
                           standard_parameter, STANDARD_PARAMETERS, element_column, ELEMENT_COLUMNS,
                           caller, SDDS_EOS_NEWFILE);
+  if (spinCoordOffset) {
+    SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, contents, command_file, lattice_file,
+                            NULL, 0, spin_centroid_column, SPIN_CENTROID_COLUMNS,
+                            caller, 0);
+  }
   SDDS_ElegantOutputSetup(SDDS_table, NULL, 0, 0, NULL, NULL, NULL, NULL, 0,
                           centroid_column,
                           bpmsOnly?CENTROID_COLUMNS_WITH_WEIGHTS:CENTROID_COLUMNS, caller, SDDS_EOS_COMPLETE);
@@ -348,6 +375,16 @@ static SDDS_DEFINITION sigma_matrix_column[SIGMA_MATRIX_COLUMNS] = {
   {"alphayBeam", "&column name=alphayBeam, symbol=\"$ga$r$by,beam$n\", type=double, description=\"alphay for the beam, excluding dispersive contributions\" &end"},
 };
 
+#define SIGMA_MATRIX_SPIN_COLUMNS 6
+static SDDS_DEFINITION sigma_matrix_spin_column[SIGMA_MATRIX_SPIN_COLUMNS] = {
+  {"Sspxx", "&column name=Sspxx, symbol=\"$gs$r$bxx$n\", units=m, type=double, description=\"Spin sigma matrix element x-x\" &end"},
+  {"Sspxy", "&column name=Sspxy, symbol=\"$gs$r$bxy$n\", units=m, type=double, description=\"Spin sigma matrix element x-y\" &end"},
+  {"Sspxz", "&column name=Sspxz, symbol=\"$gs$r$bxz$n\", units=m, type=double, description=\"Spin sigma matrix element x-z\" &end"},
+  {"Sspyy", "&column name=Sspyy, symbol=\"$gs$r$byy$n\", units=m, type=double, description=\"Spin sigma matrix element y-y\" &end"},
+  {"Sspyz", "&column name=Sspyz, symbol=\"$gs$r$byz$n\", units=m, type=double, description=\"Spin sigma matrix element y-z\" &end"},
+  {"Sspzz", "&column name=Sspzz, symbol=\"$gs$r$bzz$n\", units=m, type=double, description=\"Spin sigma matrix element z-z\" &end"},
+};
+
 void SDDS_SigmaOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row,
                            char *command_file, char *lattice_file, char *caller) {
   log_entry("SDDS_SigmaOutputSetup");
@@ -363,13 +400,42 @@ void SDDS_SigmaOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, lo
                           caller, SDDS_EOS_NEWFILE);
   SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, NULL, NULL, NULL,
                           NULL, 0, sigma_matrix_column, SIGMA_MATRIX_COLUMNS,
-                          caller, SDDS_EOS_COMPLETE);
+                          caller, spinCoordOffset?0:SDDS_EOS_COMPLETE);
+  if (spinCoordOffset)
+    SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, "sigma matrix", command_file, lattice_file,
+                            NULL, 0, sigma_matrix_spin_column, SIGMA_MATRIX_SPIN_COLUMNS,
+                            caller, SDDS_EOS_COMPLETE);
   log_exit("SDDS_SigmaOutputSetup");
 }
 
-#define WATCH_PARAMETER_MODE_COLUMNS 31
 #define WATCH_CENTROID_MODE_COLUMNS 19
-static SDDS_DEFINITION watch_parameter_mode_column[WATCH_PARAMETER_MODE_COLUMNS] = {
+static SDDS_DEFINITION watch_centroid_mode_column[WATCH_CENTROID_MODE_COLUMNS+3] = {
+  {"Step", "&column name=Step, type=long &end"},
+  {"Pass", "&column name=Pass, type=long &end"},
+  {"ElapsedTime", "&column name=ElapsedTime, type=double units=s &end"},
+  {"ElapsedCoreTime", "&column name=ElapsedCoreTime, type=double units=s &end"},
+  {"MemoryUsage", "&column name=MemoryUsage, type=long, units=kB &end"},
+  {"Cx", "&column name=Cx, symbol=\"<x>\", units=m, type=double, description=\"x centroid\" &end"},
+  {"Cxp", "&column name=Cxp, symbol=\"<x'>\", type=double, description=\"x' centroid\" &end"},
+  {"Cy", "&column name=Cy, symbol=\"<y>\", units=m, type=double, description=\"y centroid\" &end"},
+  {"Cyp", "&column name=Cyp, symbol=\"<y'>\", type=double, description=\"y' centroid\" &end"},
+  {"Cs", "&column name=Cs, symbol=\"<s>\", units=m, type=double, description=\"mean distance traveled\" &end"},
+  {"Cdelta", "&column name=Cdelta, symbol=\"<$gd$r>\", type=double, description=\"delta centroid\" &end"},
+  {"Ct", "&column name=Ct, symbol=\"<t>\", units=s, type=double, description=\"mean time of flight\" &end"},
+  {"dCt", "&column name=dCt, symbol=\"$gD$r<t>\", units=s, type=double, description=\"mean time of flight relative to ideal\" &end"},
+  {"Particles", "&column name=Particles, description=\"Number of particles\", type=long, &end"},
+  {"Charge", "&column name=Charge, description=\"Charge in the beam\", units=C, type=double &end"},
+  {"Transmission", "&column name=Transmission, description=Transmission, type=double &end"},
+  {"pCentral", "&column name=pCentral, symbol=\"p$bcen$n\", units=\"m$be$nc\", type=double, description=\"Reference beta*gamma\" &end"},
+  {"pAverage", "&column name=pAverage, symbol=\"p$bave$n\", units=\"m$be$nc\", type=double, description=\"Mean beta*gamma\" &end"},
+  {"KAverage", "&column name=KAverage, symbol=\"K$bave$n\", units=MeV, type=double, description=\"Mean kinetic energy\" &end"},
+  {"Cspx", "&column name=Cspx, symbol=\"<Spinx>\", type=double, description=\"Mean x-direction spin component\" &end"},
+  {"Cspy", "&column name=Cspy, symbol=\"<Spiny>\", type=double, description=\"Mean y-direction spin component\" &end"},
+  {"Cspz", "&column name=Cspz, symbol=\"<Spinz>\", type=double, description=\"Mean z-direction spin component\" &end"},
+};
+
+#define WATCH_PARAMETER_MODE_COLUMNS 31
+static SDDS_DEFINITION watch_parameter_mode_column[WATCH_PARAMETER_MODE_COLUMNS+9] = {
   {"Step", "&column name=Step, type=long &end"},
   {"Pass", "&column name=Pass, type=long &end"},
   {"ElapsedTime", "&column name=ElapsedTime, type=double units=s &end"},
@@ -401,6 +467,15 @@ static SDDS_DEFINITION watch_parameter_mode_column[WATCH_PARAMETER_MODE_COLUMNS]
   {"el", "&column name=el, symbol=\"$ge$r$bl$n\", units=s, type=double, description=\"longitudinal emittance\" &end"},
   {"ecx", "&column name=ecx, symbol=\"$ge$r$bx,c$n\", units=m, type=double, description=\"geometric horizontal emittance less dispersive contributions\" &end"},
   {"ecy", "&column name=ecy, symbol=\"$ge$r$by,c$n\", units=m, type=double, description=\"geometric vertical emittance less dispersive contributions\" &end"},
+  {"Cspx", "&column name=Cspx, symbol=\"<Spinx>\", type=double, description=\"Mean x-direction spin component\" &end"},
+  {"Cspy", "&column name=Cspy, symbol=\"<Spiny>\", type=double, description=\"Mean y-direction spin component\" &end"},
+  {"Cspz", "&column name=Cspz, symbol=\"<Spinz>\", type=double, description=\"Mean z-direction spin component\" &end"},
+  {"Sspxx", "&column name=Sspxx, symbol=\"$gs$r$bxx$n\", units=m, type=double, description=\"Spin sigma matrix element x-x\" &end"},
+  {"Sspxy", "&column name=Sspxy, symbol=\"$gs$r$bxy$n\", units=m, type=double, description=\"Spin sigma matrix element x-y\" &end"},
+  {"Sspxz", "&column name=Sspxz, symbol=\"$gs$r$bxz$n\", units=m, type=double, description=\"Spin sigma matrix element x-z\" &end"},
+  {"Sspyy", "&column name=Sspyy, symbol=\"$gs$r$byy$n\", units=m, type=double, description=\"Spin sigma matrix element y-y\" &end"},
+  {"Sspyz", "&column name=Sspyz, symbol=\"$gs$r$byz$n\", units=m, type=double, description=\"Spin sigma matrix element y-z\" &end"},
+  {"Sspzz", "&column name=Sspzz, symbol=\"$gs$r$bzz$n\", units=m, type=double, description=\"Spin sigma matrix element z-z\" &end"},
 };
 
 #define WATCH_POINT_FFT_COLUMNS 4
@@ -411,12 +486,11 @@ static SDDS_DEFINITION watch_point_fft_column[WATCH_POINT_FFT_COLUMNS] = {
   {"Cdelta", "&column name=Cdelta, symbol=\"FFT <$gd$r>\", type=double, description=\"FFT of delta centroid\" &end"},
 };
 
-void SDDS_WatchPointSetup(WATCH *watch, long mode, long lines_per_row,
+void SDDS_WatchPointSetup(WATCH *watch, char *filename, long mode, long lines_per_row,
                           char *command_file, char *lattice_file, char *caller, char *qualifier,
                           char *previousElementName, long previousElementOccurence) {
   char s[100];
   SDDS_TABLE *SDDS_table;
-  char *filename;
   long watch_mode;
   char buffer[16384];
 
@@ -430,7 +504,6 @@ void SDDS_WatchPointSetup(WATCH *watch, long mode, long lines_per_row,
   if (!watch->SDDS_table)
     watch->SDDS_table = tmalloc(sizeof(*(watch->SDDS_table)));
   SDDS_table = watch->SDDS_table;
-  filename = watch->filename;
   watch_mode = watch->mode_code;
 
 #if SDDS_MPI_IO
@@ -478,6 +551,17 @@ void SDDS_WatchPointSetup(WATCH *watch, long mode, long lines_per_row,
           (watch->longitIndex[1] = SDDS_DefineColumn(SDDS_table, "p", NULL, "m$be$nc", NULL, NULL, SDDS_DOUBLE, 0)) < 0 ||
           (watch->longitIndex[2] = SDDS_DefineColumn(SDDS_table, "dt", NULL, "s", NULL, NULL, SDDS_DOUBLE, 0)) < 0) {
         printf("Unable to define SDDS columns t, dt, and p for file %s (%s)\n",
+               filename, caller);
+        fflush(stdout);
+        SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+        exitElegant(1);
+      }
+    }
+    if (spinCoordOffset) {
+      if ((watch->spinIndex[0] = SDDS_DefineColumn(SDDS_table, "spx", NULL, NULL, NULL, NULL, SDDS_DOUBLE, 0)) < 0 ||
+          (watch->spinIndex[1] = SDDS_DefineColumn(SDDS_table, "spy", NULL, NULL, NULL, NULL, SDDS_DOUBLE, 0)) < 0 ||
+          (watch->spinIndex[2] = SDDS_DefineColumn(SDDS_table, "spz", NULL, NULL, NULL, NULL, SDDS_DOUBLE, 0)) < 0) {
+        printf("Unable to define SDDS columns spx, spy, and spz for file %s (%s)\n",
                filename, caller);
         fflush(stdout);
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
@@ -551,7 +635,7 @@ void SDDS_WatchPointSetup(WATCH *watch, long mode, long lines_per_row,
       SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, "watch-point centroids",
                               command_file, lattice_file,
                               standard_parameter, STANDARD_PARAMETERS,
-                              watch_parameter_mode_column, WATCH_CENTROID_MODE_COLUMNS,
+                              watch_centroid_mode_column, WATCH_CENTROID_MODE_COLUMNS+(spinCoordOffset>0?3:0),
                               caller, SDDS_EOS_NEWFILE);
     if (!SDDS_DefineSimpleParameter(SDDS_table, "s", "m", SDDS_DOUBLE) ||
         SDDS_DefineParameter(SDDS_table, "PreviousElementName", NULL, NULL, NULL, "%s", SDDS_STRING,
@@ -574,7 +658,7 @@ void SDDS_WatchPointSetup(WATCH *watch, long mode, long lines_per_row,
       SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, "watch-point parameters",
                               command_file, lattice_file,
                               standard_parameter, STANDARD_PARAMETERS,
-                              watch_parameter_mode_column, WATCH_PARAMETER_MODE_COLUMNS,
+                              watch_parameter_mode_column, WATCH_PARAMETER_MODE_COLUMNS+(spinCoordOffset?9:0),
                               caller, SDDS_EOS_NEWFILE);
     if (!SDDS_DefineSimpleParameter(SDDS_table, "s", "m", SDDS_DOUBLE) ||
         SDDS_DefineParameter(SDDS_table, "PreviousElementName", NULL, NULL, NULL, "%s", SDDS_STRING,
@@ -610,10 +694,9 @@ void SDDS_WatchPointSetup(WATCH *watch, long mode, long lines_per_row,
   }
 }
 
-void SDDS_HistogramSetup(HISTOGRAM *histogram, long mode, long lines_per_row,
+void SDDS_HistogramSetup(HISTOGRAM *histogram, char *filename, long mode, long lines_per_row,
                          char *command_file, char *lattice_file, char *caller) {
   SDDS_TABLE *SDDS_table = NULL;
-  char *filename = NULL;
   long column, columns;
 
   if (histogram->sparse &&
@@ -624,7 +707,6 @@ void SDDS_HistogramSetup(HISTOGRAM *histogram, long mode, long lines_per_row,
     if (!histogram->SDDS_table)
       histogram->SDDS_table = tmalloc(sizeof(*(histogram->SDDS_table)));
     SDDS_table = histogram->SDDS_table;
-    filename = histogram->filename;
     SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, "histograms of phase-space coordinates",
                             command_file, lattice_file,
                             phase_space_parameter, PHASE_SPACE_PARAMETERS,
@@ -819,6 +901,16 @@ void dump_watch_particles(WATCH *watch, long step, long pass, double **particle,
             SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
           }
         }
+        if (spinCoordOffset) {
+          if (!SDDS_SetRowValues(watch->SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row,
+                                 watch->spinIndex[0], particle[i][spinCoordOffset+0],
+                                 watch->spinIndex[1], particle[i][spinCoordOffset+1],
+                                 watch->spinIndex[2], particle[i][spinCoordOffset+2],
+                                 -1)) {
+            SDDS_SetError("Problem setting SDDS row values (dump_watch_particles)");
+            SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+          }
+        }
         if (!SDDS_SetRowValues(watch->SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row++,
                                watch->IDIndex, (uint64_t)particle[i][6], -1)) {
           SDDS_SetError("Problem setting SDDS row values (dump_watch_particles)");
@@ -895,7 +987,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
   long sample, i, watchStartPass = watch->start_pass;
   double tc, tc0, tc0Error, p_sum, gamma_sum, sum, error_sum, p = 0.0;
   double emit[2], emitc[2];
-  long Cx_index = 0, Sx_index = 0, ex_index = 0, ecx_index = 0, npCount;
+  long Cx_index = 0, Sx_index = 0, ex_index = 0, ecx_index = 0, npCount, Cspx_index= 0;
   BEAM_SUMS *sums;
   double emittance_l;
   long memoryUsed;
@@ -1001,12 +1093,25 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
       SDDS_SetError("Problem getting index of SDDS columns (dump_watch_parameters)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
+    if (spinCoordOffset && (Cspx_index = SDDS_GetColumnIndex(watch->SDDS_table, "Cspx")) < 0) {
+      SDDS_SetError("Problem getting index of SDDS columns (dump_watch_parameters)");
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    }
     for (i = 0; i < 6; i++) {
       if (!SDDS_SetRowValues(watch->SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, sample,
                              Cx_index + i, sums->centroid[i],
                              -1)) {
         SDDS_SetError("Problem setting row values for SDDS table (dump_watch_parameters)");
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+      }
+    }
+    if (spinCoordOffset) {
+      for (i=0; i<3; i++) {
+	if (!SDDS_SetRowValues(watch->SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, sample,
+			       Cspx_index+i, sums->spinSums->centroid[i], -1)) {
+          SDDS_SetError("Problem setting row values for SDDS table (dump_watch_parameters)");
+          SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+	}
       }
     }
   }
@@ -1035,6 +1140,18 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
           SDDS_SetError("Problem setting row values for SDDS table (dump_watch_parameters)");
           SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
         }
+      }
+      if (spinCoordOffset) {
+        long j, offset=3;
+        for (i=0; i<3; i++) {
+	  for (j=i; j<3; j++, offset++) {
+	    if (!SDDS_SetRowValues(watch->SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, sample,
+				   Cspx_index+offset, sums->spinSums->sigma[i][j], -1)) {
+              SDDS_SetError("Problem setting row values for SDDS table (dump_watch_parameters)");
+              SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+	    }
+	  }
+	}
       }
       if (!SDDS_SetRowValues(watch->SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, sample,
                              ex_index, emit[0],
@@ -1212,7 +1329,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
   fflush(stdout);
 #endif
   freeBeamSums(sums, 1);
-}
+  }
 
 void dump_watch_FFT(WATCH *watch, long step, long pass, long n_passes, double **particle, long particles,
                     long original_particles, double Po, double revolutionLength) {
@@ -1600,7 +1717,12 @@ void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, long particles,
       if (!SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, i,
                              0, particle[i][0], 1, particle[i][1], 2, particle[i][2], 3, particle[i][3],
                              4, particle[i][4] / (c_mks * p / sqrt(sqr(p) + 1)), 5, p,
-                             6, (uint64_t)particle[i][6], -1)) {
+                             6, (uint64_t)particle[i][6], -1) ||
+	  (spinCoordOffset>0 &&
+	  !SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, i,
+                             7, particle[i][spinCoordOffset+0], 8, particle[i][spinCoordOffset+1],
+			     9, particle[i][spinCoordOffset+2],
+                             -1))) {
         SDDS_SetError("Problem setting SDDS row values (dump_phase_space)");
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
       }
@@ -1640,7 +1762,7 @@ static int comp_IDs1(const void **coord1, const void **coord2) {
 
 void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral, double **particle, long particles,
 			 long step, double length) {
-  long i, row, badPID;
+  long i, row, badPID, spxIndex=-1;
 #if USE_MPI && MPI_DEBUG
   printf("dump_lost_particles: running\n");
   fflush(stdout);
@@ -1715,6 +1837,12 @@ void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral
   fflush(stdout);
 #endif
 
+  if (spinCoordOffset) {
+    if ((spxIndex=SDDS_GetColumnIndex(SDDS_table, "spx"))<0) {
+      SDDS_SetError("Problem finding column index for spx (dump_lost_particles)");
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    }
+  }
   if (!SDDS_StartTable(SDDS_table, particles)) {
     SDDS_SetError("Problem starting SDDS table (dump_lost_particles)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -1739,7 +1867,18 @@ void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral
                                9, particle[i][globalLossCoordOffset + 1],
                                10, particle[i][globalLossCoordOffset + 2],
                                -1)) {
-          SDDS_SetError("Problem setting SDDS row values (dump_lost_particles)");
+          SDDS_SetError("Problem setting SDDS row values for global coordinates (dump_lost_particles)");
+          SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+        }
+      }
+      if (spinCoordOffset) {
+        /* spin coordinates are available */
+        if (!SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row,
+                               spxIndex+0, particle[i][spinCoordOffset + 0],
+                               spxIndex+1, particle[i][spinCoordOffset + 1],
+                               spxIndex+2, particle[i][spinCoordOffset + 2],
+                               -1)) {
+          SDDS_SetError("Problem setting SDDS row values for spin (dump_lost_particles)");
           SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
         }
       }
@@ -1781,9 +1920,9 @@ void dump_centroid(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline,
   ELEMENT_LIST *eptr, *eptrLast;
   double *cent;
   char *name, *type_name;
-  long s_index, Cx_index = -1, occurence, type;
+  long s_index, Cx_index = -1, occurence, type, Cspx_index=-1;
   long wIndex = -1;
-  
+
 #if USE_MPI
   if (myid < 0)
     MPI_Comm_rank(MPI_COMM_WORLD, &myid);
@@ -1804,7 +1943,11 @@ void dump_centroid(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline,
     SDDS_SetError("Problem getting index of SDDS columns (dump_centroid)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
-
+  if (spinCoordOffset &&
+      (Cspx_index=SDDS_GetColumnIndex(SDDS_table, "Cspx"))<0) {
+    SDDS_SetError("Problem getting index of SDDS spin columns (dump_centroid)");
+    SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  }
   if (!SDDS_StartTable(SDDS_table, n_elements + 1)) {
     SDDS_SetError("Problem starting SDDS table (dump_centroid)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -1842,6 +1985,16 @@ void dump_centroid(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline,
       for (j = 0; j < 6; j++)
         cent[j] = 0;
     if (!bpmsOnly || type == T_MONI || type == T_HMON || type == T_VMON) {
+      if (spinCoordOffset) {
+	if (!SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row,
+			       Cspx_index+0, beam->spinSums->centroid[0],
+			       Cspx_index+1, beam->spinSums->centroid[1],
+			       Cspx_index+2, beam->spinSums->centroid[2],
+			       -1)) {
+          SDDS_SetError("Problem setting spin row values for SDDS table (dump_centroid)");
+          SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+	}
+      }
       if (!SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row,
                              Cx_index, cent[0], Cx_index + 1, cent[1], Cx_index + 2, cent[2],
                              Cx_index + 3, cent[3], Cx_index + 4, cent[4], Cx_index + 5, cent[5],
@@ -1915,7 +2068,7 @@ void dump_sigma(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline, lo
   double emit, emitNorm, emitc, emitcNorm, beta, alpha;
   char *name, *type_name;
   long s_index = 0, ma1_index = 0, min1_index = 0, max1_index = 0, Sx_index = 0, occurence, ex_index = 0, betax_index = 0;
-  long sNIndex[7] = {0, 0, 0, 0, 0, 0, 0};
+  long sNIndex[7] = {0, 0, 0, 0, 0, 0, 0}, spinIndex=-1;
 
 #if USE_MPI
   if (myid < 0)
@@ -1947,7 +2100,12 @@ void dump_sigma(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline, lo
     SDDS_SetError("Problem getting index of SDDS columns (dump_sigma)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
-
+  if (spinCoordOffset &&
+      (spinIndex=SDDS_GetColumnIndex(SDDS_table, "Sspxx"))<0) {
+    SDDS_SetError("Problem getting index of SDDS spin-related columns (dump_sigma)");
+    SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  }
+  
   if (!SDDS_StartTable(SDDS_table, n_elements + 1)) {
     SDDS_SetError("Problem starting SDDS table (dump_sigma)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -1987,7 +2145,17 @@ void dump_sigma(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline, lo
           }
         }
       }
-
+      if (spinCoordOffset) {
+	for (i=offset=0; i<3; i++) {
+	  for (j=i; j<3; j++, offset++) {
+	    if (!SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, ie,
+				   spinIndex+offset, beam->spinSums->sigma[i][j], -1)) {
+              SDDS_SetError("Problem setting SDDS spin row values");
+              SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+	    }
+	  }
+	}
+      }
       /* Set values for maximum amplitudes of coordinates */
       for (i = 0; i < 7; i++) {
         if (!SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, ie, ma1_index + i, beam->beamSums2->maxabs[i], -1)) {
@@ -2355,21 +2523,3 @@ void computeEmitTwissFromSigmaMatrix(double *emit, double *emitc, double *beta, 
   }
 }
 
-long memoryUsage()
-/* Memory used across all cores */
-{
-  long memoryUsed;
-#if USE_MPI
-  long memoryUsedTotal;
-#endif
-
-  memoryUsed = memory_count();
-
-#if USE_MPI
-  /* collect memory information from all cores */
-  MPI_Allreduce(&memoryUsed, &memoryUsedTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-  memoryUsed = memoryUsedTotal;
-#endif
-
-  return memoryUsed;
-}
