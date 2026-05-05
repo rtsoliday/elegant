@@ -394,9 +394,14 @@ long fmultipole_tracking(
   if (multipole->dx || multipole->dy || multipole->dz) {
     offsetBeamCoordinatesForMisalignment(particle, n_part, multipole->dx, multipole->dy, multipole->dz);
   }
-  if (multipole->tilt)
+  if (multipole->tilt) {
     rotateBeamCoordinatesForMisalignment(particle, n_part, multipole->tilt);
-
+    /*
+    if (spinCoordOffset)
+      rotateSpinsCoordinateSystem(particle, n_part, multipole->tilt);
+    */
+  }
+  
   i_top = n_part - 1;
   multipoleKicksDone += (i_top + 1) * multData.orders * nSlices * 4;
   for (i_part = 0; i_part <= i_top; i_part++) {
@@ -436,8 +441,13 @@ long fmultipole_tracking(
   }
 
   /* Note that we undo misalignments for all particles, including lost particles */
-  if (multipole->tilt)
+  if (multipole->tilt) {
     rotateBeamCoordinatesForMisalignment(particle, n_part, -multipole->tilt);
+    /*
+    if (spinCoordOffset)
+      rotateSpinsCoordinateSystem(particle, n_part, -multipole->tilt);
+    */
+  }
   if (multipole->dx || multipole->dy || multipole->dz)
     offsetBeamCoordinatesForMisalignment(particle, n_part, -multipole->dx, -multipole->dy, -multipole->dz);
 
@@ -1086,6 +1096,8 @@ long multipole_tracking2(
 
   if (iSlice <= 0) {
     offsetParticlesForMisalignment(malignMethod, particle, n_part, dx, dy, dz, pitch, yaw, 0.0, tilt, 0.0, drift, 1);
+    if (spinCoordOffset && tilt)
+      rotateSpinsCoordinateSystem(particle, n_part, tilt);
 
     if (doEndDrift) {
       exactDrift(particle, n_part, lEnd);
@@ -1163,6 +1175,8 @@ long multipole_tracking2(
 
     if (dx || dy || dz || tilt || pitch || yaw) 
       offsetParticlesForMisalignment(malignMethod, particle, n_part, dx, dy, dz, pitch, yaw, 0.0, tilt, 0.0, drift, 2);
+    if (spinCoordOffset && tilt)
+      rotateSpinsCoordinateSystem(particle, n_part, -tilt);
   }
 
   if (freeMultData && multData->copy) {
@@ -1204,7 +1218,7 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
   long i_kick, step, imult, iOrder;
   double dsh;
   long maxOrder;
-  double *xpow, *ypow;
+  double *xpow, *ypow, rigidity;
 
   static double driftFrac2[2] = {
     0.5, 0.5};
@@ -1288,17 +1302,31 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
   for (int i = 0; i < 3; i++)
     KnLp[i] = KnL[i] / n_parts;
 
+  // The minus sign is because the sign of particleCharge*particleRelSign is positive for electrons
+  // There is no factor of (1+delta) here. See AOP-TN-2010-029, Rev. 2
+  rigidity = -Po*particleMass*c_mks/particleCharge*particleRelSign;
+
   if (i_part <= 0) {
     if (edgeMultData && edgeMultData->orders) {
       FILLX(x, xpow, maxOrder);
       FILLY(y, ypow, maxOrder);
+      delta_qx = delta_qy = 0;
       for (imult = 0; imult < edgeMultData->orders; imult++) {
-        DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
+        DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow, 
                                         edgeMultData->order[imult],
                                         edgeMultData->KnL[imult], 0);
-        DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
+        DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
                                         edgeMultData->order[imult],
                                         edgeMultData->JnL[imult], 1);
+      }
+      if (spinCoordOffset) {
+        /* apply spin rotation using delta_qx, deltay_qy */
+        if (!convertMomentaToSlopes(&xp, &yp, qx, qy, dp))
+          return 0;
+	updateSpinQuaternionLocalFS(coord+spinCoordOffset,
+				    rigidity*delta_qy/(drift/100.0), -rigidity*delta_qx/(drift/100.0), 0.0,
+				    x, y, xp, yp, drift/100.0, 0.0, Po*(1+dp),
+				    -particleCharge*particleRelSign, particleMass, particleAnomalousMagneticMoment);
       }
     }
   }
@@ -1310,6 +1338,7 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
     return 0;
 
   *dzLoss = 0;
+  delta_qx = delta_qy = 0;
   for (i_kick = 0; i_kick < n_parts; i_kick++) {
     if ((apData && !checkMultAperture(x + dx, y + dy, drift*i_kick, apData)) ||
         insideObstruction_xyz(x, xp, y, yp, coord[particleIDIndex],
@@ -1319,7 +1348,7 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
       coord[2] = y;
       return 0;
     }
-    delta_qx = delta_qy = 0;
+    delta_qx = delta_qy = dsh = 0;
     for (step = 0; step < nSubsteps; step++) {
       if (drift) {
         dsh = drift * driftFrac[step];
@@ -1351,18 +1380,18 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
                                            order[0], KnLp[0] * kickFrac[step], 0);
       }
       if (xkick)
-        DO_MKICKS_NORET(&qx, &qy, xpow, ypow, 0, -xkick * kickFrac[step], 0);
+        DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow, 0, -xkick * kickFrac[step], 0);
       if (ykick)
-        DO_MKICKS_NORET(&qx, &qy, xpow, ypow, 0, -ykick * kickFrac[step], 1);
+        DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow, 0, -ykick * kickFrac[step], 1);
       if (steeringMultData && steeringMultData->orders) {
         /* apply steering corrector multipoles */
         for (imult = 0; imult < steeringMultData->orders; imult++) {
           if (steeringMultData->KnL[imult])
-            DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
+            DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
                       steeringMultData->order[imult],
                       steeringMultData->KnL[imult] * xkick * kickFrac[step], 0);
           if (steeringMultData->JnL[imult])
-            DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
+            DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
                       steeringMultData->order[imult],
                       steeringMultData->JnL[imult] * ykick * kickFrac[step], 1);
         }
@@ -1372,13 +1401,13 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
         /* do kicks for spurious multipoles */
         for (imult = 0; imult < multData->orders; imult++) {
           if (multData->KnL && multData->KnL[imult]) {
-            DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
+            DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
                       multData->order[imult],
                       multData->KnL[imult] * kickFrac[step] / n_parts,
                       0);
           }
           if (multData->JnL && multData->JnL[imult]) {
-            DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
+            DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
                       multData->order[imult],
                       multData->JnL[imult] * kickFrac[step] / n_parts,
                       1);
@@ -1389,12 +1418,19 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
       if (!convertMomentaToSlopes(&xp, &yp, qx, qy, dp))
         return 0;
 
+      if (spinCoordOffset) {
+        /* apply spin rotation using delta_qx, deltay_qy */
+	updateSpinQuaternionLocalFS(coord+spinCoordOffset,
+				    rigidity*delta_qy/(2*dsh), -rigidity*delta_qx/(2*dsh), 0.0,
+				    x, y, xp, yp, 2*dsh, 0.0, Po*(1+dp),
+				    -particleCharge*particleRelSign, particleMass, particleAnomalousMagneticMoment);
+      }
+
       if ((rad_coef || isr_coef) && drift) {
         double deltaFactor, F2, dsFactor, dsISRFactor;
         qx /= (1 + dp);
         qy /= (1 + dp);
         deltaFactor = sqr(1 + dp);
-        /* delta_qx and delta_qy are for the last step and have kickFrac[step-1] included, so remove it */
         delta_qx /= kickFrac[step];
         delta_qy /= kickFrac[step];
 #if TURBO_RECIPROCALS
@@ -1437,13 +1473,21 @@ int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xk
     if (edgeMultData && edgeMultData->orders) {
       FILLX(x, xpow, maxOrder);
       FILLY(y, ypow, maxOrder);
+      delta_qx = delta_qy = 0;
       for (imult = 0; imult < edgeMultData->orders; imult++) {
-        DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
+        DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow, 
                                         edgeMultData->order[imult],
                                         edgeMultData->KnL[imult], 0);
-        DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
+        DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow, 
                                         edgeMultData->order[imult],
                                         edgeMultData->JnL[imult], 1);
+      }
+      if (spinCoordOffset) {
+        /* apply spin rotation using delta_qx, deltay_qy */
+	updateSpinQuaternionLocalFS(coord+spinCoordOffset,
+				    rigidity*delta_qy/(drift/100.0), -rigidity*delta_qx/(drift/100.0), 0.0,
+				    x, y, xp, yp, drift/100.0, 0.0, Po*(1+dp),
+				    -particleCharge*particleRelSign, particleMass, particleAnomalousMagneticMoment);
       }
     }
   }
