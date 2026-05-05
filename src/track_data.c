@@ -24,6 +24,7 @@ double particleCharge = e_mks;
 double particleMassMV = me_mev;
 double particleRadius = re_mks;
 double particleRelSign = 1; /* relative to electron */
+double particleAnomalousMagneticMoment = 0.00115965218128;
 long particleIsElectron = 1;
 
 /* A hash table for loading parameters effectively */
@@ -56,7 +57,8 @@ double sStart = 0;
 long trajectoryTracking = 0;
 
 long particleID = 1;
-int globalLossCoordOffset = -1; /* X, Z, thetaX of loss */
+int globalLossCoordOffset = 0; /* Index for (X, Z, thetaX) of loss. If zero, ignored. */
+int spinCoordOffset = 0; /* Index for (Sx, Sy, Sz). If zero, ignored */
 size_t sizeOfParticle = 0;
 /* This value may be larger than the initial value below if optional properties are stored */
 int totalPropertiesPerParticle = COORDINATES_PER_PARTICLE + BASIC_PROPERTIES_PER_PARTICLE;
@@ -207,6 +209,7 @@ char *entity_name[N_TYPES] = {
   "CORGPLATES",
   "BEDGE",
   "DQCOR",
+  "POLAR",
 };
 
 char *madcom_name[N_MADCOMS] = {
@@ -349,7 +352,9 @@ char *entity_text[N_TYPES] = {
   "A multi-segment straight longitudinal dipole magnet",
   "A pair of corrugated plates, commonly used as a dechirper in linacs.",
   "A simple dipole edge matrix",
-  "A canonically-integrated dipole/quadrupole corrector."};
+  "A canonically-integrated dipole/quadrupole corrector.",
+  "Sets polarization of a beam if spin-tracking is enabled"
+};
 
 QUAD quad_example;
 /* quadrupole physical parameters */
@@ -2527,6 +2532,17 @@ PARAMETER charge_param[N_CHARGE_PARAMS] = {
   {"ALLOW_TOTAL_CHANGE", NULL, IS_LONG, 0, (long)((char *)&charge_example.allowChangeWhileRunning), NULL, 0.0, 0, "If nonzero, allow total charge to change while tracking even if number of particles does not change.  Useful for ramping of charge."},
 };
 
+POLAR polar_example;
+/* POLARization physical parameters */
+PARAMETER polar_param[N_POLAR_PARAMS] = {
+  {"POLARIZATION", "", IS_DOUBLE, 0, (long)((char *)&polar_example.polarization), NULL, 0.0, 0, "desired polarization"},
+  {"VX", "", IS_DOUBLE, 0, (long)((char *)&polar_example.e[0]), NULL, 0.0, 0, "x component of vector for polarization direction"},
+  {"VY", "", IS_DOUBLE, 0, (long)((char *)&polar_example.e[1]), NULL, 0.0, 0, "y component of vector for polarization direction"},
+  {"VZ", "", IS_DOUBLE, 0, (long)((char *)&polar_example.e[2]), NULL, 0.0, 0, "z component of vector for polarization direction"},
+  {"MODE", "", IS_STRING, 0, (long)((char *)&polar_example.mode), "twostate", 0.0, 0, "mode of spin vector generation (twostate, narrowcone, widecone)"},
+  {"ON_PASS", NULL, IS_LONG, 0, (long)((char *)&polar_example.onPass), NULL, 0.0, 0, "If <0, polarization is unchanged; otherwise, pass on which polarization is changed."},
+};
+
 PFILTER pfilter_example;
 /* PFILTER physical parameters */
 PARAMETER pfilter_param[N_PFILTER_PARAMS] = {
@@ -4033,12 +4049,11 @@ ELEMENT_DESCRIPTION entity_description[N_TYPES] = {
   {N_QUAD_PARAMS, MAT_LEN | BACKTRACK | DIVIDE_OK | IS_MAGNET | MATRIX_TRACKING | GPU_SUPPORT, sizeof(QUAD), quad_param},
   {N_BEND_PARAMS, MAT_LEN | BACKTRACK | DIVIDE_OK | IS_MAGNET | MATRIX_TRACKING | GPU_SUPPORT, sizeof(BEND), sbend_param},
   {N_BEND_PARAMS, MAT_LEN | BACKTRACK | DIVIDE_OK | IS_MAGNET | MATRIX_TRACKING | GPU_SUPPORT, sizeof(BEND), rbend_param},
-  {N_DRIFT_PARAMS, MAT_LEN | BACKTRACK | DIVIDE_OK | MATRIX_TRACKING | GPU_SUPPORT, sizeof(DRIFT), drift_param},
+  {N_DRIFT_PARAMS, MAT_LEN | BACKTRACK | DIVIDE_OK | MATRIX_TRACKING | GPU_SUPPORT | SPIN_TRACKING, sizeof(DRIFT), drift_param},
   {N_SEXT_PARAMS, MAT_LEN | BACKTRACK | DIVIDE_OK | IS_MAGNET | MATRIX_TRACKING | GPU_SUPPORT, sizeof(SEXT), sext_param},
   {N_OCTU_PARAMS, MAT_LEN | DIVIDE_OK | IS_MAGNET | MATRIX_TRACKING | GPU_SUPPORT, sizeof(OCTU), octu_param},
   {N_MULT_PARAMS, MAT_LEN_NCAT | IS_MAGNET, sizeof(MULT), mult_param},
-  {N_SOLE_PARAMS, MAT_LEN | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | GPU_SUPPORT | BACKTRACK,
-   sizeof(SOLE), sole_param},
+  {N_SOLE_PARAMS, MAT_LEN | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | GPU_SUPPORT | BACKTRACK | SPIN_TRACKING, sizeof(SOLE), sole_param},
   {N_HCOR_PARAMS, MAT_LEN | IS_MAGNET | GPU_SUPPORT | HYBRID_TRACKING, sizeof(HCOR), hcor_param},
   {N_VCOR_PARAMS, MAT_LEN | IS_MAGNET | GPU_SUPPORT | HYBRID_TRACKING, sizeof(VCOR), vcor_param},
   {N_RFCA_PARAMS, MAT_LEN_NCAT | BACKTRACK | HAS_RF_MATRIX | MAY_CHANGE_ENERGY | MPALGORITHM | DIVIDE_OK | GPU_SUPPORT,
@@ -4066,18 +4081,18 @@ ELEMENT_DESCRIPTION entity_description[N_TYPES] = {
   {N_PEPPOT_PARAMS, MAT_LEN_NCAT, sizeof(PEPPOT), peppot_param},
   {N_ENERGY_PARAMS, MPALGORITHM | GPU_SUPPORT | BACKTRACK, sizeof(ENERGY), energy_param},
   {N_MAXAMP_PARAMS, GPU_SUPPORT | BACKTRACK, sizeof(MAXAMP), maxamp_param},
-  {N_ROTATE_PARAMS, HAS_MATRIX | BACKTRACK | GPU_SUPPORT, sizeof(ROTATE), rotate_param},
+  {N_ROTATE_PARAMS, HAS_MATRIX | BACKTRACK | GPU_SUPPORT |SPIN_TRACKING, sizeof(ROTATE), rotate_param},
   {N_TRCOUNT_PARAMS, UNIDIAGNOSTIC | NO_APERTURE, sizeof(TRCOUNT), trcount_param},
   {N_RECIRC_PARAMS, 0 | NO_APERTURE, sizeof(RECIRC), recirc_param},
   {N_QFRING_PARAMS, MAT_LEN | MATRIX_TRACKING, sizeof(QFRING), qfring_param},
   {N_SCRAPER_PARAMS, MAT_LEN_NCAT | BACKTRACK | GPU_SUPPORT, sizeof(SCRAPER), scraper_param},
   {N_CENTER_PARAMS, 0 | GPU_SUPPORT|MPALGORITHM, sizeof(CENTER), center_param},
-  {N_KICKER_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MPALGORITHM, sizeof(KICKER), kicker_param},
-  {N_KSEXT_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | GPU_SUPPORT | BACKTRACK,
+  {N_KICKER_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MPALGORITHM |SPIN_TRACKING, sizeof(KICKER), kicker_param},
+  {N_KSEXT_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | GPU_SUPPORT | BACKTRACK | SPIN_TRACKING,
    sizeof(KSEXT), ksext_param},
   {N_KSBEND_PARAMS, MAT_LEN_NCAT | IS_MAGNET | NO_DICT_OUTPUT,
    sizeof(KSBEND), ksbend_param},
-  {N_KQUAD_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | GPU_SUPPORT | BACKTRACK,
+  {N_KQUAD_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | GPU_SUPPORT | BACKTRACK | SPIN_TRACKING,
    sizeof(KQUAD), kquad_param},
   {N_MAGNIFY_PARAMS, HAS_MATRIX | MATRIX_TRACKING, sizeof(MAGNIFY), magnify_param},
   {N_SAMPLE_PARAMS, 0 | NO_APERTURE, sizeof(SAMPLE), sample_param},
@@ -4092,7 +4107,7 @@ ELEMENT_DESCRIPTION entity_description[N_TYPES] = {
   {N_RAMPP_PARAMS, MAY_CHANGE_ENERGY | MPALGORITHM, sizeof(RAMPP), rampp_param},
   {N_STRAY_PARAMS, MAT_LEN | MAT_CHW_ENERGY,
    sizeof(STRAY), stray_param},
-  {N_CSBEND_PARAMS, MAT_LEN_NCAT | IS_MAGNET | DIVIDE_OK | GPU_SUPPORT | BACKTRACK,
+  {N_CSBEND_PARAMS, MAT_LEN_NCAT | IS_MAGNET | DIVIDE_OK | GPU_SUPPORT | BACKTRACK | SPIN_TRACKING,
    sizeof(CSBEND), csbend_param},
   {N_TWMTA_PARAMS, MAT_LEN_NCAT | MPALGORITHM, sizeof(TWMTA), twmta_param},
   {N_MATTER_PARAMS, MAT_LEN | GPU_SUPPORT, sizeof(MATTER), matter_param},
@@ -4104,7 +4119,7 @@ ELEMENT_DESCRIPTION entity_description[N_TYPES] = {
   {N_BMAPXY_PARAMS, MAT_LEN_NCAT | IS_MAGNET, sizeof(BMAPXY), bmapxy_param},
   {N_ZTRANSVERSE_PARAMS, 0, sizeof(ZTRANSVERSE), ztransverse_param},
   {N_IBSCATTER_PARAMS, MPALGORITHM, sizeof(IBSCATTER), ibscatter_param},
-  {N_FMULT_PARAMS, MAT_LEN_NCAT | IS_MAGNET, sizeof(FMULT), fmult_param},
+  {N_FMULT_PARAMS, MAT_LEN_NCAT | IS_MAGNET | SPIN_TRACKING, sizeof(FMULT), fmult_param},
   {N_WAKE_PARAMS, MAY_CHANGE_ENERGY | BACKTRACK | MPALGORITHM | GPU_SUPPORT, sizeof(WAKE), wake_param},
   {N_TRWAKE_PARAMS, 0 | BACKTRACK | MPALGORITHM | GPU_SUPPORT, sizeof(TRWAKE), trwake_param},
   {N_TUBEND_PARAMS, 0, sizeof(TUBEND), tubend_param},
@@ -4138,27 +4153,25 @@ ELEMENT_DESCRIPTION entity_description[N_TYPES] = {
   {N_POLYNOMIALSERIES_PARAMS, MAT_LEN_NCAT | IS_MAGNET, sizeof(POLYNOMIALSERIES), polynomialSeries_param},
   {N_RFTM110_PARAMS, 0 | MPALGORITHM, sizeof(RFTM110), rftm110_param},
   {N_CWIGGLER_PARAMS, MAT_LEN_NCAT | IS_MAGNET | DIVIDE_OK, sizeof(CWIGGLER), cwiggler_param},
-  {N_EDRIFT_PARAMS, MAT_LEN_NCAT | DIVIDE_OK | GPU_SUPPORT | BACKTRACK, sizeof(EDRIFT), edrift_param},
+  {N_EDRIFT_PARAMS, MAT_LEN_NCAT | DIVIDE_OK | GPU_SUPPORT | BACKTRACK | SPIN_TRACKING, sizeof(EDRIFT), edrift_param},
   {N_SCMULT_PARAMS, NO_DICT_OUTPUT, sizeof(SCMULT), scmult_param},
   {N_ILMATRIX_PARAMS, HAS_RF_MATRIX | MAT_LEN_NCAT, sizeof(ILMATRIX), ilmatrix_param},
   {N_TSCATTER_PARAMS, 0, sizeof(TSCATTER), tscatter_param},
-  {N_KQUSE_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK,
-   sizeof(KQUSE), kquse_param},
+  {N_KQUSE_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | SPIN_TRACKING, sizeof(KQUSE), kquse_param},
   {N_UKICKMAP_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MPALGORITHM | BACKTRACK, sizeof(UKICKMAP), ukickmap_param},
   {N_MKICKER_PARAMS, MAT_LEN_NCAT | IS_MAGNET, sizeof(MKICKER), mkicker_param},
   {N_EMITTANCEELEMENT_PARAMS, MPALGORITHM, sizeof(EMITTANCEELEMENT), emittanceElement_param},
   {N_MHISTOGRAM_PARAMS, UNIPROCESSOR, sizeof(MHISTOGRAM), mhistogram_param},
   {N_FTABLE_PARAMS, MAT_LEN_NCAT | IS_MAGNET, sizeof(FTABLE), ftable_param},
-  {N_KOCT_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | BACKTRACK,
-   sizeof(KOCT), koct_param},
+  {N_KOCT_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | BACKTRACK | SPIN_TRACKING, sizeof(KOCT), koct_param},
   {N_MRADITEGRALS_PARAMS, 0, sizeof(MRADINTEGRALS), mRadIntegrals_param},
   {N_APPLE_PARAMS, MAT_LEN_NCAT | IS_MAGNET, sizeof(APPLE), apple_param},
   {N_MRFDF_PARAMS, MPALGORITHM, sizeof(MRFDF), mrfdf_param},
   {N_CORGPIPE_PARAMS, MAY_CHANGE_ENERGY | MPALGORITHM | MAT_LEN_NCAT, sizeof(CORGPIPE), corgpipe_param},
   {N_LRWAKE_PARAMS, MPALGORITHM, sizeof(LRWAKE), lrwake_param},
-  {N_EHCOR_PARAMS, MAT_LEN_NCAT | IS_MAGNET | BACKTRACK, sizeof(EHCOR), ehcor_param},
-  {N_EVCOR_PARAMS, MAT_LEN_NCAT | IS_MAGNET | BACKTRACK, sizeof(EVCOR), evcor_param},
-  {N_EHVCOR_PARAMS, MAT_LEN_NCAT | IS_MAGNET | BACKTRACK, sizeof(EHVCOR), ehvcor_param},
+  {N_EHCOR_PARAMS, MAT_LEN_NCAT | IS_MAGNET | BACKTRACK | SPIN_TRACKING, sizeof(EHCOR), ehcor_param},
+  {N_EVCOR_PARAMS, MAT_LEN_NCAT | IS_MAGNET | BACKTRACK | SPIN_TRACKING, sizeof(EVCOR), evcor_param},
+  {N_EHVCOR_PARAMS, MAT_LEN_NCAT | IS_MAGNET | BACKTRACK | SPIN_TRACKING, sizeof(EHVCOR), ehvcor_param},
   {N_BMAPXYZ_PARAMS, MAT_LEN_NCAT | IS_MAGNET, sizeof(BMAPXYZ), bmapxyz_param},
   {N_BRAT_PARAMS, MAT_LEN_NCAT | IS_MAGNET, sizeof(BRAT), brat_param},
   {N_BGGEXP_PARAMS, MAT_LEN_NCAT | IS_MAGNET, sizeof(BGGEXP), bggexp_param},
@@ -4181,7 +4194,8 @@ ELEMENT_DESCRIPTION entity_description[N_TYPES] = {
   {N_LGBEND_PARAMS, MAT_LEN_NCAT, sizeof(LGBEND), lgbend_param},
   {N_CORGPLATES_PARAMS, MAY_CHANGE_ENERGY | MPALGORITHM | MAT_LEN_NCAT, sizeof(CORGPLATES), corgplates_param},
   {N_BEDGE_PARAMS, HAS_MATRIX | MATRIX_TRACKING, sizeof(BEDGE), bedge_param},
-  {N_DQCOR_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | GPU_SUPPORT | BACKTRACK, sizeof(DQCOR), dqcor_param},
+  {N_DQCOR_PARAMS, MAT_LEN_NCAT | IS_MAGNET | MAT_CHW_ENERGY | DIVIDE_OK | GPU_SUPPORT | BACKTRACK | SPIN_TRACKING, sizeof(DQCOR), dqcor_param},
+  {N_POLAR_PARAMS, DONT_CONCAT | SPIN_TRACKING, sizeof(POLAR), polar_param},
 };
 
 void compute_offsets() {
