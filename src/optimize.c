@@ -1982,6 +1982,13 @@ static long tuneFootprintMem[20] = {
   -1,
 };
 
+static char *spin_name[3] = {
+  "Cspx", "Cspy", "Cspz",
+};
+static long spin_mem[3] = {
+  -1, -1, -1
+};
+
 int showTwissMemories(FILE *fp) {
   long i;
 
@@ -2652,6 +2659,15 @@ double optimization_function(double *value, long *invalid) {
 
     if (isMaster || !notSinglePart) { /* Only the master will execute the block */
       rpn_store_final_properties(final_property_value, final_property_values);
+      if (spinCoordOffset) {
+	int im;
+	if (spin_mem[0]==-1) {
+	  for (im=0; im<3; im++)
+	    spin_mem[im] = rpn_create_mem(spin_name[im], 0);
+	}
+	for (im=0; im<3; im++)
+	  rpn_store(output->sums_vs_z[output->n_z_points].spinSums->centroid[im], NULL, spin_mem[im]);
+      }
       if (optimization_data->matrix_order > 1 && !*invalid)
         rpnStoreHigherMatrixElements(M, &optimization_data->TijkMem,
                                      &optimization_data->UijklMem,
