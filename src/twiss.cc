@@ -3863,8 +3863,8 @@ long computeTunesFromTracking(double *tune, double *amp, VMATRIX *M, LINE_LIST *
 #endif
 
 #ifdef DEBUG
-  printf((char *)"In computeTunesFromTracking: turns=%ld, xAmp=%le, yAmp=%le, useMatrix=%ld\n",
-         turns, xAmplitude, yAmplitude, useMatrix);
+  printf((char *)"In computeTunesFromTracking: turns=%ld, xAmp=%le, yAmp=%le\n",
+         turns, xAmplitude, yAmplitude);
   fflush(stdout);
 #endif
   x = xp = y = yp = NULL;
