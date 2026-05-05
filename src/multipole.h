@@ -190,12 +190,6 @@ static void UNUSED apply_canonical_multipole_kicks_ret(double *restrict qx, doub
   double *coef = expansion_coefficients(order);
   double sum_Fx = 0, sum_Fy = 0;
 
-//  //even
-//  for (i = 0; i <= order; i += 2)
-//    sum_Fy += coef[i] * xpow[order - i] * ypow[i];
-//  //odd
-//  for (i = 1; i <= order; i += 2)
-//    sum_Fx += coef[i] * xpow[order - i] * ypow[i];
   for (long i = 0; i <= order; i += 1) {
     double f = coef[i] * xpow[order-i] * ypow[i];
     if (i & 1) {
