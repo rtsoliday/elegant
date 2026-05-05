@@ -218,7 +218,7 @@ endif
 MPI_CC = $(firstword $(wildcard \
            /usr/bin/mpicc \
            /usr/local/bin/mpicc \
-           /usr/local/oag/3rdParty/mpich-4.3.0/bin/mpicc \
+           /usr/local/oag/3rdParty/mpich-4.3.0/bin/mpicc.old \
            /usr/lib64/mpich/bin/mpicc \
            /usr/lib64/openmpi/bin/mpicc \
            /usr/lib64/mpi/gcc/mpich/bin/mpicc \
@@ -233,7 +233,7 @@ MPI_CCC = $(firstword $(wildcard \
            /usr/bin/mpicxx \
            /usr/local/bin/mpic++ \
            /usr/local/bin/mpicxx \
-           /usr/local/oag/3rdParty/mpich-4.3.0/bin/mpic++ \
+           /usr/local/oag/3rdParty/mpich-4.3.0/bin/mpic++.old \
            /usr/lib64/mpich/bin/mpic++ \
            /usr/lib64/mpich/bin/mpicxx \
            /usr/lib64/openmpi/bin/mpic++ \
@@ -310,7 +310,7 @@ ifeq ($(OS), Linux)
       MPI_CC :=MPICH_CC=$(CUSTOM_GCC_PATH)/bin/gcc $(MPI_CC)
       MPI_CCC :=MPICH_CXX=$(CUSTOM_GCC_PATH)/bin/g++ $(MPI_CCC)
     endif
-    ifeq ($(MPI_CC),/usr/local/oag/3rdParty/mpich-4.3.0/bin/mpicc)
+    ifeq ($(MPI_CC),/usr/local/oag/3rdParty/mpich-4.3.0/bin/mpicc.old)
       MPI_CC :=MPICH_CC=$(CUSTOM_GCC_PATH)/bin/gcc $(MPI_CC)
       MPI_CCC :=MPICH_CXX=$(CUSTOM_GCC_PATH)/bin/g++ $(MPI_CCC)
     endif
