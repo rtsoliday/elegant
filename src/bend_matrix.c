@@ -124,7 +124,7 @@ VMATRIX *bend_matrix(
     M = sbend_matrix(length, h, ha, n * h, beta * sqr(h), gamma * pow3(h), order);
   }
 #ifdef DEBUG
-  print_matrices(stdout, "pure bend matrix", M);
+  print_matrices(stdout, "pure bend matrix", M, 0.0);
 #endif
 
   if (edge_order == 0)
@@ -161,7 +161,7 @@ VMATRIX *bend_matrix(
   }
 
 #ifdef DEBUG
-  print_matrices(stdout, "concatentated bend matrix", M);
+  print_matrices(stdout, "concatentated bend matrix", M, 0.0);
 #endif
 
   tilt_matrices(M, tilt + etilt);
