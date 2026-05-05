@@ -178,7 +178,7 @@ void do_transport_analysis(
   long n_left, n_track, i, j, k, index, code;
   TRAJECTORY *clorb = NULL;
   double stepSize[6], maximumValue[6], sum2Difference, maxAbsDifference, difference;
-  VMATRIX *M;
+  VMATRIX *M = NULL;
   TWISS twiss;
   CHROM_DERIVS chromDeriv;
   double symCheck[3][2];
@@ -579,8 +579,10 @@ void do_transport_analysis(
 #if USE_MPI
   if (myid == 0) {
 #endif
-    free_matrices(M);
-    free(M);
+    if (M) {
+      free_matrices(M);
+      free(M);
+    }
     free_czarray_2d((void **)finalCoordCopy, n_track, totalPropertiesPerParticle);
 #if USE_MPI
   }
@@ -951,7 +953,7 @@ static FILE *fpdeb = NULL;
 VMATRIX *determineMatrixHigherOrder(RUN *run, ELEMENT_LIST *eptr, double *startingCoord, double *stepSize, long order) {
   double **initialCoord, **finalCoord, **coordError, **finalCopy;
   long n_track, i, j, n_left;
-  VMATRIX *M;
+  VMATRIX *M  = NULL;
   double defaultStep[6];
   double maximumValue[6];
   long ltmp1, ltmp2;
@@ -1602,7 +1604,7 @@ VMATRIX *determineMatrixHigherOrder(RUN *run, ELEMENT_LIST *eptr, double *starti
 
 #if USE_MPI
 #  ifdef DEBUG
-  print_matrices1(fpdeb, eptr->name, "%13.8e ", M);
+  print_matrices1(fpdeb, eptr->name, "%13.8e ", M, 0.0);
 #  endif
 #endif
 
@@ -2169,6 +2171,7 @@ void determineRadiationMatrix(VMATRIX *Mr, RUN *run, ELEMENT_LIST *eptr, double 
       for (j = 0; j < 6; j++)
         part[i][j] = 0;
     trackBGGExpansion(part, nPart, &bggexp, run->p_central, NULL, NULL);
+    sums.spinSums = NULL;
     sums.beamSums2 = tmalloc(sizeof(*(sums.beamSums2)));
     zero_beam_sums(&sums, 1);
     accumulate_beam_sums(&sums, part, nPart, run->p_central, 0.0, NULL, 0.0, 0.0, -1, -1, BEAM_SUMS_NOMINMAX);
