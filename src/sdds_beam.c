@@ -360,7 +360,6 @@ long new_sdds_beam(
             beam->particle[i_store][particleIDIndex] = particleID++;
             beam->particle[i_store][lossPassIndex] = -1;
             beam->particle[i_store][bunchIndex] = -1;
-            beam->particle[i_store][weightIndex] = 1;
           }
         }
         beam->n_to_track = i_store;
@@ -427,7 +426,6 @@ long new_sdds_beam(
           beam->particle[i_store][particleIDIndex] = beam->original[i][particleIDIndex];
           beam->particle[i_store][lossPassIndex] = -1;
           beam->particle[i_store][bunchIndex] = -1;
-          beam->particle[i_store][weightIndex] = 1;
         }
         beam->n_to_track = i_store;
 
@@ -495,7 +493,6 @@ long new_sdds_beam(
               beam->particle[j][particleIDIndex] = beam->original[i][particleIDIndex] + idup * n0Total;
             beam->particle[j][lossPassIndex] = -1;
             beam->particle[j][bunchIndex] = -1;
-            beam->particle[j][weightIndex] = 1;
             j++;
           }
 #ifdef MPI_DEBUG
@@ -732,7 +729,6 @@ long new_sdds_beam(
     }
 #if !USE_MPI
     printf("%d bunches present\n", (int)hcount(hashTable));
-#endif
 #if DEBUG
     printf("id:[%ld, %ld], b:[%ld, %ld]\n", minID, maxID, minBunch, maxBunch);
     hfirst(hashTable);
@@ -742,7 +738,6 @@ long new_sdds_beam(
         break;
     }
 #endif
-#if !USE_MPI
     hdestroy(hashTable);
 #endif
 
@@ -799,7 +794,7 @@ long get_sdds_particles(double ***particle,
   static char s[200];
   long indexID = -1;
   double *columnData;
-  long ic;
+  long ic, spinsPresent = 0;
 #if SDDS_MPI_IO
   long total_points = 0, total_rows;
   int32_t active = 0;
@@ -848,7 +843,6 @@ long get_sdds_particles(double ***particle,
           }
 
       input_initialized = 1;
-
       if (selection_parameter) {
         if ((i = SDDS_GetParameterIndex(&SDDS_input, selection_parameter)) < 0) {
           sprintf(s, "SDDS beam file %s does not contain selection parameter %s",
@@ -894,6 +888,21 @@ long get_sdds_particles(double ***particle,
             bombElegantVA("Column p in file %s is missing or units are not recognized.",
                           inputFile[inputFileIndex]);
         }
+	if (spinCoordOffset) {
+	  if (check_sdds_column(&SDDS_input, "spx", NULL) &&
+	      check_sdds_column(&SDDS_input, "spy", NULL) &&
+              check_sdds_column(&SDDS_input, "spz", NULL) ) {
+	    spinsPresent = 1;
+	  } else {
+	    if (spinsPresent) {
+	      bombElegant("Inconsistent spin data presence in multiple input files", NULL);
+	    } else {
+   	      printWarning("spin tracking enabled, but one or more of spx, spy, spz missing from input file---all are ignored", inputFile[inputFileIndex]);
+              fflush(stdout);
+	      spinsPresent = 0;
+	    }
+	  }
+	}
       }
       printf("File %s opened and checked.\n", inputFile[inputFileIndex]);
       fflush(stdout);
@@ -1029,6 +1038,19 @@ long get_sdds_particles(double ***particle,
             } else if (input_type_code != SPIFFE_BEAM)
               for (i = np; i < np_new; i++)
                 data[i][particleIDIndex] = particleID++;
+	    if (spinsPresent && spinCoordOffset) {
+	      char *spinColumn[3] = {"spx", "spy", "spz"};
+	      for (ic=0; ic<3; ic++) {
+		if (!(columnData = SDDS_GetColumnInDoubles(&SDDS_input, spinColumn[ic]))) {
+                  sprintf(s, "Problem getting column %s for file %s", spinColumn[ic], inputFile[inputFileIndex]);
+                  SDDS_SetError(s);
+                  SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+		}
+		for (i=np; i<np_new; i++)
+		  data[i][spinCoordOffset+ic] = columnData[i-np];
+		free(columnData);
+	      }
+	    }
 #if SDDS_MPI_IO
           } /* End of active */
         }   /* End of isSlave */
