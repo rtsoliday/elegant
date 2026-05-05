@@ -113,9 +113,9 @@ static SDDS_DEFINITION parameter_definition[N_PARAMETERS] = {
   {"e3", "&parameter name=e3, symbol=\"$ge$r$b3$n\", type=double, units=m,  description=\"Emittance of mode 3\" &end"},
   {"IBSIteration", "&parameter name=IBSIteration, type=short, description=\"Number of IBS iterations performed\" &end"},
   {"IBSIterations", "&parameter name=IBSIterations, type=short, description=\"Number of IBS iterations requested\" &end"},
-  {"e1Convergence", "&parameter name=e1Convergence, symbol=\"$gDe$r$b1$n/$ge$r$b1$n\", type=double, units=m,  description=\"Convergence for IBS for emittance of mode 1\" &end"},
-  {"e2Convergence", "&parameter name=e2Convergence, symbol=\"$gDe$r$b2$n/$ge$r$b2$n\", type=double, units=m,  description=\"Convergence for IBS for emittance of mode 2\" &end"},
-  {"e3Convergence", "&parameter name=e3Convergence, symbol=\"$gDe$r$b3$n/$ge$r$b3$n\", type=double, units=m,  description=\"Convergence for IBS for emittance of mode 3\" &end"},
+  {"e1Convergence", "&parameter name=e1Convergence, symbol=\"$gDe$r$b1$n/$ge$r$b1$n\", type=double,  description=\"Convergence for IBS for emittance of mode 1\" &end"},
+  {"e2Convergence", "&parameter name=e2Convergence, symbol=\"$gDe$r$b2$n/$ge$r$b2$n\", type=double,  description=\"Convergence for IBS for emittance of mode 2\" &end"},
+  {"e3Convergence", "&parameter name=e3Convergence, symbol=\"$gDe$r$b3$n/$ge$r$b3$n\", type=double,  description=\"Convergence for IBS for emittance of mode 3\" &end"},
   {"Charge", "&parameter name=Charge, type=double, units=C, description=\"Charge if IBS included otherwise zero.\" &end"},
 };
 
@@ -1562,8 +1562,8 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
       eptr->coulombLog = coulombLog;
       
 #ifdef DEBUG
-      printf("particleCharge = %le, charge = %le, Gamma = %le, CL = %le \n => Ci = %le\n",
-	     particleCharge, charge,  Gamma, coulombLog, Ci);
+      printf("particleCharge = %le, charge = %le, CL = %le \n => Ci = %le\n",
+	     particleCharge, charge,  coulombLog, Ci);
 #endif
       
       /* 7. Compute d<wi^2>/dt for i=1,2,3 (Eq. 65) */
