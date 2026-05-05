@@ -147,6 +147,13 @@ void rotateCoordinatesForMisalignment(double *coord, double angle) {
   coord[2] = -x * sin_a + y * cos_a;
   coord[1] = xp * cos_a + yp * sin_a;
   coord[3] = -xp * sin_a + yp * cos_a;
+  if (spinCoordOffset) {
+    double Sx, Sy;
+    Sx = coord[spinCoordOffset+0];
+    Sy = coord[spinCoordOffset+1];
+    coord[spinCoordOffset+0] =  Sx * cos_a + Sy * sin_a;
+    coord[spinCoordOffset+1] = -Sx * sin_a + Sy * cos_a;
+  }
 }
 
 /* We rotate the coordinates of a beam to implement the rotation of the upcoming element by the given angle.
@@ -184,6 +191,16 @@ void rotateBeamCoordinatesForMisalignment(double **part, long np, double angle) 
     coord[2] = -x * sin_a + y * cos_a;
     coord[1] = xp * cos_a + yp * sin_a;
     coord[3] = -xp * sin_a + yp * cos_a;
+  }
+  if (spinCoordOffset) {
+    double Sx, Sy;
+    for (i = 0; i < np; i++) {
+      coord = part[i];
+      Sx = coord[spinCoordOffset+0];
+      Sy = coord[spinCoordOffset+1];
+      coord[spinCoordOffset+0] =  Sx * cos_a + Sy * sin_a;
+      coord[spinCoordOffset+1] = -Sx * sin_a + Sy * cos_a;
+    }
   }
 }
 
