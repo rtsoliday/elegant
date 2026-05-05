@@ -93,7 +93,7 @@ void log_entry(const char *routine) {
   }
 
   if (trace_mode & TRACE_MEMORY_LEVEL)
-    memory_level = memory_count();
+    memory_level = memoryUsage();
 
   if (trace_mode & TRACE_ENTRY) {
     /* keep track of calls in a file and in an internal list */
@@ -140,7 +140,7 @@ void log_exit(const char *routine) {
 
   in_trace_routine = 2;
   if (trace_mode & TRACE_MEMORY_LEVEL) {
-    memlev = memory_count();
+    memlev = memoryUsage();
     if (memlev != memory_level) {
       fprintf(fpmem, "memory changed to %ld inside %s\n", memlev,
               routine_name[trace_level - 1] ? routine_name[trace_level - 1] : "{NULL}");
@@ -235,4 +235,25 @@ void printMessageAndTime(FILE *fp, char *message) {
   fprintf(fp, "%s: %s", tString, message);
   fflush(fp);
   free(tString);
+}
+
+long memoryUsage()
+/* Memory used across all cores */
+{
+  long memoryUsed;
+
+  memoryUsed = memory_count();
+
+#if USE_MPI
+  return memoryUsed;
+  /* collect memory information from all cores---unfortunately, this can sometimes hang
+     because in some contexts and processor may finish its work and exit a loop to wait
+     for other processors
+  long memoryUsedTotal;
+  MPI_Allreduce(&memoryUsed, &memoryUsedTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  memoryUsed = memoryUsedTotal;
+ */
+#endif
+
+  return memoryUsed;
 }
