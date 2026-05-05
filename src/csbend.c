@@ -62,7 +62,7 @@ VTS void addRadiationKick(double *Qx, double *Qy, double *dPoP, double *sigmaDel
                       double normalizedCriticalEnergy, double Po);
 VTS double pickNormalizedPhotonEnergy(double RN);
 
-VTS long integrate_csbend_ordn(double *Qf, double *Qi, double *sigmaDelta2, double s, long n, long i, double rho0, double p0,
+VTS long integrate_csbend_ordn(double *Qf, double *Qi, double *sigmaDelta2, double *S, double s, long n, long i, double rho0, double p0,
                            double *dz_lost, MULT_APERTURE_DATA *apData, short integration_order, ELEMENT_LIST *eptr);
 VTS long integrate_csbend_ordn_expanded(double *Qf, double *Qi, double *sigmaDelta2, double s, long n, long i, double rho0, double p0,
                                     double *dz_lost, MULT_APERTURE_DATA *apData, short integration_order, ELEMENT_LIST *eptr);
@@ -101,6 +101,8 @@ static void computeCSBENDFields(double *restrict Fx, double *restrict Fy, const 
   double sumFx = 0, sumFy = 0;
   long i, j;
 
+  // B[xy] is H*F[xy]/rho0
+  
   if (!hasSkew && !hasNormal) {
     *Fx = 0;
     *Fy = 1;
@@ -764,7 +766,7 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
   double dcoord_etilt[6];
   double dxi, dyi, dzi;
   double dxf, dyf, dzf;
-  double delta_xp;
+  double delta_xp, xp0, yp0;
   double e1_kick_limit, e2_kick_limit;
   MULT_APERTURE_DATA apertureData;
 
@@ -1169,6 +1171,19 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
       yp = -coord[1] * sin_ttilt + coord[3] * cos_ttilt;
       s = coord[4];
       dp = dp0 = coord[5];
+      if (spinCoordOffset) {
+	/* rotate spin into magnet coordinate system */
+	/*
+	fprintf(stderr, "Rotating spins by %le (%le, %le)\n", ttilt, cos_ttilt, sin_ttilt);
+	fprintf(stderr, "Before: (%le, %le, %le)\n", coord[spinCoordOffset+0], coord[spinCoordOffset+1],
+		coord[spinCoordOffset+2]);
+	*/
+	rotateSpinCoordinateSystem(coord+spinCoordOffset, cos_ttilt, sin_ttilt);
+	/*
+	fprintf(stderr, "After : (%le, %le, %le)\n", coord[spinCoordOffset+0], coord[spinCoordOffset+1],
+		coord[spinCoordOffset+2]);
+	*/
+      }
     } else {
       x = coord[0];
       y = coord[2];
@@ -1180,9 +1195,12 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
 
     if (iSlice <= 0) {
       if (csbend->edgeFlags & BEND_EDGE1_EFFECTS) {
+        delta_xp = 0;
+        xp0 = xp;
+        yp0 = yp;
+        rho = (1 + dp) * rho_actual;
         if (csbend->edge_order <= 1 && csbend->edge_effects[csbend->e1Index] == 1) {
           /* apply edge focusing, nonsymplectic method */
-          rho = (1 + dp) * rho_actual;
           delta_xp = tan(e1) / rho * x;
           if (e1_kick_limit > 0 && fabs(delta_xp) > e1_kick_limit)
             delta_xp = SIGN(delta_xp) * e1_kick_limit;
@@ -1190,7 +1208,6 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
           yp -= tan(e1 - psi1 / (1 + dp)) / rho * y;
         } else if (csbend->edge_order >= 2 && csbend->edge_effects[csbend->e1Index] == 1) {
           /* apply edge focusing, nonsymplectic method */
-          rho = (1 + dp) * rho_actual;
           apply_edge_effects(&x, &xp, &y, &yp, rho, n, e1, he1, psi1 * (1 + dp), -1);
         } else if (csbend->edge_effects[csbend->e1Index] == 2) {
           /* K. Hwang's approach */
@@ -1257,6 +1274,15 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
           s += Qf[4];
           dp = Qf[5];
         }
+        if (spinCoordOffset) {
+	  /* Use the kick values to infer the spin rotations */
+	  double P = Po*(1+coord[5]);
+	  double gamma = sqrt(P*P+1);
+	  performQuaternionRotation(coord+spinCoordOffset,
+				    -(1+particleAnomalousMagneticMoment*gamma)*(yp-yp0),
+				    (1+particleAnomalousMagneticMoment*gamma)*(xp-xp0),
+				    -(1+particleAnomalousMagneticMoment)*y/rho);
+	}
       }
     }
 
@@ -1284,7 +1310,8 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
       particle_lost = !integrate_csbend_ordn_expanded(Qf, Qi, sigmaDelta2, csbend->length, csbend->nSlices, iSlice, rho0, Po, &dz_lost,
                                                       &apertureData, csbend->integration_order, eptr);
     else
-      particle_lost = !integrate_csbend_ordn(Qf, Qi, sigmaDelta2, csbend->length, csbend->nSlices, iSlice, rho0, Po, &dz_lost,
+      particle_lost = !integrate_csbend_ordn(Qf, Qi, sigmaDelta2, spinCoordOffset?coord+spinCoordOffset:NULL,
+					     csbend->length, csbend->nSlices, iSlice, rho0, Po, &dz_lost,
                                              &apertureData, csbend->integration_order, eptr);
 
     if (iSlice < 0 || iSlice == (csbend->nSlices - 1) || particle_lost) {
@@ -1362,15 +1389,17 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
     if (iSlice < 0 || iSlice == (csbend->nSlices - 1)) {
       if (csbend->edgeFlags & BEND_EDGE2_EFFECTS) {
         /* apply edge focusing */
+        delta_xp = 0;
+        xp0 = xp;
+        yp0 = yp;
+        rho = (1 + dp) * rho_actual;
         if (csbend->edge_order <= 1 && csbend->edge_effects[csbend->e2Index] == 1) {
-          rho = (1 + dp) * rho_actual;
           delta_xp = tan(e2) / rho * x;
           if (e2_kick_limit > 0 && fabs(delta_xp) > e2_kick_limit)
             delta_xp = SIGN(delta_xp) * e2_kick_limit;
           xp += delta_xp;
           yp -= tan(e2 - psi2 / (1 + dp)) / rho * y;
         } else if (csbend->edge_order >= 2 && csbend->edge_effects[csbend->e2Index] == 1) {
-          rho = (1 + dp) * rho_actual;
           apply_edge_effects(&x, &xp, &y, &yp, rho, n, e2, he2, psi2 * (1 + dp), 1);
         } else if (csbend->edge_effects[csbend->e2Index] == 2) {
           /* load input coordinates into arrays */
@@ -1434,6 +1463,15 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
           s += Qf[4];
           dp = Qf[5];
         }
+        if (spinCoordOffset) {
+	  /* Use the kick values to infer the spin rotations */
+	  double P = Po*(1+coord[5]);
+	  double gamma = sqrt(P*P+1);
+	  performQuaternionRotation(coord+spinCoordOffset,
+				    -(1+particleAnomalousMagneticMoment*gamma)*(yp-yp0),
+				    (1+particleAnomalousMagneticMoment*gamma)*(xp-xp0),
+				    -(1+particleAnomalousMagneticMoment)*y/rho);
+	}
       }
     }
 
@@ -1448,6 +1486,19 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
       coord[0] += dxf + dzf * coord[1];
       coord[2] += dyf + dzf * coord[3];
       coord[4] += dzf * sqrt(1 + sqr(coord[1]) + sqr(coord[3]));
+      if (spinCoordOffset) {
+	/* rotate spin out of  magnet coordinate system */
+	/*
+	fprintf(stderr, "Derotating spins by %le (%le, %le)\n", -ttilt, cos_ttilt, -sin_ttilt);
+	fprintf(stderr, "Before: (%le, %le, %le)\n", coord[spinCoordOffset+0], coord[spinCoordOffset+1],
+		coord[spinCoordOffset+2]);
+	*/
+	rotateSpinCoordinateSystem(coord+spinCoordOffset, cos_ttilt, -sin_ttilt);
+	/*
+	fprintf(stderr, "After : (%le, %le, %le)\n", coord[spinCoordOffset+0], coord[spinCoordOffset+1],
+		coord[spinCoordOffset+2]);
+	*/
+      }
     } else {
       coord[0] = x;
       coord[2] = y;
@@ -1516,6 +1567,7 @@ long integrate_csbend_ordn(
   double *Qf,                 /* final coordinates */
   double *Qi,                 /* initial coordinates */
   double *sigmaDelta2,        /* accumulate the energy spread increase for propagation of radiation matrix */
+  double *spin,               /* if not NULL, three-component spin vector */
   double s,                   /* arc length */
   long n,                     /* number of slices */
   long iSlice,                         /* If <0, integrate the full magnet. If >=0, integrate just a single part and return.
@@ -1533,6 +1585,7 @@ long integrate_csbend_ordn(
   double sine, cosi, tang;
   double sin_phi, cos_phi;
   //APCONTOUR *apContour;
+  double fieldConversion;
 
   static double driftFrac2[2] = {
     0.5, 0.5};
@@ -1596,6 +1649,9 @@ long integrate_csbend_ordn(
 #define S Qf[4]
 #define DPoP Qf[5]
 
+  /* Factor to convert the normalzed field values (Fx,Fy) to (Bx, By) */  
+  fieldConversion = -1/rho0/(particleCharge/(particleMass*c_mks*p0));
+  
   if (refTrajectoryMode && refTrajectoryPoints != n)
     bombElegant("Problem with recorded reference trajectory for CSBEND element---has wrong number of points\n", NULL);
   if (!Qf)
@@ -1680,6 +1736,14 @@ long integrate_csbend_ordn(
       QX += -ds * (1 + X / rho0) * Fy / rho_actual;
       QY += ds * (1 + X / rho0) * Fx / rho_actual;
 #endif
+
+      if (spin) {
+	/* --do spin, if needed */
+	updateSpinQuaternionLocalFS(spin, Fx*fieldConversion, Fy*fieldConversion, 0, X, Y, QX, QY, ds, 1/rho0,
+				    p0*(1+DPoP),  -particleCharge*particleRelSign,
+				    particleMass, particleAnomalousMagneticMoment);
+      }
+      
       if (rad_coef || isrConstant) {
         if (!distributionBasedRadiation) {
 #if TURBO_RECIPROCALS
@@ -1999,7 +2063,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   double angle, e1, e2, Kg;
   double psi1, psi2;
   double Qi[6], Qf[6];
-  double dcoord_etilt[6];
+  double dcoord_etilt[MAX_PROPERTIES_PER_PARTICLE];
   double dxi, dyi, dzi;
   double dxf, dyf, dzf;
   double delta_xp;
@@ -2273,12 +2337,13 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 
   if (isMaster) {
     if (csbend->particleOutputFile && strlen(csbend->particleOutputFile) && !csbend->particleFileActive) {
+      char *filename;
       /* set up SDDS output file for particle coordinates inside bend */
       csbend->particleFileActive = 1;
-      csbend->particleOutputFile = compose_filename(csbend->particleOutputFile, rootname);
+      filename = compose_filename(csbend->particleOutputFile, rootname);
       csbend->SDDSpart = tmalloc(sizeof(*(csbend->SDDSpart)));
       if (!SDDS_InitializeOutputElegant(csbend->SDDSpart, SDDS_BINARY, 1,
-                                        NULL, NULL, csbend->particleOutputFile) ||
+                                        NULL, NULL, filename) ||
           0 > SDDS_DefineParameter(csbend->SDDSpart, "SVNVersion", NULL, NULL, "SVN version number", NULL, SDDS_STRING, SVN_VERSION) ||
           !SDDS_DefineSimpleParameter(csbend->SDDSpart, "Pass", NULL, SDDS_LONG) ||
           !SDDS_DefineSimpleParameter(csbend->SDDSpart, "Kick", NULL, SDDS_LONG) ||
@@ -2296,16 +2361,18 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
         SDDS_SetError("Problem setting up particle output file for CSR");
         SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
       }
+      free(filename);
     }
   }
 
   if (isMaster) {
     if (csbend->histogramFile && strlen(csbend->histogramFile) && !csbend->wakeFileActive) {
       /* set up SDDS output file for CSR monitoring */
+      char *filename;
       csbend->wakeFileActive = 1;
-      csbend->histogramFile = compose_filename(csbend->histogramFile, rootname);
+      filename = compose_filename(csbend->histogramFile, rootname);
       csbend->SDDSout = tmalloc(sizeof(*(csbend->SDDSout)));
-      if (!SDDS_InitializeOutputElegant(csbend->SDDSout, SDDS_BINARY, 1, NULL, NULL, csbend->histogramFile) ||
+      if (!SDDS_InitializeOutputElegant(csbend->SDDSout, SDDS_BINARY, 1, NULL, NULL, filename) ||
           0 > SDDS_DefineParameter(csbend->SDDSout, "SVNVersion", NULL, NULL, "SVN version number", NULL, SDDS_STRING, SVN_VERSION) ||
           !SDDS_DefineSimpleParameter(csbend->SDDSout, "Pass", NULL, SDDS_LONG) ||
           !SDDS_DefineSimpleParameter(csbend->SDDSout, "Kick", NULL, SDDS_LONG) ||
@@ -2327,6 +2394,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
         SDDS_SetError("Problem setting up wake output file for CSR");
         SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
       }
+      free(filename);
     }
   }
   if (csbend->wakeFilterFile && strlen(csbend->wakeFilterFile) && !csbend->wffValues)
@@ -2468,7 +2536,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
             Qi[5] = DP;
             convertToDipoleCanonicalCoordinates(Qi, 0);
 
-            particleLost = !integrate_csbend_ordn(Qf, Qi, NULL, csbend->length / csbend->nSlices, 1, -1, rho0, Po, 
+            particleLost = !integrate_csbend_ordn(Qf, Qi, NULL, NULL, csbend->length / csbend->nSlices, 1, -1, rho0, Po, 
                                                   &dz_lost, &apertureData, csbend->integration_order, eptr);
 
             /* retrieve coordinates from arrays */
@@ -3457,8 +3525,10 @@ if (mode & CSRDRIFT_SALDIN54) {
     if (csrDrift->Saldin54Output) {
       long ix;
       if (!csrDrift->fpSaldin) {
-        csrDrift->Saldin54Output = compose_filename(csrDrift->Saldin54Output, rootname);
-        csrDrift->fpSaldin = fopen(csrDrift->Saldin54Output, "w");
+	char *filename;
+        filename = compose_filename(csrDrift->Saldin54Output, rootname);
+        csrDrift->fpSaldin = fopen(filename, "w");
+	free(filename);
         fprintf(csrDrift->fpSaldin, "SDDS1\n&column name=z, type=double &end\n&column name=Factor, type=double &end\n");
         fprintf(csrDrift->fpSaldin, "&data mode=ascii no_row_counts=1 &end\n");
       } else
@@ -5633,9 +5703,10 @@ void setUpCsbendPhotonOutputFile(CSBEND *csbend, char *rootname, long np) {
   photonLowEnergyCutoff = csbend->photonLowEnergyCutoff;
   getTrackingContext(&tc);
   if (!csbend->photonFileActive) {
-    csbend->photonOutputFile = compose_filename(csbend->photonOutputFile, rootname);
+    char *filename;
+    filename = compose_filename(csbend->photonOutputFile, rootname);
     csbend->SDDSphotons = tmalloc(sizeof(SDDS_DATASET));
-    if (!SDDS_InitializeOutputElegant(csbend->SDDSphotons, SDDS_BINARY, 1, NULL, NULL, csbend->photonOutputFile) ||
+    if (!SDDS_InitializeOutputElegant(csbend->SDDSphotons, SDDS_BINARY, 1, NULL, NULL, filename) ||
         0 > SDDS_DefineParameter(csbend->SDDSphotons, "Step", NULL, NULL, NULL, NULL, SDDS_LONG, NULL) ||
         0 > SDDS_DefineParameter(csbend->SDDSphotons, "SVNVersion", NULL, NULL, "SVN version number", NULL, SDDS_STRING, SVN_VERSION) ||
         0 > SDDS_DefineParameter(csbend->SDDSphotons, "Particles", NULL, NULL, "Number of charged particles", NULL, SDDS_LONG, NULL) ||
@@ -5651,6 +5722,7 @@ void setUpCsbendPhotonOutputFile(CSBEND *csbend, char *rootname, long np) {
       SDDS_SetError("Problem setting up photon output file for CSBEND");
       SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
     }
+    free(filename);
     csbend->photonFileActive = 1;
   }
   if (!SDDS_StartPage(csbend->SDDSphotons, 10000) ||
