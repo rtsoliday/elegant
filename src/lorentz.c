@@ -955,12 +955,13 @@ void lorentz_setup(
 #if !USE_MPI
     if (bmapxyz->particleOutputFile && !(bmapxyz->SDDSpo)) {
       TRACKING_CONTEXT tcontext;
+      char *filename;
       getTrackingContext(&tcontext);
       bmapxyz->SDDSpo = tmalloc(sizeof(*(bmapxyz->SDDSpo)));
       bmapxyz->poRow = 0;
-      bmapxyz->particleOutputFile = compose_filename(bmapxyz->particleOutputFile, tcontext.rootname);
+      filename = compose_filename(bmapxyz->particleOutputFile, tcontext.rootname);
       if (!SDDS_InitializeOutputElegant(bmapxyz->SDDSpo, SDDS_BINARY, 1,
-                                        NULL, NULL, bmapxyz->particleOutputFile) ||
+                                        NULL, NULL, filename) ||
           0 > SDDS_DefineParameter(bmapxyz->SDDSpo, "SVNVersion", NULL, NULL, "SVN version number", NULL, SDDS_STRING, SVN_VERSION) ||
           !SDDS_DefineSimpleParameter(bmapxyz->SDDSpo, "particleID", NULL, SDDS_ULONG64) ||
           !SDDS_DefineSimpleParameter(bmapxyz->SDDSpo, "pCentral", "m$be$nc", SDDS_DOUBLE) ||
