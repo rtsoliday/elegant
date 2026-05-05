@@ -36,6 +36,13 @@ BEAM_SUMS *allocateBeamSums(unsigned long flags, long nz) {
     for (i = 0; i < nz; i++)
       ptr[i].beamSums2 = NULL;
   }
+  if (spinCoordOffset) {
+    for (i=0; i<nz; i++)
+      ptr[i].spinSums = tmalloc(sizeof(SPIN_SUMS));
+  } else {
+    for (i=0; i<nz; i++)
+      ptr[i].spinSums = NULL;
+  }
   /* always compute beamSums2 for the final point */
   if (flags & CENTROID_SUMS_ONLY)
     ptr[nz - 1].beamSums2 = tmalloc(sizeof(BEAM_SUMS2));
@@ -44,9 +51,12 @@ BEAM_SUMS *allocateBeamSums(unsigned long flags, long nz) {
 
 void freeBeamSums(BEAM_SUMS *sums, long nz) {
   long i;
-  for (i = 0; i < nz; i++)
+  for (i = 0; i < nz; i++) {
     if (sums[i].beamSums2)
       free(sums[i].beamSums2);
+    if (sums[i].spinSums)
+      free(sums[i].spinSums);
+  }
   free(sums);
 }
 
@@ -275,6 +285,13 @@ void zero_beam_sums(
         for (k = 0; k < 7; k++)
           sums[i].beamSums2->sigma[j][k] = sums[i].beamSums2->sigman[j][k] = 0;
     }
+    if (sums[i].spinSums) {
+      for (j=0; j<3; j++)
+	sums[i].spinSums->centroid[j] = 0;
+      for (j=0; j<3; j++)
+	for (k=0; k<3; k++)
+	  sums[i].spinSums->sigma[j][k] = 0;
+    }
     for (j = 0; j < 7; j++)
       sums[i].centroid[j] = 0;
     sums[i].n_part = sums[i].z = sums[i].p0 = 0;
@@ -295,6 +312,7 @@ void accumulate_beam_sums(
   unsigned long flags) {
   long i_part, i, j;
   double centroid[7], centroidn[7], *timeCoord, *pz = NULL;
+  double spinCentroid[3];
   double value, Sij, Sijn;
   long npCount = 0;
   short *chosen = NULL;
@@ -308,6 +326,7 @@ void accumulate_beam_sums(
     {0, 0, 0, 0, 0, 0, 1}};
 #  ifdef USE_KAHAN
   double errorCen[7], errorCenn[7], errorSig, errorSign;
+  double spinErrorCen[3];
 #  endif
 
 #  ifdef HAVE_GPU
@@ -406,6 +425,29 @@ void accumulate_beam_sums(
     for (i_part = 0; i_part < n_part; i_part++)
       timeCoord[i_part] -= centroid[6];
 
+    if (spinCoordOffset) {
+      /* compute centroids for present beam and add in to existing centroid data */
+      for (i = 0; i < 3; i++) {
+#  ifdef USE_KAHAN
+        spinErrorCen[i] = 0.0;
+#  endif
+	spinCentroid[i] = 0.0;
+        for (i_part = 0; i_part < n_part; i_part++) {
+          if (chosen[i_part]) {
+#  ifndef USE_KAHAN
+	    spinCentroid[i] += coord[i_part][spinCoordOffset+i];
+#  else
+            spinCentroid[i] = KahanPlus(spinCentroid[i], coord[i_part][spinCoordOffset+i], &spinErrorCen[i]);
+#  endif
+	  }
+        }
+        if (npCount) {
+          sums->spinSums->centroid[i] = (sums->spinSums->centroid[i] * sums->n_part + spinCentroid[i]) / (sums->n_part + npCount);
+          spinCentroid[i] /= npCount;
+        }
+      }
+    }
+
     if (!(flags & BEAM_SUMS_NOMINMAX) && sums->beamSums2) {
       i = 4;
       for (i_part = 0; i_part < n_part; i_part++) {
@@ -480,6 +522,36 @@ void accumulate_beam_sums(
         }
       }
     }
+
+    if (sums->spinSums) {
+      /* compute Sigma[i][j] for present beam and add to existing data */
+      for (i = 0; i < 3; i++) {
+        for (j = i; j < 3; j++) {
+#  ifdef USE_KAHAN
+          double Y, b, SijOld;
+          errorSig = errorSign = 0.0;
+#  endif
+          Sij = 0;
+          for (i_part = 0; i_part < n_part; i_part++) {
+            if (chosen[i_part]) {
+              b = (coord[i_part][i+spinCoordOffset] - spinCentroid[i]) * (coord[i_part][j+spinCoordOffset] - spinCentroid[j]);
+#  ifndef USE_KAHAN
+              Sij += b;
+#  else
+              /* In-line KahanPlus to improve performance */
+              /* Sij = KahanPlus(Sij, b, &errorSig); */
+              Y = b + errorSig;
+              SijOld = Sij;
+              Sij += Y;
+              errorSig = Y - (Sij - SijOld);
+#  endif
+            }
+          }
+          sums->spinSums->sigma[i][j] = (sums->spinSums->sigma[i][j] * sums->n_part + Sij) / (sums->n_part + npCount);
+	  sums->spinSums->sigma[j][i] = sums->spinSums->sigma[i][j];
+        }
+      }
+    }
   }
 
   sums->charge = mp_charge * npCount;
@@ -520,6 +592,7 @@ void accumulate_beam_sums1(
   unsigned long flags) {
   long i_part, i, j;
   double centroid[7], *timeCoord;
+  double spinCentroid[3];
   double value;
   long active = 1;
   double Sij;
@@ -535,6 +608,7 @@ void accumulate_beam_sums1(
     {0, 0, 0, 0, 0, 0, 1}};
 #  ifdef USE_KAHAN
   double errorCen[7], errorSig[28];
+  double errorSpinCen[3]={0,0,0};
 #  endif
 
   if (!coord)
@@ -563,12 +637,18 @@ void accumulate_beam_sums1(
   double error_sum = 0.0, error_total = 0.0,
          **sumMatrixCen, **errorMatrixCen,
          **sumMatrixSig, **errorMatrixSig,
+         **sumMatrixSpinCen, **errorMatrixSpinCen,
          *sumArray, *errorArray;
   long k;
   sumMatrixCen = (double **)czarray_2d(sizeof(**sumMatrixCen), n_processors, 7);
   errorMatrixCen = (double **)czarray_2d(sizeof(**errorMatrixCen), n_processors, 7);
   sumMatrixSig = (double **)czarray_2d(sizeof(**sumMatrixSig), n_processors, 28);
   errorMatrixSig = (double **)czarray_2d(sizeof(**errorMatrixSig), n_processors, 28);
+  sumMatrixSpinCen = errorMatrixSpinCen = NULL;
+  if (spinCoordOffset) {
+    sumMatrixSpinCen = (double **)czarray_2d(sizeof(**sumMatrixSpinCen), n_processors, 3);
+    errorMatrixSpinCen = (double **)czarray_2d(sizeof(**errorMatrixSpinCen), n_processors, 3);
+  }
   sumArray = malloc(sizeof(double) * n_processors);
   errorArray = malloc(sizeof(double) * n_processors);
 #  endif
@@ -657,9 +737,40 @@ void accumulate_beam_sums1(
         }
       }
     }
-  }
+    if (spinCoordOffset) {    
+      /* compute spin centroids for present beam and add in to existing centroid data */
+      for (i = 0; i < 3; i++) {
+#  ifdef USE_KAHAN
+        errorSpinCen[i] = 0.0;
+#  endif
+	spinCentroid[i] = 0.0;
+        for (i_part = 0; i_part < n_part; i_part++) {
+          if (chosen[i_part]) {
+#  ifndef USE_KAHAN
+            spinCentroid[i] += coord[i_part][i+spinCoordOffset];
+#  else
+            spinCentroid[i] = KahanPlus(spinCentroid[i], coord[i_part][i+spinCoordOffset], &errorSpinCen[i]);
+#  endif
+          }
+        }
+        if (!notSinglePart && npCount) {
+          /* single-particle mode and this process has a particle */
+          sums->spinSums->centroid[i] = (sums->spinSums->centroid[i] * sums->n_part + spinCentroid[i]) / (sums->n_part + npCount);
+          spinCentroid[i] /= npCount;
+        }
+        if (notSinglePart && (parallelStatus != trueParallel) && isMaster) {
+          /* multi-particle mode and, but not true parallel mode, so master has the particles */
+          if (npCount) {
+            sums->spinSums->centroid[i] = (sums->spinSums->centroid[i] * sums->n_part + spinCentroid[i]) / (sums->n_part + npCount);
+            spinCentroid[i] /= npCount;
+          }
+        }
+      }
+    }
+  } /* active */
 
   if (notSinglePart) {
+    /* compute sums over processors */
     if (parallelStatus == trueParallel) {
       if (isMaster) {
         n_part = 0; /* All the particles have been distributed to the slave processors */
@@ -692,6 +803,38 @@ void accumulate_beam_sums1(
             sums->centroid[i] = (sums->centroid[i] * sums->n_part + centroid[i]) / (sums->n_part + npCount_total);
           centroid[i] /= npCount_total;
         }
+      if (spinCoordOffset) {
+        if (parallelStatus == trueParallel) {
+          if (isMaster) {
+            n_part = 0; /* All the particles have been distributed to the slave processors */
+            npCount = 0;
+            memset(spinCentroid, 0.0, sizeof(double) * 3);
+          }
+          /* compute centroid sum over processors */
+#  ifndef USE_KAHAN
+          MPI_Allreduce(spinCentroid, buffer, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+          memcpy(spinCentroid, buffer, sizeof(double) * 3);
+#  else
+          MPI_Allgather(spinCentroid, 3, MPI_DOUBLE, &sumMatrixSpinCen[0][0], 3, MPI_DOUBLE, MPI_COMM_WORLD);
+          /* compute error sum over processors */
+          MPI_Allgather(errorSpinCen, 3, MPI_DOUBLE, &errorMatrixSpinCen[0][0], 3, MPI_DOUBLE, MPI_COMM_WORLD);
+          for (i = 0; i < 3; i++) {
+            error_sum = 0.0;
+            spinCentroid[i] = 0.0;
+            /* extract the columnwise array from the matrix */
+            for (j = 1; j < n_processors; j++) {
+              spinCentroid[i] = KahanPlus(spinCentroid[i], sumMatrixSpinCen[j][i], &error_sum);
+              spinCentroid[i] = KahanPlus(spinCentroid[i], errorMatrixSpinCen[j][i], &error_sum);
+            }
+          }
+#  endif
+          if (npCount_total)
+            for (i = 0; i < 3; i++) {
+              sums->spinSums->centroid[i] = (sums->spinSums->centroid[i] * sums->n_part + spinCentroid[i]) / (sums->n_part + npCount_total);
+              spinCentroid[i] /= npCount_total;
+            }
+	}
+      }
     } else if (isMaster) {
       npCount_total = npCount;
     }
@@ -931,6 +1074,10 @@ void accumulate_beam_sums1(
   free_czarray_2d((void **)errorMatrixCen, n_processors, 7);
   free_czarray_2d((void **)sumMatrixSig, n_processors, 28);
   free_czarray_2d((void **)errorMatrixSig, n_processors, 28);
+  if (spinCoordOffset) {
+    free_czarray_2d((void **)sumMatrixSpinCen, n_processors, 3);
+    free_czarray_2d((void **)errorMatrixSpinCen, n_processors, 3);
+  }
   free(sumArray);
   free(errorArray);
 #  endif
