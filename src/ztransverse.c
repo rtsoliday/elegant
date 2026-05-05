@@ -599,21 +599,23 @@ void set_up_ztransverse(ZTRANSVERSE *ztransverse, RUN *run, long pass, long part
 #if (!USE_MPI)
   /* Only the serial version will dump this part of output */
   if (ztransverse->wakes) {
-    ztransverse->wakes = compose_filename(ztransverse->wakes, run->rootname);
+    char *filename;
+    filename = compose_filename(ztransverse->wakes, run->rootname);
     ztransverse->SDDS_wake = tmalloc(sizeof(*(ztransverse->SDDS_wake)));
     if (ztransverse->broad_band)
-      SDDS_ElegantOutputSetup(ztransverse->SDDS_wake, ztransverse->wakes, SDDS_BINARY,
+      SDDS_ElegantOutputSetup(ztransverse->SDDS_wake, filename, SDDS_BINARY,
                               1, "transverse wake",
                               run->runfile, run->lattice, wake_parameter, BB_WAKE_PARAMETERS,
                               wake_column, WAKE_COLUMNS, "set_up_ztransverse",
                               SDDS_EOS_NEWFILE | SDDS_EOS_COMPLETE);
     else {
-      SDDS_ElegantOutputSetup(ztransverse->SDDS_wake, ztransverse->wakes, SDDS_BINARY,
+      SDDS_ElegantOutputSetup(ztransverse->SDDS_wake, filename, SDDS_BINARY,
                               1, "transverse wake",
                               run->runfile, run->lattice, wake_parameter, NBB_WAKE_PARAMETERS,
                               wake_column, WAKE_COLUMNS, "set_up_ztransverse",
                               SDDS_EOS_NEWFILE | SDDS_EOS_COMPLETE);
     }
+    free(filename);
     ztransverse->SDDS_wake_initialized = 1;
   }
 #endif
