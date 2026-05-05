@@ -31,7 +31,7 @@ void processGlobalSettings(NAMELIST_TEXT *nltext) {
   parallel_tracking_based_matrices = parallelTrackingBasedMatrices;
   slope_limit = slopeLimit;
   coord_limit = coordLimit;
-
+  
   set_namelist_processing_flags(0);
   set_print_namelist_flags(0);
   if (processNamelist(&global_settings, nltext) == NAMELIST_ERROR)
@@ -40,6 +40,7 @@ void processGlobalSettings(NAMELIST_TEXT *nltext) {
   if (echoNamelists)
     print_namelist(stdout, &global_settings);
 
+  set_namelist_buffer_size(namelist_buffer_size_factor*16384);
   misalignmentMethod = malign_method;
   inhibitFileSync = inhibit_fsync;
   allowOverwrite = allow_overwrite;
