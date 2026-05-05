@@ -14,6 +14,7 @@
 
 #include "SDDS.h"
 #include "mdb.h"
+#include "scan.h"
 
 typedef struct {
   /* Floor-coordinate reference trajectory sample at arc length s. */
@@ -30,10 +31,15 @@ static int compare_floor_points(const void *item1, const void *item2) {
   return 0;
 }
 
-static char *USAGE = "centroid2floor <floorFile> <centroidFile> <outputFile>\n\n"
+#define SET_PIPE 0
+#define N_OPTIONS 1
+static char *option[N_OPTIONS] = {"pipe"};
+
+static char *USAGE = "centroid2floor <floorFile> [-pipe=[input][,output]] [<centroidFile>] [<outputFile>]\n\n"
                      "Converts centroid offsets from Frenet-Serret coordinates to global floor coordinates.\n"
                      "The floor file must provide columns s, X, Y, Z, theta, phi, psi.\n"
-                     "The centroid file must provide columns s, Cx, Cy; Cxp/Cyp are optional.\n\n"
+                     "The centroid file must provide columns s, Cx, Cy; Cxp/Cyp are optional.\n"
+                     "-pipe  Standard SDDS Toolkit pipe option.\n\n"
                      "Program by GPT-5.2-Codex and Michael Borland.\n";
 
 /*
@@ -156,24 +162,55 @@ int main(int argc, char **argv) {
   SDDS_DATASET SDDSfloor, SDDScen, SDDSout;
   char *floorFile, *centroidFile, *outputFile;
   long nFloor, rows, page;
-  long i, iFloor;
+  long i, i_arg, iFloor, tmpFileUsed;
+  SCANNED_ARG *s_arg;
+  unsigned long pipeFlags;
   int32_t hasCxp, hasCyp;
+  int32_t hasElementName, hasElementType, hasElementOccurence;
   FLOOR_POINT *floorPoint;
   /* Reference floor arrays from floorFile. */
   double *sFloor = NULL, *XFloor = NULL, *YFloor = NULL, *ZFloor = NULL, *thetaFloor = NULL, *phiFloor = NULL, *psiFloor = NULL;
   /* Centroid arrays from centroidFile. */
   double *sCen = NULL, *Cx = NULL, *Cy = NULL, *Cxp = NULL, *Cyp = NULL;
+  char **ElementName = NULL, **ElementType = NULL;
+  int32_t *ElementOccurence = NULL;
   /* Output global path arrays. */
   double *XOut, *YOut, *ZOut, *thetaOut, *thetaRefOut, *phiOut, *psiOut;
 
   SDDS_RegisterProgramName(argv[0]);
-
-  if (argc != 4)
+  argc = scanargs(&s_arg, argc, argv);
+  if (argc < 3)
     bomb(NULL, USAGE);
 
-  floorFile = argv[1];
-  centroidFile = argv[2];
-  outputFile = argv[3];
+  floorFile = centroidFile = outputFile = NULL;
+  pipeFlags = 0;
+
+  for (i_arg = 1; i_arg < argc; i_arg++) {
+    if (s_arg[i_arg].arg_type == OPTION) {
+      switch (match_string(s_arg[i_arg].list[0], option, N_OPTIONS, 0)) {
+      case SET_PIPE:
+        if (!processPipeOption(s_arg[i_arg].list + 1, s_arg[i_arg].n_items - 1, &pipeFlags))
+          SDDS_Bomb("invalid -pipe syntax");
+        break;
+      default:
+        fprintf(stderr, "error: unknown switch: %s\n", s_arg[i_arg].list[0]);
+        exit(1);
+      }
+    } else {
+      if (floorFile == NULL)
+        floorFile = s_arg[i_arg].list[0];
+      else if (centroidFile == NULL)
+        centroidFile = s_arg[i_arg].list[0];
+      else if (outputFile == NULL)
+        outputFile = s_arg[i_arg].list[0];
+      else
+        SDDS_Bomb("too many filenames");
+    }
+  }
+
+  if (!floorFile)
+    SDDS_Bomb("floor file must be given");
+  processFilenames("centroid2floor", &centroidFile, &outputFile, pipeFlags, 0, &tmpFileUsed);
 
   if (!SDDS_InitializeInput(&SDDSfloor, floorFile) || SDDS_ReadPage(&SDDSfloor) <= 0)
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -228,8 +265,11 @@ int main(int argc, char **argv) {
   if (!SDDS_InitializeInput(&SDDScen, centroidFile))
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
 
-  hasCxp = SDDS_GetColumnIndex(&SDDScen, "Cxp") >= 0;
-  hasCyp = SDDS_GetColumnIndex(&SDDScen, "Cyp") >= 0;
+  hasCxp = SDDS_CheckColumn(&SDDScen, "Cxp", NULL, SDDS_DOUBLE, stderr) == SDDS_CHECK_OKAY;
+  hasCyp = SDDS_CheckColumn(&SDDScen, "Cyp", NULL, SDDS_DOUBLE, stderr) == SDDS_CHECK_OKAY;
+  hasElementName = SDDS_CheckColumn(&SDDScen, "ElementName", NULL, SDDS_STRING, stderr) == SDDS_CHECK_OKAY;
+  hasElementType = SDDS_CheckColumn(&SDDScen, "ElementType", NULL, SDDS_STRING, stderr) == SDDS_CHECK_OKAY;
+  hasElementOccurence = SDDS_CheckColumn(&SDDScen, "ElementOccurence", NULL, SDDS_LONG, stderr) == SDDS_CHECK_OKAY;
 
   if (!SDDS_InitializeOutput(&SDDSout, SDDS_BINARY, 1,
                              "global beam path coordinates", "global beam path coordinates",
@@ -242,8 +282,15 @@ int main(int argc, char **argv) {
       !SDDS_DefineSimpleColumn(&SDDSout, "thetaRef", "radians", SDDS_DOUBLE) ||
       !SDDS_DefineSimpleColumn(&SDDSout, "theta", "radians", SDDS_DOUBLE) ||
       !SDDS_DefineSimpleColumn(&SDDSout, "phi", "radians", SDDS_DOUBLE) ||
-      !SDDS_DefineSimpleColumn(&SDDSout, "psi", "radians", SDDS_DOUBLE) ||
-      !SDDS_WriteLayout(&SDDSout))
+      !SDDS_DefineSimpleColumn(&SDDSout, "psi", "radians", SDDS_DOUBLE))
+    SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  if (hasElementName && !SDDS_DefineSimpleColumn(&SDDSout, "ElementName", NULL, SDDS_STRING))
+    SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  if (hasElementType && !SDDS_DefineSimpleColumn(&SDDSout, "ElementType", NULL, SDDS_STRING))
+    SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  if (hasElementOccurence && !SDDS_DefineSimpleColumn(&SDDSout, "ElementOccurence", NULL, SDDS_LONG))
+    SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  if (!SDDS_WriteLayout(&SDDSout))
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
 
   page = 0;
@@ -261,6 +308,15 @@ int main(int argc, char **argv) {
     if (hasCxp && !(Cxp = SDDS_GetColumnInDoubles(&SDDScen, "Cxp")))
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     if (hasCyp && !(Cyp = SDDS_GetColumnInDoubles(&SDDScen, "Cyp")))
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+
+    ElementName = ElementType = NULL;
+    ElementOccurence = NULL;
+    if (hasElementName && !(ElementName = (char **)SDDS_GetColumn(&SDDScen, "ElementName")))
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    if (hasElementType && !(ElementType = (char **)SDDS_GetColumn(&SDDScen, "ElementType")))
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    if (hasElementOccurence && !(ElementOccurence = (int32_t *)SDDS_GetColumn(&SDDScen, "ElementOccurence")))
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
 
     XOut = tmalloc(sizeof(*XOut) * rows);
@@ -331,6 +387,9 @@ int main(int argc, char **argv) {
         !SDDS_SetColumnFromDoubles(&SDDSout, SDDS_SET_BY_NAME, thetaRefOut, rows, "thetaRef") ||
         !SDDS_SetColumnFromDoubles(&SDDSout, SDDS_SET_BY_NAME, phiOut, rows, "phi") ||
         !SDDS_SetColumnFromDoubles(&SDDSout, SDDS_SET_BY_NAME, psiOut, rows, "psi") ||
+        (!hasElementName || !SDDS_SetColumn(&SDDSout, SDDS_SET_BY_NAME, ElementName, rows, "ElementName")) ||
+        (!hasElementType || !SDDS_SetColumn(&SDDSout, SDDS_SET_BY_NAME, ElementType, rows, "ElementType")) ||
+        (!hasElementOccurence || !SDDS_SetColumn(&SDDSout, SDDS_SET_BY_NAME, ElementOccurence, rows, "ElementOccurence")) ||
         !SDDS_WritePage(&SDDSout))
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
 
@@ -348,6 +407,16 @@ int main(int argc, char **argv) {
     free(thetaRefOut);
     free(phiOut);
     free(psiOut);
+    if (ElementName) {
+      SDDS_FreeStringArray(ElementName, rows);
+      free(ElementName);
+    }
+    if (ElementType) {
+      SDDS_FreeStringArray(ElementType, rows);
+      free(ElementType);
+    }
+    if (ElementOccurence)
+      free(ElementOccurence);
   }
 
   free(sFloor);
