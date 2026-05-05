@@ -240,7 +240,7 @@ void finish_bunched_beam_setup(
                                 emit_z, beta_z, alpha_z, momentum_chirp,
                                 longit_beam_type, distribution_cutoff[2], centroid + 4);
   }
-
+  
   save_initial_coordinates = save_original || save_initial_coordinates;
   if (n_particles_per_bunch == 1)
     one_random_bunch = 1;
@@ -360,6 +360,16 @@ void setup_bunched_beam_moments(
 
   /* We'll be copying values to the variables for &bunched_beam, so we do a reset first */
   reset_namelist_values(&bunched_beam);
+
+  if (spinCoordOffset) {
+    long isp;
+    double norm;
+    for (isp=0; isp<3; isp++)
+      spin[isp] = bunched_beam_moments_struct.spin[isp];
+    norm = sqrt(sqr(spin[0])+sqr(spin[1])+sqr(spin[2]));
+    for (isp=0; isp<3; isp++)
+      spin[isp] /= norm;
+  }
 
   if (bunched_beam_moments_struct.S1_beta < 0 || bunched_beam_moments_struct.S2_beta < 0 ||
       bunched_beam_moments_struct.S3_beta < 0 || bunched_beam_moments_struct.S4_beta < 0)
@@ -627,6 +637,18 @@ long new_bunched_beam(
 #if !SDDS_MPI_IO
     }
 #endif
+
+  if (spinCoordOffset) {
+    long isp;
+    double norm;
+    norm = sqrt(sqr(spin[0])+sqr(spin[1])+sqr(spin[2]));
+    for (isp=0; isp<3; isp++)
+      spin[isp] /= norm;
+    for (i_particle = 0; i_particle < beam->n_to_track; i_particle++)
+      for (isp=0; isp<3; isp++)
+	beam->original[i_particle][spinCoordOffset+isp] = spin[isp];
+  }
+    
 #if USE_MPI
     if (firstIsFiducial && beamCounter == 1) {
       /* copy values back */
@@ -658,6 +680,7 @@ long new_bunched_beam(
   if (notSinglePart)
     MPI_Allreduce(&beam->n_to_track, &beam->n_to_track_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 #endif
+
   /* copy particles into tracking buffer, adding in the time offset 
      * and converting from deltap/p relative to bunch center (defined
      * by Po) to deltap/p relative to beamline energy (defined by
@@ -682,7 +705,6 @@ long new_bunched_beam(
     beam->particle[i_particle][4] += s_offset;
     beam->particle[i_particle][lossPassIndex] = -1;
     beam->particle[i_particle][bunchIndex] = 0;
-    beam->particle[i_particle][weightIndex] = 1;
   }
 
   bunchGenerated = 1;
@@ -691,6 +713,8 @@ long new_bunched_beam(
 #else
   beam->id_slots_per_bunch = beam->n_to_track;
 #endif
+
+
 
   return (beam->n_to_track);
 }
