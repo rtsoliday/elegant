@@ -1270,6 +1270,7 @@ void do_save_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
       } while ((object = object->next));
 
     } else {
+      /* output_seq != 0 */
       /* first write element definition */
       long type;
       long nline = 1, nelem = 0;
@@ -1362,6 +1363,8 @@ void do_save_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
           sprintf(name, "\"%s\"", eptr->name);
         else
           strcpy_ss(name, eptr->name);
+	if (eptr->reversed)
+	  strcat(s, "-");
         strcat(s, name);
         strcat(s, ",");
 
