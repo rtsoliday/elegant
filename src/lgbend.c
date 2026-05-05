@@ -122,7 +122,9 @@ long track_through_lgbend(
 #endif
       ) {
     lgbend->SDDScen = tmalloc(sizeof(SDDS_DATASET));
-    if (!SDDS_InitializeOutputElegant(lgbend->SDDScen, SDDS_BINARY, 1, NULL, NULL, compose_filename(lgbend->centroidOutputFile, context.rootname)) ||
+    char *filename;
+    filename = compose_filename(lgbend->centroidOutputFile, context.rootname);
+    if (!SDDS_InitializeOutputElegant(lgbend->SDDScen, SDDS_BINARY, 1, NULL, NULL, filename) ||
           0 > SDDS_DefineParameter(lgbend->SDDScen, "SVNVersion", NULL, NULL, "SVN version number", NULL, SDDS_STRING, SVN_VERSION) ||
           !SDDS_DefineSimpleParameter(lgbend->SDDScen, "Step", NULL, SDDS_LONG) ||
           !SDDS_DefineSimpleParameter(lgbend->SDDScen, "Pass", NULL, SDDS_LONG) ||
@@ -142,6 +144,7 @@ long track_through_lgbend(
         SDDS_SetError("Problem setting up centroid output file for LGBEND");
         SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
     }
+    free(filename);
   }
   
   if (lgbend->optimizeFse && !lgbend->optimized && lgbend->angle != 0) {
