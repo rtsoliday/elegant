@@ -199,10 +199,11 @@ long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central,
   if (modrf->record) {
     if (!modrf->SDDSrec) {
       TRACKING_CONTEXT tcon;
+      char *filename;
       getTrackingContext(&tcon);
-      modrf->record = compose_filename(modrf->record, tcon.rootname);
+      filename = compose_filename(modrf->record, tcon.rootname);
       modrf->SDDSrec = tmalloc(sizeof(*(modrf->SDDSrec)));
-      if (!SDDS_InitializeOutput(modrf->SDDSrec, SDDS_BINARY, 1, NULL, NULL, modrf->record) ||
+      if (!SDDS_InitializeOutput(modrf->SDDSrec, SDDS_BINARY, 1, NULL, NULL, filename) ||
 	  !SDDS_DefineSimpleColumn(modrf->SDDSrec, "Pass", NULL, SDDS_LONG) ||
 	  !SDDS_DefineSimpleColumn(modrf->SDDSrec, "Ct", "s", SDDS_DOUBLE) ||
 	  !SDDS_DefineSimpleColumn(modrf->SDDSrec, "Phase", "deg", SDDS_DOUBLE) ||
@@ -211,6 +212,7 @@ long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central,
 	SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
 	SDDS_Bomb("problem setting up MODRF record file");
       }
+      free(filename);
     }
     if (pass==0 && !SDDS_StartPage(modrf->SDDSrec, nPasses)) {
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
