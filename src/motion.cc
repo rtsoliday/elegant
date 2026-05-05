@@ -2152,6 +2152,7 @@ void makeRftmEz0FieldTestFile(RFTMEZ0 *rftmEz0) {
   double E[3], BOverGamma[3], BOverGammaSol[3];
   SDDS_DATASET SDDSout;
   TRACKING_CONTEXT context;
+  char *filename;
   getTrackingContext(&context);
 
   field_global = rftmEz0;
@@ -2159,8 +2160,8 @@ void makeRftmEz0FieldTestFile(RFTMEZ0 *rftmEz0) {
     return;
   dZ = MIN(rftmEz0->dZ, rftmEz0->dZSol) / 2;
   nz = 2 * (rftmEz0->nz > rftmEz0->nzSol ? rftmEz0->nz : rftmEz0->nzSol);
-  rftmEz0->fieldTestFile = compose_filename(rftmEz0->fieldTestFile, context.rootname);
-  if (!SDDS_InitializeOutputElegant(&SDDSout, SDDS_BINARY, 0, NULL, NULL, rftmEz0->fieldTestFile) ||
+  filename = compose_filename(rftmEz0->fieldTestFile, context.rootname);
+  if (!SDDS_InitializeOutputElegant(&SDDSout, SDDS_BINARY, 0, NULL, NULL, filename) ||
       !SDDS_DefineSimpleColumn(&SDDSout, (char *)"z", (char *)"m", SDDS_DOUBLE) ||
       !SDDS_DefineSimpleColumn(&SDDSout, (char *)"ExRFOverr", (char *)"V/m/m", SDDS_DOUBLE) ||
       !SDDS_DefineSimpleColumn(&SDDSout, (char *)"EyRFOverr", (char *)"V/m/m", SDDS_DOUBLE) ||
@@ -2175,6 +2176,7 @@ void makeRftmEz0FieldTestFile(RFTMEZ0 *rftmEz0) {
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
     exitElegant(1);
   }
+  free(filename);
   dX = dY = 1e-3 * rftmEz0->k / sqrt(2.0);
   ERFscale = 1 / (sin(PI / 2.0) * particleCharge / (particleMass * c_mks * PIx2 * rftmEz0->frequency));
   BRFscale = 1 / (cos(PI / 2.0) * particleCharge / (particleMass * PIx2 * rftmEz0->frequency));
