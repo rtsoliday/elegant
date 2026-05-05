@@ -83,21 +83,21 @@ void showUsageOrGreeting(unsigned long mode) {
 #if USE_MPI
 #  if HAVE_GPU
   char *USAGE = "usage: mpirun -np <number of processes> gpu-Pelegant <inputfile> [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is gpu-Pelegant 2026.1.0 ALPHA RELEASE, "__DATE__
+  char *GREETING = "This is gpu-Pelegant 2026.2Beta1 ALPHA RELEASE, "__DATE__
     ", by M. Borland, K. Amyx, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, J.R. King, N. Kuklev, R. Lindberg, I.V. Pogorelov, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.\nParallelized by Y. Wang, H. Shang, and M. Borland.";
 #  else
   char *USAGE = "usage: mpirun -np <number of processes> Pelegant <inputfile> [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is elegant 2026.1.0 "__DATE__
+  char *GREETING = "This is elegant 2026.2Beta1 "__DATE__
     ", by M. Borland, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, N. Kuklev, R. Lindberg, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.\nParallelized by Y. Wang, H. Shang, and M. Borland.";
 #  endif
 #else
 #  if HAVE_GPU
   char *USAGE = "usage: gpu-elegant {<inputfile>|-pipe=in} [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is gpu-elegant 2026.1.0 ALPHA RELEASE, "__DATE__
+  char *GREETING = "This is gpu-elegant 2026.2Beta1 ALPHA RELEASE, "__DATE__
     ", by M. Borland, K. Amyx, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, J.R. King, N. Kuklev, R. Lindberg, I.V. Pogorelov, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.";
 #  else
   char *USAGE = "usage: elegant {<inputfile>|-pipe=in} [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is elegant 2026.1.0, "__DATE__
+  char *GREETING = "This is elegant 2026.2Beta1, "__DATE__
     ", by M. Borland, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, N. Kuklev, R. Lindberg, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.";
 #  endif
 #endif
@@ -927,13 +927,16 @@ int main(argc, argv)
           sStart = s_start;
           if ((run_conditions.lossLimit[0] = losses_s_limit[0]) > (run_conditions.lossLimit[1] = losses_s_limit[1]))
             bombElegant("losses_s_limit[0] can't be greater than losses_s_limit[1]", NULL);
+          totalPropertiesPerParticle = COORDINATES_PER_PARTICLE + BASIC_PROPERTIES_PER_PARTICLE;
+          globalLossCoordOffset = spinCoordOffset = 0;
           if ((run_conditions.lossesIncludeGlobalCoordinates = losses_include_global_coordinates)) {
             globalLossCoordOffset = COORDINATES_PER_PARTICLE + BASIC_PROPERTIES_PER_PARTICLE;
-            totalPropertiesPerParticle = COORDINATES_PER_PARTICLE + BASIC_PROPERTIES_PER_PARTICLE + GLOBAL_LOSS_PROPERTIES_PER_PARTICLE;
-          } else {
-            globalLossCoordOffset = -1;
-            totalPropertiesPerParticle = COORDINATES_PER_PARTICLE + BASIC_PROPERTIES_PER_PARTICLE;
-          }
+            totalPropertiesPerParticle += GLOBAL_LOSS_PROPERTIES_PER_PARTICLE;
+          } 
+	  if ((run_conditions.spinTracking = spin_tracking)) {
+	    spinCoordOffset = COORDINATES_PER_PARTICLE + BASIC_PROPERTIES_PER_PARTICLE + (globalLossCoordOffset>0 ? GLOBAL_LOSS_PROPERTIES_PER_PARTICLE: 0);
+	    totalPropertiesPerParticle += SPIN_PROPERTIES_PER_PARTICLE;
+	  }
           sizeOfParticle = totalPropertiesPerParticle * sizeof(double);
           if (starting_coord)
             free(starting_coord);
@@ -2356,6 +2359,7 @@ void do_print_dictionary(char *filename, long latex_form, long SDDS_form) {
     fprintf(fp, "&parameter name=ParallelCapable, type=short &end\n");
     fprintf(fp, "&parameter name=GPUCapable, type=short &end\n");
     fprintf(fp, "&parameter name=BacktrackCapable, type=short &end\n");
+    fprintf(fp, "&parameter name=SpinTrackingCapable, type=short &end\n");
     fprintf(fp, "&parameter name=Size, type=long, units=bytes &end\n");
     fprintf(fp, "&column name=ParameterName, type=string &end\n");
     fprintf(fp, "&column name=Units, type=string &end\n");
@@ -2406,6 +2410,7 @@ void print_dictionary_entry(FILE *fp, long type, long latex_form, long SDDS_form
     fprintf(fp, "Parallel capable? : %s\\\\\n", entity_description[type].flags & UNIPROCESSOR ? "no" : "yes");
     fprintf(fp, "GPU capable? : %s\\\\\n", entity_description[type].flags & GPU_SUPPORT ? "yes" : "no");
     fprintf(fp, "Back-tracking capable? : %s\\\\\n", entity_description[type].flags & BACKTRACK ? "yes" : "no");
+    fprintf(fp, "Spin-tracking capable? : %s\\\\\n", entity_description[type].flags & SPIN_TRACKING ? "yes" : "no");
     fprintf(fp, "\\begin{tabular}{|l|l|l|l|p{\\descwidth}|} \\hline\n");
     fprintf(fp, "Parameter Name & Units & Type & Default & Description \\\\ \\hline \n");
   } else {
@@ -2417,6 +2422,7 @@ void print_dictionary_entry(FILE *fp, long type, long latex_form, long SDDS_form
       fprintf(fp, "%ld\n", (long)(entity_description[type].flags & UNIPROCESSOR ? 0 : 1));
       fprintf(fp, "%ld\n", (long)(entity_description[type].flags & GPU_SUPPORT ? 1 : 0));
       fprintf(fp, "%ld\n", (long)(entity_description[type].flags & BACKTRACK ? 1 : 0));
+      fprintf(fp, "%ld\n", (long)(entity_description[type].flags & SPIN_TRACKING ? 1 : 0));
       fprintf(fp, "%ld\n", entity_description[type].structure_size);
       fprintf(fp, "%ld\n", entity_description[type].n_params + 1);
     } else
@@ -2968,6 +2974,9 @@ static double charge[N_PARTICLE_TYPES] = {
   -e_mks, e_mks, -e_mks, e_mks, 0};
 static double mass[N_PARTICLE_TYPES] = {
   me_mks, 1.6726485e-27, 1.88353109e-28, me_mks, 0};
+// Values from F. Meot article in Polarized Beam Dynamics and Instrumentation in Particle Accelerators
+static double anomalousMagneticMoment[N_PARTICLE_TYPES] = {
+  0.00115965218128, 1.792847, 1.165921e-3, 0.00115965218128, 0};
 
 void process_particle_command(NAMELIST_TEXT *nltext) {
   long code, i;
@@ -2989,6 +2998,7 @@ void process_particle_command(NAMELIST_TEXT *nltext) {
     particleMassMV = me_mev;
     particleRadius = re_mks;
     particleRelSign = 1;
+    particleAnomalousMagneticMoment = 0.00115965218128;
   } else if (code == TYPE_POSITRON) {
     particleIsElectron = 0;
     /* ensure exact reversal from electron */
@@ -2997,6 +3007,7 @@ void process_particle_command(NAMELIST_TEXT *nltext) {
     particleMassMV = me_mev;
     particleRadius = re_mks;
     particleRelSign = -1;
+    particleAnomalousMagneticMoment = 0.00115965218128;
   } else {
     particleIsElectron = 0;
     switch (code) {
@@ -3005,6 +3016,7 @@ void process_particle_command(NAMELIST_TEXT *nltext) {
       particleMass = mass[code];
       /* minus sign is a legacy of time when this was an electron-only code */
       particleCharge = -charge[code];
+      particleAnomalousMagneticMoment = anomalousMagneticMoment[code];
       break;
     case TYPE_OTHER:
       if (change_particle_struct.mass_ratio <= 0 || change_particle_struct.charge_ratio == 0)
@@ -3027,9 +3039,9 @@ void process_particle_command(NAMELIST_TEXT *nltext) {
   /*
     printf("particleMass = %e, particleRadius = %e, particleCharge = %e, particleMassMV = %e, particleRelSign = %e\n",
     particleMass, particleRadius, particleCharge, particleMassMV, particleRelSign);
-  */
   printWarning("Changing the particle type is not a fully tested feature",
                ". Please be alert for and report results that don't make sense.");
+  */
 }
 
 void bombTracking(const char *error) {
