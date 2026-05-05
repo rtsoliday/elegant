@@ -1530,7 +1530,7 @@ void compute_trajcor_matrices(CORMON_DATA *CM, STEERING_LIST *SL, long coord, RU
       save = NULL;
     compute_matrix(corr, run, NULL);
 #ifdef DEBUG
-    print_matrices(stdout, "*** corrector matrix:", corr->matrix);
+    print_matrices(stdout, "*** corrector matrix:", corr->matrix, 0.0);
 #endif
 
     /* track with positively-tweeked corrector */
