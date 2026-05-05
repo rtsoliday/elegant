@@ -13,6 +13,7 @@
           short include_x = 1;
           short include_y = 1;
           short include_s = 0;
+	  short include_spin = 0;
           long start_pass = 0;
           long segment_length = 0;
 #end
