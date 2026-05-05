@@ -117,7 +117,9 @@ long track_through_ccbend(
 #endif    
       ) {
     ccbend->SDDScen = tmalloc(sizeof(SDDS_DATASET));
-    if (!SDDS_InitializeOutputElegant(ccbend->SDDScen, SDDS_BINARY, 1, NULL, NULL, compose_filename(ccbend->centroidOutputFile, context.rootname)) ||
+    char *filename;
+    filename = compose_filename(ccbend->centroidOutputFile, context.rootname);
+    if (!SDDS_InitializeOutputElegant(ccbend->SDDScen, SDDS_BINARY, 1, NULL, NULL, filename) ||
           0 > SDDS_DefineParameter(ccbend->SDDScen, "SVNVersion", NULL, NULL, "SVN version number", NULL, SDDS_STRING, SVN_VERSION) ||
           !SDDS_DefineSimpleParameter(ccbend->SDDScen, "Step", NULL, SDDS_LONG) ||
           !SDDS_DefineSimpleParameter(ccbend->SDDScen, "Pass", NULL, SDDS_LONG) ||
@@ -136,6 +138,7 @@ long track_through_ccbend(
         SDDS_SetError("Problem setting up centroid output file for CCBEND");
         SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
     }
+    free(filename);
   }
 
   if ((ccbend->optimizeFse || ccbend->optimizeDx) && ccbend->optimized != -1 && ccbend->angle != 0) {
