@@ -202,7 +202,7 @@ VMATRIX *full_matrix(ELEMENT_LIST *elem, RUN *run, long order) {
 
 #ifdef WATCH_MEMORY
   printf("start full_matrix: CPU: %6.2lf  PF: %6ld  MEM: %6ld\n",
-         cpu_time() / 100.0, page_faults(), memory_count());
+         cpu_time() / 100.0, page_faults(), memoryUsage());
   fflush(stdout);
 #endif
 
@@ -2118,9 +2118,11 @@ void set_up_watch_point(WATCH *watch, RUN *run, long occurence, char *previousEl
     free(watch->label);
     watch->label = buffer;
   }
-  watch->filename = compose_filename_occurence(watch->filename, run->rootname, occurence + watch->indexOffset);
-  SDDS_WatchPointSetup(watch, SDDS_BINARY, 1, run->runfile, run->lattice, "set_up_watch_point", qualifier, 
+  char *filename;
+  filename = compose_filename_occurence(watch->filename, run->rootname, occurence + watch->indexOffset);
+  SDDS_WatchPointSetup(watch, filename, SDDS_BINARY, 1, run->runfile, run->lattice, "set_up_watch_point", qualifier, 
                        previousElementName, previousElementOccurence);
+  free(filename);
   watch->initialized = 1;
   watch->count = 0;
   watch->flushSample = -1;
@@ -2162,9 +2164,10 @@ void set_up_histogram(HISTOGRAM *histogram, RUN *run, long occurence, long IDSlo
   if (histogram->binSizeFactor <= 0)
     bombElegant("bin_size_factor is non-positive for HISTOGRAM element", NULL);
 
-  histogram->filename = compose_filename_occurence(histogram->filename, run->rootname, occurence);
-
-  SDDS_HistogramSetup(histogram, SDDS_BINARY, 1, run->runfile, run->lattice, "set_up_histogram");
+  char *filename;
+  filename = compose_filename_occurence(histogram->filename, run->rootname, occurence);
+  SDDS_HistogramSetup(histogram, filename, SDDS_BINARY, 1, run->runfile, run->lattice, "set_up_histogram");
+  free(filename);
   histogram->initialized = 1;
   histogram->count = 0;
   if (histogram->bunchSeries && IDSlotsPerBunch>0) {
