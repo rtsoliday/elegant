@@ -468,7 +468,7 @@ long doTuneFootprint(
   double dx, dy, ddelta, x, y, delta;
   long ix, iy, ixy, idelta, turns;
   long my_ixy, my_idelta;
-  static double **one_part;
+  static double **one_part = NULL;
   double p;
   long n_part, lost;
   XY_TF_DATA *xyTfData;
@@ -501,6 +501,8 @@ long doTuneFootprint(
   }
 
 #if USE_MPI
+  partOnMaster = 1;
+  notSinglePart = 0;
 #  ifdef DEBUG
   printf("parallelStatus = %d, partOnMaster = %d, notSinglePart = %ld, runInSinglePartMode = %ld\n",
          parallelStatus, partOnMaster, notSinglePart, runInSinglePartMode);
@@ -557,11 +559,21 @@ long doTuneFootprint(
 
   if (run->showElementTiming)
     resetElementTiming();
-
+  if (verbosity>2) {
+    long i;
+    printf("Fiducial initial coordinates:\n");
+    for (i=0; i<COORDINATES_PER_PARTICLE+1; i++)
+      printf("%le ", one_part[0][i]);
+    fputc('\n', stdout);
+  }
   if (!do_tracking(NULL, one_part, n_part, NULL, beamline, &p, (double **)NULL, (BEAM_SUMS **)NULL, (long *)NULL,
                    NULL, run, 0, TEST_PARTICLES, 1, 0,
                    NULL, NULL, NULL, NULL, NULL)) {
-    printf("Error: lost particle when fiducializing\n");
+    long i;
+    printf("Error: lost particle when fiducializing. Coordinates:\n");
+    for (i=0; i<COORDINATES_PER_PARTICLE+1; i++)
+      printf("%le ", one_part[0][i]);
+    fputc('\n', stdout);
     exitElegant(1);
   }
 
