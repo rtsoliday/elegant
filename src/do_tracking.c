@@ -1788,11 +1788,15 @@ long do_tracking(
                         track_particles(coord, M, coord, nToTrack);
                         free_matrices(M);
                         free(M);
+			if (spinCoordOffset) 
+			  rotateSpinsCoordinateSystem(coord, nToTrack, ((ROTATE *)eptr->p_elem)->tilt);
                       }
                     } else {
                       if (!(eptr->matrix))
                         eptr->matrix = rotation_matrix(((ROTATE *)eptr->p_elem)->tilt);
                       track_particles(coord, eptr->matrix, coord, nToTrack);
+		      if (spinCoordOffset)
+			rotateSpinsCoordinateSystem(coord, nToTrack, ((ROTATE *)eptr->p_elem)->tilt);
                     }
                   }
                   break;
@@ -1801,6 +1805,10 @@ long do_tracking(
                   if ((malign->on_pass == -1 || malign->on_pass == i_pass) && !(malign->excludeOrbit && (flags & TEST_PARTICLES)))
                     offset_beam(coord, nToTrack, (MALIGN *)eptr->p_elem, *P_central);
                   break;
+		case T_POLAR:
+		  if (((POLAR*)eptr->p_elem)->onPass==i_pass && !(flags&TEST_PARTICLES))
+		    polarizeBeam(coord, nToTrack, (POLAR*)eptr->p_elem);
+		  break;
                 case T_PEPPOT:
                   nLeft = pepper_pot_plate(coord, (PEPPOT *)eptr->p_elem, nToTrack, accepted);
                   break;
@@ -2110,6 +2118,8 @@ long do_tracking(
                       bombElegant("no matrix for element that must have matrix", NULL);
                   }
                   track_particles(coord, eptr->matrix, coord, nToTrack);
+		  if (spinCoordOffset)
+		    updateSpinForSolenoid(coord, nToTrack, *P_central, (SOLE*)eptr->p_elem);
                   break;
                 case T_MATTER:
                   nLeft = track_through_matter(coord, nToTrack, i_pass, (MATTER *)eptr->p_elem, *P_central, accepted, z);
