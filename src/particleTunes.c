@@ -18,7 +18,7 @@
 #include "particleTunes.h"
 #include "fftpackC.h"
 
-char *tuneColumnName[3] = {"nux", "nuy", "nus"};
+char *tuneColumnName[4] = {"nux", "nuy", "nus", "nusp"};
 char *JColumnName[3] = {"Jx", "Jy", "Js"};
 
 double computeInvariant(double *q, double *qp, long turns, double tune)
@@ -88,6 +88,7 @@ long setupParticleTunes
   ptunes->include[0] = include_x;
   ptunes->include[1] = include_y;
   ptunes->include[2] = include_s;
+  ptunes->include[3] = (spinCoordOffset?include_spin:0);
   ptunes->startPass = start_pass;
   ptunes->segmentLength = segment_length;
 
@@ -108,6 +109,8 @@ long setupParticleTunes
        (include_s &&
        (SDDS_DefineColumn(&(ptunes->SDDSout), (char*)"Js", (char*)"J$bs$n", (char*)"m", NULL, NULL, SDDS_DOUBLE, 0)==-1 ||
         SDDS_DefineColumn(&(ptunes->SDDSout), (char*)"nus", (char*)"$gn$r$bs$n", NULL, NULL, NULL, SDDS_DOUBLE, 0)==-1)) ||
+      (include_spin && spinCoordOffset &&
+       SDDS_DefineColumn(&(ptunes->SDDSout), (char*)"nusp", (char*)"$gn$r$bsp$n", NULL, NULL, NULL, SDDS_DOUBLE, 0)==-1) ||
       !SDDS_DefineSimpleParameter(&(ptunes->SDDSout), "StartPass", NULL, SDDS_LONG) ||
       !SDDS_DefineSimpleParameter(&(ptunes->SDDSout), "EndPass", NULL, SDDS_LONG) ||
       !SDDS_WriteLayout(&(ptunes->SDDSout))) {
@@ -126,7 +129,7 @@ long setupParticleTunes
   else    
     ptunes->maxBufferSize = ptunes->segmentLength;
   ptunes->indexHash = NULL;
-  ptunes->data = (double***)calloc(6, sizeof(double**));
+  ptunes->data = (double***)calloc(8, sizeof(double**));
   ptunes->np = 0;
   
   return 1;
@@ -168,7 +171,7 @@ void accumulateParticleTuneData
       }
     } else
       ptunes->np = np;
-    for (ic=0; ic<3; ic++) {
+    for (ic=0; ic<4; ic++) {
       if (ptunes->include[ic] &&
           (!(ptunes->data[ic*2+0] = (double**)czarray_2d(sizeof(double), ptunes->np, ptunes->maxBufferSize)) ||
            !(ptunes->data[ic*2+1] = (double**)czarray_2d(sizeof(double), ptunes->np, ptunes->maxBufferSize)))) {
@@ -214,6 +217,11 @@ void accumulateParticleTuneData
           ptunes->data[2*ic+0][pIndex][turnIndex] = coord[ip][2*ic+0];
           ptunes->data[2*ic+1][pIndex][turnIndex] = coord[ip][2*ic+1];
         }
+      }
+      if (spinCoordOffset && ptunes->include[ic]) {
+	/* store x and y components */
+        ptunes->data[2*ic+0][pIndex][turnIndex] = coord[ip][spinCoordOffset+0]; 
+        ptunes->data[2*ic+1][pIndex][turnIndex] = coord[ip][spinCoordOffset+2];
       }
       ptunes->particleID[pIndex] = pid;
       ptunes->turnIndexLimit[pIndex] = turnIndex+1;
@@ -285,7 +293,7 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
   mpiAbort = 0;
 #endif
   
-  for (ic=0; ic<3; ic++) {
+  for (ic=0; ic<4; ic++) {
     if (!ptunes->include[ic])
       continue;
     for (ip=0; ip<ptunes->np; ip++) {
@@ -343,7 +351,8 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
     }
     if (myid==0) {
       if (!SDDS_SetColumn(&(ptunes->SDDSout), SDDS_SET_BY_NAME, tuneData, npTotal,  tuneColumnName[ic]) ||
-          !SDDS_SetColumn(&(ptunes->SDDSout), SDDS_SET_BY_NAME, J, npTotal,  JColumnName[ic]) ) {
+	  (ic<3 && 
+	   !SDDS_SetColumn(&(ptunes->SDDSout), SDDS_SET_BY_NAME, J, npTotal,  JColumnName[ic])) ) {
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
         mpiAbort = MPI_ABORT_PARTICLE_TUNE_IO_ERROR;
       }
@@ -353,7 +362,8 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
       return;
 #else
     if (!SDDS_SetColumn(&(ptunes->SDDSout), SDDS_SET_BY_NAME, tuneData, ptunes->np,  tuneColumnName[ic]) ||
-          !SDDS_SetColumn(&(ptunes->SDDSout), SDDS_SET_BY_NAME, J, ptunes->np,  JColumnName[ic]) ) {
+	(ic<3 &&
+	 !SDDS_SetColumn(&(ptunes->SDDSout), SDDS_SET_BY_NAME, J, ptunes->np,  JColumnName[ic])) ) {
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
       bombElegant("IO error for particle tune output", NULL);
     }
@@ -442,7 +452,7 @@ void finishParticleTunes(PARTICLE_TUNES *ptunes)
     hdestroy(ptunes->indexHash);
   ptunes->indexHash = NULL;
 
-  for (ic=0; ic<6; ic++) {
+  for (ic=0; ic<8; ic++) {
     if (ptunes->data[ic])
       free_czarray_2d((void**)ptunes->data[ic], ptunes->np, ptunes->maxBufferSize);
     ptunes->data[ic] = NULL;
