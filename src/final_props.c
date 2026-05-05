@@ -230,6 +230,17 @@ void SDDS_FinalOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, lo
   SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, contents, command_file,
                           lattice_file, final_property_parameter, FINAL_PROPERTY_PARAMETERS, NULL, 0,
                           caller, SDDS_EOS_NEWFILE);
+  if (spinCoordOffset) {
+    if (!SDDS_DefineSimpleParameter(SDDS_table, "Cspx", NULL, SDDS_DOUBLE) ||
+	!SDDS_DefineSimpleParameter(SDDS_table, "Cspy", NULL, SDDS_DOUBLE) ||
+	!SDDS_DefineSimpleParameter(SDDS_table, "Cspz", NULL, SDDS_DOUBLE)) {
+      printf("Problem defining SDDS spin parameters in file %s (%s)\n", filename, caller);
+      fflush(stdout);
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+      exitElegant(1);
+    }
+  }
+
   if ((varied_quantities &&
        !SDDS_DefineSimpleParameters(SDDS_table, varied_quantities, varied_quantity_name, varied_quantity_unit, SDDS_DOUBLE))) {
     printf("Problem defining extra SDDS parameters in file %s (%s)\n", filename, caller);
@@ -343,12 +354,12 @@ void dump_final_properties(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums,
 
   if (isMaster)
     if ((n_properties = SDDS_ParameterCount(SDDS_table)) !=
-        (FINAL_PROPERTY_PARAMETERS + n_varied_quan + n_perturbed_quan + 
+        (FINAL_PROPERTY_PARAMETERS + n_varied_quan + n_perturbed_quan + (spinCoordOffset?3:0) +
          (n_optim_quan?3*(n_optim_quan-3) + 3:0) - perturbed_quan_duplicates)) {
       printf("error: the number of parameters (%ld) defined for the SDDS table for the final properties file is not equal to the number of quantities (%ld) for which information is provided (dump_final_properties)\n",
              n_properties,
              FINAL_PROPERTY_PARAMETERS + n_varied_quan + n_perturbed_quan + 
-             (n_optim_quan?3*(n_optim_quan-3) + 3:0) - perturbed_quan_duplicates);
+             (n_optim_quan?3*(n_optim_quan-3) + 3:0) + (spinCoordOffset?3:0) - perturbed_quan_duplicates);
       fflush(stdout);
       abort();
     }
@@ -360,7 +371,7 @@ void dump_final_properties(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums,
   computed_properties = tmalloc(sizeof(*computed_properties) * n_properties);
   if ((n_computed = compute_final_properties(computed_properties, sums, n_original, p_central, M, particle, step,
                                              totalSteps, charge)) !=
-      (n_properties - (n_varied_quan + n_perturbed_quan + 
+      (n_properties - (n_varied_quan + n_perturbed_quan + (spinCoordOffset?3:0) +
                        (n_optim_quan?3*(n_optim_quan -3 ) + 3:0) - perturbed_quan_duplicates))) {
     printf("error: compute_final_properties computed %ld quantities--%ld expected. (dump_final_properties)\n",
            n_computed, n_properties - (n_varied_quan + n_perturbed_quan + 
@@ -447,6 +458,21 @@ void dump_final_properties(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums,
         }
     }
 
+    if (spinCoordOffset) {
+      long isp;
+      if ((isp = SDDS_GetParameterIndex(SDDS_table, "Cspx"))<0) {
+        SDDS_SetError("Problem with definition of SDDS spin parameters (dump_final_properties)");
+        SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+      }
+      if (!SDDS_SetParameters(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE,
+			      isp+0, sums->spinSums->centroid[0], 
+			      isp+1, sums->spinSums->centroid[1], 
+			      isp+2, sums->spinSums->centroid[2],
+			      -1)) {
+	SDDS_SetError("Problem setting SDDS parameter values for spin quantities (dump_final_properties)");
+        SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+      }
+    }
     if (!SDDS_WriteTable(SDDS_table)) {
       SDDS_SetError("Problem writing SDDS data for final properties (dump_final_properties)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -779,7 +805,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
 #  else
   data[i_data++] = delapsed_time();
 #  endif
-  data[i_data++] = memory_count();
+  data[i_data++] = memoryUsage();
   data[i_data++] = page_faults();
 #else
   data[i_data++] = 0;
@@ -802,6 +828,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
   fflush(stdout);
 #endif
   log_exit("compute_final_properties");
+
   return (i_data + F_N_QUANS);
 }
 
