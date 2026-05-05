@@ -29,6 +29,8 @@
     double S6 = 0;
     double S56 = 0;
     
+    double spin[3] = {0.0, 0.0, 1.0};
+
     double time_start = 0;
     double Po = 0.0;
     long one_random_bunch = 1;
