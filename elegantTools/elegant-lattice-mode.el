@@ -35,12 +35,46 @@
   (unless elegant-lattice-font-lock-keywords
     (setq elegant-lattice-font-lock-keywords
           `((,elegant-lattice--type-regexp . font-lock-type-face)
-            ("^[ \t]*\\([A-Za-z][A-Za-z0-9_]*\\)[ \t]*:" (1 font-lock-function-name-face))
+            ("^[ \t]*\\([A-Za-z][A-Za-z0-9_]*\\|\"[^\"]*\"\\)[ \t]*:" (1 font-lock-function-name-face))
             ("\\_<[A-Za-z][A-Za-z0-9_]*\\_>[ \t]*=" (0 font-lock-variable-name-face))
             ("\\_<[-+]?[0-9]*\\.?[0-9]+\\([eEdD][-+]?[0-9]+\\)?\\_>" . font-lock-constant-face)))))
 
+(defun elegant-lattice--logical-line-beginning ()
+  "Buffer position of the start of the current logical line.
+Walks back over preceding physical lines that end with '&'."
+  (save-excursion
+    (beginning-of-line)
+    (while (and (> (point) (point-min))
+                (save-excursion
+                  (forward-line -1)
+                  (end-of-line)
+                  (skip-chars-backward " \t")
+                  (eq (char-before) ?&)))
+      (forward-line -1))
+    (point)))
+
+(defun elegant-lattice--logical-line-end ()
+  "Buffer position of the end of the current logical line.
+Walks forward over physical lines ending with '&'."
+  (save-excursion
+    (end-of-line)
+    (while (save-excursion
+             (skip-chars-backward " \t")
+             (and (eq (char-before) ?&) (not (eobp))))
+      (forward-line 1)
+      (end-of-line))
+    (point)))
+
+(defun elegant-lattice--join-continuations (text)
+  "Remove '&' line-continuations from TEXT, joining physical lines with a space."
+  (replace-regexp-in-string "[ \t]*&[ \t]*\n[ \t]*" " " text))
+
 (defun elegant-lattice--line-to-point ()
-  (buffer-substring-no-properties (line-beginning-position) (point)))
+  "Return text from the start of the current logical line to point,
+with '&' continuations joined into a single string."
+  (elegant-lattice--join-continuations
+   (buffer-substring-no-properties
+    (elegant-lattice--logical-line-beginning) (point))))
 
 (defun elegant-lattice--bounds ()
   (let ((end (point)))
@@ -49,22 +83,24 @@
       (cons (point) end))))
 
 (defun elegant-lattice--element-type-on-line ()
-  "Return element TYPE on current line as uppercase, or nil."
-  (save-excursion
-    (beginning-of-line)
-    (when (re-search-forward
-           "^[ \t]*[A-Za-z][A-Za-z0-9_]*[ \t]*:[ \t]*\\([A-Za-z][A-Za-z0-9_]*\\)"
-           (line-end-position) t)
-      (upcase (match-string-no-properties 1)))))
+  "Return element TYPE on current logical line as uppercase, or nil."
+  (let ((s (elegant-lattice--join-continuations
+             (buffer-substring-no-properties
+              (elegant-lattice--logical-line-beginning)
+              (elegant-lattice--logical-line-end)))))
+    (when (string-match
+           "^[ \t]*\\(?:[A-Za-z][A-Za-z0-9_]*\\|\"[^\"]*\"\\)[ \t]*:[ \t]*\\([A-Za-z][A-Za-z0-9_]*\\)"
+           s)
+      (upcase (match-string 1 s)))))
 
 (defun elegant-lattice--type-context-p ()
   (let ((s (elegant-lattice--line-to-point)))
-    (and (string-match "^[ \t]*[A-Za-z][A-Za-z0-9_]*[ \t]*:" s)
+    (and (string-match "^[ \t]*\\(?:[A-Za-z][A-Za-z0-9_]*\\|\"[^\"]*\"\\)[ \t]*:" s)
          (not (string-match "," s)))))
 
 (defun elegant-lattice--param-context-p ()
   (let ((s (elegant-lattice--line-to-point)))
-    (and (string-match "^[ \t]*[A-Za-z][A-Za-z0-9_]*[ \t]*:" s)
+    (and (string-match "^[ \t]*\\(?:[A-Za-z][A-Za-z0-9_]*\\|\"[^\"]*\"\\)[ \t]*:" s)
          (string-match "," s)
          (not (elegant-lattice--after-equals-p)))))
 
