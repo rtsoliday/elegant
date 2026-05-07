@@ -3,13 +3,15 @@ polarization $P$ in a specified direction $\hat{v}=\vec{V}/V$, where
 $\vec{V}=(VX,VY,VZ)$.
 It has no effect if \verb|spin_tracking=0| in \verb|run_setup|.
 
-
-There are three available modes, controlled by the \verb|MODE| parameter:
+There are four available modes, controlled by the \verb|MODE| parameter:
 \begin{itemize}
 \item \verb|twostate| --- All spin vectors are along $\hat{v}$ or $-\hat{v}$,
   with the two states being randomly assigned so as to approximately produce the specified polarization.
   For example, for $P=0.85$ (85\% polarization) 92.5\% of the spins vectors are $\hat{v}$ and
   7.5\% are $-\hat{v}$.
+\item \verb|vonmises-fisher| --- This is the preferred method when random spin directions are desired. The distribution
+  is a biased gaussian that intersects the unit sphere.  The gaussian parameter is chosen so that the desired polarization
+  is achieved. The method and code were adapted from a discussion with ChatGPT.
 \item \verb|narrowcone| --- All spins are oriented in the direction $\hat{v}$, but with a polar angle $\theta$ such
   that $\cos\theta=P$. The azimuthal angle is uniformly distributed over $[0, 2\pi)$. 
 \item \verb|widecone| --- All spins are oriented in the direction $\hat{v}$, but with a randomly-chosen, uniformly-distributed polar angle
