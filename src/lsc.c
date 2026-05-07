@@ -278,12 +278,17 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
       i1 = LSC->lowFrequencyCutoff0 * nfreq;
       if (i1 < 1)
         i1 = 1;
+      if (i1 >= nfreq)
+        i1 = nfreq - 1;
       i2 = LSC->lowFrequencyCutoff1 * nfreq;
+      if (i2 < i1)
+        i2 = i1;
       if (i2 >= nfreq)
         i2 = nfreq - 1;
       dfraction = i1 == i2 ? 0 : 1. / (i2 - i1);
       fraction = 0;
-      for (i = 0; i < i1; i++) {
+      Ifreq[0] = 0;
+      for (i = 1; i < i1; i++) {
         Ifreq[2 * i - 1] = 0;
         Ifreq[2 * i] = 0;
       }
@@ -570,12 +575,17 @@ void addLSCKick(double **part, long np, LSCKICK *LSC, double Po, CHARGE *charge,
     i1 = LSC->lowFrequencyCutoff0 * nfreq;
     if (i1 < 1)
       i1 = 1;
+    if (i1 >= nfreq)
+      i1 = nfreq - 1;
     i2 = LSC->lowFrequencyCutoff1 * nfreq;
+    if (i2 < i1)
+      i2 = i1;
     if (i2 >= nfreq)
       i2 = nfreq - 1;
     dfraction = i1 == i2 ? 0 : 1. / (i2 - i1);
     fraction = 0;
-    for (i = 0; i < i1; i++) {
+    Ifreq[0] = 0;
+    for (i = 1; i < i1; i++) {
       Ifreq[2 * i - 1] = 0;
       Ifreq[2 * i] = 0;
     }

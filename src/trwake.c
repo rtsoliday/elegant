@@ -42,14 +42,21 @@ void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
 
 #ifdef HAVE_GPU
   if (getElementOnGpu()) {
-    startGpuTimer();
-    gpu_track_through_trwake(np0, wakeData, Po, run, i_pass, charge);
+    long gpuBunchedWakeAction = gpu_trwake_bunched_mode_action(np0, wakeData, charge);
+    if (gpuBunchedWakeAction == GPU_BUNCHED_WAKE_UNSUPPORTED) {
+      part0 = forceParticlesToCpu("TRWAKE bunched beam CPU fallback");
+    } else if (gpuBunchedWakeAction == GPU_BUNCHED_WAKE_SKIP) {
+      return;
+    } else {
+      startGpuTimer();
+      gpu_track_through_trwake(np0, wakeData, Po, run, i_pass, charge);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    track_through_trwake(part0, np0, wakeData, Po, run, i_pass, charge);
-    compareGpuCpu(np, "track_through_trwake");
+      startCpuTimer();
+      track_through_trwake(part0, np0, wakeData, Po, run, i_pass, charge);
+      compareGpuCpu(np0, "track_through_trwake");
 #  endif
-    return;
+      return;
+    }
   }
 #endif
 

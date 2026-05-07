@@ -1,0 +1,4 @@
+S1: UKICKMAP,INPUT_FILE="/home/soliday/oag/apps/src/elegantTestSet/uKickMap1/kickmap.sdds",&
+  L=1,FIELD_FACTOR=0.01,N_KICKS=10
+D1: DRIF,L=0.05
+BL: LINE=(D1,S1,D1)

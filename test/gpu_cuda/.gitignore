@@ -1,0 +1,4 @@
+output/
+*.tmp
+*.log
+*.done

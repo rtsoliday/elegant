@@ -28,6 +28,34 @@ ifeq ($(MDEBUG),1)
   DEBUGOPTIONS = MDEBUG=1
 endif
 
+MPI_AVAILABLE =
+ifneq ($(WIN_MPI),)
+  MPI_AVAILABLE = 1
+else ifneq ($(MPI_CC),)
+  ifneq ($(MPI_CCC),)
+    MPI_AVAILABLE = 1
+  endif
+endif
+
+CUDA_AUTO ?= 1
+CUDA_REQUESTED := $(filter 1 yes YES true TRUE on ON,$(HAVE_CUDA) $(HAVE_GPU))
+CUDA_DISABLED := $(filter 0 no NO false FALSE off OFF,$(HAVE_CUDA) $(HAVE_GPU) $(CUDA_AUTO))
+CUDA_NVCC_FROM_NVCC := $(if $(NVCC),$(shell command -v $(NVCC) 2>/dev/null))
+CUDA_NVCC_FROM_PATH := $(shell command -v nvcc 2>/dev/null)
+CUDA_NVCC_COMMON := /usr/local/cuda-12.4/bin/nvcc /usr/local/cuda/bin/nvcc
+CUDA_NVCC_VERSIONED := $(sort $(wildcard /usr/local/cuda-*/bin/nvcc))
+CUDA_AUTO_NVCC := $(firstword $(CUDA_NVCC_FROM_NVCC) $(NVCC) $(CUDA_NVCC_FROM_PATH) $(wildcard $(CUDA_NVCC_COMMON)) $(CUDA_NVCC_VERSIONED))
+CUDA_AUTO_HOME := $(patsubst %/bin/nvcc,%,$(CUDA_AUTO_NVCC))
+CUDA_AUTO_CUDART := $(firstword $(wildcard $(CUDA_AUTO_HOME)/lib64/libcudart.so) $(wildcard $(CUDA_AUTO_HOME)/lib64/libcudart.a))
+CUDA_AVAILABLE =
+ifneq ($(CUDA_REQUESTED),)
+  CUDA_AVAILABLE = 1
+else ifeq ($(CUDA_DISABLED),)
+  ifneq ($(CUDA_AUTO_CUDART),)
+    CUDA_AVAILABLE = 1
+  endif
+endif
+
 DIRS = $(GSL_REPO)
 DIRS += $(GSL_LOCAL)
 DIRS += $(SDDS_REPO)/include
@@ -42,7 +70,7 @@ DIRS += $(SDDS_REPO)/SDDSlib
 DIRS += $(SDDS_REPO)/fftpack
 DIRS += $(SDDS_REPO)/matlib
 DIRS += $(SDDS_REPO)/mdbcommon
-ifneq ($(MPI_CC),)
+ifneq ($(MPI_AVAILABLE),)
 DIRS += $(SDDS_REPO)/pgapack
 endif
 DIRS += physics
@@ -80,7 +108,7 @@ $(SDDS_REPO)/rpns/code: $(SDDS_REPO)/mdbmth $(GSL_REPO) $(GSL_LOCAL)
 	$(MAKE) -C $@
 $(SDDS_REPO)/namelist: $(SDDS_REPO)/rpns/code
 	$(MAKE) -C $@
-ifeq ($(MPI_CC),)
+ifeq ($(MPI_AVAILABLE),)
 $(SDDS_REPO)/SDDSlib: $(SDDS_REPO)/namelist
 	$(MAKE) -C $@
 else
@@ -94,7 +122,7 @@ $(SDDS_REPO)/matlib: $(SDDS_REPO)/fftpack
 	$(MAKE) -C $@
 $(SDDS_REPO)/mdbcommon: $(SDDS_REPO)/matlib
 	$(MAKE) -C $@
-ifneq ($(MPI_CC),)
+ifneq ($(MPI_AVAILABLE),)
 $(SDDS_REPO)/pgapack: $(SDDS_REPO)/mdbcommon
 	$(MAKE) -C $@
 endif
@@ -102,13 +130,16 @@ physics: $(SDDS_REPO)/mdbcommon
 	$(MAKE) -C $@
 xraylib: physics
 	$(MAKE) -C $@
-ifeq ($(MPI_CC),)
 src: xraylib
-	$(MAKE) $(DEBUGOPTIONS) -C $@ 
-else
-src: xraylib
-	$(MAKE) $(DEBUGOPTIONS) -C $@
-	$(MAKE) $(DEBUGOPTIONS) -C $@ -f Makefile.mpi
+	$(MAKE) $(DEBUGOPTIONS) -C $@ HAVE_CUDA= HAVE_GPU=
+ifneq ($(CUDA_AVAILABLE),)
+	$(MAKE) $(DEBUGOPTIONS) -C $@ HAVE_CUDA=1
+endif
+ifneq ($(MPI_AVAILABLE),)
+	$(MAKE) $(DEBUGOPTIONS) -C $@ -f Makefile.mpi HAVE_CUDA= HAVE_GPU=
+ifneq ($(CUDA_AVAILABLE),)
+	$(MAKE) $(DEBUGOPTIONS) -C $@ -f Makefile.mpi HAVE_CUDA=1
+endif
 endif
 elegantTools: src
 	$(MAKE) -C $@
@@ -118,10 +149,19 @@ sddsbrightness: elegantTools
 clean:
 	$(MAKE) -C physics clean
 	$(MAKE) -C xraylib clean
-	$(MAKE) -C src clean 
+	$(MAKE) -C src clean
+	$(MAKE) -C src HAVE_CUDA=1 clean
+	$(MAKE) -C src HAVE_CUDA=1 GPU_VERIFY=1 clean
+	$(MAKE) -C src -f Makefile.mpi clean
+	$(MAKE) -C src -f Makefile.mpi HAVE_CUDA=1 clean
+	$(MAKE) -C src -f Makefile.mpi HAVE_CUDA=1 GPU_VERIFY=1 clean
 	$(MAKE) -C elegantTools clean
 	$(MAKE) -C sddsbrightness clean
 
 distclean: clean
 	rm -rf bin/$(OS)-$(ARCH)
+	rm -rf bin/$(OS)-$(ARCH)-gpu
+	rm -rf bin/$(OS)-$(ARCH)-gpu-verify
 	rm -rf lib/$(OS)-$(ARCH)
+	rm -rf lib/$(OS)-$(ARCH)-gpu
+	rm -rf lib/$(OS)-$(ARCH)-gpu-verify

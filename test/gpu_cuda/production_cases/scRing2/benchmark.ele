@@ -1,0 +1,41 @@
+&insert_sceffects
+  name = "*",
+  type = "CSBEND",
+  vertical = 1,
+  horizontal = 1,
+  nonlinear = 0,
+&end
+
+&run_setup
+  lattice = "/home/soliday/oag/apps/src/elegantTestSet/scRing2/parTrack.lte",
+  p_central = 880,
+  use_beamline = "par",
+  default_order = 1,
+  rootname = <root>,
+  output = "%s.out",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  final = "%s.fin",
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+  show_element_timing = 1,
+  random_number_seed = <seed>,
+&end
+
+&twiss_output
+  matched = 1,
+  filename = "%s.twi",
+  radiation_integrals = 1,
+  output_at_each_step = 1,
+&end
+
+&run_control
+  n_passes = <n_passes>,
+&end
+
+&sdds_beam
+  input = "/home/soliday/oag/apps/src/elegantTestSet/scRing2/bunch.sdds",
+&end
+
+&track
+&end

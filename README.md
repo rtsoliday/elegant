@@ -23,6 +23,17 @@ cd elegant
 make -j
 ```
 
+The top-level build automatically builds `Pelegant` when MPI compiler wrappers are found.  It also automatically builds the CUDA executables when a usable CUDA Toolkit is found, while keeping the ordinary CPU binaries available.  On a CUDA-capable build host, `make` installs:
+
+```text
+bin/Linux-x86_64/elegant
+bin/Linux-x86_64/Pelegant
+bin/Linux-x86_64-gpu/gpu-elegant
+bin/Linux-x86_64-gpu/gpu-Pelegant
+```
+
+Use `make CUDA_AUTO=0 -j` for a CPU-only build, or force a specific CUDA compiler with `make HAVE_CUDA=1 NVCC=/usr/local/cuda-12.4/bin/nvcc -j`.  CUDA runtime controls and verification workflows are documented in [doc/CUDA_GPU_SUPPORT.md](doc/CUDA_GPU_SUPPORT.md).
+
 ## Usage
 
 Run **elegant** with an appropriate input file:

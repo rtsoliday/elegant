@@ -275,13 +275,15 @@ long simple_rf_cavity(
     nLeft = gpu_trackRfCavityWithWakes(np, rfca, accepted, P_central, zEnd, 0,
                                        NULL, NULL, NULL, NULL, NULL, 0);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    trackRfCavityWithWakes(part, np, rfca, accepted, &P_central_input, zEnd, 0,
-                           NULL, NULL, NULL, NULL, NULL, 0);
-    compareGpuCpu(np, "simple_rf_cavity");
-    if (*P_central / P_central_input - 1 > 1e-12) {
-      printf("simple_rf_cavity: Warning: GPU P_central=%le vs CPU=%le\n",
-             *P_central, P_central_input);
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      trackRfCavityWithWakes(part, np, rfca, accepted, &P_central_input, zEnd, 0,
+                             NULL, NULL, NULL, NULL, NULL, 0);
+      compareGpuCpu(np, "simple_rf_cavity");
+      if (*P_central / P_central_input - 1 > 1e-12) {
+        printf("simple_rf_cavity: Warning: GPU P_central=%le vs CPU=%le\n",
+               *P_central, P_central_input);
+      }
     }
 #  endif
     return nLeft;

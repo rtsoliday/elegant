@@ -20,7 +20,9 @@
 #ifdef HAVE_GPU
 #  include <gpu_base.h>
 #  include <gpu_funcs.h>
+#  include <gpu_kickmap.h>
 #  include <gpu_limit_amplitudes.h>
+#  include <gpu_space_charge.h>
 #endif /* HAVE_GPU */
 
 void flushTransverseFeedbackDriverFiles(TFBDRIVER *tfbd);
@@ -397,6 +399,10 @@ long do_tracking(
 #ifdef HAVE_GPU
   // gpuBaseInit(coord, nOriginal, accepted, lostBeam->particle, isMaster);
   gpuBaseInit(coord, nOriginal, accepted, NULL, isMaster);
+#  if USE_MPI
+  if (notSinglePart && run->load_balancing_on == 1)
+    gpuDisableForRun("Pelegant load_balancing_on=1 CUDA redistribution is deferred");
+#  endif
 #endif
 
   flags |= beamline->fiducial_flag;
@@ -686,7 +692,9 @@ long do_tracking(
         if (getSCMULTSpecCount()) {
           /* prepare space charge effects calculation  */
 #ifdef HAVE_GPU
-          coord = forceParticlesToCpu("initializeSCMULT");
+          if (!gpu_scmult_can_initialize_on_gpu(nToTrack) &&
+              !gpu_scmult_can_skip_cpu(nToTrack, beam ? beam->id_slots_per_bunch : 0))
+            coord = forceParticlesToCpu("initializeSCMULT");
 #endif
           if (!(flags & TEST_PARTICLES))
             initializeSCMULT(eptr, coord, nToTrack, *P_central, i_pass, beam? beam->id_slots_per_bunch : 0);
@@ -874,13 +882,9 @@ long do_tracking(
           log_entry("do_tracking.2.2.1");
 
 #ifdef HAVE_GPU
-          setElementGpuData((void *)eptr);
+          setElementGpuData((void *)eptr, nToTrack);
 #  ifndef GPU_VERIFY
-          /* Ensure coord array is not used during GPU operations. */
-          if (getGpuBase()->elementOnGpu)
-            coord = NULL;
-          else
-            coord = getGpuBase()->coord;
+          coord = getGpuBase()->coord;
 #  endif
 #endif
 
@@ -1336,6 +1340,10 @@ long do_tracking(
                   break;
                 case T_MARK:
                   if ((flags & (CLOSED_ORBIT_TRACKING | OPTIMIZING)) && ((MARK *)eptr->p_elem)->fitpoint && i_pass == n_passes - 1) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu())
+                      coord = copyParticlesToCpuReadOnly("MARK fitpoint output");
+#endif
                     /*
                       if (beamline->flags&BEAMLINE_TWISS_WANTED) {
                       if (!(beamline->flags&BEAMLINE_TWISS_DONE))
@@ -1512,14 +1520,17 @@ long do_tracking(
 #ifdef HAVE_GPU
                     {
                       long dflag[2] = {0, 0};
-                      if (((SCRAPER *)eptr->p_elem)->direction & DIRECTION_X) {
-                        dflag[0] = ((SCRAPER *)eptr->p_elem)->direction & DIRECTION_PLUS_X ? 1 : 0;
-                        dflag[1] = ((SCRAPER *)eptr->p_elem)->direction & DIRECTION_MINUS_X ? 1 : 0;
-                      } else if (((SCRAPER *)eptr->p_elem)->direction & DIRECTION_Y) {
-                        dflag[0] = ((SCRAPER *)eptr->p_elem)->direction & DIRECTION_PLUS_Y ? 1 : 0;
-                        dflag[1] = ((SCRAPER *)eptr->p_elem)->direction & DIRECTION_MINUS_Y ? 1 : 0;
+                      SCRAPER *scraper = (SCRAPER *)eptr->p_elem;
+                      if (scraper->direction & DIRECTION_X) {
+                        dflag[0] = scraper->direction & DIRECTION_PLUS_X ? 1 : 0;
+                        dflag[1] = scraper->direction & DIRECTION_MINUS_X ? 1 : 0;
+                      } else if (scraper->direction & DIRECTION_Y) {
+                        dflag[0] = scraper->direction & DIRECTION_PLUS_Y ? 1 : 0;
+                        dflag[1] = scraper->direction & DIRECTION_MINUS_Y ? 1 : 0;
                       }
-                      if (dflag[0] && dflag[1]) {
+                      if (getElementOnGpu() && dflag[0] && dflag[1] &&
+                          (scraper->position <= 0 ||
+                           (scraper->length && (scraper->Xo || scraper->Z)))) {
                         coord = forceParticlesToCpu("beam_scraper");
                       }
                     }
@@ -1602,6 +1613,10 @@ long do_tracking(
                       fflush(stdout);
                       switch (watch->mode_code) {
                       case WATCH_COORDINATES:
+#ifdef HAVE_GPU
+                        if (getElementOnGpu())
+                          coord = copyParticlesToCpuReadOnly("WATCH coordinate output");
+#endif
                         dump_watch_particles(watch, step, i_pass, coord, nToTrack, *P_central,
                                              beamline->revolution_length,
                                              charge ? charge->macroParticleCharge : 0.0, z,
@@ -1609,6 +1624,10 @@ long do_tracking(
                         break;
                       case WATCH_PARAMETERS:
                       case WATCH_CENTROIDS:
+#ifdef HAVE_GPU
+                        if (getElementOnGpu())
+                          coord = copyParticlesToCpuReadOnly("WATCH parameter output");
+#endif
                         dump_watch_parameters(watch, step, i_pass, n_passes, coord, nToTrack,
 #if SDDS_MPI_IO
                                               total_nOriginal,
@@ -1631,11 +1650,16 @@ long do_tracking(
                             printWarning(buffer, NULL);
                           }
                           gatherParticles(&coord, &nToTrack, &nLost, &accepted, n_processors, myid, &round);
-                          if (isMaster)
+                          if (isMaster) {
+#endif
+#ifdef HAVE_GPU
+                            if (getElementOnGpu())
+                              coord = copyParticlesToCpuReadOnly("WATCH FFT output");
 #endif
                             dump_watch_FFT(watch, step, i_pass, n_passes, coord, nToTrack, nOriginal, *P_central,
 					   beamline->revolution_length);
 #if SDDS_MPI_IO
+                          }
                           if (!partOnMaster && notSinglePart) {
 #  if USE_MPI && MPI_DEBUG
                             printf("Scattering particles (3): nToTrack = %ld\n", nToTrack);
@@ -2326,10 +2350,24 @@ long do_tracking(
                     ((APPLE *)eptr->p_elem)->isr = saveISR;
                   break;
                 case T_UKICKMAP:
+#if defined(HAVE_GPU)
+                  if (getElementOnGpu()) {
+                    nLeft = gpu_track_undulator_kickmap(coord, accepted, nToTrack, *P_central,
+                                                        (UKICKMAP *)eptr->p_elem, last_z);
+                    break;
+                  }
+#endif
                   nLeft = trackUndulatorKickMap(coord, accepted, nToTrack, *P_central, (UKICKMAP *)eptr->p_elem,
                                                 last_z);
                   break;
                 case T_KICKMAP:
+#if defined(HAVE_GPU)
+                  if (getElementOnGpu()) {
+                    nLeft = gpu_track_kickmap(coord, accepted, nToTrack, *P_central,
+                                              (KICKMAP *)eptr->p_elem, last_z, NULL);
+                    break;
+                  }
+#endif
                   nLeft = trackKickMap(coord, accepted, nToTrack, *P_central, (KICKMAP *)eptr->p_elem,
                                        last_z, NULL);
                   break;
@@ -2569,9 +2607,11 @@ long do_tracking(
                   traj_vs_z[i_traj].centroid[i] = 0;
               } else {
 #ifdef HAVE_GPU
-                if (getElementOnGpu()) {
+                if (getElementOnGpu() && gpu_reductions_enabled(nLeft)) {
                   gpu_collect_trajectory_data(traj_vs_z[i_traj].centroid, nLeft);
                 } else {
+                  if (getElementOnGpu())
+                    coord = copyParticlesToCpuReadOnly("trajectory centroid below CUDA reduction threshold");
 #endif
                   for (i = 0; i < 6; i++) {
                     for (j = sum = 0; j < nToTrack; j++)
@@ -2664,7 +2704,8 @@ long do_tracking(
               /* need special care for element with 0 length but phase space rotation */
               if (((DRIFT *)eptr->p_elem)->length > 0.0) {
 #ifdef HAVE_GPU
-                coord = forceParticlesToCpu("accumulateSCMULT");
+                if (!gpu_scmult_can_skip_cpu(nToTrack, beam ? beam->id_slots_per_bunch : 0))
+                  coord = forceParticlesToCpu("accumulateSCMULT");
 #endif
                 accumulateSCMULT(coord, nToTrack, *P_central, eptr, beam ? beam->id_slots_per_bunch: 0);
               }
@@ -2852,7 +2893,7 @@ long do_tracking(
                       case WATCH_PARAMETERS:
                       case WATCH_CENTROIDS:
 #ifdef HAVE_GPU
-                        coord = forceParticlesToCpu("dump_watch_parameters");
+                        coord = copyParticlesToCpuReadOnly("dump_watch_parameters");
 #endif
                         dump_watch_parameters(watch, step, i_pass, n_passes, coord, nToTrack,
 #if SDDS_MPI_IO
@@ -2866,7 +2907,7 @@ long do_tracking(
                         break;
                       case WATCH_FFT:
 #ifdef HAVE_GPU
-                        coord = forceParticlesToCpu("dump_watch_FFT");
+                        coord = copyParticlesToCpuReadOnly("dump_watch_FFT");
 #endif
                         dump_watch_FFT(watch, step, i_pass, n_passes, coord, nToTrack, nOriginal, *P_central,
 				       beamline->revolution_length);
@@ -3147,9 +3188,7 @@ long do_tracking(
 #endif
 
 #ifdef HAVE_GPU
-#  ifdef GPU_VERIFY
         displayTimings();
-#  endif
         if (!coord)
           coord = getGpuBase()->coord;
         gpuBaseDealloc();
@@ -3553,7 +3592,7 @@ long do_tracking(
           gpu_set_central_momentum(np, P_new, P_central);
 #  ifdef GPU_VERIFY
           startCpuTimer();
-          set_central_momentum(coord, np, P_new, P_central);
+          set_central_momentum(coord, np, P_new, &P_central_init);
           compareGpuCpu(np, "set_central_momentum");
 #  endif /* GPU_VERIFY */
           return;
@@ -4306,14 +4345,17 @@ long do_tracking(
 
 #ifdef HAVE_GPU
         if (getElementOnGpu()) {
-          startGpuTimer();
-          gpu_matr_element_tracking(M, matr, np, z);
+          if (gpu_matrix_supported(M)) {
+            startGpuTimer();
+            gpu_matr_element_tracking(M, matr, np, z);
 #  ifdef GPU_VERIFY
-          startCpuTimer();
-          matr_element_tracking(coord, M, matr, np, z);
-          compareGpuCpu(np, "matr_element_tracking");
+            startCpuTimer();
+            matr_element_tracking(coord, M, matr, np, z);
+            compareGpuCpu(np, "matr_element_tracking");
 #  endif /* GPU_VERIFY */
-          return;
+            return;
+          }
+          coord = forceParticlesToCpu("unsupported matrix for CUDA matr_element_tracking");
         }
 #endif /* HAVE_GPU */
 
@@ -4363,14 +4405,20 @@ long do_tracking(
 
 #ifdef HAVE_GPU
         if (getElementOnGpu()) {
-          startGpuTimer();
-          gpu_ematrix_element_tracking(M, matr, np, z, P_central);
+          if (gpu_matrix_supported(M)) {
 #  ifdef GPU_VERIFY
-          startCpuTimer();
-          ematrix_element_tracking(coord, M, matr, np, z, P_central);
-          compareGpuCpu(np, "ematr_element_tracking");
+            double P_central_init = *P_central;
 #  endif /* GPU_VERIFY */
-          return;
+            startGpuTimer();
+            gpu_ematrix_element_tracking(M, matr, np, z, P_central);
+#  ifdef GPU_VERIFY
+            startCpuTimer();
+            ematrix_element_tracking(coord, M, matr, np, z, &P_central_init);
+            compareGpuCpu(np, "ematr_element_tracking");
+#  endif /* GPU_VERIFY */
+            return;
+          }
+          coord = forceParticlesToCpu("unsupported matrix for CUDA ematrix_element_tracking");
         }
 #endif /* HAVE_GPU */
 

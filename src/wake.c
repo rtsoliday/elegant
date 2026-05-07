@@ -46,15 +46,34 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
 
 #ifdef HAVE_GPU
   if (getElementOnGpu()) {
-    startGpuTimer();
-    double cpu_PoInput = *PoInput;
-    gpu_track_through_wake(np0, wakeData, &cpu_PoInput, run, i_pass, charge);
+    double gpu_PoInput = *PoInput;
+    long gpuBunchedWakeAction = gpu_wake_bunched_mode_action(np0, wakeData, charge);
+    if (gpuBunchedWakeAction == GPU_BUNCHED_WAKE_UNSUPPORTED) {
+      part0 = forceParticlesToCpu("WAKE bunched beam CPU fallback");
+    } else if (gpuBunchedWakeAction == GPU_BUNCHED_WAKE_SKIP) {
+      return;
+    } else {
+      startGpuTimer();
+      gpu_track_through_wake(np0, wakeData, &gpu_PoInput, run, i_pass, charge);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    track_through_wake(part0, np0, wakeData, PoInput, run, i_pass, charge);
-    compareGpuCpu(np, "track_through_wake");
+      double cpu_PoInput = *PoInput;
+      startCpuTimer();
+      track_through_wake(part0, np0, wakeData, &cpu_PoInput, run, i_pass, charge);
+      if (wakeData->change_p0) {
+        double diff = fabs(cpu_PoInput - gpu_PoInput);
+        double scale = fabs(cpu_PoInput) > fabs(gpu_PoInput) ? fabs(cpu_PoInput) : fabs(gpu_PoInput);
+        if (diff > 1e-12 && diff > 1e-12 * scale) {
+          fprintf(stderr,
+                  "elegant CUDA VERIFY WAKE P_central mismatch cpu=%21.15e gpu=%21.15e\n",
+                  cpu_PoInput, gpu_PoInput);
+          exit(1);
+        }
+      }
+      compareGpuCpu(np0, "track_through_wake");
 #  endif
-    return;
+      *PoInput = gpu_PoInput;
+      return;
+    }
   }
 #endif
 

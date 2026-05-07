@@ -1,5 +1,5 @@
 define make_prod_objs
-$(1)_OBJS = $(patsubst %.cpp, $(OBJ_DIR)/%.$(OBJEXT), $(patsubst %.cc, $(OBJ_DIR)/%.$(OBJEXT), $(patsubst %.c, $(OBJ_DIR)/%.$(OBJEXT), $($(1)_SRC))))
+$(1)_OBJS = $(patsubst %.cu, $(OBJ_DIR)/%.$(OBJEXT), $(patsubst %.cpp, $(OBJ_DIR)/%.$(OBJEXT), $(patsubst %.cc, $(OBJ_DIR)/%.$(OBJEXT), $(patsubst %.c, $(OBJ_DIR)/%.$(OBJEXT), $($(1)_SRC)))))
 endef
 
 ifneq ($(SCRIPTS),)
@@ -27,6 +27,7 @@ ifneq ($(LIBRARY),)
  LIBRARY_OBJS = $(LIBRARY_SRC:.c=.$(OBJEXT))
  LIBRARY_OBJS := $(LIBRARY_OBJS:.cc=.$(OBJEXT))
  LIBRARY_OBJS := $(LIBRARY_OBJS:.cpp=.$(OBJEXT))
+ LIBRARY_OBJS := $(LIBRARY_OBJS:.cu=.$(OBJEXT))
  LIBRARY_OBJS := $(patsubst %,$(OBJ_DIR)/%, $(LIBRARY_OBJS))
 endif
 
@@ -46,6 +47,7 @@ ifneq ($(PYTHON_SHARED_LIBRARY),)
  LIBRARY_OBJS = $(LIBRARY_SRC:.c=.$(OBJEXT))
  LIBRARY_OBJS := $(LIBRARY_OBJS:.cc=.$(OBJEXT))
  LIBRARY_OBJS := $(LIBRARY_OBJS:.cpp=.$(OBJEXT))
+ LIBRARY_OBJS := $(LIBRARY_OBJS:.cu=.$(OBJEXT))
  LIBRARY_OBJS := $(patsubst %,$(OBJ_DIR)/%, $(LIBRARY_OBJS))
 endif
 
@@ -168,11 +170,17 @@ endif
 
 
 $(OBJ_DIR)/%.$(OBJEXT): %.c
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CFLAGS)) -c $< $(OUTPUT)
 $(OBJ_DIR)/%.$(OBJEXT): %.cc
+	@mkdir -p $(dir $@)
 	$(CCC) $(CCFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CCFLAGS)) -c $< $(OUTPUT)
 $(OBJ_DIR)/%.$(OBJEXT): %.cpp
+	@mkdir -p $(dir $@)
 	$(CCC) $(CCFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CCFLAGS)) -c $< $(OUTPUT)
+$(OBJ_DIR)/%.$(OBJEXT): %.cu
+	@mkdir -p $(dir $@)
+	$(NVCC) $(NVCCFLAGS) $(NVCCDEPFLAGS) -c $< $(OUTPUT)
 $(BIN_DIR)/%: %
 	cp -f $< $@
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi

@@ -1,0 +1,3 @@
+MAP1: BMAPXY,L=0.01,METHOD="bulirsch-stoer",ACCURACY=1e-8,&
+  FILENAME="/home/soliday/oag/apps/src/elegantTestSet/bmapxy1/srquad.bmapxy",STRENGTH=100
+BL: LINE=(MAP1)

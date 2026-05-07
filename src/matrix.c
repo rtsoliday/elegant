@@ -221,15 +221,18 @@ void track_particles(double **final, VMATRIX *M, double **initial,
   char fname[20];
 #  endif /* GPU_VERIFY */
   if (getElementOnGpu()) {
-    startGpuTimer();
-    gpu_track_particles(M, n_part);
+    if (gpu_matrix_supported(M)) {
+      startGpuTimer();
+      gpu_track_particles(M, n_part);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    track_particles(final, M, initial, n_part);
-    sprintf(fname, "track_particles_M%d", M->order);
-    compareGpuCpu(n_part, fname);
+      startCpuTimer();
+      track_particles(final, M, initial, n_part);
+      sprintf(fname, "track_particles_M%ld", M->order);
+      compareGpuCpu(n_part, fname);
 #  endif /* GPU_VERIFY */
-    return;
+      return;
+    }
+    forceParticlesToCpu("unsupported matrix for CUDA track_particles");
   }
 #endif /* HAVE_GPU */
 

@@ -1,0 +1,90 @@
+&run_setup
+  lattice = "/home/soliday/oag/apps/src/elegantTestSet/LCLS1/LCLS.lte",
+  use_beamline = "beamline",
+  rootname = <root>,
+  output = "%s.out",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  final = "%s.fin",
+  parameters = "%s.par",
+  magnets = "%s.mag",
+  combine_bunch_statistics = 0,
+  default_order = 2,
+  concat_order = 0,
+  print_statistics = 0,
+  show_element_timing = 1,
+  random_number_seed = <seed>,
+  p_central = 294.12970,
+  tracking_updates = 0,
+  load_balancing_on = 0,
+  search_path = "/home/soliday/oag/apps/src/elegantTestSet/LCLS1",
+  semaphore_file = "%s.done",
+&end
+
+&run_control
+  n_steps = 1,
+  reset_rf_for_each_step = 1,
+&end
+
+&error_control
+  clear_error_settings = 1,
+  error_log = "%s.erl",
+  no_errors_for_first_step = 0,
+&end
+
+&error_element
+  name = "Q*",
+  element_type = "QUAD",
+  item = "dx",
+  amplitude = 0.150e-4,
+  cutoff = 2,
+&end
+
+&error_element
+  name = "Q*",
+  element_type = "QUAD",
+  item = "dy",
+  amplitude = 0.150e-4,
+  cutoff = 3,
+&end
+
+&error_element
+  name = "L*",
+  element_type = "RFCW",
+  item = "dx",
+  amplitude = 0.300e-4,
+  bind = 0,
+  cutoff = 3,
+&end
+
+&error_element
+  name = "L*",
+  element_type = "RFCW",
+  item = "dy",
+  amplitude = 0.300e-4,
+  bind = 0,
+  cutoff = 3,
+&end
+
+&sdds_beam
+  input = "/home/soliday/oag/apps/src/elegantTestSet/LCLS1/P200k_e1220.sdds",
+  input_type = "elegant",
+  sample_interval = 1,
+  sample_fraction = <sample_fraction>,
+  p_lower = 0,
+  p_upper = 1e10,
+  reuse_bunch = 0,
+&end
+
+&twiss_output
+  filename = "%s.twi",
+  matched = 0,
+  beta_x = 15.5677,
+  beta_y = 15.6911,
+  alpha_x = 2.0028,
+  alpha_y = 2.0134,
+  concat_order = 3,
+&end
+
+&track
+&end

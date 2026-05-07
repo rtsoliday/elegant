@@ -36,11 +36,13 @@ long rectangular_collimator(
 #ifdef HAVE_GPU
   if (getElementOnGpu()) {
     startGpuTimer();
-    ip = gpu_rectangular_collimator(rcol, np, accepted, z, Po);
+    ip = gpu_rectangular_collimator(rcol, np, accepted, z, Po, eptr);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    rectangular_collimator(initial, rcol, np, accepted, z, Po);
-    compareGpuCpu(np, "rectangular_collimator");
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      rectangular_collimator(initial, rcol, np, accepted, z, Po, eptr);
+      compareGpuCpu(np, "rectangular_collimator");
+    }
 #  endif /* GPU_VERIFY */
     return ip;
   }
@@ -200,12 +202,14 @@ long limit_amplitudes(
   if (getElementOnGpu()) {
     startGpuTimer();
     ip = gpu_limit_amplitudes(xmax, ymax, np, accepted, z, Po,
-                              extrapolate_z, openCode);
+                              extrapolate_z, openCode, eptr);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    limit_amplitudes(coord, xmax, ymax, np, accepted, z, Po,
-                     extrapolate_z, openCode);
-    compareGpuCpu(np, "limit_amplitudes");
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      limit_amplitudes(coord, xmax, ymax, np, accepted, z, Po,
+                       extrapolate_z, openCode, eptr);
+      compareGpuCpu(np, "limit_amplitudes");
+    }
 #  endif /* GPU_VERIFY */
     return ip;
   }
@@ -292,9 +296,11 @@ long removeInvalidParticles(
     startGpuTimer();
     ip = gpu_removeInvalidParticles(np, accepted, z, Po);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    removeInvalidParticles(coord, np, accepted, z, Po);
-    compareGpuCpu(np, "removeInvalidParticles");
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      removeInvalidParticles(coord, np, accepted, z, Po);
+      compareGpuCpu(np, "removeInvalidParticles");
+    }
 #  endif /* GPU_VERIFY */
     return ip;
   }
@@ -345,11 +351,13 @@ long elliptical_collimator(
 #ifdef HAVE_GPU
   if (getElementOnGpu()) {
     startGpuTimer();
-    ip = gpu_elliptical_collimator(ecol, np, accepted, z, Po);
+    ip = gpu_elliptical_collimator(ecol, np, accepted, z, Po, eptr);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    elliptical_collimator(initial, ecol, np, accepted, z, Po);
-    compareGpuCpu(np, "elliptical_collimator");
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      elliptical_collimator(initial, ecol, np, accepted, z, Po, eptr);
+      compareGpuCpu(np, "elliptical_collimator");
+    }
 #  endif /* GPU_VERIFY */
     return ip;
   }
@@ -504,10 +512,12 @@ long elimit_amplitudes(
     ip = gpu_elimit_amplitudes(xmax, ymax, np, accepted, z, Po,
                                extrapolate_z, openCode, exponent, yexponent, eptr);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    elimit_amplitudes(coord, xmax, ymax, np, accepted, z, Po,
-                      extrapolate_z, openCode, exponent, yexponent);
-    compareGpuCpu(np, "elimit_amplitudes");
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      elimit_amplitudes(coord, xmax, ymax, np, accepted, z, Po,
+                        extrapolate_z, openCode, exponent, yexponent, eptr);
+      compareGpuCpu(np, "elimit_amplitudes");
+    }
 #  endif /* GPU_VERIFY */
     return ip;
   }
@@ -629,11 +639,13 @@ long elimit_amplitudes(
 #ifdef HAVE_GPU
     if (getElementOnGpu()) {
       startGpuTimer();
-      ip = gpu_beam_scraper(scraper, np, accepted, z, Po);
+      ip = gpu_beam_scraper(scraper, np, accepted, z, Po, eptr);
 #  ifdef GPU_VERIFY
-      startCpuTimer();
-      beam_scraper(initial, scraper, np, accepted, z, Po);
-      compareGpuCpu(np, "beam_scraper");
+      if (getElementOnGpu()) {
+        startCpuTimer();
+        beam_scraper(initial, scraper, np, accepted, z, Po, eptr);
+        compareGpuCpu(np, "beam_scraper");
+      }
 #  endif /* GPU_VERIFY */
       return ip;
     }
@@ -1228,11 +1240,13 @@ long elimit_amplitudes(
 #ifdef HAVE_GPU
     if (getElementOnGpu()) {
       startGpuTimer();
-      ip = gpu_imposeApertureData(np, accepted, z, Po, apData);
+      ip = gpu_imposeApertureData(np, accepted, z, Po, apData, eptr);
 #  ifdef GPU_VERIFY
-      startCpuTimer();
-      imposeApertureData(initial, np, accepted, z, Po, apData);
-      compareGpuCpu(np, "imposeApertureData");
+      if (getElementOnGpu()) {
+        startCpuTimer();
+        imposeApertureData(initial, np, accepted, z, Po, apData, eptr);
+        compareGpuCpu(np, "imposeApertureData");
+      }
 #  endif /* GPU_VERIFY */
       return ip;
     }

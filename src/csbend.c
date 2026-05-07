@@ -41,10 +41,21 @@ VT double **Fy_xy = NULL;
 VT short refTrajectoryMode = 0;
 VT long refTrajectoryPoints = 0;
 VT double **refTrajectoryData = NULL;
+#ifdef HAVE_GPU
+static long csrGpuCsbendInnerCall = 0;
+static long csrGpuCsbendDeviceEntryRequested = 0;
+#endif
 
 #define VTS static
 
 void convolveArrays1(double *output, long n, double *a1, double *a2);
+static long prepareParticleCoordinateHistogram(double **hist, long *maxBins,
+                                               double *lower, double *upper,
+                                               double *binSize, long *bins,
+                                               double expansionFactor,
+                                               double **particleCoord,
+                                               long nParticles,
+                                               long coordinateIndex);
 VTS void dipoleFringeKHwang(double *Qf, double *Qi,
                         double rho, double inFringe, long higherOrder, double K1, double edge, double gap,
                         double fint, double Rhe);
@@ -785,7 +796,7 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
                                       z_start, sigmaDelta2, rootname, maxamp, apContour, apFileData, iSlice, eptr);
 #  ifdef GPU_VERIFY
     startCpuTimer();
-    track_through_csbend(part, n_part, csbend, p_error, Po, accepted, z_start, sigmaDelta2, rootname, maxamp, apContour, apFileData, iSlice);
+    track_through_csbend(part, n_part, csbend, p_error, Po, accepted, z_start, sigmaDelta2, rootname, maxamp, apContour, apFileData, iSlice, eptr);
     compareGpuCpu(n_part, "track_through_csbend");
 #  endif /* GPU_VERIFY */
     return i_part;
@@ -2041,6 +2052,314 @@ void readWakeFilterFile(long *values, double **freq, double **real, double **ima
                         char *freqName, char *realName, char *imagName,
                         char *filename);
 
+#ifdef GPU_VERIFY
+static double csrVerifyEnvDouble(const char *name, double defaultValue) {
+  char *endptr = NULL;
+  const char *value = getenv(name);
+  double result;
+
+  if (!value || !*value)
+    return defaultValue;
+  result = strtod(value, &endptr);
+  if (endptr == value)
+    return defaultValue;
+  return result;
+}
+
+static long csrVerifyEnvFlag(const char *name) {
+  const char *value = getenv(name);
+
+  return value && (!strcmp(value, "1") || !strcmp(value, "yes") ||
+                   !strcmp(value, "true") || !strcmp(value, "on") ||
+                   !strcmp(value, "YES") || !strcmp(value, "TRUE") ||
+                   !strcmp(value, "ON"));
+}
+
+static long csrVerifyValuesClose(double cpu, double gpu,
+                                 double absTol, double relTol,
+                                 double *absDiffReturn,
+                                 double *relDiffReturn) {
+  double absDiff, relDiff, scale;
+
+  if (isnan(cpu) || isnan(gpu)) {
+    absDiff = relDiff = (isnan(cpu) && isnan(gpu)) ? 0 : DBL_MAX;
+    if (absDiffReturn)
+      *absDiffReturn = absDiff;
+    if (relDiffReturn)
+      *relDiffReturn = relDiff;
+    return isnan(cpu) && isnan(gpu);
+  }
+  absDiff = fabs(cpu - gpu);
+  scale = fmax(fabs(cpu), fabs(gpu));
+  relDiff = scale > DBL_MIN ? absDiff / scale : absDiff;
+  if (absDiffReturn)
+    *absDiffReturn = absDiff;
+  if (relDiffReturn)
+    *relDiffReturn = relDiff;
+  return absDiff <= absTol || relDiff <= relTol;
+}
+
+static void csrCopyLastWakeForVerify(CSR_LAST_WAKE *target,
+                                     const CSR_LAST_WAKE *source) {
+  size_t bytes;
+
+  memcpy(target, source, sizeof(*target));
+  if (source->dGamma && source->bins > 0) {
+    bytes = (size_t)source->bins * sizeof(*target->dGamma);
+    target->dGamma = malloc(bytes);
+    if (!target->dGamma)
+      bombElegant("memory allocation failure copying CSR_LAST_WAKE dGamma for GPU verification", NULL);
+    memcpy(target->dGamma, source->dGamma, bytes);
+  }
+}
+
+static void csrReleaseLastWakeVerifyCopy(CSR_LAST_WAKE *wake) {
+  free(wake->dGamma);
+  wake->dGamma = NULL;
+  if (wake->FdNorm) {
+    free(wake->FdNorm);
+    free(wake->xSaldin);
+    wake->FdNorm = wake->xSaldin = NULL;
+  }
+  if (wake->StupakovFileActive) {
+    if (!SDDS_Terminate(&wake->SDDS_Stupakov))
+      bombElegant("problem terminating data file for Stupakov output from CSRDRIFT", NULL);
+    wake->StupakovFileActive = 0;
+  }
+}
+
+static void csrCompareLastWakeArray(const char *field,
+                                    const double *cpu,
+                                    const double *gpu,
+                                    long n,
+                                    double absTol,
+                                    double relTol,
+                                    long *mismatches,
+                                    double *maxAbs,
+                                    double *maxRel) {
+  long i;
+
+  if (n <= 0)
+    return;
+  if (!cpu || !gpu) {
+    if (cpu != gpu) {
+      fprintf(stderr,
+              "elegant CUDA VERIFY CSR_LAST_WAKE mismatch %s pointer cpu=%p gpu=%p\n",
+              field, (const void *)cpu, (const void *)gpu);
+      (*mismatches)++;
+    }
+    return;
+  }
+  for (i = 0; i < n; i++) {
+    double absDiff, relDiff;
+    if (!csrVerifyValuesClose(cpu[i], gpu[i], absTol, relTol,
+                              &absDiff, &relDiff)) {
+      if (*mismatches < 10)
+        fprintf(stderr,
+                "elegant CUDA VERIFY CSR_LAST_WAKE mismatch %s[%ld] cpu=%.17e gpu=%.17e abs=%.3e rel=%.3e\n",
+                field, i, cpu[i], gpu[i], absDiff, relDiff);
+      (*mismatches)++;
+    }
+    if (absDiff > *maxAbs)
+      *maxAbs = absDiff;
+    if (relDiff > *maxRel)
+      *maxRel = relDiff;
+  }
+}
+
+static void compareCSR_LAST_WAKE(const CSR_LAST_WAKE *gpuWake,
+                                 const CSR_LAST_WAKE *cpuWake) {
+  double absTol = csrVerifyEnvDouble("ELEGANT_GPU_WAKE_COMPARE_ABS",
+                                     csrVerifyEnvDouble("ELEGANT_GPU_COMPARE_ABS", 1e-9));
+  double relTol = csrVerifyEnvDouble("ELEGANT_GPU_WAKE_COMPARE_REL",
+                                     csrVerifyEnvDouble("ELEGANT_GPU_COMPARE_REL", 1e-10));
+  double maxAbs = 0, maxRel = 0;
+  long mismatches = 0;
+
+#  define CSR_COMPARE_LONG(field)                                             \
+  do {                                                                        \
+    if (cpuWake->field != gpuWake->field) {                                   \
+      if (mismatches < 10)                                                    \
+        fprintf(stderr,                                                       \
+                "elegant CUDA VERIFY CSR_LAST_WAKE mismatch %s cpu=%ld gpu=%ld\n", \
+                #field, (long)cpuWake->field, (long)gpuWake->field);          \
+      mismatches++;                                                           \
+    }                                                                         \
+  } while (0)
+
+#  define CSR_COMPARE_ULONG(field)                                            \
+  do {                                                                        \
+    if (cpuWake->field != gpuWake->field) {                                   \
+      if (mismatches < 10)                                                    \
+        fprintf(stderr,                                                       \
+                "elegant CUDA VERIFY CSR_LAST_WAKE mismatch %s cpu=%lu gpu=%lu\n", \
+                #field, (unsigned long)cpuWake->field,                        \
+                (unsigned long)gpuWake->field);                               \
+      mismatches++;                                                           \
+    }                                                                         \
+  } while (0)
+
+#  define CSR_COMPARE_DOUBLE(field)                                           \
+  do {                                                                        \
+    double absDiff, relDiff;                                                  \
+    if (!csrVerifyValuesClose(cpuWake->field, gpuWake->field, absTol, relTol, \
+                              &absDiff, &relDiff)) {                         \
+      if (mismatches < 10)                                                    \
+        fprintf(stderr,                                                       \
+                "elegant CUDA VERIFY CSR_LAST_WAKE mismatch %s cpu=%.17e gpu=%.17e abs=%.3e rel=%.3e\n", \
+                #field, cpuWake->field, gpuWake->field, absDiff, relDiff);    \
+      mismatches++;                                                           \
+    }                                                                         \
+    if (absDiff > maxAbs)                                                     \
+      maxAbs = absDiff;                                                       \
+    if (relDiff > maxRel)                                                     \
+      maxRel = relDiff;                                                       \
+  } while (0)
+
+  CSR_COMPARE_ULONG(lastMode);
+  CSR_COMPARE_LONG(bins);
+  CSR_COMPARE_LONG(valid);
+  CSR_COMPARE_DOUBLE(dctBin);
+  CSR_COMPARE_DOUBLE(s0);
+  CSR_COMPARE_DOUBLE(ds0);
+  CSR_COMPARE_DOUBLE(zLast);
+  CSR_COMPARE_DOUBLE(z0);
+  CSR_COMPARE_DOUBLE(S11);
+  CSR_COMPARE_DOUBLE(S12);
+  CSR_COMPARE_DOUBLE(S22);
+  CSR_COMPARE_DOUBLE(rho);
+  CSR_COMPARE_DOUBLE(bendingAngle);
+  CSR_COMPARE_DOUBLE(Po);
+  CSR_COMPARE_DOUBLE(perc68BunchLength);
+  CSR_COMPARE_DOUBLE(perc90BunchLength);
+  CSR_COMPARE_DOUBLE(peakToPeakWavelength);
+  CSR_COMPARE_DOUBLE(rmsBunchLength);
+  CSR_COMPARE_LONG(nSaldin);
+  if (cpuWake->nSaldin)
+    CSR_COMPARE_DOUBLE(lastFdNorm);
+  CSR_COMPARE_LONG(SGOrder);
+  CSR_COMPARE_LONG(SGHalfWidth);
+  CSR_COMPARE_LONG(SGDerivHalfWidth);
+  CSR_COMPARE_LONG(SGDerivOrder);
+  CSR_COMPARE_DOUBLE(binRangeFactor);
+  CSR_COMPARE_DOUBLE(GSConstant);
+  CSR_COMPARE_DOUBLE(MPCharge);
+  CSR_COMPARE_LONG(StupakovFileActive);
+  CSR_COMPARE_LONG(StupakovOutputInterval);
+  CSR_COMPARE_LONG(trapazoidIntegration);
+  CSR_COMPARE_DOUBLE(lowFrequencyCutoff0);
+  CSR_COMPARE_DOUBLE(lowFrequencyCutoff1);
+  CSR_COMPARE_DOUBLE(highFrequencyCutoff0);
+  CSR_COMPARE_DOUBLE(highFrequencyCutoff1);
+  CSR_COMPARE_LONG(clipNegativeBins);
+  CSR_COMPARE_LONG(wffValues);
+
+  csrCompareLastWakeArray("dGamma", cpuWake->dGamma, gpuWake->dGamma,
+                          cpuWake->bins == gpuWake->bins ? cpuWake->bins : 0,
+                          absTol, relTol, &mismatches, &maxAbs, &maxRel);
+  csrCompareLastWakeArray("FdNorm", cpuWake->FdNorm, gpuWake->FdNorm,
+                          cpuWake->nSaldin == gpuWake->nSaldin ? cpuWake->nSaldin : 0,
+                          absTol, relTol, &mismatches, &maxAbs, &maxRel);
+  csrCompareLastWakeArray("xSaldin", cpuWake->xSaldin, gpuWake->xSaldin,
+                          cpuWake->nSaldin == gpuWake->nSaldin ? cpuWake->nSaldin : 0,
+                          absTol, relTol, &mismatches, &maxAbs, &maxRel);
+  csrCompareLastWakeArray("wffFreqValue", cpuWake->wffFreqValue,
+                          gpuWake->wffFreqValue,
+                          cpuWake->wffValues == gpuWake->wffValues ? cpuWake->wffValues : 0,
+                          absTol, relTol, &mismatches, &maxAbs, &maxRel);
+  csrCompareLastWakeArray("wffRealFactor", cpuWake->wffRealFactor,
+                          gpuWake->wffRealFactor,
+                          cpuWake->wffValues == gpuWake->wffValues ? cpuWake->wffValues : 0,
+                          absTol, relTol, &mismatches, &maxAbs, &maxRel);
+  csrCompareLastWakeArray("wffImagFactor", cpuWake->wffImagFactor,
+                          gpuWake->wffImagFactor,
+                          cpuWake->wffValues == gpuWake->wffValues ? cpuWake->wffValues : 0,
+                          absTol, relTol, &mismatches, &maxAbs, &maxRel);
+
+  if (mismatches) {
+    fprintf(stderr,
+            "elegant CUDA VERIFY CSR_LAST_WAKE failed: %ld mismatches, maxAbs=%.3e, maxRel=%.3e, absTol=%.3e, relTol=%.3e\n",
+            mismatches, maxAbs, maxRel, absTol, relTol);
+    exit(1);
+  }
+  if (csrVerifyEnvFlag("ELEGANT_GPU_VERBOSE"))
+    fprintf(stderr,
+            "elegant CUDA VERIFY CSR_LAST_WAKE passed: maxAbs=%.3e maxRel=%.3e\n",
+            maxAbs, maxRel);
+
+#  undef CSR_COMPARE_LONG
+#  undef CSR_COMPARE_ULONG
+#  undef CSR_COMPARE_DOUBLE
+}
+#endif
+
+#if defined(HAVE_GPU) && !USE_MPI
+static long csrDriftImmediatelyFollows(ELEMENT_LIST *eptr) {
+  return eptr && eptr->succ && eptr->succ->type == T_CSRDRIFT;
+}
+
+static long csrResidentSimpleFinalTransformAvailable(
+  CSRCSBEND *csbend, double e2, double psi2, double cos_ttilt,
+  double sin_ttilt, double dxf, double dyf, double dzf,
+  const double *dcoord_etilt) {
+  long i;
+
+  if (!csbend || !dcoord_etilt)
+    return 0;
+  if ((cos_ttilt != 1 && cos_ttilt != -1) || sin_ttilt != 0)
+    return 0;
+  if (dxf != 0 || dyf != 0 || dzf != 0)
+    return 0;
+  for (i = 0; i < 5; i++)
+    if (dcoord_etilt[i] != 0)
+      return 0;
+  if (!(csbend->edgeFlags & BEND_EDGE2_EFFECTS))
+    return 1;
+  if (e2 != 0 || psi2 != 0 || csbend->edge_order > 1)
+    return 0;
+  return csbend->edge_effects[csbend->e2Index] == 0 ||
+         csbend->edge_effects[csbend->e2Index] == 1;
+}
+
+static long csrResidentSimpleInitialTransformAvailable(
+  CSRCSBEND *csbend, double e1, double he1, double psi1,
+  double cos_ttilt, double sin_ttilt, double dxi, double dyi,
+  double dzi) {
+  if (!csbend)
+    return 0;
+  if ((cos_ttilt != 1 && cos_ttilt != -1) || sin_ttilt != 0)
+    return 0;
+  if (dxi != 0 || dyi != 0 || dzi != 0)
+    return 0;
+  if (!(csbend->edgeFlags & BEND_EDGE1_EFFECTS))
+    return 1;
+  if (e1 != 0 || he1 != 0 || psi1 != 0 || csbend->edge_order > 1)
+    return 0;
+  return csbend->edge_effects[csbend->e1Index] == 0 ||
+         csbend->edge_effects[csbend->e1Index] == 1;
+}
+#endif
+
+#ifdef HAVE_GPU
+long track_through_csbendCSR_cuda_resident_entry(
+  double **part, long n_part, CSRCSBEND *csbend, double p_error,
+  double Po, double **accepted, double z_start, double z_end,
+  CHARGE *charge, char *rootname, MAXAMP *maxamp, APCONTOUR *apContour,
+  APERTURE_DATA *apFileData, ELEMENT_LIST *eptr) {
+  long result;
+
+  csrGpuCsbendInnerCall++;
+  csrGpuCsbendDeviceEntryRequested++;
+  result = track_through_csbendCSR(part, n_part, csbend, p_error, Po,
+                                   accepted, z_start, z_end, charge,
+                                   rootname, maxamp, apContour,
+                                   apFileData, eptr);
+  csrGpuCsbendDeviceEntryRequested--;
+  csrGpuCsbendInnerCall--;
+  return result;
+}
+#endif
+
 long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, double p_error,
                              double Po, double **accepted, double z_start, double z_end,
                              CHARGE *charge, char *rootname, MAXAMP *maxamp, APCONTOUR *apContour,
@@ -2050,6 +2369,11 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   static double *beta0 = NULL, *ctHist = NULL, *ctHistDeriv = NULL;
   static double *dGamma = NULL, *T1 = NULL, *T2 = NULL, *denom = NULL, *chik = NULL, *grnk = NULL;
   static long maxParticles = 0, maxBins = 0;
+#if defined(HAVE_GPU)
+  static double *denomCachePointer = NULL;
+  static long denomCacheBins = 0;
+  static double denomCacheDct = 0;
+#endif
   char particleLost;
   double x = 0, xp, y = 0, yp, p1, beta1, p0;
   double ctLower, ctUpper, dct, slippageLength, phiBend, slippageLength13;
@@ -2070,6 +2394,16 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   double macroParticleCharge, CSRConstant, gamma2, gamma3;
   long iBin, iBinBehind;
   long csrInhibit = 0;
+#if defined(HAVE_GPU)
+  long csrDgammaHostCurrent = 1;
+#endif
+#if defined(HAVE_GPU) && !USE_MPI
+  long useGpuCsrResident = 0;
+  long usedGpuCsrResident = 0;
+  long gpuCsrResidentDeviceEntryDone = 0;
+  long gpuCsrResidentFinalDone = 0;
+  long skipGpuCsrDriftPrep = 0;
+#endif
   double derbenevRatio = 0;
   long n_partMoreThanOne = 0;
   TRACKING_CONTEXT tContext;
@@ -2094,34 +2428,30 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 #endif
 
 #ifdef HAVE_GPU
-  if (getElementOnGpu()) {
+  if (getElementOnGpu() && !csrGpuCsbendInnerCall) {
     startGpuTimer();
     i_part = gpu_track_through_csbendCSR(n_part, csbend, p_error, Po, accepted, z_start, z_end, charge, rootname, maxamp, apContour, apFileData, eptr);
 #  ifdef GPU_VERIFY
     startCpuTimer();
     /* Copy the csrWake global struct (it is reset below) */
     CSR_LAST_WAKE gpuCsrWake;
-    memcpy(&gpuCsrWake, &csrWake, sizeof(CSR_LAST_WAKE));
+    csrCopyLastWakeForVerify(&gpuCsrWake, &csrWake);
     csrWake.FdNorm = NULL;          /* Reset doesn't deallocate */
+    csrWake.xSaldin = NULL;
     csrWake.StupakovFileActive = 0; /* Reset doesn't close */
 
-    track_through_csbendCSR(part, n_part, csbend, p_error, Po, accepted, z_start, z_end, charge, rootname, maxamp, apContour, apFileData);
+    track_through_csbendCSR(part, n_part, csbend, p_error, Po, accepted, z_start, z_end, charge, rootname, maxamp, apContour, apFileData, eptr);
     compareGpuCpu(n_part, "track_through_csbendCSR");
-
-    /* compare CSR_LAST_WAKE structs */
     compareCSR_LAST_WAKE(&gpuCsrWake, &csrWake);
-    /* Deallocate gpuCsrWake */
-    if (gpuCsrWake.FdNorm) {
-      free(gpuCsrWake.FdNorm);
-      free(gpuCsrWake.xSaldin);
-    }
-    if (gpuCsrWake.StupakovFileActive)
-      if (!SDDS_Terminate(&gpuCsrWake.SDDS_Stupakov))
-        bombElegant("problem terminating data file for Stupakov output from CSRDRIFT", NULL);
+    csrReleaseLastWakeVerifyCopy(&gpuCsrWake);
 #  endif /* GPU_VERIFY */
     return i_part;
   }
 #endif /* HAVE_GPU */
+
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  gpu_clear_csr_wake_cpu_shadow();
+#endif
 
   gamma2 = Po * Po + 1;
   gamma3 = pow(gamma2, 3. / 2);
@@ -2417,7 +2747,26 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   multipoleKicksDone += n_part * csbend->nSlices * (csbend->integration_order == 4 ? 4 : 1);
 #endif
 
+#if defined(HAVE_GPU) && !USE_MPI
+  if (csrGpuCsbendDeviceEntryRequested) {
+    if (n_partMoreThanOne &&
+        !(tContext.sliceAnalysis && tContext.sliceAnalysis->active) &&
+        !maxamp && !apContour && (!apFileData || !apFileData->initialized) &&
+        gpu_csr_csbend_resident_available(csbend, n_part, nBins) &&
+        csrResidentSimpleInitialTransformAvailable(
+          csbend, e1, he1, psi1, cos_ttilt, sin_ttilt, dxi, dyi, dzi))
+      gpuCsrResidentDeviceEntryDone =
+        gpu_track_csbend_csr_enter_simple(n_part, Po, cos_ttilt);
+    if (!gpuCsrResidentDeviceEntryDone)
+      forceParticlesToCpu("CSRCSBEND resident initial CPU fallback");
+  }
+#endif
+
+#if defined(HAVE_GPU) && !USE_MPI
+  if (!gpuCsrResidentDeviceEntryDone && (isSlave || !notSinglePart)) {
+#else
   if (isSlave || !notSinglePart) {
+#endif
     /* check particle data, transform coordinates, and handle edge effects */
     for (i_part = 0; i_part < n_part; i_part++) {
       if (!part) {
@@ -2509,6 +2858,18 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
       }
     }
   }
+#if defined(HAVE_GPU) && !USE_MPI
+  useGpuCsrResident =
+    n_partMoreThanOne &&
+    !(tContext.sliceAnalysis && tContext.sliceAnalysis->active) &&
+    !maxamp && !apContour && (!apFileData || !apFileData->initialized) &&
+    gpu_csr_csbend_resident_available(csbend, n_part, nBins);
+  if (useGpuCsrResident && !gpuCsrResidentDeviceEntryDone &&
+      !gpu_csr_csbend_resident_begin(beta0, n_part))
+    useGpuCsrResident = 0;
+  if (useGpuCsrResident)
+    usedGpuCsrResident = 1;
+#endif
   if (csbend->csr && n_partMoreThanOne)
     CSRConstant = 2 * macroParticleCharge * particleCharge / pow(3 * rho0 * rho0, 1. / 3.) / (4 * PI * epsilon_o * particleMass * sqr(c_mks));
   else
@@ -2521,6 +2882,23 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
       break;
     if (isSlave || !notSinglePart) {
       if (!csbend->backtrack || kick != 0) {
+#if defined(HAVE_GPU) && !USE_MPI
+        long gpuCsrResidentBodyDone = 0;
+        if (useGpuCsrResident) {
+          gpuCsrResidentBodyDone =
+            gpu_track_csbend_csr_body_slice(csbend, n_part,
+                                            csbend->length / csbend->nSlices,
+                                            rho0, rho_actual);
+          if (!gpuCsrResidentBodyDone) {
+            forceParticlesToCpu("CSRCSBEND resident body fallback");
+            if (gpuCsrResidentDeviceEntryDone &&
+                !gpu_copy_csbend_csr_beta0(beta0, n_part))
+              bombElegant("unable to copy CUDA CSRCSBEND beta0 for body fallback", NULL);
+            useGpuCsrResident = 0;
+          }
+        }
+        if (!gpuCsrResidentBodyDone) {
+#endif
         for (i_part = 0; i_part <= i_top; i_part++) {
           coord = part[i_part];
 
@@ -2585,6 +2963,9 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
           }
         }
         n_part = i_top + 1;
+#if defined(HAVE_GPU) && !USE_MPI
+        }
+#endif
       }
     }
 
@@ -2639,6 +3020,9 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 #else
     if (!csrInhibit && (notSinglePart || (!notSinglePart && n_partMoreThanOne))) { /* n_part could be 0 for some processors, which could cause synchronization problem */
 #endif
+#if defined(HAVE_GPU) && !USE_MPI
+      long useGpuCsrKick = 0;
+#endif
       /* compute CSR potential function */
       if (kick == 0 || !csbend->binOnce) {
 	long lastMaxBins;
@@ -2649,10 +3033,75 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 	  /* maxBins = nBins; */
 	  nBins = 0;
 	}
+#if defined(HAVE_GPU) && !USE_MPI
+        nBinned = -1;
+        if (useGpuCsrResident) {
+          double gpuCtLower = ctLower, gpuCtUpper = ctUpper, gpuDct = dct;
+          long gpuNBins = nBins;
+          if (gpu_prepare_csbend_csr_histogram_device(
+                &gpuCtLower, &gpuCtUpper, &gpuDct, &gpuNBins,
+                csbend->binRangeFactor < 1.1 ? 1.1 : csbend->binRangeFactor,
+                n_part, Po) >= 0) {
+            if (gpuNBins > maxBins) {
+              maxBins = gpuNBins;
+              if (!(ctHist = SDDS_Realloc(ctHist, sizeof(*ctHist) * maxBins)) ||
+                  !(ctHistDeriv = SDDS_Realloc(ctHistDeriv, sizeof(*ctHistDeriv) * maxBins)) ||
+                  !(denom = SDDS_Realloc(denom, sizeof(*denom) * maxBins)) ||
+                  !(T1 = SDDS_Realloc(T1, sizeof(*T1) * maxBins)) ||
+                  !(T2 = SDDS_Realloc(T2, sizeof(*T2) * maxBins)) ||
+                  !(dGamma = SDDS_Realloc(dGamma, sizeof(*dGamma) * maxBins)))
+                bombElegant("memory allocation failure (track_through_csbendCSR)", NULL);
+            }
+            nBinned = gpu_compute_csbend_csr_histogram_device(ctHist,
+                                                              n_part, gpuNBins,
+                                                              gpuCtLower,
+                                                              gpuDct);
+            if (nBinned >= 0) {
+              ctLower = gpuCtLower;
+              ctUpper = gpuCtUpper;
+              dct = gpuDct;
+              nBins = gpuNBins;
+            }
+          }
+          if (nBinned < 0) {
+            forceParticlesToCpu("CSRCSBEND resident histogram fallback");
+            if (gpuCsrResidentDeviceEntryDone &&
+                !gpu_copy_csbend_csr_beta0(beta0, n_part))
+              bombElegant("unable to copy CUDA CSRCSBEND beta0 for histogram fallback", NULL);
+            useGpuCsrResident = 0;
+          }
+        }
+        if (nBinned < 0 && gpu_csr_csbend_histogram_available(n_part, nBins)) {
+          double gpuCtLower = ctLower, gpuCtUpper = ctUpper, gpuDct = dct;
+          long gpuNBins = nBins;
+          if (prepareParticleCoordinateHistogram(&ctHist, &maxBins,
+                                                 &gpuCtLower, &gpuCtUpper,
+                                                 &gpuDct, &gpuNBins,
+                                                 csbend->binRangeFactor < 1.1 ? 1.1 : csbend->binRangeFactor,
+                                                 part, n_part, 4) >= 0) {
+            nBinned = gpu_compute_csbend_csr_histogram(ctHist, part,
+                                                       n_part, gpuNBins,
+                                                       gpuCtLower, gpuDct);
+            if (nBinned >= 0) {
+              ctLower = gpuCtLower;
+              ctUpper = gpuCtUpper;
+              dct = gpuDct;
+              nBins = gpuNBins;
+            }
+          }
+        }
+        if (nBinned < 0) {
+          ctLower = ctUpper = 0;
+          if ((dct = c_mks*csbend->binSize) > 0)
+            nBins = 0;
+#endif
         nBinned = binParticleCoordinate(&ctHist, &maxBins,
                                         &ctLower, &ctUpper, &dct, &nBins,
                                         csbend->binRangeFactor < 1.1 ? 1.1 : csbend->binRangeFactor,
                                         part, n_part, 4);
+#if defined(HAVE_GPU) && !USE_MPI
+        }
+#endif
 	if (lastMaxBins<maxBins) {
 	  if (!(ctHistDeriv = SDDS_Realloc(ctHistDeriv, sizeof(*ctHistDeriv) * maxBins)) ||
 	      !(denom = SDDS_Realloc(denom, sizeof(*denom) * maxBins)) ||
@@ -2719,10 +3168,22 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
           SavitzyGolaySmooth(ctHist, nBins, csbend->SGOrder, csbend->SGHalfWidth, csbend->SGHalfWidth, 0);
           correctDistribution(ctHist, nBins, 1.0 * nBinned);
         }
+#if defined(HAVE_GPU)
+        if (denomCachePointer != denom || denomCacheDct != dct || denomCacheBins < nBins) {
+          for (iBin = 0; iBin < nBins; iBin++)
+            denom[iBin] = pow(dct * iBin, 1. / 3.);
+          denomCachePointer = denom;
+          denomCacheDct = dct;
+          denomCacheBins = nBins;
+        }
+        for (iBin = 0; iBin < nBins; iBin++)
+          ctHistDeriv[iBin] = (ctHist[iBin] /= dct);
+#else
         for (iBin = 0; iBin < nBins; iBin++) {
           denom[iBin] = pow(dct * iBin, 1. / 3.);
           ctHistDeriv[iBin] = (ctHist[iBin] /= dct);
         }
+#endif
         /* - compute derivative with smoothing.  The deriv is w.r.t. index number and
          * I won't scale it now as it will just fall out in the integral 
          */
@@ -2769,6 +3230,36 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
             grnk[iBin] = const2 * (chik[iBin + 1] - 2.0 * chik[iBin] + chik[iBin - 1]);
           grnk[nBins - 1] = 0;
         } else {
+#ifdef HAVE_GPU
+          long returnCsrWakeComponents =
+            csbend->wakeFileActive &&
+            ((!csbend->outputLastWakeOnly && kick % csbend->outputInterval == 0) ||
+             (csbend->outputLastWakeOnly && kick == (csbend->nSlices - 1)));
+          long copyCsrDgammaToHost = 1;
+#  if !USE_MPI
+          useGpuCsrKick =
+            !csbend->backtrack && !csbend->wffValues && CSRConstant &&
+            ((useGpuCsrResident &&
+              gpu_csr_csbend_resident_available(csbend, n_part, nBins)) ||
+             gpu_csr_csbend_kick_available(n_part, nBins));
+          copyCsrDgammaToHost =
+            !useGpuCsrKick || returnCsrWakeComponents ||
+            (kick == (csbend->nSlices - 1));
+#  endif
+          if (!gpu_compute_csbend_csr_wake(dGamma, T1, T2,
+                                           ctHist, ctHistDeriv, denom,
+                                           n_part, nBins, CSRConstant,
+                                           csbend->length / csbend->nSlices,
+                                           slippageLength13, dct,
+                                           csbend->steadyState,
+                                           csbend->trapazoidIntegration,
+                                           diSlippage, diSlippage4,
+                                           returnCsrWakeComponents,
+                                           copyCsrDgammaToHost)) {
+#  if !USE_MPI
+            useGpuCsrKick = 0;
+#  endif
+#endif
           for (iBin = 0; iBin < nBins; iBin++) {
             double term1, term2;
             long count;
@@ -2820,6 +3311,14 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
             }
             dGamma[iBin] = T1[iBin] + T2[iBin];
           }
+#ifdef HAVE_GPU
+          csrDgammaHostCurrent = 1;
+#endif
+#ifdef HAVE_GPU
+          } else {
+            csrDgammaHostCurrent = copyCsrDgammaToHost;
+          }
+#endif
         }
 
         if (csbend->integratedGreensFunction) {
@@ -2839,6 +3338,35 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
       }
       if (isSlave || !notSinglePart) {
         if (CSRConstant) {
+#if defined(HAVE_GPU) && !USE_MPI
+          if (useGpuCsrKick && useGpuCsrResident &&
+              gpu_apply_csbend_csr_kick_device(n_part, nBins, ctLower, dct, Po, rho0)) {
+            if (!csrDgammaHostCurrent && kick == (csbend->nSlices - 1)) {
+              if (!gpu_copy_csbend_csr_dgamma(dGamma, nBins))
+                bombElegant("unable to copy CUDA CSR dGamma for final CSRCSBEND state", NULL);
+              csrDgammaHostCurrent = 1;
+            }
+          } else if (useGpuCsrKick && !useGpuCsrResident &&
+                     gpu_apply_csbend_csr_kick(part, n_part, nBins, ctLower, dct, Po, rho0)) {
+            if (!csrDgammaHostCurrent && kick == (csbend->nSlices - 1)) {
+              if (!gpu_copy_csbend_csr_dgamma(dGamma, nBins))
+                bombElegant("unable to copy CUDA CSR dGamma for final CSRCSBEND state", NULL);
+              csrDgammaHostCurrent = 1;
+            }
+          } else {
+            if (useGpuCsrResident) {
+              forceParticlesToCpu("CSRCSBEND resident kick fallback");
+              if (gpuCsrResidentDeviceEntryDone &&
+                  !gpu_copy_csbend_csr_beta0(beta0, n_part))
+                bombElegant("unable to copy CUDA CSRCSBEND beta0 for kick fallback", NULL);
+              useGpuCsrResident = 0;
+            }
+            if (!csrDgammaHostCurrent) {
+              if (!gpu_copy_csbend_csr_dgamma(dGamma, nBins))
+                bombElegant("unable to copy CUDA CSR dGamma for CPU CSR kick fallback", NULL);
+              csrDgammaHostCurrent = 1;
+            }
+#endif
           for (i_part = 0; i_part < n_part; i_part++) {
             long nBins1;
             double f;
@@ -2857,6 +3385,9 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
               */
             }
           }
+#if defined(HAVE_GPU) && !USE_MPI
+          }
+#endif
         }
       }
 
@@ -2956,7 +3487,30 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
     }
   }
 
-  if (!csbend->binOnce && n_partMoreThanOne && !csrInhibit && !csbend->csrBlock) {
+#if defined(HAVE_GPU) && !USE_MPI
+  skipGpuCsrDriftPrep =
+    usedGpuCsrResident && !csrDriftImmediatelyFollows(eptr);
+  if (useGpuCsrResident) {
+    if (csrResidentSimpleFinalTransformAvailable(
+          csbend, e2, psi2, cos_ttilt, sin_ttilt,
+          dxf, dyf, dzf, dcoord_etilt))
+      gpuCsrResidentFinalDone =
+        gpu_track_csbend_csr_finalize_simple(n_part, Po, cos_ttilt);
+#  if defined(GPU_VERIFY)
+    forceParticlesToCpu("CSRCSBEND resident final CPU handoff");
+#  else
+    if (!gpuCsrResidentFinalDone || !skipGpuCsrDriftPrep)
+      forceParticlesToCpu("CSRCSBEND resident final CPU handoff");
+#  endif
+    useGpuCsrResident = 0;
+  }
+#endif
+
+  if (!csbend->binOnce && n_partMoreThanOne && !csrInhibit && !csbend->csrBlock
+#if defined(HAVE_GPU) && !USE_MPI
+      && !skipGpuCsrDriftPrep
+#endif
+      ) {
     /* prepare some data for use by CSRDRIFT element */
 #ifdef DEBUG
     fprintf(stderr, "Preparing data for CSRDRIFT, in case one follows\n");
@@ -3011,7 +3565,11 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   }
 
   i_top = n_part - 1;
-  if (isSlave || !notSinglePart) {
+  if ((isSlave || !notSinglePart)
+#if defined(HAVE_GPU) && !USE_MPI
+      && !gpuCsrResidentFinalDone
+#endif
+      ) {
     /* handle edge effects, and transform coordinates */
     for (i_part = 0; i_part <= i_top; i_part++) {
       coord = part[i_part];
@@ -3106,7 +3664,11 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
     n_part = i_top + 1;
   }
 
-  if (n_partMoreThanOne && !csbend->csrBlock) {
+  if (n_partMoreThanOne && !csbend->csrBlock
+#if defined(HAVE_GPU) && !USE_MPI
+      && !skipGpuCsrDriftPrep
+#endif
+      ) {
     /* prepare more data for CSRDRIFT */
     int64_t imin, imax;
     double S55;
@@ -3132,6 +3694,13 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 #ifdef DEBUG
     fprintf(stderr, "rms bunch length = %le, percentile bunch length (68, 90) = %le, %le\n",
             csrWake.rmsBunchLength, csrWake.perc68BunchLength, csrWake.perc90BunchLength);
+#endif
+#if defined(HAVE_GPU) && !USE_MPI
+    if (!csrDgammaHostCurrent) {
+      if (!gpu_copy_csbend_csr_dgamma(dGamma, nBins))
+        bombElegant("unable to copy CUDA CSR dGamma for CSR_LAST_WAKE state", NULL);
+      csrDgammaHostCurrent = 1;
+    }
 #endif
     if (macroParticleCharge) {
       index_min_max(&imin, &imax, csrWake.dGamma, csrWake.bins);
@@ -3184,6 +3753,26 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   csrWake.wffRealFactor = csbend->wffRealFactor;
   csrWake.wffImagFactor = csbend->wffImagFactor;
 
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  if (csrWake.valid && csrWake.dGamma && csrWake.bins == nBins &&
+      !csbend->integratedGreensFunction) {
+    double *cpuDGamma = malloc((size_t)nBins * sizeof(*cpuDGamma));
+    if (!cpuDGamma)
+      bombElegant("memory allocation failure copying CSR_LAST_WAKE CPU shadow", NULL);
+    if (gpu_copy_csr_wake_cpu_shadow(cpuDGamma, nBins)) {
+      CSR_LAST_WAKE cpuCsrWake;
+      if (csbend->wffValues)
+        applyFilterTable(cpuDGamma, nBins, dct / c_mks,
+                         csbend->wffValues, csbend->wffFreqValue,
+                         csbend->wffRealFactor, csbend->wffImagFactor);
+      memcpy(&cpuCsrWake, &csrWake, sizeof(cpuCsrWake));
+      cpuCsrWake.dGamma = cpuDGamma;
+      compareCSR_LAST_WAKE(&csrWake, &cpuCsrWake);
+    }
+    free(cpuDGamma);
+  }
+#endif
+
 #if defined(MINIMIZE_MEMORY)
   /* leave dGamma out of this because that memory is used by CSRDRIFT */
   free(beta0);
@@ -3198,6 +3787,11 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
     free(chik);
   beta0 = ctHist = ctHistDeriv = T1 = T2 = denom = NULL;
   maxBins = maxParticles = 0;
+#  if defined(HAVE_GPU)
+  denomCachePointer = NULL;
+  denomCacheBins = 0;
+  denomCacheDct = 0;
+#  endif
 #endif
 
 #if (!USE_MPI)
@@ -3211,11 +3805,14 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 }
 #undef DEBUG_IGF
 
-long binParticleCoordinate(double **hist, long *maxBins,
-                           double *lower, double *upper, double *binSize, long *bins,
-                           double expansionFactor,
-                           double **particleCoord, long nParticles, long coordinateIndex) {
-  long iBin, iParticle, nBinned, count;
+static long prepareParticleCoordinateHistogram(double **hist, long *maxBins,
+                                               double *lower, double *upper,
+                                               double *binSize, long *bins,
+                                               double expansionFactor,
+                                               double **particleCoord,
+                                               long nParticles,
+                                               long coordinateIndex) {
+  long iBin, iParticle, count;
   double value;
 #ifdef DEBUG
   fprintf(stderr, "binParticleCoordinate: maxBins = %ld, bins = %ld, binSize = %le\n",
@@ -3284,9 +3881,22 @@ long binParticleCoordinate(double **hist, long *maxBins,
   fprintf(stderr, "range: [%le, %le] (%le) : bins => %ld, binSize => %le; maxBins = %ld\n",
 	  *lower, *upper, *upper-*lower, *bins, *binSize, *maxBins);
 #endif
-  
+
   for (iBin = 0; iBin < *bins; iBin++)
     (*hist)[iBin] = 0;
+  return count;
+}
+
+long binParticleCoordinate(double **hist, long *maxBins,
+                           double *lower, double *upper, double *binSize, long *bins,
+                           double expansionFactor,
+                           double **particleCoord, long nParticles, long coordinateIndex) {
+  long iBin, iParticle, nBinned, status;
+  if ((status = prepareParticleCoordinateHistogram(hist, maxBins, lower, upper,
+                                                  binSize, bins, expansionFactor,
+                                                  particleCoord, nParticles,
+                                                  coordinateIndex)) < 0)
+    return status;
   nBinned = 0;
   if (isSlave || !notSinglePart) {
     for (iParticle = nBinned = 0; iParticle < nParticles; iParticle++) {

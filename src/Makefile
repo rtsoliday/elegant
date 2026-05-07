@@ -218,6 +218,44 @@ endif
 CFLAGS +=  -I$(SDDS_REPO)/include -I$(OBJ_DIR) -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -Og
 CCFLAGS +=  -I$(SDDS_REPO)/include -I$(OBJ_DIR) -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -Og
 
+ELEGANT_INSTALL_NAME = elegant$(EXEEXT)
+CUDA_REQUESTED := $(filter 1 yes YES true TRUE on ON,$(HAVE_CUDA) $(HAVE_GPU))
+ifneq ($(CUDA_REQUESTED),)
+  HAVE_CUDA := 1
+  HAVE_GPU := 1
+  ELEGANT_INSTALL_NAME = gpu-elegant$(EXEEXT)
+  CUDA_NVCC_FROM_PATH := $(shell command -v nvcc 2>/dev/null)
+  CUDA_NVCC_COMMON := /usr/local/cuda-12.4/bin/nvcc /usr/local/cuda/bin/nvcc
+  CUDA_NVCC_VERSIONED := $(sort $(wildcard /usr/local/cuda-*/bin/nvcc))
+  ifeq ($(strip $(NVCC)),)
+    NVCC := $(firstword $(CUDA_NVCC_FROM_PATH) $(wildcard $(CUDA_NVCC_COMMON)) $(CUDA_NVCC_VERSIONED))
+  endif
+  ifeq ($(strip $(NVCC)),)
+    ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
+      $(error CUDA support requested, but nvcc was not found. Set NVCC=/path/to/nvcc, for example NVCC=/usr/local/cuda-12.4/bin/nvcc)
+    endif
+  endif
+  CUDA_HOME ?= $(patsubst %/bin/nvcc,%,$(NVCC))
+  CUDA_ARCH ?= sm_86
+  OBJ_DIR := $(OBJ_DIR).gpu
+  BIN_DIR := $(BIN_DIR)-gpu
+  ifeq ($(GPU_VERIFY),1)
+    OBJ_DIR := $(OBJ_DIR).verify
+    BIN_DIR := $(BIN_DIR)-verify
+    CFLAGS += -DGPU_VERIFY=1
+    CCFLAGS += -DGPU_VERIFY=1
+    NVCCFLAGS += -DGPU_VERIFY=1
+  endif
+  CFLAGS += -O3 -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
+  CCFLAGS += -O3 -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
+  NVCCFLAGS += -O3 -g -arch=$(CUDA_ARCH) --fmad=false -Xcompiler -fPIC -I$(SDDS_REPO)/include -I$(OBJ_DIR) -Igpu -I$(CUDA_HOME)/include -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -DHAVE_GPU=1
+  NVCCDEPFLAGS ?= $(DEPFLAGS)
+  LDFLAGS += -L$(CUDA_HOME)/lib64 -Wl,-rpath,$(CUDA_HOME)/lib64
+  PROD_SYS_LIBS += -lcudart
+  elegant_SRC += gpu/gpu_stub.c gpu/gpu_cuda_runtime.cu
+  elegantto_SRC += gpu/gpu_stub.c gpu/gpu_cuda_runtime.cu
+endif
+
 ifeq ($(MDEBUG),1)
   CFLAGS += -DMPI_DEBUG=1 -Og 
   CCFLAGS += -DMPI_DEBUG=1 -Og
@@ -259,43 +297,43 @@ endif
 
 include ../Makefile.build
 
-$(OBJ_DIR)/elegant$(EXEEXT): $(elegant_OBJS) $(PROD_DEPS)
+$(OBJ_DIR)/elegant$(EXEEXT): $(elegant_OBJS) $(PROD_DEPS) | $(BIN_DIR)
 	$(LINKEXE) $(OUTPUTEXE) $(elegant_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
-	cp -f $@ $(BIN_DIR)/
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
+	cp -f $@ $(BIN_DIR)/$(ELEGANT_INSTALL_NAME)
+	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/$(ELEGANT_INSTALL_NAME); fi
+	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/$(ELEGANT_INSTALL_NAME); fi
 
-$(OBJ_DIR)/elegantto$(EXEEXT): $(elegantto_OBJS) $(PROD_DEPS)
+$(OBJ_DIR)/elegantto$(EXEEXT): $(elegantto_OBJS) $(PROD_DEPS) | $(BIN_DIR)
 	$(LINKEXE) $(OUTPUTEXE) $(elegantto_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
 	cp -f $@ $(BIN_DIR)/
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
 
-$(OBJ_DIR)/sddssasefel$(EXEEXT): $(sddssasefel_OBJS) $(PROD_DEPS)
+$(OBJ_DIR)/sddssasefel$(EXEEXT): $(sddssasefel_OBJS) $(PROD_DEPS) | $(BIN_DIR)
 	$(LINKEXE) $(OUTPUTEXE) $(sddssasefel_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
 	cp -f $@ $(BIN_DIR)/
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
 
-$(OBJ_DIR)/ibsEmittance$(EXEEXT): $(ibsEmittance_OBJS) $(PROD_DEPS)
+$(OBJ_DIR)/ibsEmittance$(EXEEXT): $(ibsEmittance_OBJS) $(PROD_DEPS) | $(BIN_DIR)
 	$(LINKEXE) $(OUTPUTEXE) $(ibsEmittance_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
 	cp -f $@ $(BIN_DIR)/
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
 
-$(OBJ_DIR)/abrat$(EXEEXT): $(abrat_OBJS) $(PROD_DEPS)
+$(OBJ_DIR)/abrat$(EXEEXT): $(abrat_OBJS) $(PROD_DEPS) | $(BIN_DIR)
 	$(LINKEXE) $(OUTPUTEXE) $(abrat_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
 	cp -f $@ $(BIN_DIR)/
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
 
-$(OBJ_DIR)/trimda$(EXEEXT): $(trimda_OBJS) $(PROD_DEPS)
+$(OBJ_DIR)/trimda$(EXEEXT): $(trimda_OBJS) $(PROD_DEPS) | $(BIN_DIR)
 	$(LINKEXE) $(OUTPUTEXE) $(trimda_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
 	cp -f $@ $(BIN_DIR)/
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
 
-$(OBJ_DIR)/iirFilterTest$(EXEEXT): $(iirFilterTest_OBJS) $(PROD_DEPS)
+$(OBJ_DIR)/iirFilterTest$(EXEEXT): $(iirFilterTest_OBJS) $(PROD_DEPS) | $(BIN_DIR)
 	$(LINKEXE) $(OUTPUTEXE) $(iirFilterTest_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
 	cp -f $@ $(BIN_DIR)/
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
@@ -562,4 +600,3 @@ $(OBJ_DIR)/particleTunes.$(OBJEXT): $(OBJ_DIR)/particleTunes.h
 
 $(OBJ_DIR)/particleTunes.h: particleTunes.nl
 	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables particleTunes.nl $(OBJ_DIR)/particleTunes.h
-

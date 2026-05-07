@@ -6,6 +6,7 @@ endif
 include ../Makefile.rules
 
 PROD = Pelegant
+PELEGANT_INSTALL_NAME = Pelegant$(EXEEXT)
 
 Pelegant_SRC = alpha_data.c \
 	alpha_matrix.c \
@@ -208,18 +209,59 @@ ifeq ($(OS), Windows)
   LIB_LINK_DIRS += -LIBPATH:$(SDDS_REPO)/lib/$(OS)-$(ARCH)
 endif
 
+CUDA_REQUESTED := $(filter 1 yes YES true TRUE on ON,$(HAVE_CUDA) $(HAVE_GPU))
+ifneq ($(CUDA_REQUESTED),)
+  HAVE_CUDA := 1
+  HAVE_GPU := 1
+  PELEGANT_INSTALL_NAME = gpu-Pelegant$(EXEEXT)
+  CUDA_NVCC_FROM_PATH := $(shell command -v nvcc 2>/dev/null)
+  CUDA_NVCC_COMMON := /usr/local/cuda-12.4/bin/nvcc /usr/local/cuda/bin/nvcc
+  CUDA_NVCC_VERSIONED := $(sort $(wildcard /usr/local/cuda-*/bin/nvcc))
+  ifeq ($(strip $(NVCC)),)
+    NVCC := $(firstword $(CUDA_NVCC_FROM_PATH) $(wildcard $(CUDA_NVCC_COMMON)) $(CUDA_NVCC_VERSIONED))
+  endif
+  ifeq ($(strip $(NVCC)),)
+    ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
+      $(error CUDA support requested for Pelegant, but nvcc was not found. Set NVCC=/path/to/nvcc, for example NVCC=/usr/local/cuda-12.4/bin/nvcc)
+    endif
+  endif
+  CUDA_HOME ?= $(patsubst %/bin/nvcc,%,$(NVCC))
+  CUDA_ARCH ?= sm_86
+  OBJ_DIR := $(OBJ_DIR).gpu.mpi
+  BIN_DIR := $(BIN_DIR)-gpu
+  ifeq ($(GPU_VERIFY),1)
+    OBJ_DIR := $(OBJ_DIR).verify
+    BIN_DIR := $(BIN_DIR)-verify
+    CFLAGS += -DGPU_VERIFY=1
+    CCFLAGS += -DGPU_VERIFY=1
+    NVCCFLAGS += -DGPU_VERIFY=1
+  endif
+  CFLAGS += -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
+  CCFLAGS += -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
+  NVCCFLAGS += -O3 -g -arch=$(CUDA_ARCH) --fmad=false -Xcompiler -fPIC -I$(SDDS_REPO)/include -I$(SDDS_REPO)/pgapack -I$(OBJ_DIR) -Igpu -I$(CUDA_HOME)/include -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DUSE_MPI=1 -DSDDS_MPI_IO=1 -DWL=32 -DSVN_VERSION=\"$(SVN_VERSION)\" -DHAVE_GPU=1
+  NVCCDEPFLAGS ?= $(DEPFLAGS)
+  LDFLAGS += -L$(CUDA_HOME)/lib64 -Wl,-rpath,$(CUDA_HOME)/lib64
+  PROD_SYS_LIBS += -Wl,-Bdynamic -lcudart
+  Pelegant_SRC += gpu/gpu_stub.mpi.c gpu/gpu_cuda_runtime.mpi.cu
+endif
+
 include ../Makefile.build
 
 $(OBJ_DIR)/Pelegant$(EXEEXT): $(Pelegant_OBJS) $(PROD_DEPS)
 	$(LINKEXE) $(OUTPUTEXE) $(Pelegant_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
-	cp -f $@ $(BIN_DIR)/
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
+	cp -f $@ $(BIN_DIR)/$(PELEGANT_INSTALL_NAME)
+	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/$(PELEGANT_INSTALL_NAME); fi
+	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/$(PELEGANT_INSTALL_NAME); fi
 
 $(OBJ_DIR)/%.mpi.$(OBJEXT): %.c
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CFLAGS)) -c $< $(OUTPUT)
 $(OBJ_DIR)/%.mpi.$(OBJEXT): %.cc
+	@mkdir -p $(dir $@)
 	$(CCC) $(CCFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CCFLAGS)) -c $< $(OUTPUT)
+$(OBJ_DIR)/%.mpi.$(OBJEXT): %.cu
+	@mkdir -p $(dir $@)
+	$(NVCC) $(NVCCFLAGS) $(NVCCDEPFLAGS) -c $< $(OUTPUT)
 
 $(OBJ_DIR)/insertSCeffects.mpi.$(OBJEXT): $(OBJ_DIR)/insertSCeffects.h
 
@@ -482,4 +524,3 @@ $(OBJ_DIR)/particleTunes.mpi.$(OBJEXT): $(OBJ_DIR)/particleTunes.h
 
 $(OBJ_DIR)/particleTunes.h: particleTunes.nl
 	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables particleTunes.nl $(OBJ_DIR)/particleTunes.h
-

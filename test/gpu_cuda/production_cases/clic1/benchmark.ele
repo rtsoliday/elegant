@@ -1,0 +1,63 @@
+&run_setup
+  lattice = "/home/soliday/oag/apps/src/elegantTestSet/CLIC1/rtml.lte",
+  use_beamline = "RTML",
+  rootname = <root>,
+  default_order = 3,
+  sigma = "%s.sig",
+  final = "%s.fin",
+  output = "%s.out",
+  magnets = "%s.mag",
+  centroid = "%s.cen",
+  parameters = "%s.param",
+  semaphore_file = "%s.done",
+  print_statistics = 0,
+  show_element_timing = 1,
+  tracking_updates = 0,
+  load_balancing_on = 0,
+  random_number_seed = <seed>,
+  p_central_mev = 2860.0,
+  search_path = "/home/soliday/oag/apps/src/elegantTestSet/CLIC1",
+&end
+
+&run_control
+  n_steps = 1,
+&end
+
+&bunched_beam
+  n_particles_per_bunch = <n_particles>,
+  emit_nx = 500.0e-9,
+  emit_ny = 5.0e-9,
+  beta_x = 39.0,
+  alpha_x = 0.0,
+  beta_y = 39.0,
+  alpha_y = 0.0,
+  sigma_s = 1300e-6,
+  sigma_dp = 1.1e-3,
+  momentum_chirp = 0.0,
+  distribution_type[0] = 3*"gaussian",
+  distribution_cutoff[0] = 3*4,
+  enforce_rms_values[0] = 1,1,1,
+  bunch = "%s.bun",
+&end
+
+&twiss_output
+  matched = 0,
+  beta_x = 39.0,
+  alpha_x = 0.0,
+  beta_y = 39.0,
+  alpha_y = 0.0,
+  eta_x = 0.0,
+  etap_x = 0.0,
+  eta_y = 0.0,
+  etap_y = 0.0,
+  filename = "%s.twi",
+&end
+
+&matrix_output
+  SDDS_output = "%s.mat",
+  SDDS_output_order = 3,
+  full_matrix_only = 1,
+&end
+
+&track
+&end

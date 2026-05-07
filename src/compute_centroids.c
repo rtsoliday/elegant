@@ -70,18 +70,25 @@ void compute_centroids(
 #ifdef USE_KAHAN
   double error[6];
 #endif
+#ifdef HAVE_GPU
+  long restoreElementOnGpu = 0;
+#endif
 
 #ifdef HAVE_GPU
   if (getElementOnGpu()) {
-    startGpuTimer();
-    gpu_compute_centroids(centroid, n_part);
+    if (gpu_reductions_enabled(n_part)) {
+      startGpuTimer();
+      gpu_compute_centroids(centroid, n_part);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    copyReductionArrays(centroid, NULL);
-    compute_centroids(centroid, coordinates, n_part);
-    compareReductionArrays(centroid, NULL, NULL, "compute_centroids");
+      startCpuTimer();
+      copyReductionArrays(centroid, NULL);
+      compute_centroids(centroid, coordinates, n_part);
+      compareReductionArrays(centroid, NULL, NULL, "compute_centroids");
 #  endif /* GPU_VERIFY */
-    return;
+      return;
+    }
+    restoreElementOnGpu = getElementOnGpu();
+    coordinates = copyParticlesToCpuReadOnly("compute_centroids below CUDA reduction threshold");
   }
 #endif /* HAVE_GPU */
 
@@ -174,6 +181,10 @@ void compute_centroids(
   free(sumArray);
   free(errorArray);
 #  endif
+#endif
+#ifdef HAVE_GPU
+  if (restoreElementOnGpu)
+    getGpuBase()->elementOnGpu = restoreElementOnGpu;
 #endif
 }
 
@@ -316,6 +327,9 @@ void accumulate_beam_sums(
   double value, Sij, Sijn;
   long npCount = 0;
   short *chosen = NULL;
+#  ifdef HAVE_GPU
+  long restoreElementOnGpu = 0;
+#  endif
   short sparse[7][7] = {
     {1, 1, 0, 0, 0, 1, 0},
     {0, 1, 0, 0, 0, 1, 0},
@@ -331,17 +345,21 @@ void accumulate_beam_sums(
 
 #  ifdef HAVE_GPU
   if (getElementOnGpu()) {
+    if (gpu_reductions_enabled(n_part)) {
 #    ifdef GPU_VERIFY
-    BEAM_SUMS *gpusums = (BEAM_SUMS *)getGpuBeamSums(sums);
-    startGpuTimer();
-    gpu_accumulate_beam_sums(gpusums, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
-    startCpuTimer();
-    accumulate_beam_sums(sums, coord, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
-    compareReductionArrays(NULL, NULL, sums, "accumulate_beam_sums");
+      BEAM_SUMS *gpusums = (BEAM_SUMS *)getGpuBeamSums(sums);
+      startGpuTimer();
+      gpu_accumulate_beam_sums(gpusums, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
+      startCpuTimer();
+      accumulate_beam_sums(sums, coord, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
+      compareReductionArrays(NULL, NULL, sums, "accumulate_beam_sums");
 #    else
-    gpu_accumulate_beam_sums(sums, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
+      gpu_accumulate_beam_sums(sums, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
 #    endif /* GPU_VERIFY */
-    return;
+      return;
+    }
+    restoreElementOnGpu = getElementOnGpu();
+    coord = copyParticlesToCpuReadOnly("accumulate_beam_sums below CUDA reduction threshold");
   }
 #  endif /* HAVE_GPU */
 
@@ -560,6 +578,10 @@ void accumulate_beam_sums(
   free(chosen);
   if (pz)
     free(pz);
+#  ifdef HAVE_GPU
+  if (restoreElementOnGpu)
+    getGpuBase()->elementOnGpu = restoreElementOnGpu;
+#  endif
 }
 
 #else
@@ -598,6 +620,9 @@ void accumulate_beam_sums1(
   double Sij;
   long npCount = 0, npCount_total = 0;
   short *chosen = NULL;
+#  ifdef HAVE_GPU
+  long restoreElementOnGpu = 0;
+#  endif
   short sparse[7][7] = {
     {1, 1, 0, 0, 0, 1, 0},
     {0, 1, 0, 0, 0, 1, 0},
@@ -616,18 +641,22 @@ void accumulate_beam_sums1(
 
 #  ifdef HAVE_GPU
   if (getElementOnGpu()) {
+    if (gpu_reductions_enabled(n_part)) {
 #    ifdef GPU_VERIFY
-    BEAM_SUMS *gpusums = (BEAM_SUMS *)getGpuBeamSums(sums);
-    startGpuTimer();
-    gpu_accumulate_beam_sums(gpusums, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
-    startCpuTimer();
-    accumulate_beam_sums1(sums, coord, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
-    compareReductionArrays(NULL, NULL, sums, "accumulate_beam_sums");
+      BEAM_SUMS *gpusums = (BEAM_SUMS *)getGpuBeamSums(sums);
+      startGpuTimer();
+      gpu_accumulate_beam_sums(gpusums, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
+      startCpuTimer();
+      accumulate_beam_sums1(sums, coord, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
+      compareReductionArrays(NULL, NULL, sums, "accumulate_beam_sums");
 #    else
-    //gpu_accumulate_beam_sums(sums, n_part, p_central, mp_charge, startPID, endPID, flags);
-    gpu_accumulate_beam_sums(sums, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
+      //gpu_accumulate_beam_sums(sums, n_part, p_central, mp_charge, startPID, endPID, flags);
+      gpu_accumulate_beam_sums(sums, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
 #    endif /* GPU_VERIFY */
-    return;
+      return;
+    }
+    restoreElementOnGpu = getElementOnGpu();
+    coord = copyParticlesToCpuReadOnly("accumulate_beam_sums below CUDA reduction threshold");
   }
 #  endif   /* HAVE_GPU */
 
@@ -1086,6 +1115,10 @@ void accumulate_beam_sums1(
   free(chosen);
   if (pz)
     free(pz);
+#  ifdef HAVE_GPU
+  if (restoreElementOnGpu)
+    getGpuBase()->elementOnGpu = restoreElementOnGpu;
+#  endif
 }
 #endif
 

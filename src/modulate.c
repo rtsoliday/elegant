@@ -252,9 +252,15 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
   beta = pCentral / sqrt(pCentral * pCentral + 1);
 
 #ifdef HAVE_GPU
-  if (getGpuBase()->elementOnGpu)
-    tBeam = gpu_findFiducialTime(np, 0, 0, pCentral, FID_MODE_TMEAN | FID_MODE_FULLBEAM);
-  else
+  if (getGpuBase()->elementOnGpu) {
+#  if USE_MPI
+    if (notSinglePart) {
+      coord = forceParticlesToCpu("findFiducialTime MPI fallback");
+      tBeam = findFiducialTime(coord, np, 0, 0, pCentral, FID_MODE_TMEAN | FID_MODE_FULLBEAM);
+    } else
+#  endif
+    tBeam = gpu_findFiducialTime(np, 0.0, 0.0, pCentral, FID_MODE_TMEAN | FID_MODE_FULLBEAM);
+  } else
 #endif
     tBeam = findFiducialTime(coord, np, 0, 0, pCentral, FID_MODE_TMEAN | FID_MODE_FULLBEAM);
 #ifdef DEBUG

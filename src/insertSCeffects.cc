@@ -17,6 +17,9 @@
 #include "mdb.h"
 #include "track.h"
 #include "match_string.h"
+#ifdef HAVE_GPU
+#  include "gpu_space_charge.h"
+#endif
 
 typedef struct {
   double dmux, dmuy;
@@ -142,10 +145,58 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
   double kick[2];
   double totalCharge;
   int flag;
+#ifdef HAVE_GPU
+  long scmultOnGpu;
+#endif
 
 #ifdef DEBUG
   printf("entered trackThroughSCMULT\n");
   fflush(stdout);
+#endif
+
+#ifdef HAVE_GPU
+  if ((isSlave || !notSinglePart) && charge && eptr && eptr->twiss &&
+      sc.bunchData && sc.nBunches == 1 &&
+      gpu_scmult_single_bunch_supported(np0, charge->idSlotsPerBunch,
+                                        sc.nonlinear, sc.sliceDuration,
+                                        sc.horizontal, sc.vertical)) {
+#  ifdef GPU_VERIFY
+    if (getElementOnGpu())
+      part0 = forceParticlesToCpu("trackThroughSCMULT linear verification");
+#  endif
+    if (gpu_scmult_compute_centroid_sigma(np0, Po,
+                                          sc.bunchData[0].center,
+                                          sc.bunchData[0].sigma)) {
+      totalCharge = np0 * charge->macroParticleCharge;
+      if (!(iPass == 0 || sc.averagingFactor == 1)) {
+        for (int j = 0; j < 3; j++)
+          sc.bunchData[0].sigma[j] =
+            (1 - sc.averagingFactor) * ((SCMULT *)eptr->p_elem)->lastSigma[j] +
+            sc.averagingFactor * sc.bunchData[0].sigma[j];
+      }
+      for (int j = 0; j < 3; j++)
+        ((SCMULT *)eptr->p_elem)->lastSigma[j] = sc.bunchData[0].sigma[j];
+      gpu_track_through_scmult_linear(np0, totalCharge, sc.c1,
+                                      sc.horizontal, sc.vertical,
+                                      sc.uniform,
+                                      sc.bunchData[0].center,
+                                      sc.bunchData[0].sigma,
+                                      sc.bunchData[0].dmux,
+                                      sc.bunchData[0].dmuy,
+                                      eptr->twiss->betax,
+                                      eptr->twiss->betay);
+#  ifdef GPU_VERIFY
+      for (i = 0; i < np0; i++)
+        linearSCKick(part0[i], eptr, sc.bunchData[0].center,
+                     sc.bunchData[0].sigma, totalCharge, 0);
+      compareGpuCpu(np0, "trackThroughSCMULT linear resident");
+#  endif
+      sc.bunchData[0].dmux = sc.bunchData[0].dmuy = 0.0;
+      return;
+    }
+  }
+  if (getElementOnGpu())
+    part0 = forceParticlesToCpu("trackThroughSCMULT fallback");
 #endif
 
   if (isSlave || !notSinglePart) {
@@ -233,42 +284,67 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 	for (int j=0; j<3; j++)
 	  sc.bunchData[iBucket].sigma[j] = (1 - sc.averagingFactor) * ((SCMULT *)eptr->p_elem)->lastSigma[j] + sc.averagingFactor * sc.bunchData[iBucket].sigma[j];
       }
-      /* Save values in case we need them for future averaging */
-      for (int j=0; j<3; j++)
-	((SCMULT *)eptr->p_elem)->lastSigma[j] = sc.bunchData[iBucket].sigma[j];
-      if (sc.sliceDuration<=0) {
-	/* compute kicks using unsliced method */
-	for (i = 0; i < np; i++) {
-	  coord = part[i];
-	  if (!sc.nonlinear) {
-	    linearSCKick(coord, eptr, sc.bunchData[iBucket].center, sc.bunchData[iBucket].sigma, totalCharge, iBucket);
-	  } else {
-	    flag = nonlinearSCKick(coord, eptr, sc.bunchData[iBucket].center, sc.bunchData[iBucket].sigma, kick, totalCharge, iBucket);
-	    if (!flag) {
-	      linearSCKick(coord, eptr, sc.bunchData[iBucket].center, sc.bunchData[iBucket].sigma, totalCharge, iBucket);
-	      continue;
-	    }
-	    coord[1] += kick[0];
-	    coord[3] += kick[1];
-	  }
-	}
-      } else {
-	/* compute kicks using sliced method */
-	long nSlices, iSlice;
-	double *QTime, *xyCentroidTime[2], *xySizeTime[2], centroid[3], sigma[3], sliceCharge;
-	tmin -= sc.sliceDuration/2;
-	tmax += sc.sliceDuration/2;
-	if ((nSlices = (tmax-tmin)/sc.sliceDuration+1)<=0)
-	  bombElegantVA((char*)"Error in trackThroughSCMULT: number of slices is %ld, t:[%le, %le], dt=%le\n",
-			nSlices, tmin, tmax, sc.sliceDuration);
-	QTime = (double*)calloc(nSlices, sizeof(*QTime));
-	xyCentroidTime[0] = (double*)calloc(nSlices, sizeof(*xyCentroidTime[0]));
-	xyCentroidTime[1] = (double*)calloc(nSlices, sizeof(*xyCentroidTime[1]));
-	xySizeTime[0] = (double*)calloc(nSlices, sizeof(*xySizeTime[0]));
-	xySizeTime[1] = (double*)calloc(nSlices, sizeof(*xySizeTime[1]));
-	binTimeDistribution(QTime, pbin, tmin, sc.sliceDuration, nSlices, time, part, Po, np);
-	binTransverseTimeDistribution(xyCentroidTime, NULL, pbin, tmin, sc.sliceDuration, nSlices, time, part, Po, np, 0.0, 0.0, 1, 1);
-	binTransverseTimeDistribution(xySizeTime, NULL, pbin, tmin, sc.sliceDuration, nSlices, time, part, Po, np, 0.0, 0.0, 2, 2);
+	      /* Save values in case we need them for future averaging */
+	      for (int j=0; j<3; j++)
+		((SCMULT *)eptr->p_elem)->lastSigma[j] = sc.bunchData[iBucket].sigma[j];
+#ifdef HAVE_GPU
+	      scmultOnGpu = 0;
+	      if (gpu_scmult_linear_supported(np, nBuckets, sc.nonlinear,
+	                                      sc.sliceDuration, sc.horizontal,
+	                                      sc.vertical)) {
+		gpu_track_through_scmult_linear(np, totalCharge, sc.c1,
+		                                sc.horizontal, sc.vertical,
+		                                sc.uniform,
+		                                sc.bunchData[iBucket].center,
+		                                sc.bunchData[iBucket].sigma,
+		                                sc.bunchData[iBucket].dmux,
+		                                sc.bunchData[iBucket].dmuy,
+		                                eptr->twiss->betax,
+		                                eptr->twiss->betay);
+#  ifdef GPU_VERIFY
+		for (i = 0; i < np; i++)
+		  linearSCKick(part[i], eptr, sc.bunchData[iBucket].center,
+		               sc.bunchData[iBucket].sigma, totalCharge,
+		               iBucket);
+		compareGpuCpu(np, "trackThroughSCMULT linear");
+#  endif
+		scmultOnGpu = 1;
+	      }
+	      if (!scmultOnGpu) {
+#endif
+		if (sc.sliceDuration<=0) {
+		  /* compute kicks using unsliced method */
+		  for (i = 0; i < np; i++) {
+		    coord = part[i];
+		    if (!sc.nonlinear) {
+		      linearSCKick(coord, eptr, sc.bunchData[iBucket].center, sc.bunchData[iBucket].sigma, totalCharge, iBucket);
+		    } else {
+		      flag = nonlinearSCKick(coord, eptr, sc.bunchData[iBucket].center, sc.bunchData[iBucket].sigma, kick, totalCharge, iBucket);
+		      if (!flag) {
+		        linearSCKick(coord, eptr, sc.bunchData[iBucket].center, sc.bunchData[iBucket].sigma, totalCharge, iBucket);
+		        continue;
+		      }
+		      coord[1] += kick[0];
+		      coord[3] += kick[1];
+		    }
+		  }
+		} else {
+		  /* compute kicks using sliced method */
+		  long nSlices, iSlice;
+		  double *QTime, *xyCentroidTime[2], *xySizeTime[2], centroid[3], sigma[3], sliceCharge;
+		  tmin -= sc.sliceDuration/2;
+		  tmax += sc.sliceDuration/2;
+		  if ((nSlices = (tmax-tmin)/sc.sliceDuration+1)<=0)
+		    bombElegantVA((char*)"Error in trackThroughSCMULT: number of slices is %ld, t:[%le, %le], dt=%le\n",
+				  nSlices, tmin, tmax, sc.sliceDuration);
+		  QTime = (double*)calloc(nSlices, sizeof(*QTime));
+		  xyCentroidTime[0] = (double*)calloc(nSlices, sizeof(*xyCentroidTime[0]));
+		  xyCentroidTime[1] = (double*)calloc(nSlices, sizeof(*xyCentroidTime[1]));
+		  xySizeTime[0] = (double*)calloc(nSlices, sizeof(*xySizeTime[0]));
+		  xySizeTime[1] = (double*)calloc(nSlices, sizeof(*xySizeTime[1]));
+		  binTimeDistribution(QTime, pbin, tmin, sc.sliceDuration, nSlices, time, part, Po, np);
+		  binTransverseTimeDistribution(xyCentroidTime, NULL, pbin, tmin, sc.sliceDuration, nSlices, time, part, Po, np, 0.0, 0.0, 1, 1);
+		  binTransverseTimeDistribution(xySizeTime, NULL, pbin, tmin, sc.sliceDuration, nSlices, time, part, Po, np, 0.0, 0.0, 2, 2);
 #if USE_MPI
 	if (isSlave && notSinglePart) {
 	  /* Sum charge distribution across all processors */
@@ -285,82 +361,85 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 	  free(buffer);
 	}
 #endif
-	for (iSlice=0; iSlice<nSlices; iSlice++) {
-	  if (QTime[iSlice]) {
-	    double d;
-	    for (int plane=0; plane<2; plane++) {
-	      if (QTime[iSlice]>=sc.sliceThreshold)
-		/* compute slice centroid */
-		xyCentroidTime[plane][iSlice] /= QTime[iSlice];
-	      else
-		xyCentroidTime[plane][iSlice] = sc.bunchData[iBucket].center[plane];
-	      /* compute slice rms size. If invalid or too few particles, use whole-beam value */
-	      if (QTime[iSlice]>=sc.sliceThreshold &&
-		  (d = xySizeTime[plane][iSlice]/QTime[iSlice] - sqr(xyCentroidTime[plane][iSlice]))>=0)
-		xySizeTime[plane][iSlice] = sqrt(d);
-	      else
-		xySizeTime[plane][iSlice] = sc.bunchData[iBucket].sigma[plane];
-	    }
-	  }
-	  QTime[iSlice] *= charge->macroParticleCharge;
-	}
-	centroid[2] = 0;
-	sigma[2] = sc.sliceDuration*c_mks; /* not actually used */
-	for (i = 0; i < np; i++) {
-	  coord = part[i];
-	  iSlice = pbin[i];
-	  if (sc.sliceInterpolation==0) {
-	    for (int plane=0; plane<2; plane++) {
-	      centroid[plane] = xyCentroidTime[plane][iSlice];
-	      sigma[plane] = xySizeTime[plane][iSlice];
-	    }
-	    sliceCharge = QTime[iSlice];
-	  } else {
-	    double timeOffset;
-	    long ib;
-	    short interpolate = sc.sliceInterpolation;
-	    if ((ib = iSlice)<0 || ib>(nSlices-1)) {
-	      interpolate = 0;
-              timeOffset = 0;
-            }
-	    else
-	      timeOffset = time[i] - (tmin + ib*sc.sliceDuration); /* distance to bin center */
-	    if ((timeOffset<0 && ib) || ib==nSlices-1) {
-	      ib--;
-	      timeOffset += sc.sliceDuration;
-	    }
-	    for (int plane=0; plane<2; plane++) {
-	      if (!interpolate) {
-		centroid[plane] = xyCentroidTime[plane][iSlice];
-		sigma[plane] = xySizeTime[plane][iSlice];
-		sliceCharge = QTime[iSlice];
-	      } else {
-		centroid[plane] = xyCentroidTime[plane][ib] + (xyCentroidTime[plane][ib+1]-xyCentroidTime[plane][ib])/sc.sliceDuration*timeOffset;
-		sigma[plane] = xySizeTime[plane][ib] + (xySizeTime[plane][ib+1]-xySizeTime[plane][ib])/sc.sliceDuration*timeOffset;
-		sliceCharge = QTime[ib] + (QTime[ib+1]-QTime[ib])/sc.sliceDuration*timeOffset;
+		  for (iSlice=0; iSlice<nSlices; iSlice++) {
+		    if (QTime[iSlice]) {
+		      double d;
+		      for (int plane=0; plane<2; plane++) {
+		        if (QTime[iSlice]>=sc.sliceThreshold)
+			  /* compute slice centroid */
+			  xyCentroidTime[plane][iSlice] /= QTime[iSlice];
+		        else
+			  xyCentroidTime[plane][iSlice] = sc.bunchData[iBucket].center[plane];
+		        /* compute slice rms size. If invalid or too few particles, use whole-beam value */
+		        if (QTime[iSlice]>=sc.sliceThreshold &&
+			    (d = xySizeTime[plane][iSlice]/QTime[iSlice] - sqr(xyCentroidTime[plane][iSlice]))>=0)
+			  xySizeTime[plane][iSlice] = sqrt(d);
+		        else
+			  xySizeTime[plane][iSlice] = sc.bunchData[iBucket].sigma[plane];
+		      }
+		    }
+		    QTime[iSlice] *= charge->macroParticleCharge;
+		  }
+		  centroid[2] = 0;
+		  sigma[2] = sc.sliceDuration*c_mks; /* not actually used */
+		  for (i = 0; i < np; i++) {
+		    coord = part[i];
+		    iSlice = pbin[i];
+		    if (sc.sliceInterpolation==0) {
+		      for (int plane=0; plane<2; plane++) {
+		        centroid[plane] = xyCentroidTime[plane][iSlice];
+		        sigma[plane] = xySizeTime[plane][iSlice];
+		      }
+		      sliceCharge = QTime[iSlice];
+		    } else {
+		      double timeOffset;
+		      long ib;
+		      short interpolate = sc.sliceInterpolation;
+		      if ((ib = iSlice)<0 || ib>(nSlices-1)) {
+		        interpolate = 0;
+		        timeOffset = 0;
+		      }
+		      else
+		        timeOffset = time[i] - (tmin + ib*sc.sliceDuration); /* distance to bin center */
+		      if ((timeOffset<0 && ib) || ib==nSlices-1) {
+		        ib--;
+		        timeOffset += sc.sliceDuration;
+		      }
+		      for (int plane=0; plane<2; plane++) {
+		        if (!interpolate) {
+			  centroid[plane] = xyCentroidTime[plane][iSlice];
+			  sigma[plane] = xySizeTime[plane][iSlice];
+			  sliceCharge = QTime[iSlice];
+		        } else {
+			  centroid[plane] = xyCentroidTime[plane][ib] + (xyCentroidTime[plane][ib+1]-xyCentroidTime[plane][ib])/sc.sliceDuration*timeOffset;
+			  sigma[plane] = xySizeTime[plane][ib] + (xySizeTime[plane][ib+1]-xySizeTime[plane][ib])/sc.sliceDuration*timeOffset;
+			  sliceCharge = QTime[ib] + (QTime[ib+1]-QTime[ib])/sc.sliceDuration*timeOffset;
+		        }
+		      }
+		    }
+		    if (!sc.nonlinear) {
+		      linearSCKick(coord, eptr, centroid, sigma, sliceCharge, iBucket);
+		    } else {
+		      flag = nonlinearSCKick(coord, eptr, centroid, sigma, kick, sliceCharge, iBucket);
+		      if (!flag) {
+		        linearSCKick(coord, eptr, centroid, sigma, sliceCharge, iBucket);
+		        continue;
+		      }
+		      coord[1] += kick[0];
+		      coord[3] += kick[1];
+		    }
+		  }
+		  free(QTime);
+		  free(xyCentroidTime[0]);
+		  free(xyCentroidTime[1]);
+		  free(xySizeTime[0]);
+		  free(xySizeTime[1]);
+		}
+#ifdef HAVE_GPU
 	      }
-	    }
-	  }
-	  if (!sc.nonlinear) {
-	    linearSCKick(coord, eptr, centroid, sigma, sliceCharge, iBucket);
-	  } else {
-	    flag = nonlinearSCKick(coord, eptr, centroid, sigma, kick, sliceCharge, iBucket);
-	    if (!flag) {
-	      linearSCKick(coord, eptr, centroid, sigma, sliceCharge, iBucket);
-	      continue;
-	    }
-	    coord[1] += kick[0];
-	    coord[3] += kick[1];
-	  }
-	}
-	free(QTime);
-	free(xyCentroidTime[0]);
-	free(xyCentroidTime[1]);
-	free(xySizeTime[0]);
-	free(xySizeTime[1]);
-      }
-	
-      if (nBuckets != 1) {
+#endif
+
+	      if (nBuckets != 1) {
 	/* Move data back to input array */
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
@@ -501,6 +580,34 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part0, long np0, double Po, l
   fflush(stdout);
 #endif
 
+#ifdef HAVE_GPU
+  if ((isSlave || !notSinglePart) &&
+      (sc.nBunches == 0 || sc.nBunches == 1) &&
+      gpu_scmult_can_initialize_on_gpu(np0)) {
+    long gpuBuckets = 0;
+    if (gpu_scmult_count_bunches(np0, idSlotsPerBunch, &gpuBuckets) &&
+        gpuBuckets == 1) {
+      if (sc.nBunches == 0) {
+        sc.nBunches = 1;
+        sc.bunchData = (BUNCH_DATA *)calloc(1, sizeof(BUNCH_DATA));
+        if (!sc.bunchData)
+          bombElegant("Unable to allocate bucket data for SCMULT.", NULL);
+      }
+      if (gpu_scmult_compute_centroid_sigma(np0, Po,
+                                            sc.bunchData[0].center,
+                                            sc.bunchData[0].sigma)) {
+        sc.bunchData[0].dmux = sc.bunchData[0].dmuy = 0.0;
+        sc.c0 = fabs(sqrt(2.0 / PI) * particleRadius / particleCharge);
+        sc.c1 = sc.c0 / sqr(Po) / sqrt(sqr(Po) + 1.0);
+        sc.length = 0.0;
+        return;
+      }
+    }
+  }
+  if (gpu_scmult_can_skip_cpu(np0, idSlotsPerBunch) || getElementOnGpu())
+    part0 = forceParticlesToCpu("initializeSCMULT fallback");
+#endif
+
   if (isSlave || !notSinglePart) {
 #ifdef DEBUG
     printf("indexing bucket assignments\n");
@@ -611,6 +718,30 @@ void accumulateSCMULT(double **part0, long np0, double Po, ELEMENT_LIST *eptr, l
 #ifdef DEBUG
   printf("accumulateSCMULT 1, np=%ld\n", np0);
   fflush(stdout);
+#endif
+
+#ifdef HAVE_GPU
+  if ((isSlave || !notSinglePart) && sc.nBunches == 1 && sc.bunchData &&
+      eptr && eptr->twiss && eptr->pred && eptr->pred->twiss &&
+      gpu_scmult_can_skip_cpu(np0, idSlotsPerBunch)) {
+    temp = sc.bunchData[0].sigma[0] + sc.bunchData[0].sigma[1];
+    dmux = twiss0->betax / sc.bunchData[0].sigma[0] / temp;
+    dmuy = twiss0->betay / sc.bunchData[0].sigma[1] / temp;
+    if (gpu_scmult_compute_centroid_sigma(np0, Po,
+                                          sc.bunchData[0].center,
+                                          sc.bunchData[0].sigma)) {
+      twiss0 = eptr->twiss;
+      temp = sc.bunchData[0].sigma[0] + sc.bunchData[0].sigma[1];
+      dmux += twiss0->betax / sc.bunchData[0].sigma[0] / temp;
+      dmuy += twiss0->betay / sc.bunchData[0].sigma[1] / temp;
+      length = ((DRIFT *)eptr->p_elem)->length;
+      sc.bunchData[0].dmux += dmux * length / 2.0;
+      sc.bunchData[0].dmuy += dmuy * length / 2.0;
+      return;
+    }
+  }
+  if (gpu_scmult_can_skip_cpu(np0, idSlotsPerBunch) || getElementOnGpu())
+    part0 = forceParticlesToCpu("accumulateSCMULT fallback");
 #endif
 
   if (isSlave || !notSinglePart) {
