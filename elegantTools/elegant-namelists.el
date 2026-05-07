@@ -34,7 +34,7 @@
    "include_commands"
    "macro_output"
    "error_control"
-   "error"
+   "error_element"
    "fit_traces"
    "floor_coordinates"
    "frequency_map"
@@ -210,6 +210,7 @@
           "alpha_y"
           "eta_y"
           "etap_y"
+          "spin"
           "use_twiss_command_values"
           "use_moments_output_values"
           "Po"
@@ -254,6 +255,7 @@
           "S5"
           "S6"
           "S56"
+          "spin"
           "time_start"
           "Po"
           "one_random_bunch"
@@ -481,6 +483,7 @@
           "element_divisions"
           "back_tracking"
           "s_start"
+          "spin_tracking"
           ))
    (cons "change_particle"
          (list
@@ -533,7 +536,7 @@
           "no_errors_for_first_step"
           "error_factor"
           ))
-   (cons "error"
+   (cons "error_element"
          (list
           "name"
           "exclude"
@@ -1032,6 +1035,7 @@
           "include_x"
           "include_y"
           "include_s"
+          "include_spin"
           "start_pass"
           "segment_length"
           ))
@@ -1539,6 +1543,7 @@
           (cons "alpha_y" "double")
           (cons "eta_y" "double")
           (cons "etap_y" "double")
+          (cons "spin" "double")
           (cons "use_twiss_command_values" "long")
           (cons "use_moments_output_values" "long")
           (cons "Po" "double")
@@ -1583,6 +1588,7 @@
           (cons "S5" "double")
           (cons "S6" "double")
           (cons "S56" "double")
+          (cons "spin" "double")
           (cons "time_start" "double")
           (cons "Po" "double")
           (cons "one_random_bunch" "long")
@@ -1810,6 +1816,7 @@
           (cons "element_divisions" "long")
           (cons "back_tracking" "long")
           (cons "s_start" "double")
+          (cons "spin_tracking" "long")
           ))
    (cons "change_particle"
          (list
@@ -2361,6 +2368,7 @@
           (cons "include_x" "short")
           (cons "include_y" "short")
           (cons "include_s" "short")
+          (cons "include_spin" "short")
           (cons "start_pass" "long")
           (cons "segment_length" "long")
           ))
