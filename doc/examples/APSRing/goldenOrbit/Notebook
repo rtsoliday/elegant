@@ -14,5 +14,9 @@ sddsplot -graph=line,vary \
 # Show that the correctors are not significantly powered
 sddsplot -col=s,Kick run.cor -graph=sym -title="Corrector effort to reach golden orbit"
 
+# Compute the beam stay clear including the orbit error and local x-y apertures
+sddsprocess run.twi -define=col,xBSC,"Ax betax * sqrt",units=m  -define=col,yBSC,"Ay betay * sqrt",units=m
+sddsplot -graph=line,vary -group=nameindex -separate=nameindex -column=s,?Aperture -legend=spec=Aperture run.twi -column=s,?BSC run.twi -legend=spec=BSC
+
 # clean up
 \rm run.[a-df-z]*
