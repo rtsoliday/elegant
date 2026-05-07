@@ -7,11 +7,12 @@ set auto_path [linsert $auto_path 0  $env(OAG_TOP_DIR)/oag/apps/lib/$env(HOST_AR
 
 APSStandardSetup
 
-set usage {usage: computeBeats -reference <filename> -input <filename>}
+set usage {usage: computeBeats -reference <filename> -input <filename> [-plot 0]}
 set reference ""
 set input ""
+set plot 1
 set args $argv
-if {[APSStrictParseArguments {input reference}] || ![string length $input] || ![string length $reference]} {
+if {[APSStrictParseArguments {input reference plot}] || ![string length $input] || ![string length $reference]} {
     return -code error "$usage"
 }
 if ![file exists $input] {
@@ -37,7 +38,10 @@ exec sddsxref $input $reference -pipe=out -take=betax,betay,etax,s \
     "-print=parameter,etaxLabel,%.2f%% pk-to-pk    %.2f%% rms,deltaEtaxSpread,deltaEtaxStDev" \
     "-print=parameter,betayLabel,%.2f%% pk-to-pk    %.2f%% rms,deltaBetaySpread,deltaBetayStDev" \
 
-exec sddsplot -layout=1,3 -split=page -groupby=page,names -separate=names $input.beat \
-    -column=s,deltaBetax -title=@betaxLabel \
-    -column=s,deltaBetay -title=@betayLabel \
-    -column=s,deltaEtax -title=@etaxLabel  &
+if $plot {
+    exec sddsplot -layout=1,3 -split=page -groupby=page,names -separate=names $input.beat \
+        -column=s,deltaBetax -title=@betaxLabel \
+        -column=s,deltaBetay -title=@betayLabel \
+        -column=s,deltaEtax -title=@etaxLabel  &
+}
+
