@@ -2,7 +2,7 @@
 ;; Auto-generated from ELEGANT track_data.c. Do not edit by hand.
 
 (defconst elegant-lattice-element-types
-  '("ALPH" "APCONTOUR" "BEAMBEAM" "BEDGE" "BGGEXP" "BMAPXY" "BMXYZ" "BOFFAXE" "BRANCH" "BRAT" "BUMPER" "CCBEND" "CENTER" "CEPL" "CHARGE" "CKICKER" "CLEAN" "CORGPIPE" "CORGPLATES" "CPICKUP" "CSBEND" "CSRCSBEND" "CSRDRIFT" "CWIGGLER" "DQCOR" "DRIF" "DSCATTER" "ECOL" "EDRIFT" "EHKICK" "EKICKER" "ELSE" "EMATRIX" "EMITTANCE" "ENERGY" "EVKICK" "FLOOR" "FMULT" "FRFMODE" "FTABLE" "FTRFMODE" "GFWIGGLER" "GKICKMAP" "HISTOGRAM" "HKICK" "HKPOLY" "HMON" "IBSCATTER" "ILMATRIX" "IONEFFECTS" "KICKER" "KOCT" "KPOLY" "KQUAD" "KQUSE" "KSBEND" "KSEXT" "LGBEND" "LINE" "LMIRROR" "LRWAKE" "LSCDRIFT" "LSRMDLTR" "LTHINLENS" "MAGNIFY" "MALIGN" "MAPSOLENOID" "MARK" "MATR" "MATTER" "MAXAMP" "MBUMPER" "MHISTOGRAM" "MODRF" "MONI" "MRFDF" "MULT" "NIBEND" "NISEPT" "OCTU" "PEPPOT" "PFILTER" "POLYSERIES" "QUAD" "QUFRINGE" "RAMPP" "RAMPRF" "RBEN" "RCOL" "RECIRC" "REFLECT" "REMCOR" "RFCA" "RFCW" "RFDF" "RFMODE" "RFTM110" "RFTMEZ0" "RIMULT" "RMDF" "ROTATE" "SAMPLE" "SBEN" "SCATTER" "SCMULT" "SCRAPER" "SCRIPT" "SEXT" "SHRFDF" "SLICE" "SOLE" "SPEEDBUMP" "SREFFECTS" "STRAY" "TAPERAPC" "TAPERAPE" "TAPERAPR" "TFBDRIVER" "TFBPICKUP" "TMCF" "TRCOUNT" "TRFMODE" "TRWAKE" "TSCATTER" "TUBEND" "TWISS" "TWLA" "TWMTA" "TWPL" "UKICKMAP" "VKICK" "VMON" "WAKE" "WATCH" "WIGGLER" "ZLONGIT" "ZTRANSVERSE")
+  '("ALPH" "APCONTOUR" "BEAMBEAM" "BEDGE" "BGGEXP" "BMAPXY" "BMXYZ" "BOFFAXE" "BRANCH" "BRAT" "BUMPER" "CCBEND" "CENTER" "CEPL" "CHARGE" "CKICKER" "CLEAN" "CORGPIPE" "CORGPLATES" "CPICKUP" "CSBEND" "CSRCSBEND" "CSRDRIFT" "CWIGGLER" "DQCOR" "DRIF" "DSCATTER" "ECOL" "EDRIFT" "EHKICK" "EKICKER" "ELSE" "EMATRIX" "EMITTANCE" "ENERGY" "EVKICK" "FLOOR" "FMULT" "FRFMODE" "FTABLE" "FTRFMODE" "GFWIGGLER" "GKICKMAP" "HISTOGRAM" "HKICK" "HKPOLY" "HMON" "IBSCATTER" "ILMATRIX" "IONEFFECTS" "KICKER" "KOCT" "KPOLY" "KQUAD" "KQUSE" "KSBEND" "KSEXT" "LGBEND" "LINE" "LMIRROR" "LRWAKE" "LSCDRIFT" "LSRMDLTR" "LTHINLENS" "MAGNIFY" "MALIGN" "MAPSOLENOID" "MARK" "MATR" "MATTER" "MAXAMP" "MBUMPER" "MHISTOGRAM" "MODRF" "MONI" "MRFDF" "MULT" "NIBEND" "NISEPT" "OCTU" "PEPPOT" "PFILTER" "POLAR" "POLYSERIES" "QUAD" "QUFRINGE" "RAMPP" "RAMPRF" "RBEN" "RCOL" "RECIRC" "REFLECT" "REMCOR" "RFCA" "RFCW" "RFDF" "RFMODE" "RFTM110" "RFTMEZ0" "RIMULT" "RMDF" "ROTATE" "SAMPLE" "SBEN" "SCATTER" "SCMULT" "SCRAPER" "SCRIPT" "SEXT" "SHRFDF" "SLICE" "SOLE" "SPEEDBUMP" "SREFFECTS" "STRAY" "TAPERAPC" "TAPERAPE" "TAPERAPR" "TFBDRIVER" "TFBPICKUP" "TMCF" "TRCOUNT" "TRFMODE" "TRWAKE" "TSCATTER" "TUBEND" "TWISS" "TWLA" "TWMTA" "TWPL" "UKICKMAP" "VKICK" "VMON" "WAKE" "WATCH" "WIGGLER" "ZLONGIT" "ZTRANSVERSE")
   "List of available ELEGANT element types.")
 
 (defconst elegant-lattice-element-docs
@@ -89,6 +89,7 @@
     ("OCTU" . "An octupole implemented as a third-order matrix. Use KOCT for symplectic tracking.")
     ("PEPPOT" . "A pepper-pot plate.")
     ("PFILTER" . "An element for energy and momentum filtration.")
+    ("POLAR" . "Sets polarization of a beam if spin-tracking is enabled")
     ("POLYSERIES" . "Tracks through a Polynomial series map specified by a file containing coefficients.")
     ("QUAD" . "A quadrupole implemented as a matrix, up to 3rd order. Use KQUAD for symplectic tracking.")
     ("QUFRINGE" . "An element consisting of a linearly increasing or decreasing quadrupole field.")
@@ -231,6 +232,7 @@
     ("OCTU" . ("L" "K3" "TILT" "DX" "DY" "DZ" "FSE" "ORDER"))
     ("PEPPOT" . ("L" "RADII" "TRANSMISSION" "TILT" "THETA_RMS" "N_HOLES"))
     ("PFILTER" . ("DELTALIMIT" "LOWERFRACTION" "UPPERFRACTION" "FIXPLIMITS" "BEAMCENTERED" "BINS"))
+    ("POLAR" . ("POLARIZATION" "VX" "VY" "VZ" "MODE" "ON_PASS"))
     ("POLYSERIES" . ("L" "TILT" "DX" "DY" "DZ" "FILENAME"))
     ("QUAD" . ("L" "K1" "TILT" "PITCH" "YAW" "DX" "DY" "DZ" "FSE" "HKICK" "VKICK" "HCALIBRATION" "VCALIBRATION" "HSTEERING" "VSTEERING" "ORDER" "EDGE1_EFFECTS" "EDGE2_EFFECTS" "FRINGE_TYPE" "FFRINGE" "LEFFECTIVE" "I0P" "I1P" "I2P" "I3P" "LAMBDA2P" "I0M" "I1M" "I2M" "I3M" "LAMBDA2M" "RADIAL" "MALIGN_METHOD"))
     ("QUFRINGE" . ("L" "K1" "TILT" "DX" "DY" "DZ" "FSE" "DIRECTION" "ORDER"))
@@ -2355,6 +2357,12 @@
     (("PFILTER" . "FIXPLIMITS") . ("" . ("IS_LONG" . "fix the limits in p from LOWERFRACTION and UPPERFRACTION applied to first beam")))
     (("PFILTER" . "BEAMCENTERED") . ("" . ("IS_LONG" . "if nonzero, center for DELTALIMIT is average beam momentum")))
     (("PFILTER" . "BINS") . ("" . ("IS_LONG" . "number of bins")))
+    (("POLAR" . "POLARIZATION") . ("" . ("IS_DOUBLE" . "desired polarization")))
+    (("POLAR" . "VX") . ("" . ("IS_DOUBLE" . "x component of vector for polarization direction")))
+    (("POLAR" . "VY") . ("" . ("IS_DOUBLE" . "y component of vector for polarization direction")))
+    (("POLAR" . "VZ") . ("" . ("IS_DOUBLE" . "z component of vector for polarization direction")))
+    (("POLAR" . "MODE") . ("" . ("IS_STRING" . "mode of spin vector generation (twostate, narrowcone, widecone)")))
+    (("POLAR" . "ON_PASS") . ("If <0, polarization is unchanged; otherwise, pass on which polarization is changed." . ("" . "")))
     (("POLYSERIES" . "L") . ("M" . ("IS_DOUBLE" . "length")))
     (("POLYSERIES" . "TILT") . ("RAD" . ("IS_DOUBLE" . "rotation about longitudinal axis")))
     (("POLYSERIES" . "DX") . ("M" . ("IS_DOUBLE" . "misalignment")))
