@@ -1345,9 +1345,20 @@ double sincFunction(double x)
   return sin(x)/x;
 }
 
+double langevinFunction(double x)
+{
+  if (x>1e-4)
+    return 1./tanh(x)-1./x;
+  else if (x>0)
+    return x/3 - ipow(x,3)/45 + 2*ipow(x,5)/945;
+  else
+    return -1;
+}
+
 void polarizeBeam(double **part, long np, POLAR *polar) {
-  char *polarizationModeOption[3] = {"twostate", "narrowcone", "widecone"};
+  char *polarizationModeOption[4] = {"twostate", "narrowcone", "widecone", "vonmises-fisher"};
   double phi, cos_theta, sin_theta, rx, ry, theta, theta1, angle;
+  double kappa, exp_kappa, u;
   if (spinCoordOffset>0) {
     long ip, i;
     double *coord, cut, psign, e[3], emag, p;
@@ -1365,7 +1376,10 @@ void polarizeBeam(double **part, long np, POLAR *polar) {
       for (i=0; i<3; i++)
   	e[i] /= emag;
     }
-    switch (match_string(polar->mode, polarizationModeOption, 3, 0)) {
+    int code = match_string(polar->mode, polarizationModeOption, 4, 0);
+    if (p==0 || p==1)
+      code = 0;
+    switch (code) {
     case 0:
       /* two state */
       cut = (p+1)/2;
@@ -1417,6 +1431,29 @@ void polarizeBeam(double **part, long np, POLAR *polar) {
 	coord[spinCoordOffset+0] = sin_theta*cos(phi);
 	coord[spinCoordOffset+1] = sin_theta*sin(phi);
 	coord[spinCoordOffset+2] = cos_theta;
+	performQuaternionRotation(coord+spinCoordOffset, rx, ry, 0.0);
+      }
+      break;
+    case 3:
+      /* von Mises-Fisher */
+      kappa = zeroIntHalve(langevinFunction, p, 1e-6, 100, 1, 1e-6);
+      /* set up rotation to defined axis */
+      angle = acos(e[2]);
+      rx = -e[1]/sqrt(sqr(e[0])+sqr(e[1]))*angle;
+      ry = e[0]/sqrt(sqr(e[0])+sqr(e[1]))*angle;
+      for (ip=0; ip<np; ip++) {
+	coord = part[ip];
+        if (kappa < 1e-10)
+          u = 2*random_4(1) - 1;
+	else {
+	  exp_kappa = exp(kappa);
+          u = (1/kappa) * log(1/exp_kappa + random_4(1)*(exp_kappa-1/exp_kappa));
+	}
+        phi = PIx2*random_4(1);
+	double s = sqrt(1-u*u);
+	coord[spinCoordOffset+0] = s*cos(phi);
+	coord[spinCoordOffset+1] = s*sin(phi);
+	coord[spinCoordOffset+2] = u;
 	performQuaternionRotation(coord+spinCoordOffset, rx, ry, 0.0);
       }
       break;
