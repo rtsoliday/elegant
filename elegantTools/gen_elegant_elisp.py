@@ -14,7 +14,7 @@ This script emits an .el file with:
   - elegant-namelist-qualifier-types
 
 Usage:
-  python3 gen_elegant_elisp.py elegant-namelists.txt > elegant-namelists.el
+  python3 gen_elegant_elisp.py elegant-namelists.txt
 """
 
 from __future__ import annotations
@@ -161,9 +161,9 @@ def emit_elisp(qualifiers: Dict[str, List[str]], types: Dict[str, Dict[str, str]
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Generate Emacs Lisp tables from ELEGANT namelist definitions.")
+    ap = argparse.ArgumentParser(description="Generate Emacs Lisp tables (elegant-namelists.el) from ELEGANT namelist definitions.")
     ap.add_argument("input", help="Path to elegant-namelists.txt (namelist definitions).")
-    ap.add_argument("-o", "--output", default="-", help="Output .el path (default: stdout). Use '-' for stdout.")
+    ap.add_argument("-o", "--output", default="elegant-namelists.el", help="Output .el path (default: stdout). Use '-' for stdout.")
     args = ap.parse_args()
 
     with open(args.input, "r", encoding="utf-8", errors="replace") as f:
