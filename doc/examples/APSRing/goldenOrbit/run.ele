@@ -63,6 +63,11 @@ sddsprocess run.clo run.dy -match=col,ElementType=MONI -print=col,ElementParamet
     n_iterations = 1
 &end
 
+&twiss_output
+    filename = %s.twi
+    output_at_each_step = 1
+&end
+
 &run_control
 &end
 
