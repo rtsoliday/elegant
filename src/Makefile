@@ -227,12 +227,25 @@ ifneq ($(CUDA_REQUESTED),)
   CUDA_NVCC_FROM_PATH := $(shell command -v nvcc 2>/dev/null)
   CUDA_NVCC_COMMON := /usr/local/cuda-12.4/bin/nvcc /usr/local/cuda/bin/nvcc
   CUDA_NVCC_VERSIONED := $(sort $(wildcard /usr/local/cuda-*/bin/nvcc))
+  CUDA_NVCC_CANDIDATES := $(strip $(CUDA_NVCC_FROM_PATH) $(wildcard $(CUDA_NVCC_COMMON)) $(CUDA_NVCC_VERSIONED))
   ifeq ($(strip $(NVCC)),)
-    NVCC := $(firstword $(CUDA_NVCC_FROM_PATH) $(wildcard $(CUDA_NVCC_COMMON)) $(CUDA_NVCC_VERSIONED))
+    NVCC := $(firstword $(call CUDA_SUPPORTED_NVCCS,$(CUDA_NVCC_CANDIDATES)))
   endif
-  ifeq ($(strip $(NVCC)),)
-    ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
+  ifneq ($(strip $(NVCC)),)
+    CUDA_NVCC_VERSION := $(call CUDA_NVCC_RELEASE_VERSION,$(NVCC))
+    CUDA_NVCC_MAJOR := $(call CUDA_NVCC_RELEASE_MAJOR,$(NVCC))
+    CUDA_NVCC_SUPPORTED := $(call CUDA_NVCC_IS_SUPPORTED,$(NVCC))
+  endif
+  ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
+    ifeq ($(strip $(NVCC)),)
+      ifeq ($(strip $(CUDA_NVCC_CANDIDATES)),)
       $(error CUDA support requested, but nvcc was not found. Set NVCC=/path/to/nvcc, for example NVCC=/usr/local/cuda-12.4/bin/nvcc)
+      else
+      $(error CUDA support requested, but no nvcc with CUDA release >= $(CUDA_NVCC_MINIMUM_MAJOR) was found. Set NVCC=/path/to/nvcc, for example NVCC=/usr/local/cuda-12.4/bin/nvcc)
+      endif
+    endif
+    ifeq ($(strip $(CUDA_NVCC_SUPPORTED)),)
+      $(error CUDA support requested, but $(NVCC) reports CUDA release $(if $(CUDA_NVCC_VERSION),$(CUDA_NVCC_VERSION),unknown); nvcc release $(CUDA_NVCC_MINIMUM_MAJOR) or newer is required)
     endif
   endif
   CUDA_HOME ?= $(patsubst %/bin/nvcc,%,$(NVCC))

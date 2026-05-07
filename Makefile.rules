@@ -9,6 +9,12 @@ OBJ_DIR = O.$(OS)-$(ARCH)
 BIN_DIR = $(DD)../bin/$(OS)-$(ARCH)
 LIB_DIR = $(DD)../lib/$(OS)-$(ARCH)
 
+CUDA_NVCC_MINIMUM_MAJOR ?= 12
+CUDA_NVCC_RELEASE_VERSION = $(shell $(1) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9.]*\).*/\1/p' | tail -n 1)
+CUDA_NVCC_RELEASE_MAJOR = $(shell $(1) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | tail -n 1)
+CUDA_NVCC_IS_SUPPORTED = $(shell major=`$(1) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | tail -n 1`; if [ -n "$$major" ] && [ "$$major" -ge "$(CUDA_NVCC_MINIMUM_MAJOR)" ]; then printf 1; fi)
+CUDA_SUPPORTED_NVCCS = $(strip $(foreach nvcc,$(1),$(if $(call CUDA_NVCC_IS_SUPPORTED,$(nvcc)),$(nvcc))))
+
 EPICS_HOST := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 EPICS_ARCH = $(ARCH)
 ifeq ($(findstring cygwin, $(EPICS_HOST)),cygwin)

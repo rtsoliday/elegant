@@ -44,7 +44,12 @@ CUDA_NVCC_FROM_NVCC := $(if $(NVCC),$(shell command -v $(NVCC) 2>/dev/null))
 CUDA_NVCC_FROM_PATH := $(shell command -v nvcc 2>/dev/null)
 CUDA_NVCC_COMMON := /usr/local/cuda-12.4/bin/nvcc /usr/local/cuda/bin/nvcc
 CUDA_NVCC_VERSIONED := $(sort $(wildcard /usr/local/cuda-*/bin/nvcc))
-CUDA_AUTO_NVCC := $(firstword $(CUDA_NVCC_FROM_NVCC) $(NVCC) $(CUDA_NVCC_FROM_PATH) $(wildcard $(CUDA_NVCC_COMMON)) $(CUDA_NVCC_VERSIONED))
+CUDA_NVCC_CANDIDATES := $(strip $(CUDA_NVCC_FROM_NVCC) $(NVCC) $(CUDA_NVCC_FROM_PATH) $(wildcard $(CUDA_NVCC_COMMON)) $(CUDA_NVCC_VERSIONED))
+ifeq ($(strip $(NVCC)),)
+  CUDA_AUTO_NVCC := $(firstword $(call CUDA_SUPPORTED_NVCCS,$(CUDA_NVCC_CANDIDATES)))
+else
+  CUDA_AUTO_NVCC := $(firstword $(call CUDA_SUPPORTED_NVCCS,$(CUDA_NVCC_FROM_NVCC) $(NVCC)))
+endif
 CUDA_AUTO_HOME := $(patsubst %/bin/nvcc,%,$(CUDA_AUTO_NVCC))
 CUDA_AUTO_CUDART := $(firstword $(wildcard $(CUDA_AUTO_HOME)/lib64/libcudart.so) $(wildcard $(CUDA_AUTO_HOME)/lib64/libcudart.a))
 CUDA_AVAILABLE =
