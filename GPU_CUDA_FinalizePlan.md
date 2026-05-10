@@ -14,13 +14,13 @@ runtime validation where noted.
 | --- | --- | --- | --- |
 | Release and CI | Phase 10 still needs no-MPI/no-CUDA, MPI-only, and CUDA-only portability coverage; Phase 20 still needs hosted workflow execution and CUDA runner review. | `test/gpu_cuda/release_invariance.sh`, `test/gpu_cuda/ci_release.sh`, fallback reports, release notes template, and `.github/workflows/gpu-cuda-ci.yml` exist. The workflow is wired, but the plans do not record a successful fresh GitHub Actions run or a self-hosted CUDA runner review. | Run the workflow from a fresh checkout, capture artifacts, and add explicit portability coverage or documented release exceptions for no-MPI/no-CUDA, MPI-only, and CUDA-only hosts. |
 | Benchmark reports | Phase 12 deferred CI artifact upload and a standardized release-note report filename. | Report generation and artifact collection now exist. The GitHub workflow uploads CI artifacts. A final standardized release-report filename still is not clearly enforced. | Standardize the release report names and require uploaded report/fallback artifacts in release review. |
-| Basic kernels and residency | Phase 2 kept `exactDrift` opt-in, specialized beam-sum modes on CPU, and host synchronization for output and CPU-only consumers. | Code confirms `ELEGANT_GPU_ENABLE_EXACT_DRIFT` is still opt-in. Common reductions are implemented, while specialized reduction modes and MPI reductions still fall back. Output/diagnostics still synchronize when needed. | Keep exact drift opt-in unless new bounded timings show benefit. Track specialized reductions as low-risk cleanup only after higher-payoff fallbacks are addressed. |
-| Apertures and losses | Phase 3 listed `gpu_removeInvalidParticles`, `gpu_imposeApertureData`, and faster compaction as deferred. Phase 15 later kept stable compaction opt-in and listed unsupported edge cases. | The old Phase 3 statement is partly refuted: current code has opt-in stable prefix-sum compaction for selected `MAXAMP`, `RCOL`, `ECOL`, `SCRAPER`, `aperture_data`, and narrow identity-`RFCA` `removeInvalidParticles`. The path remains opt-in, and unsupported inverted, all-loss, material-interaction, and broader invalid-particle cases still fall back. | Reduce lost-tail/global-loss overhead, decide whether any aperture compaction subset becomes recommended/default, and broaden only the edge cases with measured production value. |
-| CSR | Phase 6 listed resident CSRCSBEND, range/binning residency, `CSR_LAST_WAKE`, `CSRDRIFT`, IGF, filters, aperture interaction, and production coverage as deferred. Phase 14 later wrapped an opt-in resident CSR subset. | Resident `CSRCSBEND` exists behind `ELEGANT_GPU_ENABLE_CSR_RESIDENT=1`, but guards exclude IGF, wake-filter resident support, radiation/ISR, backtracking, bin-once, in-element output, and several handoff states. `gpu_track_through_driftCSR` now has a narrow no-CSR/no-LSC exact-or-linear drift subset, while state-consuming `CSRDRIFT` modes remain CPU-owned. Fresh action-5 validation confirms the guarded resident subset is production-correct as an opt-in and removes the validated resident final CPU handoff cases; production logs still show CPU-owned `CSRDRIFT` and unsupported `CSRCSBEND` transitions. | Keep resident CSR as a targeted opt-in, not a default. Reduce remaining CPU-owned `CSRDRIFT` and unsupported `CSRCSBEND` transitions next, and separately tackle IGF, wake-filter resident support, Saldin/LSC drift state, and broader CSR plus aperture/loss cases. |
+| Basic kernels and residency | Phase 2 kept `exactDrift` opt-in, specialized beam-sum modes on CPU, and host synchronization for output and CPU-only consumers. | Action 11 supersedes the old exact-drift policy: exact drift is now enabled by default for eligible GPU runs, with `ELEGANT_GPU_ENABLE_EXACT_DRIFT=0` as the CPU fallback override. Common reductions are implemented, while specialized reduction modes and MPI reductions still fall back. Output/diagnostics still synchronize when needed. | Keep exact drift default-on under its particle threshold after the bounded retest; track specialized reductions as low-risk cleanup only after higher-payoff fallbacks are addressed. |
+| Apertures and losses | Phase 3 listed `gpu_removeInvalidParticles`, `gpu_imposeApertureData`, and faster compaction as deferred. Phase 15 originally kept stable compaction opt-in and listed unsupported edge cases. | The old Phase 3 statement is partly refuted: current code has stable prefix-sum compaction for selected `MAXAMP`, `RCOL`, `ECOL`, `SCRAPER`, `aperture_data`, and narrow identity-`RFCA` `removeInvalidParticles`. It now enables that path by default only for runs without `losses` output; `.los` output keeps the exact CPU loss-row fallback unless compaction is explicitly forced. Unsupported inverted, all-loss, material-interaction, and broader invalid-particle cases still fall back. | Reduce lost-tail/global-loss overhead for `.los` output, keep no-loss-output compaction as the safe default subset, and broaden only the edge cases with measured production value. |
+| CSR | Phase 6 listed resident CSRCSBEND, range/binning residency, `CSR_LAST_WAKE`, `CSRDRIFT`, IGF, filters, aperture interaction, and production coverage as deferred. Phase 14 later wrapped a guarded resident CSR subset. | Resident `CSRCSBEND` is now enabled by default for the guarded subset, with `ELEGANT_GPU_ENABLE_CSR_RESIDENT=0` as the fallback override. Guards still exclude IGF, wake-filter resident support, radiation/ISR, backtracking, bin-once, in-element output, and several handoff states. `gpu_track_through_driftCSR` has a narrow no-CSR/no-LSC exact-or-linear drift subset, while state-consuming `CSRDRIFT` modes remain CPU-owned. Fresh action-5 validation confirms the guarded resident subset is production-correct and removes the validated resident final CPU handoff cases; production logs still show CPU-owned `CSRDRIFT` and unsupported `CSRCSBEND` transitions. | Keep the current guard set tight while defaulting the validated resident subset. Reduce remaining CPU-owned `CSRDRIFT` and unsupported `CSRCSBEND` transitions next, and separately tackle IGF, wake-filter resident support, Saldin/LSC drift state, and broader CSR plus aperture/loss cases. |
 | Wakes, LSC, and RF | Phase 5 deferred smoothed wakes, tilted `TRWAKE`, LSC filters/backtracking/kick/AUTO, `RFCW`, cuFFT paths, and fiducial-time semantics. Phase 16 resolved several of these. | The old Phase 5 deferrals are partly refuted: smoothed `WAKE`/`TRWAKE`, `WAKE,CHANGE_P0=1`, tilted single-bunch `TRWAKE` without spin, several `LSCDRIFT` modes, narrow serial/local fiducial time including selected-bunch `TMEAN`, selected-bunch `PMAXIMUM`, and selected-bunch `FIRST`, selected-bucket/range and skipped-`CHANGE_P0` match-only bunched `WAKE`/`TRWAKE` filtering, zero-length thin `RFCA` with GPU phase setup, `LIGHT`/`TMEAN`/`PMAXIMUM`/`FIRST`, `CHANGE_P0`, and deterministic offsets, nonzero-length RF-only matrix-method `RFCA`, nonzero-length RF-only kick-method `RFCA,N_KICKS>=1` including explicit `T_REFERENCE` validated by `phase39_rfca_kick_rf_only`, `phase45_rf_kick_treference`, selected-bunch `TMEAN` validated by `phase47_rf_selected_tmean_fiducial`, selected-bunch `PMAXIMUM` validated by `phase48_rf_selected_pmaximum_fiducial`, and selected-bunch `FIRST` validated by `phase50_rf_first_fiducial`, the RF-only matrix-method `RFCW` subset including deterministic offsets and `LIGHT`/`TMEAN`/`PMAXIMUM`/`FIRST` fiducial modes, RF-only kick-method `RFCW,N_KICKS>=1` including explicit `T_REFERENCE` validated by `phase38_rfcw_kick_rf_only`, `phase45_rf_kick_treference`, selected-bunch `TMEAN` validated by `phase47_rf_selected_tmean_fiducial`, selected-bunch `PMAXIMUM` validated by `phase48_rf_selected_pmaximum_fiducial`, and selected-bunch `FIRST` validated by `phase50_rf_first_fiducial`, narrow serial/local wake-bearing matrix-method `RFCW` including autoscaled/fixed wake bins, single-wake-family wake columns, explicit nonzero `T_REFERENCE`, positive-length matrix `WAKES_AT_END=1`, selected-bunch fiducialization including `PMAXIMUM` and `FIRST`, and guarded LSCKICK support including LSC-only cavities validated by `phase36_rfcw_lsc`, `phase41_rfcw_wake_pmaximum_fiducial`, `phase42_rfcw_fixed_wake_bins`, `phase43_rfcw_lsc_only`, `phase44_rfcw_single_wake_planes`, `phase46_rfcw_wake_treference`, `phase49_rfcw_wake_selected_fiducial`, and `phase50_rf_first_fiducial`, and guarded serial/local wake-bearing kick-method `RFCW,N_KICKS>=1` including `WAKES_AT_END=0\|1`, autoscaled/fixed wake bins, single-wake-family wake columns, explicit nonzero `T_REFERENCE`, selected-bunch fiducialization including `PMAXIMUM` and `FIRST`, and guarded LSCKICK support including LSC-only cavities validated by `phase36_rfcw_lsc`, `phase37_rfcw_multikick`, `phase41_rfcw_wake_pmaximum_fiducial`, `phase42_rfcw_fixed_wake_bins`, `phase43_rfcw_lsc_only`, `phase44_rfcw_single_wake_planes`, `phase46_rfcw_wake_treference`, `phase49_rfcw_wake_selected_fiducial`, and `phase50_rf_first_fiducial` are implemented. Action 6 closes the current serial/local finalization scope; distributed Pelegant wake reductions, distributed RFCA/RFCW fiducialization, broader unsupported RFCW/LSC combinations, and cuFFT-backed paths are deferred. | Treat Action 6 as closed for this pass. Defer distributed bunched-wake reductions until MPI design exists, broader RFCA/RFCW modes until focused production evidence appears, and cuFFT until profiling shows FFT cost dominates transfers. |
 | Magnets | Phase 4 deferred misalignments, radiation/ISR, spin, advanced `CSBEND`, slice-by-slice, aperture hooks, multipole data files, and corrector radiation kicks. Phase 17 added some deterministic misalignments. | The old "misalignment" deferral is partly refuted: original-mode `DX`/`DY`/`DZ`/`TILT` support exists for `KQUAD`, `KSEXT`, `KOCT`, `DQCOR`, simple non-CSR `CSBEND` with `ETILT`, and action-7 simple `MULT` order 0 through 3. Code still rejects pitch/yaw, nonzero `MALIGN_METHOD`, radiation/ISR, spin, aperture hooks, slice tracking, reference/FSE correction, advanced fringe models, high-order/file-backed multipoles, and extra multipole files. `gpu_addCorrectorRadiationKick` remains unsupported. | Use the refreshed production magnet profile to choose the next deterministic slice. Keep stochastic radiation/ISR and spin blocked until distribution-level validation exists. |
-| SCMULT, Poisson, ion effects | Phase 7 deferred sliced/nonlinear/multi-bunch SCMULT, Poisson/cuFFT work, field-map/wiggler profiling, and ion effects. Phase 18 added production profiling and `scRing2`; action 8 refreshed `scRing2_no_watch`. | Linear unsliced single-bucket `SCMULT` exists behind `ELEGANT_GPU_ENABLE_SCMULT=1`; `SCMULT` is not a general automatic `GPU_SUPPORT` element. The no-WATCH action-8 quick gate matched CPU at `1e-11` with only final deallocation sync. `phase65_scmult_nonlinear_fallback`, `phase66_scmult_sliced_fallback`, and `phase67_scmult_multibunch_fallback` now validate that nonlinear, sliced, and multi-bunch SCMULT stay on the CPU path under the same opt-in flag. No CUDA Poisson or ion-effects path is present, but the new `ionEffectsPoisson` wrapper now captures the expected CPU fallback for `IONEFFECTS` plus a 16x16 Poisson grid. | Keep linear SCMULT opt-in until a release decision or second source-family validation. Keep nonlinear, sliced, bunched, Poisson, and ion work CPU-owned unless profiling justifies a CUDA port; use `ionEffectsPoisson` as the future correctness gate. |
-| Field maps and wigglers | Phase 18 deferred field-map/wiggler acceleration and high-count `UKICKMAP` decisions. | Bounded CPU-fallback wrappers exist for `BMAPXY`, `BMXYZ`, `BOFFAXE`, and `CWIGGLER`, and the action-8 refresh matched all 19 common SDDS files at `1e-11`. A narrow deterministic cached `KICKMAP`/`UKICKMAP` CUDA prototype exists, and action 8 adds opt-in resident map-loss compaction for the no-loss-output subset through `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=1`. The high-count production-shaped `latticeErrors6` `UKICKMAP` gate and focused ordinary `phase62_kickmap_loss_compaction` `GKICKMAP` gate now pass with resident compaction; `phase63_kickmap_loss_output_fallback`, `phase64_kickmap_global_loss_fallback`, `latticeErrors6_loss_output`, and `latticeErrors6_global_loss` confirm loss-output/global-loss map rows still use the CPU fallback under the same flag. Radiation/ISR, offsets, tilt, yaw, and loss-output map-loss rows still fall back. | Keep the map-loss compaction path opt-in pending release policy, keep `.los`/global-loss row semantics on CPU until designed, and treat `BMAPXY`/`BMXYZ`/`BOFFAXE`, `CWIGGLER`, and unwrapped `WIGGLER` as separate future ports. |
+| SCMULT, Poisson, ion effects | Phase 7 deferred sliced/nonlinear/multi-bunch SCMULT, Poisson/cuFFT work, field-map/wiggler profiling, and ion effects. Phase 18 added production profiling and `scRing2`; action 8 refreshed `scRing2_no_watch`. | Linear unsliced single-bucket `SCMULT` is now enabled by default for serial CUDA under the existing guards, with `ELEGANT_GPU_ENABLE_SCMULT=0` as the fallback override; `SCMULT` is still not a general automatic `GPU_SUPPORT` element. The no-WATCH action-8 quick gate matched CPU at `1e-11` with only final deallocation sync. `phase65_scmult_nonlinear_fallback`, `phase66_scmult_sliced_fallback`, and `phase67_scmult_multibunch_fallback` validate that nonlinear, sliced, and multi-bunch SCMULT stay on the CPU path under the same policy. No CUDA Poisson or ion-effects path is present, but the new `ionEffectsPoisson` wrapper captures the expected CPU fallback for `IONEFFECTS` plus a 16x16 Poisson grid. | Keep the default guard limited to serial linear single-bucket SCMULT and preserve the explicit `0` escape hatch. Keep nonlinear, sliced, bunched, Poisson, and ion work CPU-owned unless profiling justifies a CUDA port; use `ionEffectsPoisson` as the future correctness gate. |
+| Field maps and wigglers | Phase 18 deferred field-map/wiggler acceleration and high-count `UKICKMAP` decisions. | Bounded CPU-fallback wrappers exist for `BMAPXY`, `BMXYZ`, `BOFFAXE`, and `CWIGGLER`, and the action-8 refresh matched all 19 common SDDS files at `1e-11`. A narrow deterministic cached `KICKMAP`/`UKICKMAP` CUDA prototype exists, and action 8 adds default resident map-loss compaction for the no-loss-output subset, with `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=0` as the fallback override. The high-count production-shaped `latticeErrors6` `UKICKMAP` gate and focused ordinary `phase62_kickmap_loss_compaction` `GKICKMAP` gate now pass with resident compaction; `phase63_kickmap_loss_output_fallback`, `phase64_kickmap_global_loss_fallback`, `latticeErrors6_loss_output`, and `latticeErrors6_global_loss` confirm loss-output/global-loss map rows still use the CPU fallback. Radiation/ISR, offsets, tilt, yaw, and loss-output map-loss rows still fall back. | Keep no-loss-output map-loss compaction as the default safe subset, keep `.los`/global-loss row semantics on CPU until designed, and treat `BMAPXY`/`BMXYZ`/`BOFFAXE`, `CWIGGLER`, and unwrapped `WIGGLER` as separate future ports. |
 | Pelegant and multi-GPU | Phases 8 and 19 deferred larger Pelegant timing, dynamic load balancing, MPI-aware reductions, GPU-aware particle exchange, true multi-GPU, and multi-node validation. | Fixed-rank single-node Pelegant CUDA validation exists. `load_balancing_on=1` is guarded: CPU fallback in auto mode and fail-fast in required mode. MPI scatter/gather still forces host staging. | Resume only on suitable hardware: multi-GPU mapping/timing, GPU-resident dynamic redistribution, MPI-aware reductions, and GPU-aware exchange. |
 | Stochastic validation | Multiple phases defer radiation/ISR/spin or distribution-based paths until stochastic validation exists. | Static profile tooling identifies stochastic blockers. Action 10 now adds a distribution-level SDDS comparator plus initial fixed-seed CPU/GPU guards for `csbend1`, `spinTest2`, `cwiggler10_radiation`, and `uKickMap4_radiation`. | Keep stochastic CUDA paths blocked until the distribution gates are broadened beyond the initial two-seed smoke size and tied to the corresponding feature guards. |
 
@@ -29,7 +29,7 @@ runtime validation where noted.
 These items were listed as unfinished in the older implementation plan but are
 now covered in the current code or later improvement phases:
 
-- Narrow `removeInvalidParticles` and `imposeApertureData` CUDA paths exist under `ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION=1`.
+- Narrow `removeInvalidParticles` and `imposeApertureData` CUDA paths exist under stable aperture compaction, which is automatic for no-loss-output runs and explicit with `ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION=1` for `.los` output runs.
 - Smoothed `WAKE`/`TRWAKE`, `WAKE,CHANGE_P0=1`, tilted single-bunch
   `TRWAKE` without spin, several `LSCDRIFT` modes, narrow serial/local
   `gpu_findFiducialTime` including selected-bunch `TMEAN`, selected-bunch
@@ -94,21 +94,19 @@ now covered in the current code or later improvement phases:
 
 ### 2. Opt-In Promotion Policy
 
-Status: complete as a static release policy. No opt-in path should become
-automatic by default in this pass. The current evidence supports two targeted
-production opt-ins, while the remaining flags should stay experimental or
-diagnostic until they have broader timing evidence.
+Status: complete as a static release policy. Exact drift, guarded resident CSR,
+and the no-loss-output aperture and magnet loss-compaction subsets are automatic
+by default after their focused retests; the remaining flags should stay targeted
+opt-ins, experimental, or diagnostic until they have broader timing evidence.
 
 | Flag | Release decision | Evidence | Do not promote yet because | Next promotion gate |
 | --- | --- | --- | --- | --- |
-| `ELEGANT_GPU_ENABLE_CSR_RESIDENT=1` | Recommended targeted opt-in for CSR-heavy workloads that match the guarded simple `CSRCSBEND` subset. Do not enable by default yet. | The isolated 20,000-particle, 261-pass `phase6_csr_csbend` gate is recorded as 5.27s CUDA vs 35.24s CPU, about 6.69x faster, with all 4 common SDDS files matching at `1e-11`. The May 8 finalization focused quick run matched all 4 common files with `csr=48` and only final `gpuBaseDealloc` synchronization, and the focused `GPU_VERIFY` run passed resident `ctHist`, `T1`, `T2`, and `dGamma` checks. Focused no-CSR, Stupakov-only, first-order entry/exit-edge `CSRCSBEND`, and no-state linearized `CSRDRIFT` regressions now avoid resident final/entry/drift handoffs in normal runs. The latest production smoke with the flag matched all 70 common files; `lcls0` was 1.62x faster with `csr=320`, `lcls1` was 1.76x faster with `csr=300`, and the fallback report shows zero `CSRCSBEND resident final CPU handoff` requests. | The guard intentionally excludes IGF, wake-filter resident support, radiation/ISR, backtracking, bin-once, in-element output, Derbenev criterion evaluation, and Saldin/LSC/non-Stupakov `CSRDRIFT` state. The pre-action-6 production smoke was dominated by `RFCW`, while current targeted RF runs remove the validated `clic1`, `lcls1`, and `lcls0` RFCW handoffs. Aperture/loss fallbacks, 13 CPU-owned `CSRDRIFT` transitions, and 5 CPU-owned `CSRCSBEND` transitions remain. | Keep the exact guarded subset as a documented opt-in. Do not promote to default until the remaining state-consuming `CSRDRIFT` modes, unsupported `CSRCSBEND` transitions, and diagnostic/final-state cases have broader production-shaped validation. |
-| `ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION=1` | Recommended targeted opt-in for verified loss-heavy `RCOL`, `ECOL`, and ideal `SCRAPER` subsets. Do not enable by default yet. | Focused same-workload gates show useful `RCOL`, `ECOL`, and `SCRAPER` speedups from about 2.49x to 4.33x, while preserving loss semantics at `1e-11`. The May 8 finalization production smoke matched all 70 common files with the flag enabled; `maxamp1` was 1.83x, while tiny watch-heavy collimator wrappers were still 0.18x-0.22x. | The no-loss-output path now avoids loss-tail row synchronization, but `.los` consumers still need row copies to preserve loss output. The production-style `MAXAMP` margin is modest, and watch-heavy or tiny collimator wrappers remain startup/synchronization dominated. Inverted, all-loss, material-interaction, and broader invalid-particle modes still fall back. | Keep as a targeted opt-in by documented workload shape. Do not make it default without a broader production-lattice timing win and a design for `.los` row synchronization that preserves loss pass, row ordering, global coordinates, and optional spin columns. |
-| `ELEGANT_GPU_ENABLE_SCMULT=1` | Keep opt-in. Do not mark as production-recommended globally and do not enable automatically. | The linear unsliced `SCMULT` slice is correct and fast for `scRing2`, with production evidence around 2.56x-2.59x from the Phase 18 baseline and a May 9 action-8 no-WATCH quick refresh showing 1.57x, 8 resident SCMULT kernels, and only final deallocation synchronization. | The evidence still comes from one production source family, even though the no-WATCH variant isolates SCMULT/RF residency from diagnostic output. Nonlinear, sliced, and bunched SCMULT remain CPU-owned, and `SCMULT` intentionally lacks general automatic `GPU_SUPPORT` metadata. | Keep opt-in for now. Use the action-8 no-WATCH refresh as the additional production-shaped validation, but require either a second source family or a release decision before enabling any automatic SCMULT eligibility. |
-| `ELEGANT_GPU_ENABLE_EXACT_DRIFT=1` | Keep experimental opt-in only. | The kernel is correctness-verified, but the recorded one-minute timing did not beat CPU: 30,000 particles, 140 CPU passes in 59.78s vs 126 CUDA passes in 59.76s. | Standalone exact drift is not a speed win and can add launch/transfer overhead. | Revisit only if a larger resident workflow shows exact drift as a measured bottleneck. |
-| `ELEGANT_GPU_ENABLE_CSR_HISTOGRAM=1` | Keep diagnostic/experimental opt-in. Do not recommend as a speed path now that resident CSR exists. | The histogram path is correctness-verified and useful for CSR wake-array validation, but the old same-workload gate was slower than the scratch-only path: 30.42s vs 29.98s for the 273-pass run. | It still leaves range/bin sizing and other setup CPU-owned and is superseded for speed by `ELEGANT_GPU_ENABLE_CSR_RESIDENT=1`. | Retain for verification and development. Promote no default behavior unless a non-resident CSR workload appears where it is consistently faster. |
-| `ELEGANT_GPU_ENABLE_CSR_KICK=1` | Keep developer/stepping-stone opt-in. | The prototype is correctness-verified, including CSR wake-array and `CSR_LAST_WAKE` checks. | Recorded same-workload timing was not a robust speed win, and the host-packed implementation increased CSR kernel calls and transfer time. | Use only as part of future fully resident CSR work. Do not advertise as production tuning. |
-| `ELEGANT_GPU_ENABLE_APERTURE_COMPACTION=1` | Keep experimental legacy opt-in; prefer the stable parallel compaction flag for new aperture timing. | It preserves simple `MAXAMP` loss semantics and now reads back only lost tail rows in normal builds. | Earlier quick timings were slower than CPU fallback, and the stable prefix-sum path is the active aperture direction. | Retain for compatibility/debugging unless later cleanup removes it deliberately. |
-| `ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE=0|1` | Treat as a sub-control of parallel aperture compaction, not a separate promotion target. Default-on under `ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION=1` is acceptable. | Accepted-device compaction reduced sync requests in `maxamp1` and is part of the verified Phase 15 stable path. | It is meaningful only when parallel aperture compaction is enabled. | Keep documented as a debugging override. |
+| `ELEGANT_GPU_ENABLE_CSR_RESIDENT=0|1` | Default-on for CSR-heavy workloads that match the guarded simple `CSRCSBEND` subset; set `0` to force the older CPU/non-resident handoff behavior. | The isolated 20,000-particle, 261-pass `phase6_csr_csbend` gate is recorded as 5.27s CUDA vs 35.24s CPU, about 6.69x faster, with all 4 common SDDS files matching at `1e-11`. The May 8 finalization focused quick run matched all 4 common files with `csr=48` and only final `gpuBaseDealloc` synchronization, and the focused `GPU_VERIFY` run passed resident `ctHist`, `T1`, `T2`, and `dGamma` checks. Focused no-CSR, Stupakov-only, first-order entry/exit-edge `CSRCSBEND`, and no-state linearized `CSRDRIFT` regressions now avoid resident final/entry/drift handoffs in normal runs. The default-policy production smoke with the flag unset matched all 70 common files, recorded `ELEGANT_GPU_ENABLE_CSR_RESIDENT=unset(default-on)`, and reported `lcls0` 1.83x with `csr=320` and `lcls1` 1.93x with `csr=300`. | The guard intentionally excludes IGF, wake-filter resident support, radiation/ISR, backtracking, bin-once, in-element output, Derbenev criterion evaluation, and Saldin/LSC/non-Stupakov `CSRDRIFT` state. The pre-action-6 production smoke was dominated by `RFCW`, while current targeted RF runs remove the validated `clic1`, `lcls1`, and `lcls0` RFCW handoffs. Aperture/loss fallbacks, 13 CPU-owned `CSRDRIFT` transitions, and 5 CPU-owned `CSRCSBEND` transitions remain. | Keep the exact guarded subset default-on, preserve `ELEGANT_GPU_ENABLE_CSR_RESIDENT=0` as the escape hatch, and do not broaden the guard until remaining state-consuming `CSRDRIFT` modes, unsupported `CSRCSBEND` transitions, and diagnostic/final-state cases have broader production-shaped validation. |
+| `ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION=0|1` | Default-on only for verified no-loss-output aperture loss handling; keep `.los` output as CPU fallback unless the flag is explicitly set to `1`. | Focused same-workload gates show useful `RCOL`, `ECOL`, and `SCRAPER` speedups from about 2.49x to 4.33x when the stable path is forced. The May 8 finalization production smoke matched all 70 common files with the flag enabled; `maxamp1` was 1.83x, while tiny watch-heavy collimator wrappers were still 0.18x-0.22x. A fresh no-loss-output `phase15_elimit_loss_no_output` 30,000-particle, 10-pass run matched CPU at `1e-11` and took 0.85s with automatic stable compaction versus 1.29s CPU and 0.89s with stable compaction explicitly disabled. | `.los` consumers still need row copies to preserve loss output when the stable path is forced. The production-style `MAXAMP` margin is modest, and watch-heavy or tiny collimator wrappers remain startup/synchronization dominated. Inverted, all-loss, material-interaction, and broader invalid-particle modes still fall back. | Keep the no-loss-output subset default-on and document `ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION=0` as the escape hatch. Do not make `.los` output stable compaction automatic without a broader production-lattice timing win and a design that preserves loss pass, row ordering, global coordinates, and optional spin columns. |
+| `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=0|1` | Default-on only for verified no-loss-output magnet/map loss handling; keep `.los` and global loss-coordinate output on the CPU loss-row fallback path. | May 10, 2026 retests with the flag unset matched CPU at `1e-11` for `phase56`, `phase57`, `phase58`, and `phase62`; CUDA reported resident magnet/map compaction and only final deallocation synchronization. The explicit `0` override matched CPU for `phase56` and `phase62` while reporting the expected particle-loss fallback synchronizations. The `.los`/global gates `phase59`, `phase60`, `phase63`, and `phase64` matched CPU at `1e-11` and retained CPU loss-row fallback. | Resident `.los` and global loss-coordinate row semantics are still deliberately not implemented. Radiation/ISR, spin, advanced `CSBEND`, pitch/yaw or nonzero `MALIGN_METHOD`, high-order/file-backed multipoles, aperture hooks, KICKMAP offsets/tilt/yaw, and stochastic map modes remain CPU-owned. | Keep the no-loss-output subset default-on and document `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=0` as the escape hatch. Do not make loss-output/global rows resident without a design that preserves row ordering, global columns, acceptance output, and optional future spin columns. |
+| `ELEGANT_GPU_ENABLE_SCMULT=0|1` | Default-on for serial CUDA runs matching the guarded linear, unsliced, single-bucket `SCMULT` subset; set `0` to force the older CPU fallback. | The linear unsliced `SCMULT` slice is correct and fast for `scRing2`, with production evidence around 2.56x-2.59x from the Phase 18 baseline and a May 9 action-8 no-WATCH quick refresh showing 1.57x, 8 resident SCMULT kernels, and only final deallocation synchronization. Focused default-policy retests with the flag unset matched CPU at `1e-11` for the isolated linear case, the production-shaped `scRing2_no_watch` wrapper, and the nonlinear, sliced, and multi-bunch fallback guards. | The evidence still comes mostly from one production source family, so the automatic window remains limited to the existing serial linear single-bucket guard. Nonlinear, sliced, and bunched SCMULT remain CPU-owned, MPI defaults remain conservative, and `SCMULT` still lacks broad `GPU_SUPPORT` metadata. | Keep the narrow default-on guard and explicit `ELEGANT_GPU_ENABLE_SCMULT=0` escape hatch. Require more production-shaped coverage before broadening into nonlinear, sliced, bunched, or MPI SCMULT. |
+| `ELEGANT_GPU_ENABLE_EXACT_DRIFT=0|1` | Enable exact drift by default under the existing particle threshold; keep the variable as an explicit override. | The earlier one-minute result was superseded by a May 9, 2026 local retest: 30,000 particles, 12 CPU passes in 5.25s versus 44 default-on CUDA passes in 4.87s. The common 40-pass sample CPU/GPU SDDS comparison matched all 4 files at `1e-11`, and the `GPU_VERIFY` quick run reported per-element exact-drift `maxAbs=0` and `maxRel=0`. | Keep the threshold and allow `ELEGANT_GPU_ENABLE_EXACT_DRIFT=0` for debugging or machines where launch overhead dominates. The diagnostic-heavy `exact_drift` fixture still flushes for centroid/sigma consumers, so coalescing benefits mainly resident workflows with no intermediate coordinate reads. | Continue collecting production-shaped timing with the default on, especially drift-heavy resident lattices with sparse diagnostics. |
+| `ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE=0|1` | Treat as a sub-control of stable aperture compaction, not a separate promotion target. Default-on when stable compaction is active is acceptable. | Accepted-device compaction reduced sync requests in `maxamp1` and is part of the verified Phase 15 stable path. | It is meaningful only when parallel aperture compaction is enabled automatically or explicitly. | Keep documented as a debugging override. |
 
 Promotion requirements for any future default enablement:
 
@@ -133,7 +131,7 @@ reports to judge the current serial-production state.
 | Priority | Hotspot | Evidence | Action |
 | --- | --- | --- | --- |
 | 1 | Remaining `RFCW` CPU-element handoffs | The generated aggregate report counted `CPU element: RFCW` 702 times across the selected Phase 13/14/15 production-smoke snapshots. Action 6 removes the validated CLIC RF-only portion plus the bounded LCLS wake-bearing portions: `clic1`, `lcls1`, and `lcls0` each reduced their prior 78 `CPU element: RFCW` syncs to zero in targeted quick runs. `phase36_rfcw_lsc` covers guarded LSCKICK integration inside the matrix-method and `N_KICKS=1` RFCW collective slices, `phase37_rfcw_multikick` extends the guarded kick-method collective slice to `N_KICKS>1` with `WAKES_AT_END=0|1`, `phase38_rfcw_kick_rf_only` covers the RF-only kick-method slice, `phase45_rf_kick_treference` covers explicit `T_REFERENCE` in the RF-only kick-method RFCA/RFCW slice, `phase47_rf_selected_tmean_fiducial` covers selected-bunch `TMEAN` in supported RFCA/RF-only RFCW slices, `phase48_rf_selected_pmaximum_fiducial` covers selected-bunch `PMAXIMUM` in the same RF-only slices, `phase49_rfcw_wake_selected_fiducial` covers selected-bunch `TMEAN`/`PMAXIMUM` in guarded wake-bearing RFCW slices, `phase50_rf_first_fiducial` covers selected-bunch `FIRST` in supported RFCA/RF-only RFCW and guarded wake-bearing RFCW slices, `phase52_rf_standing_wave_multikick_treference` covers explicit-reference multi-kick standing-wave RFCA/RFCW, and `phase42_rfcw_fixed_wake_bins`, `phase43_rfcw_lsc_only`, `phase44_rfcw_single_wake_planes`, and `phase46_rfcw_wake_treference` close the fixed-bin, LSC-only, single-wake-family, and explicit wake-bearing `T_REFERENCE` focused guards. The aggregate report still predates this work, so rerun production smoke before ranking any remaining RF syncs. | Treat unsupported `RFCW` modes as deferred post-action-6 candidates: distributed particles, broader LSC/RF combinations outside the documented slices, distributed/MPI fiducial reductions, and broader kick/fiducial/RF modes. Do not reopen them without focused regression, production wrapper, fallback-summary delta, and `GPU_VERIFY` gates. |
-| 2 | `UKICKMAP`/`KICKMAP` map-loss fallback | The Phase 18 cache run had 337 mutable `UKICKMAP particle loss fallback` syncs in `uKickMap1`, while still matching all 4 common SDDS files and showing about 4.08x speedup. Action 8 adds an opt-in resident stable compaction path for supported `KICKMAP`/`UKICKMAP` map losses when loss-output/global-loss rows are not needed. On a 3,000-particle, 2,000-pass `uKickMap1` slice, the old fallback path had 101 `UKICKMAP particle loss fallback` syncs; the compaction run matched CPU at `1e-11` and reduced synchronization to final `gpuBaseDealloc` only. The high-count production-shaped `latticeErrors6` wrapper now runs 40 production `UKICKMAP` elements per pass; the 30,000-particle, 2-pass compaction gate matched all 4 common files at `1e-11`, kept 564 survivors, removed 80 same-workload `UKICKMAP particle loss fallback` synchronizations, and ran in 0.41s versus 0.77s CPU. Focused `phase62_kickmap_loss_compaction` covers ordinary `GKICKMAP`: its 3,000-particle, 3-pass compaction gate matched all 4 common files at `1e-11` and removed 15 same-workload `KICKMAP particle loss fallback` synchronizations. Focused `phase63_kickmap_loss_output_fallback` and `phase64_kickmap_global_loss_fallback` keep the compaction flag enabled but request `.los`/`.acc` and global loss-coordinate rows; both quick gates matched all 12 common SDDS files at `1e-11`, including `.los`, and reported 15 explicit `KICKMAP particle loss fallback` synchronizations per case. Production-shaped `latticeErrors6_loss_output` and `latticeErrors6_global_loss` repeat the same high-count `UKICKMAP` maps with `.los`/`.acc` and global rows; both matched all 12 common files at `1e-11` and reported 73 explicit `UKICKMAP particle loss fallback` synchronizations per case. | Treat `uKickMap1`, `latticeErrors6`, and `phase62_kickmap_loss_compaction` as the resident no-loss-output map-loss gates, with `phase63`/`phase64` and `latticeErrors6_loss_output`/`latticeErrors6_global_loss` as the loss-row CPU-fallback guards. Keep the path opt-in pending release policy, and keep map loss with `.los`/global loss rows, radiation/ISR, offsets, tilt, and yaw on the CPU path. |
+| 2 | `UKICKMAP`/`KICKMAP` map-loss fallback | The Phase 18 cache run had 337 mutable `UKICKMAP particle loss fallback` syncs in `uKickMap1`, while still matching all 4 common SDDS files and showing about 4.08x speedup. Action 8 adds a resident stable compaction path for supported `KICKMAP`/`UKICKMAP` map losses when loss-output/global-loss rows are not needed; it is now automatic in that no-loss-output window. On a 3,000-particle, 2,000-pass `uKickMap1` slice, the old fallback path had 101 `UKICKMAP particle loss fallback` syncs; the compaction run matched CPU at `1e-11` and reduced synchronization to final `gpuBaseDealloc` only. The high-count production-shaped `latticeErrors6` wrapper now runs 40 production `UKICKMAP` elements per pass; the 30,000-particle, 2-pass compaction gate matched all 4 common files at `1e-11`, kept 564 survivors, removed 80 same-workload `UKICKMAP particle loss fallback` synchronizations, and ran in 0.41s versus 0.77s CPU. Focused `phase62_kickmap_loss_compaction` covers ordinary `GKICKMAP`: its 3,000-particle, 3-pass compaction gate matched all 4 common files at `1e-11` and removed 15 same-workload `KICKMAP particle loss fallback` synchronizations. Focused `phase63_kickmap_loss_output_fallback` and `phase64_kickmap_global_loss_fallback` request `.los`/`.acc` and global loss-coordinate rows; both quick gates matched all 12 common SDDS files at `1e-11`, including `.los`, and reported 15 explicit `KICKMAP particle loss fallback` synchronizations per case. Production-shaped `latticeErrors6_loss_output` and `latticeErrors6_global_loss` repeat the same high-count `UKICKMAP` maps with `.los`/`.acc` and global rows; both matched all 12 common files at `1e-11` and reported 73 explicit `UKICKMAP particle loss fallback` synchronizations per case. | Treat `uKickMap1`, `latticeErrors6`, and `phase62_kickmap_loss_compaction` as the resident no-loss-output map-loss gates, with `phase63`/`phase64` and `latticeErrors6_loss_output`/`latticeErrors6_global_loss` as the loss-row CPU-fallback guards. Keep no-loss-output map-loss compaction default-on, and keep map loss with `.los`/global loss rows, radiation/ISR, offsets, tilt, and yaw on the CPU path. |
 | 3 | `CSRDRIFT` and `CSRCSBEND` handoffs | The action-3 baseline had 11 `CSRCSBEND resident final CPU handoff` syncs. Action 5 removes that resident-final marker for the validated normal runs and reduces production CPU-owned `CSRCSBEND` transitions to 5, while 13 CPU-owned `CSRDRIFT` transitions remain. The pre-resident counter report had 64 `CSRDRIFT` targets. | Treat remaining CSR CPU-element transitions as the next CSR-local cleanup after `RFCW`, or as the smaller scoped target if `RFCW` is too broad. Preserve `CSR_LAST_WAKE`, CSR output files, `CSRDRIFT` state, and verification handoff semantics. |
 | 4 | Aperture/loss synchronization | Phase 13/14 `maxamp1` still show 11 `elimit_amplitudes particle loss fallback` syncs. With stable aperture compaction enabled in Phase 15, production aperture smoke matches all 70 common files and leaves 30 visible loss-tail row-copy syncs: 14 `elliptical_collimator`, 11 `elimit_amplitudes`, and 5 `rectangular_collimator`. | Continue with lost-tail and global-loss bookkeeping cleanup, but do not broaden aperture semantics until same-workload timings justify it. Avoid spending release-critical effort on tiny watch-heavy wrappers unless they expose a correctness issue. |
 | 5 | Read-only diagnostics and output | Phase 15 production smoke has 46 read-only sync requests: 30 loss-tail row-copy syncs plus 16 `WATCH coordinate output` reasons. The thin-`RFCA`/SCMULT no-watch runs show that output removal can dominate specific synthetic cases, but this is not a general compute port. | Preserve exact output semantics. If a diagnostic path changes from mutable synchronization to read-only synchronization or device-side summarization, add SDDS output comparison and fallback-counter regression coverage. |
@@ -168,7 +166,7 @@ Code change made for this slice:
 
 - `gpuBaseInit` now records whether the current tracking call will write a
   `losses` file.
-- Stable and legacy aperture compaction copy lost-tail rows back to the host
+- Stable aperture compaction copies lost-tail rows back to the host
   only when loss output is needed. Runs that do not request `losses` output can
   keep survivor tracking resident without paying the immediate lost-tail
   device-to-host copy.
@@ -213,9 +211,10 @@ Deferred aperture/loss work after action 4:
 - Loss-output row synchronization remains by design for `.los` consumers.
   Reduce those cases further only with a design that preserves loss pass, lost
   row ordering, global loss coordinates, and optional spin columns.
-- Treat the verified aperture subset as a targeted production opt-in. The fresh
-  production smoke supports documented workload-shape recommendations, not
-  automatic default behavior.
+- Treat the verified no-loss-output aperture subset as the automatic production
+  default. The fresh production smoke still supports only documented
+  workload-shape recommendations for forcing stable compaction when `.los`
+  output is present, not automatic `.los` default behavior.
 - Add measured cases before broadening inverted `RCOL`/`ECOL`, all-loss,
   material-interaction, and remaining global-loss-coordinate modes.
 - Broaden `removeInvalidParticles` beyond the identity-`RFCA` trigger only
@@ -226,8 +225,9 @@ Deferred aperture/loss work after action 4:
 ### 5. Finish CSR Work
 
 Status: finalization validation and the first cleanup slices are complete.
-Resident `CSRCSBEND` remains a targeted production opt-in, not a default. The
-completed slices cover no-CSR `CSRDRIFT` exact/linear-drift residency,
+Resident `CSRCSBEND` now runs by default for the guarded production subset, with
+`ELEGANT_GPU_ENABLE_CSR_RESIDENT=0` as the fallback override. The completed
+slices cover no-CSR `CSRDRIFT` exact/linear-drift residency,
 Stupakov-only CSRDRIFT final-prep avoidance, and checked CUDA initial/final
 transforms for first-order entrance/exit-edge `CSRCSBEND` sections. Generated
 `test/gpu_cuda/output/reports/finalize-action5-csr-production-smoke.md`,
@@ -256,10 +256,10 @@ and the TSV companion from the no-state linearized CSRDRIFT cleanup slice.
 Code and harness changes made for these slices:
 
 - `production_smoke.sh` now preserves and reports the CSR runtime controls
-  `ELEGANT_GPU_ENABLE_CSR_HISTOGRAM`, `ELEGANT_GPU_ENABLE_CSR_KICK`,
-  `ELEGANT_GPU_ENABLE_CSR_RESIDENT`, `ELEGANT_GPU_MIN_CSR_PARTICLES`, and
+  `ELEGANT_GPU_ENABLE_CSR_RESIDENT`,
+  `ELEGANT_GPU_MIN_CSR_PARTICLES`, and
   `ELEGANT_GPU_MIN_CSR_BINS`, so production smoke reports capture the CSR
-  opt-in state instead of relying on external run notes.
+  resident-policy and threshold state instead of relying on external run notes.
 - The production benchmark report parser now recognizes row-level CPU
   synchronization messages, keeping release summaries aligned with fallback
   summaries when CSR or aperture diagnostics request named row copies.
@@ -362,12 +362,29 @@ Validation completed:
   A source scan of the curated LCLS/CLIC production wrappers found no
   `CSRDRIFT,LINEARIZE=1` declarations, so the no-state linear drift slice does
   not change the latest production CSR fallback counts.
+- Default-policy retest: with `ELEGANT_GPU_ENABLE_CSR_RESIDENT` unset,
+  `phase6_csr_csbend` matched all 4 common files at `1e-11` and reported
+  `CSR resident enabled`, `csr=48`, and only final `gpuBaseDealloc`
+  synchronization in the normal CUDA run. `phase14_csr_entry_edge`,
+  `phase14_csr_linear_drift`, and `phase14_csr_last_wake` matched all 13 common
+  files at `1e-11`; `phase14_csr_saldin54` matched all 6 common files at
+  `1e-11` while retaining the expected CSRCSBEND final handoffs. The
+  `GPU_VERIFY` `phase6_csr_csbend` run passed and matched all 4 common files at
+  `1e-11`. With `ELEGANT_GPU_ENABLE_CSR_RESIDENT=0`, `phase6_csr_csbend` still
+  matched CPU at `1e-11` and reported `CSR resident explicitly disabled`.
+- Default-policy production smoke with `ELEGANT_GPU_MODE=required` and
+  `ELEGANT_GPU_ENABLE_CSR_RESIDENT` unset matched all 70 common files at
+  `1e-11`; the generated report records
+  `ELEGANT_GPU_ENABLE_CSR_RESIDENT=unset(default-on)`. The LCLS wrappers stayed
+  CSR-resident for the guarded sections (`lcls0 csr=320`, `lcls1 csr=300`) and
+  ran 1.83x and 1.93x faster than CPU, respectively. The report is
+  `test/gpu_cuda/output/reports/csr-default-production.md`.
 
 Deferred CSR work after action 5:
 
-- Keep resident `CSRCSBEND` as a documented targeted opt-in. The fresh
-  production smoke supports use on matching CSR-heavy workloads, but not
-  automatic default enablement.
+- Keep resident `CSRCSBEND` default-on only for the documented guard set. The
+  fresh production smoke supports automatic use on matching CSR-heavy workloads,
+  but not broadening the guard without new evidence.
 - Reduce CPU-owned `CSRDRIFT` execution for the remaining Saldin, LSC, and
   non-Stupakov state-consuming modes, CPU-owned unsupported `CSRCSBEND`
   transitions, Derbenev/output diagnostics, ISR/radiation CSR bends, and
@@ -1444,11 +1461,11 @@ Code change made for this slice:
 - Marked `MULT` as `GPUCapable=1` and updated the dictionary metadata check.
 - Updated the production magnet profiler so matrix `KICKER`/`HVCOR` aliases are
   no longer counted as unsupported, and simple `MULT` is counted as covered.
-- Added `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=1` as a guarded stable
-  prefix-sum compaction prototype for detected losses from supported multipole
-  and non-CSR `CSBEND` kernels when no loss-output file or global
-  loss-coordinate bookkeeping is active. Detected losses still fall back to CPU
-  by default.
+- Added guarded stable prefix-sum compaction for detected losses from supported
+  multipole and non-CSR `CSBEND` kernels when no loss-output file or global
+  loss-coordinate bookkeeping is active. It is now enabled by default for
+  no-loss-output runs, with `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=0`
+  available to force the older CPU loss fallback.
 - Reused the stable accepted-array partition path for magnet loss compaction,
   including the device-side accepted scatter controlled by
   `ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE`.
@@ -1472,32 +1489,31 @@ Validation completed:
   `unsupported_multipole_or_corrector_family` decreased from 3,278 to 24
   remaining `FMULT` definitions.
 - Added `phase56_mult_loss_compaction`, a no-loss-output simple `MULT`
-  detected-loss case. With `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=1`, CUDA
-  matched CPU output for all 4 common SDDS files at `1e-11`, reported no
-  CPU-element fallback, and synchronized only at final `gpuBaseDealloc`. Report:
+  detected-loss case. With default magnet loss compaction, CUDA matched CPU
+  output for all 4 common SDDS files at `1e-11`, reported no CPU-element
+  fallback, and synchronized only at final `gpuBaseDealloc`. Report:
   `test/gpu_cuda/output/reports/phase56-mult-loss-compaction-quick.md`.
 - Added `phase57_mult_loss_accepted_compaction`, the same simple `MULT`
-  detected-loss shape with acceptance output enabled. With
-  `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=1`, CUDA matched CPU output for all
-  5 common SDDS files at `1e-11`, including `.acc`, reported no CPU-element
-  fallback, enabled accepted-device compaction, and synchronized only at final
+  detected-loss shape with acceptance output enabled. With default magnet loss
+  compaction, CUDA matched CPU output for all 5 common SDDS files at `1e-11`,
+  including `.acc`, reported no CPU-element fallback, enabled accepted-device
+  compaction, and synchronized only at final
   `gpuBaseDealloc`. Report:
   `test/gpu_cuda/output/reports/phase57-mult-loss-accepted-compaction-quick.md`.
 - Added `phase59_mult_loss_output_fallback`, the same simple `MULT`
-  detected-loss shape with `.los` and `.acc` output enabled. With
-  `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=1`, CUDA matched CPU output for all
-  6 common SDDS files at `1e-11`, including `.los`, lost 2862 of 3000 particles
-  (`Transmission=0.046`), and explicitly synchronized through
-  `multipole_tracking particle loss fallback`. This validates that the opt-in
-  compaction flag still preserves existing loss-output semantics by staying on
+  detected-loss shape with `.los` and `.acc` output enabled. CUDA matched CPU
+  output for all 6 common SDDS files at `1e-11`, including `.los`, lost 2862 of
+  3000 particles (`Transmission=0.046`), and explicitly synchronized through
+  `multipole_tracking particle loss fallback`. This validates that the default
+  compaction policy still preserves existing loss-output semantics by staying on
   the CPU loss-row path when `.los` is requested. Report:
   `test/gpu_cuda/output/reports/phase59-mult-loss-output-fallback-quick.md`.
 - Added `phase60_mult_global_loss_fallback`, the same simple `MULT`
   detected-loss shape with `.los`, `losses_include_global_coordinates=1`, and
-  `.acc` output enabled. With `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=1`,
-  CUDA matched CPU output for all 6 common SDDS files at `1e-11`, including the
-  `.los` `X`, `Z`, and `thetaX` global-coordinate columns, lost 2862 of 3000
-  particles (`Transmission=0.046`), and explicitly synchronized through
+  `.acc` output enabled. CUDA matched CPU output for all 6 common SDDS files at
+  `1e-11`, including the `.los` `X`, `Z`, and `thetaX` global-coordinate
+  columns, lost 2862 of 3000 particles (`Transmission=0.046`), and explicitly
+  synchronized through
   `multipole_tracking particle loss fallback`. This validates the current guard
   for global loss-coordinate consumers while resident global loss-row
   compaction remains deferred. Report:
@@ -1505,10 +1521,10 @@ Validation completed:
 - Added `phase58_csbend_loss_compaction`, a no-loss-output non-CSR `CSBEND`
   detected-loss case with first-order edges, original-mode misalignments, and
   acceptance output enabled. The quick gate lost 47 of 3000 particles
-  (`Transmission=0.9843333`); with
-  `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=1`, CUDA matched CPU output for all
-  5 common SDDS files at `1e-11`, including `.acc`, reported no CPU-element
-  fallback, enabled accepted-device compaction, and synchronized only at final
+  (`Transmission=0.9843333`); with default magnet loss compaction, CUDA matched
+  CPU output for all 5 common SDDS files at `1e-11`, including `.acc`, reported
+  no CPU-element fallback, enabled accepted-device compaction, and synchronized
+  only at final
   `gpuBaseDealloc`. Report:
   `test/gpu_cuda/output/reports/phase58-csbend-loss-compaction-quick.md`.
 - Added `phase61_csbend_advanced_fallback`, an advanced non-CSR `CSBEND` case
@@ -1519,6 +1535,18 @@ Validation completed:
   validates the conservative fallback guard for representative advanced
   `CSBEND` shapes while resident support remains deferred. Report:
   `test/gpu_cuda/output/reports/phase61-csbend-advanced-fallback-quick.md`.
+- May 10 default-policy retest: built CUDA and `GPU_VERIFY` CUDA binaries.
+  With `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION` unset, the device quick
+  gates `phase56_mult_loss_compaction`, `phase57_mult_loss_accepted_compaction`,
+  `phase58_csbend_loss_compaction`, and `phase62_kickmap_loss_compaction`
+  matched CPU at `1e-11`; verbose diagnostics reported magnet loss compaction
+  enabled for no-loss-output runs and no particle-loss fallback synchronizations
+  appeared. With `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=0`, `phase56` and
+  `phase62` still matched CPU and explicitly reported the expected
+  `multipole_tracking`/`KICKMAP particle loss fallback` synchronizations. The
+  `.los`/global-loss quick gates `phase59`, `phase60`, `phase63`, and `phase64`
+  matched CPU at `1e-11` under the default policy and retained the explicit CPU
+  loss-row fallback synchronizations.
 
 Deferred follow-ups after action 7 closure:
 
@@ -1547,16 +1575,16 @@ fallback guards, the first resident
 `latticeErrors6` `UKICKMAP` compaction gate, the ordinary focused
 `GKICKMAP` compaction fixture, the `KICKMAP`/`UKICKMAP` loss-row fallback
 guards, and the refreshed field-map/wiggler fallback wrappers. The action-8
-ion/Poisson fallback wrapper is also in place. `SCMULT`
-remains opt-in pending a release decision or a second independent source-family
-validation, and map-loss compaction remains opt-in under
-`ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=1`.
+  ion/Poisson fallback wrapper is also in place. Linear single-bucket `SCMULT`
+  is now default-on for serial CUDA under the existing guard set, while
+  no-loss-output map-loss compaction is now part of the default
+  magnet loss-compaction policy.
 
 Validation completed:
 
 - Reran `scRing2_no_watch`, the production-shaped linear, unsliced `SCMULT`
-  wrapper with WATCH diagnostics disabled, using
-  `ELEGANT_GPU_ENABLE_SCMULT=1`.
+  wrapper with WATCH diagnostics disabled, with the SCMULT flag unset under the
+  default-on serial policy.
 - CPU/GPU quick runs matched all 5 common SDDS files at `1e-11`, including
   `.twi`. The fixed source beam tracked 1000 particles for 8 passes.
 - CUDA reported 8 resident `SCMULT` kernels, 480 matrix kernels, 288 magnet
@@ -1565,8 +1593,8 @@ Validation completed:
   quick gate. Report:
   `test/gpu_cuda/output/reports/action8-scmult-no-watch-quick.md`.
 - Added `phase65_scmult_nonlinear_fallback` and
-  `phase66_scmult_sliced_fallback` as focused deferred-mode guards under
-  `ELEGANT_GPU_ENABLE_SCMULT=1`. CPU/GPU quick runs with 2,000 particles and
+  `phase66_scmult_sliced_fallback` as focused deferred-mode guards under the
+  same default-on policy. CPU/GPU quick runs with 2,000 particles and
   2 passes matched all 10 common SDDS files at `1e-11`, including `.twi`.
   CUDA reported 48 `trackThroughSCMULT fallback` synchronizations per case,
   72 matrix kernels per case, and 0 resident `SCMULT` kernels, confirming
@@ -1574,7 +1602,7 @@ Validation completed:
   `test/gpu_cuda/output/reports/action8-scmult-deferred-fallback.md` and
   `test/gpu_cuda/output/reports/action8-scmult-deferred-fallbacks.md`.
 - Added `phase67_scmult_multibunch_fallback` as the matching multi-bunch
-  deferred-mode guard under `ELEGANT_GPU_ENABLE_SCMULT=1`. The case generates
+  deferred-mode guard under the same default-on policy. The case generates
   a seed bunch, reloads it with `use_bunched_mode=1`, and duplicates it with a
   time stagger so SCMULT sees multiple buckets. CPU/GPU quick runs with 1,000
   seed particles per bunch and 2 passes matched all 7 common SDDS files at
@@ -1585,14 +1613,14 @@ Validation completed:
   confirming multi-bunch SCMULT remains CPU-owned. Reports:
   `test/gpu_cuda/output/reports/action8-scmult-multibunch-fallback.md` and
   `test/gpu_cuda/output/reports/action8-scmult-multibunch-fallbacks.md`.
-- Added opt-in stable resident map-loss compaction for the supported
-  deterministic `KICKMAP`/`UKICKMAP` CUDA subset when no loss-output or global
-  loss-coordinate rows are needed. The default checked path and CPU fallback
-  remain unchanged when `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=1` is not
-  set, and unsupported radiation/ISR, offset, tilt, and yaw modes are still
-  CPU-owned.
+- Added stable resident map-loss compaction for the supported deterministic
+  `KICKMAP`/`UKICKMAP` CUDA subset when no loss-output or global loss-coordinate
+  rows are needed. This no-loss-output subset is now enabled by default, while
+  `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=0` keeps the old checked path and
+  CPU fallback available; unsupported radiation/ISR, offset, tilt, and yaw modes
+  are still CPU-owned.
 - Reran `uKickMap1` with 3,000 particles and 2,000 passes. The CPU run took
-  5.54s. The opt-in resident compaction GPU run took 1.82s, matched all 4
+  5.54s. The resident compaction GPU run took 1.82s, matched all 4
   common SDDS files at `1e-11`, and reduced synchronization to only final
   `gpuBaseDealloc`. The same GPU workload without compaction matched CPU but
   had 101 `UKICKMAP particle loss fallback` synchronizations. Report:
@@ -1624,21 +1652,22 @@ Validation completed:
   `test/gpu_cuda/output/reports/action8-kickmap-map-loss-fallbacks.md`.
 - Added `phase63_kickmap_loss_output_fallback` and
   `phase64_kickmap_global_loss_fallback` as ordinary `GKICKMAP` loss-row
-  fallback guards under `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=1`.
-  CPU/GPU quick runs with 3,000 particles and 3 passes matched all 12 common
+  fallback guards. CPU/GPU quick runs with 3,000 particles and 3 passes matched
+  all 12 common
   SDDS files at `1e-11`, including `.los` and `.acc`; the global-loss case
   includes the `X`, `Z`, and `thetaX` columns. CUDA reported 15 explicit
   `KICKMAP particle loss fallback` synchronizations per case, confirming the
-  opt-in resident compaction path still defers host loss-row semantics. Reports:
+  default resident compaction policy still defers host loss-row semantics.
+  Reports:
   `test/gpu_cuda/output/reports/action8-kickmap-loss-output-fallback.md` and
   `test/gpu_cuda/output/reports/action8-kickmap-loss-output-fallbacks.md`.
 - Added `latticeErrors6_loss_output` and `latticeErrors6_global_loss` as
-  high-count production-shaped `UKICKMAP` loss-row fallback guards under
-  `ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION=1`. CPU/GPU quick runs with
-  3,000 particles and 2 passes matched all 12 common SDDS files at `1e-11`,
+  high-count production-shaped `UKICKMAP` loss-row fallback guards. CPU/GPU
+  quick runs with 3,000 particles and 2 passes matched all 12 common SDDS files
+  at `1e-11`,
   including `.los` and `.acc`; the global-loss case includes `X`, `Z`, and
   `thetaX`. CUDA reported 73 explicit `UKICKMAP particle loss fallback`
-  synchronizations per case, confirming the opt-in resident compaction path
+  synchronizations per case, confirming the default resident compaction policy
   also defers UKICKMAP host loss-row semantics. Reports:
   `test/gpu_cuda/output/reports/action8-ukickmap-loss-output-fallback.md` and
   `test/gpu_cuda/output/reports/action8-ukickmap-loss-output-fallbacks.md`.
@@ -1663,20 +1692,21 @@ Validation completed:
 
 Deferred action-8 tasks:
 
-- Deferred: keep linear `SCMULT` behind `ELEGANT_GPU_ENABLE_SCMULT=1` unless
-  release policy explicitly accepts the current `scRing2`/`scRing2_no_watch`
-  evidence as sufficient for a narrow automatic eligibility window.
+- Default policy: keep linear `SCMULT` enabled only for the guarded serial
+  single-bucket window, with `ELEGANT_GPU_ENABLE_SCMULT=0` as the fallback
+  override; do not broaden solely from the current `scRing2`/`scRing2_no_watch`
+  evidence.
 - Deferred: keep nonlinear, sliced, and bunched SCMULT deferred until profiling
   shows they matter; `phase65`/`phase66`/`phase67` now guard the nonlinear,
   sliced single-bunch, and multi-bunch fallback paths.
-- Deferred: keep `KICKMAP`/`UKICKMAP` map-loss compaction opt-in pending
-  release policy, now that `uKickMap1`, the high-count `latticeErrors6`
-  `UKICKMAP` gate, and the ordinary `phase62_kickmap_loss_compaction`
-  `GKICKMAP` gate pass.
+- Default policy: keep `KICKMAP`/`UKICKMAP` map-loss compaction enabled only for
+  the no-loss-output subset validated by `uKickMap1`, the high-count
+  `latticeErrors6` `UKICKMAP` gate, and the ordinary
+  `phase62_kickmap_loss_compaction` `GKICKMAP` gate.
 - Deferred: keep map loss with `.los` output or global loss-coordinate rows on
   CPU; the `phase63`/`phase64` `KICKMAP` guards and
   `latticeErrors6_loss_output`/`latticeErrors6_global_loss` `UKICKMAP` guards
-  validate this fallback under the compaction flag until resident loss-row
+  validate this fallback under the default compaction policy until resident loss-row
   semantics are designed and validated.
 - Deferred: keep `BMAPXY`, `BMXYZ`, `BOFFAXE`, `CWIGGLER`, and unwrapped
   `WIGGLER` CPU-owned unless a separate measured port is justified.
@@ -1776,7 +1806,7 @@ Remaining action-10 work:
 
 1. Run the GitHub Actions workflow and self-hosted GPU runtime smoke, then archive artifacts.
 2. Treat action 6 as closed for the current serial/local scope. Use `test/gpu_cuda/output/reports/finalize-action3-sync-hotspots.md` plus the action-6 CLIC, `lcls1`, `lcls0`, `phase36_rfcw_lsc`, `phase37_rfcw_multikick`, `phase38_rfcw_kick_rf_only`, `phase39_rfca_kick_rf_only`, `phase40_rf_pmaximum_fiducial`, `phase41_rfcw_wake_pmaximum_fiducial`, `phase42_rfcw_fixed_wake_bins`, `phase43_rfcw_lsc_only`, `phase44_rfcw_single_wake_planes`, `phase45_rf_kick_treference`, `phase46_rfcw_wake_treference`, `phase47_rf_selected_tmean_fiducial`, `phase48_rf_selected_pmaximum_fiducial`, `phase49_rfcw_wake_selected_fiducial`, `phase50_rf_first_fiducial`, `phase51_rf_standing_wave_single`, `phase52_rf_standing_wave_multikick_treference`, `phase53_rfca_standing_wave_multikick_fiducial`, and `phase54_rfcw_standing_wave_multikick_fiducial` deltas as the RF synchronization baseline. The CLIC RF-only plus RF-only kick-method, LCLS matrix-method, guarded `N_KICKS>=1` wake-bearing `RFCW`, and RF-only RFCA matrix/kick subsets, including the focused matrix-method and kick-method `WAKES_AT_END=1`, LSCKICK, multi-kick, fixed-wake-bin, LSC-only, single-wake-family, explicit `T_REFERENCE`, selected-bunch `TMEAN`, selected-bunch `PMAXIMUM`, selected-bunch `FIRST`, narrow matrix/single-kick plus explicit-reference or non-explicit fiducial multi-kick `STANDING_WAVE=1` RFCA/RFCW gates, are now covered.
-3. Apply the opt-in policy above: recommend targeted opt-in use for resident CSR and stable aperture compaction, keep linear SCMULT opt-in pending a release decision or second source-family validation, and keep exact drift plus CSR histogram/kick experimental.
+3. Apply the default/fallback policy above: keep guarded resident CSR default-on with `ELEGANT_GPU_ENABLE_CSR_RESIDENT=0` as the fallback override, keep no-loss-output stable aperture compaction default-on with `.los` output still explicit, keep guarded serial linear SCMULT default-on with `ELEGANT_GPU_ENABLE_SCMULT=0` as the fallback override, and enable exact drift by default under its threshold.
 4. Continue action 8 only if release policy wants resident map-loss `.los`/global-coordinate rows or a specific field-map/wiggler CUDA port. The high-count `latticeErrors6` `UKICKMAP`, ordinary `phase62_kickmap_loss_compaction` `GKICKMAP`, `KICKMAP` and `UKICKMAP` loss-row fallback guards, `ionEffectsPoisson` CPU-fallback, and refreshed `BMAPXY`/`BMXYZ`/`BOFFAXE`/`CWIGGLER` fallback gates now pass, and action 7 is wrapped for finalization; keep unsupported `RFCW`, distributed RF/MPI reductions, cuFFT, remaining CSR handoffs, and aperture overhead as deferred post-release candidates unless new production evidence changes the priority.
 5. Continue action 10 by broadening each passing stochastic gate beyond the
    current two-seed smoke size before expanding any corresponding CUDA path.

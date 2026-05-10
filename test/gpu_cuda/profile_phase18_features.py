@@ -470,7 +470,7 @@ def make_report(root: Path, files_scanned: int, occurrences: list[Occurrence], t
         [
             "## Phase 18 Guidance",
             "",
-            "- Measure SCMULT production cases before widening the current opt-in single-bucket linear CUDA path.  The scanner distinguishes linear/unsliced insertion from nonlinear, sliced, and bunched-mode shapes.",
+            "- Measure SCMULT production cases before widening the current guarded single-bucket linear CUDA path.  The scanner distinguishes linear/unsliced insertion from nonlinear, sliced, and bunched-mode shapes.",
             "- Treat `UKICKMAP`/`KICKMAP`, `BMAPXY`/`BMXYZ`, and `CWIGGLER`/`WIGGLER` as separate profiling families; they have different file formats, interpolation paths, radiation options, and output hooks.",
             "- Add field-grid and particle-coordinate comparison outputs before any field-map CUDA port, especially for cases with `field_or_particle_output` or external field files.",
             f"- Ion-effects coverage found in this scan: {ion_count} direct occurrence(s).  Poisson-related static coverage found in this scan: {poisson_count} occurrence(s)/flag(s).  If this remains zero or near-zero, add a small production-like ion/Poisson wrapper before attempting CUDA work in `poisson.cc`.",

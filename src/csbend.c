@@ -3070,7 +3070,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
     if (!csrInhibit && (notSinglePart || (!notSinglePart && n_partMoreThanOne))) { /* n_part could be 0 for some processors, which could cause synchronization problem */
 #endif
 #if defined(HAVE_GPU) && !USE_MPI
-      long useGpuCsrKick = 0;
+      long useGpuCsrResidentKick = 0;
 #endif
       /* compute CSR potential function */
       if (kick == 0 || !csbend->binOnce) {
@@ -3118,25 +3118,6 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
                 !gpu_copy_csbend_csr_beta0(beta0, n_part))
               bombElegant("unable to copy CUDA CSRCSBEND beta0 for histogram fallback", NULL);
             useGpuCsrResident = 0;
-          }
-        }
-        if (nBinned < 0 && gpu_csr_csbend_histogram_available(n_part, nBins)) {
-          double gpuCtLower = ctLower, gpuCtUpper = ctUpper, gpuDct = dct;
-          long gpuNBins = nBins;
-          if (prepareParticleCoordinateHistogram(&ctHist, &maxBins,
-                                                 &gpuCtLower, &gpuCtUpper,
-                                                 &gpuDct, &gpuNBins,
-                                                 csbend->binRangeFactor < 1.1 ? 1.1 : csbend->binRangeFactor,
-                                                 part, n_part, 4) >= 0) {
-            nBinned = gpu_compute_csbend_csr_histogram(ctHist, part,
-                                                       n_part, gpuNBins,
-                                                       gpuCtLower, gpuDct);
-            if (nBinned >= 0) {
-              ctLower = gpuCtLower;
-              ctUpper = gpuCtUpper;
-              dct = gpuDct;
-              nBins = gpuNBins;
-            }
           }
         }
         if (nBinned < 0) {
@@ -3286,13 +3267,12 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
              (csbend->outputLastWakeOnly && kick == (csbend->nSlices - 1)));
           long copyCsrDgammaToHost = 1;
 #  if !USE_MPI
-          useGpuCsrKick =
+          useGpuCsrResidentKick =
             !csbend->backtrack && !csbend->wffValues && CSRConstant &&
-            ((useGpuCsrResident &&
-              gpu_csr_csbend_resident_available(csbend, n_part, nBins)) ||
-             gpu_csr_csbend_kick_available(n_part, nBins));
+            useGpuCsrResident &&
+            gpu_csr_csbend_resident_available(csbend, n_part, nBins);
           copyCsrDgammaToHost =
-            !useGpuCsrKick || returnCsrWakeComponents ||
+            !useGpuCsrResidentKick || returnCsrWakeComponents ||
             (kick == (csbend->nSlices - 1));
 #  endif
           if (!gpu_compute_csbend_csr_wake(dGamma, T1, T2,
@@ -3306,7 +3286,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
                                            returnCsrWakeComponents,
                                            copyCsrDgammaToHost)) {
 #  if !USE_MPI
-            useGpuCsrKick = 0;
+            useGpuCsrResidentKick = 0;
 #  endif
 #endif
           for (iBin = 0; iBin < nBins; iBin++) {
@@ -3388,15 +3368,8 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
       if (isSlave || !notSinglePart) {
         if (CSRConstant) {
 #if defined(HAVE_GPU) && !USE_MPI
-          if (useGpuCsrKick && useGpuCsrResident &&
+          if (useGpuCsrResidentKick &&
               gpu_apply_csbend_csr_kick_device(n_part, nBins, ctLower, dct, Po, rho0)) {
-            if (!csrDgammaHostCurrent && kick == (csbend->nSlices - 1)) {
-              if (!gpu_copy_csbend_csr_dgamma(dGamma, nBins))
-                bombElegant("unable to copy CUDA CSR dGamma for final CSRCSBEND state", NULL);
-              csrDgammaHostCurrent = 1;
-            }
-          } else if (useGpuCsrKick && !useGpuCsrResident &&
-                     gpu_apply_csbend_csr_kick(part, n_part, nBins, ctLower, dct, Po, rho0)) {
             if (!csrDgammaHostCurrent && kick == (csbend->nSlices - 1)) {
               if (!gpu_copy_csbend_csr_dgamma(dGamma, nBins))
                 bombElegant("unable to copy CUDA CSR dGamma for final CSRCSBEND state", NULL);

@@ -126,6 +126,16 @@ metadata_value() {
   fi
 }
 
+metadata_value_default() {
+  local name=$1
+  local default_value=$2
+  if [ "${!name+x}" = x ]; then
+    printf '%s\n' "${!name}"
+  else
+    printf 'unset(%s)\n' "$default_value"
+  fi
+}
+
 run_cmd() {
   quote_cmd "$@"
   if [ "$DRY_RUN" -eq 0 ]; then
@@ -160,12 +170,10 @@ gpu_env=(
   "ELEGANT_GPU_MIN_PARTICLES=1"
 )
 for gpu_env_name in \
-  ELEGANT_GPU_ENABLE_APERTURE_COMPACTION \
   ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION \
   ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE \
-  ELEGANT_GPU_ENABLE_CSR_HISTOGRAM \
-  ELEGANT_GPU_ENABLE_CSR_KICK \
   ELEGANT_GPU_ENABLE_CSR_RESIDENT \
+  ELEGANT_GPU_ENABLE_SCMULT \
   ELEGANT_GPU_MIN_CSR_PARTICLES \
   ELEGANT_GPU_MIN_CSR_BINS
 do
@@ -207,12 +215,10 @@ if [ -n "$REPORT_FILE" ]; then
     --metadata "ELEGANT_GPU_MODE=$GPU_MODE" \
     --metadata "ELEGANT_GPU_VERBOSE=1" \
     --metadata "ELEGANT_GPU_MIN_PARTICLES=1" \
-    --metadata "ELEGANT_GPU_ENABLE_APERTURE_COMPACTION=$(metadata_value ELEGANT_GPU_ENABLE_APERTURE_COMPACTION)" \
     --metadata "ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION=$(metadata_value ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION)" \
     --metadata "ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE=$(metadata_value ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE)" \
-    --metadata "ELEGANT_GPU_ENABLE_CSR_HISTOGRAM=$(metadata_value ELEGANT_GPU_ENABLE_CSR_HISTOGRAM)" \
-    --metadata "ELEGANT_GPU_ENABLE_CSR_KICK=$(metadata_value ELEGANT_GPU_ENABLE_CSR_KICK)" \
-    --metadata "ELEGANT_GPU_ENABLE_CSR_RESIDENT=$(metadata_value ELEGANT_GPU_ENABLE_CSR_RESIDENT)" \
+    --metadata "ELEGANT_GPU_ENABLE_CSR_RESIDENT=$(metadata_value_default ELEGANT_GPU_ENABLE_CSR_RESIDENT default-on)" \
+    --metadata "ELEGANT_GPU_ENABLE_SCMULT=$(metadata_value_default ELEGANT_GPU_ENABLE_SCMULT default-on-serial)" \
     --metadata "ELEGANT_GPU_MIN_CSR_PARTICLES=$(metadata_value ELEGANT_GPU_MIN_CSR_PARTICLES)" \
     --metadata "ELEGANT_GPU_MIN_CSR_BINS=$(metadata_value ELEGANT_GPU_MIN_CSR_BINS)" \
     --build-command "make" \

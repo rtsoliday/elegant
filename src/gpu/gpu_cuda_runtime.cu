@@ -83,6 +83,39 @@ static int timeKernel(cudaError_t launchStatus, float *milliseconds) {
   return static_cast<int>(status);
 }
 
+static int getCachedTimingEvents(cudaEvent_t *start, cudaEvent_t *stop) {
+  cudaError_t status;
+
+  if (!start || !stop)
+    return static_cast<int>(cudaErrorInvalidValue);
+  if (!*start) {
+    status = cudaEventCreate(start);
+    if (status != cudaSuccess)
+      return static_cast<int>(status);
+  }
+  if (!*stop) {
+    status = cudaEventCreate(stop);
+    if (status != cudaSuccess)
+      return static_cast<int>(status);
+  }
+  return static_cast<int>(cudaSuccess);
+}
+
+static int finishTimedKernel(cudaEvent_t start, cudaEvent_t stop,
+                             float *milliseconds) {
+  cudaError_t status;
+
+  status = cudaEventRecord(stop, 0);
+  if (status != cudaSuccess)
+    return static_cast<int>(status);
+  status = cudaGetLastError();
+  if (status == cudaSuccess)
+    status = cudaEventSynchronize(stop);
+  if (milliseconds && status == cudaSuccess)
+    cudaEventElapsedTime(milliseconds, start, stop);
+  return static_cast<int>(status);
+}
+
 __device__ __forceinline__ int gpuTOffset(int i, int j, int k) {
   return i * 21 + j * (j + 1) / 2 + k;
 }
@@ -1069,61 +1102,6 @@ __device__ __forceinline__ double gpuCoordinateSign(double value) {
   return value < 0 ? -1.0 : 1.0;
 }
 
-__global__ void gpuLimitAmplitudesCompactKernel(double *coord, long nParticles, int stride,
-                                                double xmax, double ymax, double z,
-                                                double pCentral, long extrapolateZ,
-                                                long *remaining) {
-  long np = nParticles;
-  long itop = nParticles - 1;
-
-  if (threadIdx.x != 0 || blockIdx.x != 0)
-    return;
-
-  for (long ip = 0; ip < np; ip++) {
-    double *part = coord + ip * stride;
-    long isOut = 0;
-    double dz = 0;
-
-    if (xmax > 0 && fabs(part[0]) > xmax)
-      isOut += 1;
-    if (ymax > 0 && fabs(part[2]) > ymax)
-      isOut += 2;
-    if (!isfinite(part[0]) || !isfinite(part[2]))
-      isOut += 4;
-    if (isOut && !(isOut & 4) && extrapolateZ) {
-      double dzx = -DBL_MAX;
-      double dzy = -DBL_MAX;
-
-      if ((isOut & 1) && part[1] != 0)
-        dzx = (part[0] - gpuCoordinateSign(part[1]) * xmax) / part[1];
-      if ((isOut & 2) && part[3] != 0)
-        dzy = (part[2] - gpuCoordinateSign(part[3]) * ymax) / part[3];
-      dz = dzx > dzy ? -dzx : -dzy;
-      if (dz == -DBL_MAX)
-        dz = 0;
-    }
-    if (isOut) {
-      double *lost = coord + itop * stride;
-
-      if (ip != itop) {
-        for (int ic = 0; ic < stride; ic++) {
-          double temp = part[ic];
-          part[ic] = lost[ic];
-          lost[ic] = temp;
-        }
-      }
-      lost[0] += dz * lost[1];
-      lost[2] += dz * lost[3];
-      lost[4] = z + dz;
-      lost[5] = pCentral * (1 + lost[5]);
-      --itop;
-      --ip;
-      --np;
-    }
-  }
-  *remaining = np;
-}
-
 __device__ __forceinline__ int gpuLimitAmplitudeLost(double *part, double xmax,
                                                      double ymax) {
   int lost = 0;
@@ -1238,72 +1216,6 @@ __global__ void gpuELimitAmplitudeLossCountKernel(double *coord, long nParticles
   }
   if (thread == 0)
     *lostCount = partial[0];
-}
-
-__global__ void gpuELimitAmplitudesCompactKernel(double *coord, long nParticles, int stride,
-                                                 double xmax, double ymax,
-                                                 long exponent, long yExponent,
-                                                 double z, double pCentral,
-                                                 long extrapolateZ, long *remaining) {
-  double a2 = gpuIntegerPower(xmax, exponent);
-  double b2 = gpuIntegerPower(ymax, yExponent);
-  long np = nParticles;
-  long itop = nParticles - 1;
-
-  if (threadIdx.x != 0 || blockIdx.x != 0)
-    return;
-
-  for (long ip = 0; ip < np; ip++) {
-    double *part = coord + ip * stride;
-    int finiteCoordinates = isfinite(part[0]) && isfinite(part[2]);
-    long lost = 0;
-    double dz = 0;
-
-    if (!finiteCoordinates) {
-      lost = 1;
-    } else {
-      double normalized =
-        gpuIntegerPower(part[0], exponent) / a2 +
-        gpuIntegerPower(part[2], yExponent) / b2;
-      lost = normalized > 1;
-    }
-
-    if (!lost)
-      continue;
-
-    if (finiteCoordinates && extrapolateZ && exponent == 2 && yExponent == 2) {
-      double c0 = part[0] * part[0] / a2 + part[2] * part[2] / b2 - 1;
-      double c1 = 2 * (part[0] * part[1] / a2 + part[2] * part[3] / b2);
-      double c2 = part[1] * part[1] / a2 + part[3] * part[3] / b2;
-      double det = c1 * c1 - 4 * c0 * c2;
-
-      if (z > 0 && c2 != 0 && det >= 0) {
-        double root = sqrt(det);
-        dz = (-c1 + root) / (2 * c2);
-        if (dz > 0)
-          dz = (-c1 - root) / (2 * c2);
-        if (z + dz < 0)
-          dz = -z;
-        part[0] += dz * part[1];
-        part[2] += dz * part[3];
-      }
-    }
-
-    double *lostPart = coord + itop * stride;
-    if (ip != itop) {
-      for (int ic = 0; ic < stride; ic++) {
-        double temp = part[ic];
-        part[ic] = lostPart[ic];
-        lostPart[ic] = temp;
-      }
-    }
-    lostPart[4] = z + dz;
-    lostPart[5] = pCentral * (1 + lostPart[5]);
-    --itop;
-    --ip;
-    --np;
-  }
-  *remaining = np;
 }
 
 __device__ __forceinline__ int gpuELimitAmplitudeLost(double *part,
@@ -2522,37 +2434,6 @@ __global__ void gpuCsrCsbendWakeKernel(const double *ctHist,
   dGamma[iBin] = t1 + t2;
 }
 
-__global__ void gpuCsrCsbendKickKernel(double *coord,
-                                       long nParticles,
-                                       int stride,
-                                       const double *dGamma,
-                                       double *dpReturn,
-                                       long nBins,
-                                       double ctLower,
-                                       double dct,
-                                       double Po,
-                                       double rho0) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
-  double *part;
-  double ct, x, dp, f, kick;
-  long iBin;
-
-  if (ip >= nParticles)
-    return;
-  part = coord + ip * stride;
-  ct = part[0];
-  x = part[1];
-  dp = part[2];
-  iBin = static_cast<long>((ct - ctLower) / dct);
-  f = (ct - ctLower) / dct - iBin;
-  if (iBin >= 0 && iBin < nBins - 1) {
-    kick = ((1 - f) * dGamma[iBin] + f * dGamma[iBin + 1]) /
-           Po * (1 + x / rho0);
-    dp += kick;
-  }
-  dpReturn[ip] = dp;
-}
-
 __global__ void gpuCsrCsbendKickInPlaceKernel(double *coord,
                                               long nParticles,
                                               int stride,
@@ -3234,67 +3115,37 @@ extern "C" int gpuCudaTrackParticles(void *coord, long nParticles, int stride,
 
 extern "C" int gpuCudaExactDrift(void *coord, long nParticles, int stride,
                                  double length, float *milliseconds) {
-  cudaEvent_t start, stop;
+  static cudaEvent_t start = NULL, stop = NULL;
   cudaError_t status;
   int threads = 256;
   int blocks = static_cast<int>((nParticles + threads - 1) / threads);
 
   if (milliseconds)
     *milliseconds = 0;
-  status = cudaEventCreate(&start);
+  status = static_cast<cudaError_t>(getCachedTimingEvents(&start, &stop));
   if (status != cudaSuccess)
     return static_cast<int>(status);
-  status = cudaEventCreate(&stop);
-  if (status != cudaSuccess) {
-    cudaEventDestroy(start);
-    return static_cast<int>(status);
-  }
   cudaEventRecord(start, 0);
   gpuExactDriftKernel<<<blocks, threads>>>(static_cast<double *>(coord), nParticles, stride, length);
-  cudaEventRecord(stop, 0);
-  status = cudaGetLastError();
-  if (status == cudaSuccess)
-    status = cudaEventSynchronize(stop);
-  if (milliseconds && status == cudaSuccess)
-    cudaEventElapsedTime(milliseconds, start, stop);
-  cudaEventDestroy(start);
-  cudaEventDestroy(stop);
-  if (status != cudaSuccess)
-    return static_cast<int>(status);
-  return timeKernel(cudaSuccess, NULL);
+  return finishTimedKernel(start, stop, milliseconds);
 }
 
 extern "C" int gpuCudaLinearDrift(void *coord, long nParticles, int stride,
                                   double length, float *milliseconds) {
-  cudaEvent_t start, stop;
+  static cudaEvent_t start = NULL, stop = NULL;
   cudaError_t status;
   int threads = 256;
   int blocks = static_cast<int>((nParticles + threads - 1) / threads);
 
   if (milliseconds)
     *milliseconds = 0;
-  status = cudaEventCreate(&start);
+  status = static_cast<cudaError_t>(getCachedTimingEvents(&start, &stop));
   if (status != cudaSuccess)
     return static_cast<int>(status);
-  status = cudaEventCreate(&stop);
-  if (status != cudaSuccess) {
-    cudaEventDestroy(start);
-    return static_cast<int>(status);
-  }
   cudaEventRecord(start, 0);
   gpuLinearDriftKernel<<<blocks, threads>>>(static_cast<double *>(coord),
                                             nParticles, stride, length);
-  cudaEventRecord(stop, 0);
-  status = cudaGetLastError();
-  if (status == cudaSuccess)
-    status = cudaEventSynchronize(stop);
-  if (milliseconds && status == cudaSuccess)
-    cudaEventElapsedTime(milliseconds, start, stop);
-  cudaEventDestroy(start);
-  cudaEventDestroy(stop);
-  if (status != cudaSuccess)
-    return static_cast<int>(status);
-  return timeKernel(cudaSuccess, NULL);
+  return finishTimedKernel(start, stop, milliseconds);
 }
 
 extern "C" int gpuCudaKickMapTrackChecked(void *coord, long nParticles,
@@ -5538,35 +5389,6 @@ extern "C" int gpuCudaCsrCsbendWake(const double *ctHist,
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
 
-extern "C" int gpuCudaCsrCsbendKick(void *coord,
-                                    long nParticles,
-                                    int stride,
-                                    const double *dGamma,
-                                    double *dpReturn,
-                                    long nBins,
-                                    double ctLower,
-                                    double dct,
-                                    double Po,
-                                    double rho0,
-                                    float *milliseconds) {
-  cudaEvent_t start, stop;
-  int threads = 256;
-  int blocks;
-  int status;
-
-  if (!coord || !dGamma || !dpReturn || nParticles <= 0 || stride < 3 ||
-      nBins < 2 || dct <= 0 || Po == 0 || rho0 == 0)
-    return static_cast<int>(cudaErrorInvalidValue);
-  blocks = static_cast<int>((nParticles + threads - 1) / threads);
-  status = prepareTimedLaunch(&start, &stop, milliseconds);
-  if (status != static_cast<int>(cudaSuccess))
-    return status;
-  gpuCsrCsbendKickKernel<<<blocks, threads>>>(
-    static_cast<double *>(coord), nParticles, stride, dGamma, dpReturn,
-    nBins, ctLower, dct, Po, rho0);
-  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
-}
-
 extern "C" int gpuCudaCsrCsbendKickInPlace(void *coord,
                                            long nParticles,
                                            int stride,
@@ -6248,43 +6070,6 @@ extern "C" int gpuCudaLimitAmplitudeLossCount(void *coord, long nParticles, int 
   return static_cast<int>(cudaStatus);
 }
 
-extern "C" int gpuCudaLimitAmplitudesCompact(void *coord, long nParticles, int stride,
-                                             double xmax, double ymax, double z,
-                                             double pCentral, long extrapolateZ,
-                                             long *remaining, float *milliseconds) {
-  cudaEvent_t start, stop;
-  cudaError_t cudaStatus;
-  long *deviceRemaining = NULL;
-  int status;
-
-  if (!remaining)
-    return static_cast<int>(cudaErrorInvalidValue);
-  *remaining = nParticles;
-  if (nParticles <= 0)
-    return static_cast<int>(cudaSuccess);
-
-  cudaStatus = cudaMalloc(&deviceRemaining, sizeof(*deviceRemaining));
-  if (cudaStatus != cudaSuccess)
-    return static_cast<int>(cudaStatus);
-
-  status = prepareTimedLaunch(&start, &stop, milliseconds);
-  if (status != static_cast<int>(cudaSuccess)) {
-    cudaFree(deviceRemaining);
-    return status;
-  }
-  gpuLimitAmplitudesCompactKernel<<<1, 1>>>(
-    static_cast<double *>(coord), nParticles, stride, xmax, ymax, z,
-    pCentral, extrapolateZ, deviceRemaining);
-  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
-  if (status != static_cast<int>(cudaSuccess)) {
-    cudaFree(deviceRemaining);
-    return status;
-  }
-  cudaStatus = cudaMemcpy(remaining, deviceRemaining, sizeof(*remaining), cudaMemcpyDeviceToHost);
-  cudaFree(deviceRemaining);
-  return static_cast<int>(cudaStatus);
-}
-
 extern "C" int gpuCudaLimitAmplitudesStableCompact(
   void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
   double xmax, double ymax, double z, double pCentral, long extrapolateZ,
@@ -6374,44 +6159,6 @@ extern "C" int gpuCudaELimitAmplitudeLossCount(void *coord, long nParticles, int
   }
   cudaStatus = cudaMemcpy(lostCount, deviceLostCount, sizeof(*lostCount), cudaMemcpyDeviceToHost);
   cudaFree(deviceLostCount);
-  return static_cast<int>(cudaStatus);
-}
-
-extern "C" int gpuCudaELimitAmplitudesCompact(void *coord, long nParticles, int stride,
-                                              double xmax, double ymax, long exponent,
-                                              long yExponent, double z, double pCentral,
-                                              long extrapolateZ, long *remaining,
-                                              float *milliseconds) {
-  cudaEvent_t start, stop;
-  cudaError_t cudaStatus;
-  long *deviceRemaining = NULL;
-  int status;
-
-  if (!remaining)
-    return static_cast<int>(cudaErrorInvalidValue);
-  *remaining = nParticles;
-  if (nParticles <= 0)
-    return static_cast<int>(cudaSuccess);
-
-  cudaStatus = cudaMalloc(&deviceRemaining, sizeof(*deviceRemaining));
-  if (cudaStatus != cudaSuccess)
-    return static_cast<int>(cudaStatus);
-
-  status = prepareTimedLaunch(&start, &stop, milliseconds);
-  if (status != static_cast<int>(cudaSuccess)) {
-    cudaFree(deviceRemaining);
-    return status;
-  }
-  gpuELimitAmplitudesCompactKernel<<<1, 1>>>(
-    static_cast<double *>(coord), nParticles, stride, xmax, ymax, exponent,
-    yExponent, z, pCentral, extrapolateZ, deviceRemaining);
-  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
-  if (status != static_cast<int>(cudaSuccess)) {
-    cudaFree(deviceRemaining);
-    return status;
-  }
-  cudaStatus = cudaMemcpy(remaining, deviceRemaining, sizeof(*remaining), cudaMemcpyDeviceToHost);
-  cudaFree(deviceRemaining);
   return static_cast<int>(cudaStatus);
 }
 

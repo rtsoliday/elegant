@@ -23,10 +23,6 @@ long gpu_track_through_driftCSR(long np, void *csrDrift, double Po,
                                 double revolutionLength, void *charge,
                                 char *rootname);
 long gpu_csr_csbend_wake_available(long nParticles, long nBins);
-long gpu_csr_csbend_histogram_available(long nParticles, long nBins);
-long gpu_compute_csbend_csr_histogram(double *ctHist, double **part,
-                                      long nParticles, long nBins,
-                                      double ctLower, double dct);
 long gpu_compute_csbend_csr_wake(double *dGamma, double *T1, double *T2,
                                  const double *ctHist,
                                  const double *ctHistDeriv,
@@ -42,10 +38,6 @@ long gpu_compute_csbend_csr_wake(double *dGamma, double *T1, double *T2,
                                  long diSlippage4,
                                  long copyComponentArrays,
                                  long copyDGammaArray);
-long gpu_csr_csbend_kick_available(long nParticles, long nBins);
-long gpu_apply_csbend_csr_kick(double **part, long nParticles, long nBins,
-                               double ctLower, double dct,
-                               double Po, double rho0);
 long gpu_csr_csbend_resident_available(void *csbend, long nParticles,
                                        long nBins);
 long gpu_csr_csbend_resident_begin(double *beta0, long nParticles);

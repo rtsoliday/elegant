@@ -243,10 +243,6 @@ extern int gpuCudaDoubleMinMax(void *coord, long nParticles, int stride,
 extern int gpuCudaLimitAmplitudeLossCount(void *coord, long nParticles, int stride,
                                           double xmax, double ymax,
                                           long *lostCount, float *milliseconds);
-extern int gpuCudaLimitAmplitudesCompact(void *coord, long nParticles, int stride,
-                                         double xmax, double ymax, double z,
-                                         double pCentral, long extrapolateZ,
-                                         long *remaining, float *milliseconds);
 extern int gpuCudaLimitAmplitudesStableCompact(void *coord, void *scratchCoord,
                                                void *prefix, long nParticles,
                                                int stride, double xmax,
@@ -259,11 +255,6 @@ extern int gpuCudaELimitAmplitudeLossCount(void *coord, long nParticles, int str
                                            double xmax, double ymax,
                                            long exponent, long yExponent,
                                            long *lostCount, float *milliseconds);
-extern int gpuCudaELimitAmplitudesCompact(void *coord, long nParticles, int stride,
-                                          double xmax, double ymax, long exponent,
-                                          long yExponent, double z, double pCentral,
-                                          long extrapolateZ, long *remaining,
-                                          float *milliseconds);
 extern int gpuCudaELimitAmplitudesStableCompact(void *coord, void *scratchCoord,
                                                 void *prefix, long nParticles,
                                                 int stride, double xmax,
@@ -459,17 +450,6 @@ extern int gpuCudaCsrCsbendWake(const double *ctHist,
                                 long diSlippage,
                                 long diSlippage4,
                                 float *milliseconds);
-extern int gpuCudaCsrCsbendKick(void *coord,
-                                long nParticles,
-                                int stride,
-                                const double *dGamma,
-                                double *dpReturn,
-                                long nBins,
-                                double ctLower,
-                                double dct,
-                                double Po,
-                                double rho0,
-                                float *milliseconds);
 extern int gpuCudaCsrCsbendKickInPlace(void *coord,
                                        long nParticles,
                                        int stride,
@@ -498,24 +478,17 @@ typedef struct GPU_CSR_SCRATCH {
   void *T1;
   void *T2;
   void *dGamma;
-  void *coord;
   void *kickDp;
   void *bodyBackup;
   void *bodyLostCount;
   void *rangeResult;
-  double *hostCoordinate;
   double *hostWakeInput;
-  double *hostKickDp;
   double *cpuDGamma;
   long capacity;
-  long coordCapacity;
-  long coordStride;
   long kickDpCapacity;
   long bodyBackupCapacity;
   long bodyBackupStride;
-  long hostCoordinateCapacity;
   long hostWakeInputCapacity;
-  long hostKickDpCapacity;
   long cpuDGammaCapacity;
   long cpuDGammaBins;
   long cpuDGammaValid;
@@ -572,18 +545,24 @@ static GPU_KICKMAP_CACHE gpuKickMapCache;
 static GPU_RFCW_KICK_SCRATCH gpuRfcwKickScratch;
 static long gpuVerbose = 0;
 static long gpuEnableExactDrift = 0;
-static long gpuEnableApertureCompaction = 0;
+static long gpuExactDriftExplicit = 0;
 static long gpuEnableApertureParallelCompaction = 0;
+static long gpuApertureParallelCompactionExplicit = 0;
+static long gpuApertureParallelCompactionVerifyDisabled = 0;
 static long gpuEnableApertureAcceptedDevice = 0;
 static long gpuEnableMagnetLossCompaction = 0;
-static long gpuEnableCsrHistogram = 0;
-static long gpuEnableCsrKick = 0;
+static long gpuMagnetLossCompactionExplicit = 0;
 static long gpuEnableCsrResident = 0;
+static long gpuCsrResidentExplicit = 0;
 static long gpuEnableScmult = 0;
+static long gpuScmultExplicit = 0;
 static long gpuAvoidShortGpuIslands = 1;
 static long gpuShortGpuIslandMaxElements = 4;
 static long unsupportedReported = 0;
 static double gpuWallStart = 0;
+static double gpuPendingExactDriftLength = 0;
+static long gpuPendingExactDriftCount = 0;
+static long gpuPendingExactDriftParticles = 0;
 static double gpuSavedCentroid[7];
 static long gpuSavedCentroidValid = 0;
 static BEAM_SUMS gpuSavedSums;
@@ -600,6 +579,7 @@ static void gpuRfcwApplyCoordinateOffset(long np, int index, double value,
 static long gpuPassiveElementSupported(ELEMENT_LIST *eptr, long nParticles);
 static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles);
 static long gpuShouldUseCpuForShortGpuIsland(ELEMENT_LIST *eptr, long nParticles);
+static void gpuFlushPendingExactDrift(const char *reason);
 static long gpuCsrCsbendDeviceEntrySupported(ELEMENT_LIST *eptr, long nParticles);
 static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr);
 static long gpuCsbendElementSupported(ELEMENT_LIST *eptr);
@@ -784,6 +764,44 @@ static const char *gpuMode(void) {
   if (!mode || !*mode)
     return "off";
   return mode;
+}
+
+static const char *gpuExactDriftStatus(void) {
+  if (gpuEnableExactDrift)
+    return gpuExactDriftExplicit ? "; exact drift explicitly enabled" : "; exact drift enabled";
+  return gpuExactDriftExplicit ? "; exact drift explicitly disabled" : "";
+}
+
+static const char *gpuCsrResidentStatus(void) {
+  if (gpuEnableCsrResident)
+    return gpuCsrResidentExplicit ? "; CSR resident explicitly enabled" : "; CSR resident enabled";
+  return gpuCsrResidentExplicit ? "; CSR resident explicitly disabled" : "";
+}
+
+static const char *gpuScmultStatus(void) {
+  if (gpuEnableScmult)
+    return gpuScmultExplicit ? "; SCMULT explicitly enabled" : "; SCMULT enabled";
+  return gpuScmultExplicit ? "; SCMULT explicitly disabled" : "";
+}
+
+static const char *gpuApertureParallelCompactionStatus(void) {
+  if (gpuApertureParallelCompactionVerifyDisabled)
+    return "; aperture parallel compaction disabled in GPU_VERIFY";
+  if (gpuEnableApertureParallelCompaction)
+    return gpuApertureParallelCompactionExplicit ?
+           "; aperture parallel compaction explicitly enabled" :
+           "; aperture parallel compaction enabled for no-loss-output runs";
+  return gpuApertureParallelCompactionExplicit ?
+         "; aperture parallel compaction explicitly disabled" : "";
+}
+
+static const char *gpuMagnetLossCompactionStatus(void) {
+  if (gpuEnableMagnetLossCompaction)
+    return gpuMagnetLossCompactionExplicit ?
+           "; magnet loss compaction explicitly enabled" :
+           "; magnet loss compaction enabled for no-loss-output runs";
+  return gpuMagnetLossCompactionExplicit ?
+         "; magnet loss compaction explicitly disabled" : "";
 }
 
 static void gpuRequiredFailure(const char *message) {
@@ -1551,7 +1569,7 @@ static long gpuParticleCountAllowed(long nParticles, long minParticles) {
   return gpuBase.requiredMode || minParticles <= 0 || nParticles >= minParticles;
 }
 
-static long gpuScmultOptInAllowed(long nParticles) {
+static long gpuScmultAllowed(long nParticles) {
   if (!gpuEnableScmult)
     return 0;
   if (!gpuBase.initialized || gpuBase.activeDevice < 0 || nParticles <= 0)
@@ -1602,7 +1620,7 @@ static long gpuPassiveElementSupported(ELEMENT_LIST *eptr, long nParticles) {
   case T_WATCH:
     return 1;
   case T_SCMULT:
-    return gpuScmultOptInAllowed(nParticles);
+    return gpuScmultAllowed(nParticles);
   default:
     break;
   }
@@ -1752,6 +1770,9 @@ static void gpuReleaseDeviceBuffer(void) {
   gpuBase.deviceCapacity = 0;
   gpuBase.deviceStride = 0;
   gpuBase.deviceCurrent = 0;
+  gpuPendingExactDriftLength = 0;
+  gpuPendingExactDriftCount = 0;
+  gpuPendingExactDriftParticles = 0;
 }
 
 static void gpuReleaseAcceptedBuffer(void) {
@@ -1868,11 +1889,6 @@ static void gpuReleaseCsrScratch(void) {
   int status;
 
   gpuReleaseCsrWakeScratch();
-  if (gpuCsrScratch.coord) {
-    status = gpuCudaFree(gpuCsrScratch.coord);
-    if (status != 0)
-      gpuFatalStatus("cudaFree(CSR coord)", status);
-  }
   if (gpuCsrScratch.kickDp) {
     status = gpuCudaFree(gpuCsrScratch.kickDp);
     if (status != 0)
@@ -1893,12 +1909,8 @@ static void gpuReleaseCsrScratch(void) {
     if (status != 0)
       gpuFatalStatus("cudaFree(CSR range result)", status);
   }
-  if (gpuCsrScratch.hostCoordinate)
-    free(gpuCsrScratch.hostCoordinate);
   if (gpuCsrScratch.hostWakeInput)
     free(gpuCsrScratch.hostWakeInput);
-  if (gpuCsrScratch.hostKickDp)
-    free(gpuCsrScratch.hostKickDp);
   if (gpuCsrScratch.cpuDGamma)
     free(gpuCsrScratch.cpuDGamma);
   memset(&gpuCsrScratch, 0, sizeof(gpuCsrScratch));
@@ -2096,33 +2108,6 @@ static void gpuUploadCsrDenomIfNeeded(const double *denom, long nBins,
   gpuCsrScratch.denomDct = dct;
 }
 
-static void gpuEnsureCsrCoordScratch(long nParticles, long stride) {
-  unsigned long count;
-  int status;
-
-  if (stride <= 0)
-    gpuRequiredFailure("invalid CUDA CSR coordinate scratch stride");
-  if (nParticles <= 0)
-    return;
-  if (gpuCsrScratch.coord && gpuCsrScratch.coordCapacity >= nParticles &&
-      gpuCsrScratch.coordStride == stride)
-    return;
-  if (gpuCsrScratch.coord) {
-    status = gpuCudaFree(gpuCsrScratch.coord);
-    if (status != 0)
-      gpuFatalStatus("cudaFree(CSR coord)", status);
-    gpuCsrScratch.coord = NULL;
-    gpuCsrScratch.coordCapacity = 0;
-    gpuCsrScratch.coordStride = 0;
-  }
-  count = (unsigned long)nParticles * (unsigned long)stride;
-  status = gpuCudaMallocDouble(&gpuCsrScratch.coord, count);
-  if (status != 0)
-    gpuFatalStatus("cudaMalloc(CSR coord)", status);
-  gpuCsrScratch.coordCapacity = nParticles;
-  gpuCsrScratch.coordStride = stride;
-}
-
 static void gpuEnsureCsrKickDpScratch(long nParticles) {
   unsigned long count;
   int status;
@@ -2182,38 +2167,6 @@ static void gpuEnsureCsrBodyScratch(long nParticles, long stride) {
     gpuFatalStatus("cudaMalloc(CSR body lost count)", status);
   gpuCsrScratch.bodyBackupCapacity = nParticles;
   gpuCsrScratch.bodyBackupStride = stride;
-}
-
-static double *gpuEnsureCsrHostCoordinateScratch(long nParticles) {
-  double *buffer;
-
-  if (nParticles <= 0)
-    return NULL;
-  if (gpuCsrScratch.hostCoordinateCapacity >= nParticles)
-    return gpuCsrScratch.hostCoordinate;
-  buffer = realloc(gpuCsrScratch.hostCoordinate,
-                   (size_t)nParticles * sizeof(*gpuCsrScratch.hostCoordinate));
-  if (!buffer)
-    gpuRequiredFailure("unable to allocate CUDA CSR host coordinate scratch");
-  gpuCsrScratch.hostCoordinate = buffer;
-  gpuCsrScratch.hostCoordinateCapacity = nParticles;
-  return gpuCsrScratch.hostCoordinate;
-}
-
-static double *gpuEnsureCsrHostKickDpScratch(long nParticles) {
-  double *buffer;
-
-  if (nParticles <= 0)
-    return NULL;
-  if (gpuCsrScratch.hostKickDpCapacity >= nParticles)
-    return gpuCsrScratch.hostKickDp;
-  buffer = realloc(gpuCsrScratch.hostKickDp,
-                   (size_t)nParticles * sizeof(*gpuCsrScratch.hostKickDp));
-  if (!buffer)
-    gpuRequiredFailure("unable to allocate CUDA CSR kick dp scratch");
-  gpuCsrScratch.hostKickDp = buffer;
-  gpuCsrScratch.hostKickDpCapacity = nParticles;
-  return gpuCsrScratch.hostKickDp;
 }
 
 void gpu_clear_csr_wake_cpu_shadow(void) {
@@ -2281,7 +2234,7 @@ static void gpuNoticeHostBaseChange(void) {
   }
 }
 
-static void gpuCopyHostToDevice(long nParticles) {
+static void gpuCopyHostToDeviceInternal(long nParticles, long flushPending) {
   float milliseconds = 0;
   unsigned long count;
   int status;
@@ -2290,8 +2243,11 @@ static void gpuCopyHostToDevice(long nParticles) {
     return;
   gpuNoticeHostBaseChange();
   gpuEnsureDeviceBuffer(nParticles);
-  if (gpuBase.deviceCurrent)
+  if (gpuBase.deviceCurrent) {
+    if (flushPending)
+      gpuFlushPendingExactDrift("pending exactDrift before CUDA coordinate use");
     return;
+  }
   count = (unsigned long)nParticles * (unsigned long)gpuBase.deviceStride;
   status = gpuCudaCopyHostToDevice(gpuBase.deviceCoord, gpuBase.coord[0], count, &milliseconds);
   if (status != 0)
@@ -2302,11 +2258,16 @@ static void gpuCopyHostToDevice(long nParticles) {
   gpuBase.nParticles = nParticles;
 }
 
+static void gpuCopyHostToDevice(long nParticles) {
+  gpuCopyHostToDeviceInternal(nParticles, 1);
+}
+
 static long gpuCopyDeviceToHost(long nParticles) {
   float milliseconds = 0;
   unsigned long count;
   int status;
 
+  gpuFlushPendingExactDrift("pending exactDrift before CPU synchronization");
   if (!gpuBase.deviceCoord || !gpuBase.deviceCurrent || gpuBase.hostCurrent || nParticles <= 0)
     return 0;
   if (!gpuBase.coord || !gpuBase.coord[0])
@@ -2774,6 +2735,7 @@ static void gpuSetScraperGlobalLossCoordinates(long firstLost, long nParticles,
 #endif
 
 static void gpuMarkHostWillChange(void) {
+  gpuFlushPendingExactDrift("pending exactDrift before host coordinate mutation");
   gpuBase.elementOnGpu = 0;
   gpuBase.hostCurrent = 1;
   gpuBase.deviceCurrent = 0;
@@ -2787,6 +2749,37 @@ static void gpuMarkDeviceChanged(long nParticles) {
   gpuBase.deviceCurrent = 1;
   gpuBase.hostCurrent = 0;
   gpuBase.nParticles = nParticles;
+}
+
+static void gpuFlushPendingExactDrift(const char *reason) {
+  float milliseconds = 0;
+  int status;
+  long nParticles;
+  long startedWallTimer = 0;
+
+  if (!gpuPendingExactDriftCount)
+    return;
+  nParticles = gpuPendingExactDriftParticles;
+  if (!gpuBase.deviceCoord || !gpuBase.deviceCurrent || nParticles <= 0)
+    gpuRequiredFailure(reason ? reason : "pending exactDrift lost device coordinates");
+
+  if (gpuWallStart <= 0) {
+    gpuWallStart = wallSeconds();
+    startedWallTimer = 1;
+  }
+  status = gpuCudaExactDrift(gpuBase.deviceCoord, nParticles,
+                             (int)gpuBase.deviceStride,
+                             gpuPendingExactDriftLength, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("coalesced exactDrift kernel", status);
+  gpuRecordMilliseconds(&gpuBase.gpuKernelSeconds, milliseconds);
+  gpuBase.gpuExactDriftCount++;
+  gpuPendingExactDriftLength = 0;
+  gpuPendingExactDriftCount = 0;
+  gpuPendingExactDriftParticles = 0;
+  gpuMarkDeviceChanged(nParticles);
+  if (startedWallTimer)
+    gpuRecordWallSeconds();
 }
 
 static void gpuRecordHelperKernel(float milliseconds) {
@@ -3141,6 +3134,9 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   const char *mode = gpuMode();
 
   memset(&gpuBase, 0, sizeof(gpuBase));
+  gpuPendingExactDriftLength = 0;
+  gpuPendingExactDriftCount = 0;
+  gpuPendingExactDriftParticles = 0;
   gpuBase.coord = coord;
   gpuBase.accepted = accepted;
   gpuBase.lostPart = lostPart;
@@ -3166,18 +3162,42 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuBase.hostCurrent = 1;
   gpuBase.hostCoordBase = coord ? (void *)coord[0] : NULL;
   gpuVerbose = gpuEnvFlag("ELEGANT_GPU_VERBOSE");
-  gpuEnableExactDrift = gpuEnvFlag("ELEGANT_GPU_ENABLE_EXACT_DRIFT");
-  gpuEnableApertureCompaction = gpuEnvFlag("ELEGANT_GPU_ENABLE_APERTURE_COMPACTION");
-  gpuEnableApertureParallelCompaction = gpuEnvFlag("ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION");
-  gpuEnableMagnetLossCompaction = gpuEnvFlag("ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION");
+  gpuExactDriftExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_EXACT_DRIFT");
+  gpuEnableExactDrift = !gpuExactDriftExplicit ||
+                        gpuEnvFlag("ELEGANT_GPU_ENABLE_EXACT_DRIFT");
+  gpuApertureParallelCompactionExplicit =
+    gpuEnvSet("ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION");
+  gpuApertureParallelCompactionVerifyDisabled = 0;
+  gpuEnableApertureParallelCompaction =
+    gpuApertureParallelCompactionExplicit ?
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION") :
+    !gpuBase.lossOutputNeeded;
+#ifdef GPU_VERIFY
+  if (gpuEnableApertureParallelCompaction) {
+    gpuEnableApertureParallelCompaction = 0;
+    gpuApertureParallelCompactionVerifyDisabled = 1;
+  }
+#endif
+  gpuMagnetLossCompactionExplicit =
+    gpuEnvSet("ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION");
+  gpuEnableMagnetLossCompaction =
+    gpuMagnetLossCompactionExplicit ?
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION") :
+    !gpuBase.lossOutputNeeded;
   gpuEnableApertureAcceptedDevice =
     (gpuEnableApertureParallelCompaction || gpuEnableMagnetLossCompaction) &&
     (!gpuEnvSet("ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE") ||
      gpuEnvFlag("ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE"));
-  gpuEnableCsrHistogram = gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_HISTOGRAM");
-  gpuEnableCsrKick = gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_KICK");
-  gpuEnableCsrResident = gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT");
-  gpuEnableScmult = gpuEnvFlag("ELEGANT_GPU_ENABLE_SCMULT");
+  gpuCsrResidentExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSR_RESIDENT");
+  gpuEnableCsrResident = !gpuCsrResidentExplicit ||
+                         gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT");
+  gpuScmultExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_SCMULT");
+  gpuEnableScmult = !gpuScmultExplicit ||
+                    gpuEnvFlag("ELEGANT_GPU_ENABLE_SCMULT");
+#if USE_MPI
+  if (!gpuScmultExplicit)
+    gpuEnableScmult = 0;
+#endif
   gpuAvoidShortGpuIslands = !gpuEnvSet("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS") ||
                             gpuEnvFlag("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS");
   gpuShortGpuIslandMaxElements = gpuEnvLong("ELEGANT_GPU_SHORT_GPU_ISLAND_MAX_ELEMENTS", 4);
@@ -3249,7 +3269,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     status = gpuCudaRuntimeGetDeviceName((int)gpuBase.activeDevice, deviceName, sizeof(deviceName));
 #if USE_MPI
     fprintf(stderr,
-              "elegant CUDA: selected device %ld%s%s on MPI rank %d; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s.\n",
+              "elegant CUDA: selected device %ld%s%s on MPI rank %d; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s.\n",
             gpuBase.activeDevice,
             status == 0 ? " " : "",
             status == 0 ? deviceName : "",
@@ -3265,18 +3285,15 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuBase.csrMinBins,
             gpuBase.scmultMinParticles,
             gpuBase.exactDriftMinParticles,
-            gpuEnableExactDrift ? "; exact drift explicitly enabled" : "",
-            gpuEnableApertureCompaction ? "; aperture compaction explicitly enabled" : "",
-            gpuEnableApertureParallelCompaction ? "; aperture parallel compaction explicitly enabled" : "",
+            gpuExactDriftStatus(),
+            gpuApertureParallelCompactionStatus(),
             gpuEnableApertureAcceptedDevice ? "; accepted-device compaction enabled" : "",
-            gpuEnableMagnetLossCompaction ? "; magnet loss compaction enabled" : "",
-            gpuEnableCsrHistogram ? "; CSR histogram explicitly enabled" : "",
-            gpuEnableCsrKick ? "; CSR kick enabled" : "",
-            gpuEnableCsrResident ? "; CSR resident enabled" : "",
-            gpuEnableScmult ? "; SCMULT explicitly enabled" : "");
+            gpuMagnetLossCompactionStatus(),
+            gpuCsrResidentStatus(),
+            gpuScmultStatus());
 #else
     fprintf(stderr,
-            "elegant CUDA: selected device %ld%s%s; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s.\n",
+            "elegant CUDA: selected device %ld%s%s; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s.\n",
             gpuBase.activeDevice,
             status == 0 ? " " : "",
             status == 0 ? deviceName : "",
@@ -3291,15 +3308,12 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuBase.csrMinBins,
             gpuBase.scmultMinParticles,
             gpuBase.exactDriftMinParticles,
-            gpuEnableExactDrift ? "; exact drift explicitly enabled" : "",
-            gpuEnableApertureCompaction ? "; aperture compaction explicitly enabled" : "",
-            gpuEnableApertureParallelCompaction ? "; aperture parallel compaction explicitly enabled" : "",
+            gpuExactDriftStatus(),
+            gpuApertureParallelCompactionStatus(),
             gpuEnableApertureAcceptedDevice ? "; accepted-device compaction enabled" : "",
-            gpuEnableMagnetLossCompaction ? "; magnet loss compaction enabled" : "",
-            gpuEnableCsrHistogram ? "; CSR histogram explicitly enabled" : "",
-            gpuEnableCsrKick ? "; CSR kick enabled" : "",
-            gpuEnableCsrResident ? "; CSR resident enabled" : "",
-            gpuEnableScmult ? "; SCMULT explicitly enabled" : "");
+            gpuMagnetLossCompactionStatus(),
+            gpuCsrResidentStatus(),
+            gpuScmultStatus());
 #endif
   }
 
@@ -3655,7 +3669,22 @@ void gpu_exactDrift(long nParticles, double length) {
 
   if (nParticles <= 0)
     return;
-  gpuCopyHostToDevice(nParticles);
+  gpuCopyHostToDeviceInternal(nParticles, 0);
+#ifndef GPU_VERIFY
+  if (!gpuBase.verifyMode) {
+    if (gpuPendingExactDriftCount &&
+        gpuPendingExactDriftParticles != nParticles)
+      gpuFlushPendingExactDrift("pending exactDrift particle-count change");
+    gpuPendingExactDriftLength += length;
+    gpuPendingExactDriftCount++;
+    gpuPendingExactDriftParticles = nParticles;
+    gpuBase.deviceCurrent = 1;
+    gpuBase.hostCurrent = 0;
+    gpuBase.nParticles = nParticles;
+    gpuRecordWallSeconds();
+    return;
+  }
+#endif
   status = gpuCudaExactDrift(gpuBase.deviceCoord, nParticles, (int)gpuBase.deviceStride,
                              length, &milliseconds);
   if (status != 0)
@@ -4040,33 +4069,6 @@ static long gpuLimitAmplitudeLossCount(double xmax, double ymax, long np) {
   return lostCount;
 }
 
-static long gpuLimitAmplitudesCompact(double xmax, double ymax, long np,
-                                      double z, double Po, long extrapolate_z) {
-  long remaining = np;
-  float milliseconds = 0;
-  int status;
-
-  if (np <= 0)
-    return np;
-  gpuCopyHostToDevice(np);
-  status = gpuCudaLimitAmplitudesCompact(gpuBase.deviceCoord, np, (int)gpuBase.deviceStride,
-                                         xmax, ymax, z, Po, extrapolate_z,
-                                         &remaining, &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("limit_amplitudes aperture compaction kernel", status);
-  gpuRecordApertureKernel(milliseconds);
-#ifdef GPU_VERIFY
-  gpuMarkDeviceChanged(np);
-  copyParticlesToCpuReadOnly("limit_amplitudes CUDA compaction loss output");
-#else
-  gpuCopyApertureLossRowsToHost(
-    remaining, np, "limit_amplitudes CUDA compaction loss tail output");
-  gpuMarkDeviceChanged(remaining);
-#endif
-  gpuRecordWallSeconds();
-  return remaining;
-}
-
 #ifndef GPU_VERIFY
 static long gpuLimitAmplitudesStableCompact(double xmax, double ymax, long np,
                                             double z, double Po,
@@ -4133,8 +4135,6 @@ long gpu_limit_amplitudes(double xmax, double ymax, long np, double **accepted,
                                            extrapolate_z, accepted,
                                            (ELEMENT_LIST *)eptr);
 #endif
-  if (gpuEnableApertureCompaction && !accepted && globalLossCoordOffset <= 0)
-    return gpuLimitAmplitudesCompact(xmax, ymax, np, z, Po, extrapolate_z);
   return gpuLimitAmplitudesOnCpu(xmax, ymax, np, accepted, z, Po, extrapolate_z,
                                  openCode, (ELEMENT_LIST *)eptr,
                                  "limit_amplitudes particle loss fallback");
@@ -4383,34 +4383,6 @@ static long gpuELimitAmplitudeLossCount(double xmax, double ymax, long np,
   return lostCount;
 }
 
-static long gpuELimitAmplitudesCompact(double xmax, double ymax, long np,
-                                       double z, double Po, long extrapolate_z,
-                                       long exponent, long yExponent) {
-  long remaining = np;
-  float milliseconds = 0;
-  int status;
-
-  if (np <= 0)
-    return np;
-  gpuCopyHostToDevice(np);
-  status = gpuCudaELimitAmplitudesCompact(gpuBase.deviceCoord, np, (int)gpuBase.deviceStride,
-                                          xmax, ymax, exponent, yExponent, z, Po,
-                                          extrapolate_z, &remaining, &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("elimit_amplitudes aperture compaction kernel", status);
-  gpuRecordApertureKernel(milliseconds);
-#ifdef GPU_VERIFY
-  gpuMarkDeviceChanged(np);
-  copyParticlesToCpuReadOnly("elimit_amplitudes CUDA compaction loss output");
-#else
-  gpuCopyApertureLossRowsToHost(
-    remaining, np, "elimit_amplitudes CUDA compaction loss tail output");
-  gpuMarkDeviceChanged(remaining);
-#endif
-  gpuRecordWallSeconds();
-  return remaining;
-}
-
 #ifndef GPU_VERIFY
 static long gpuELimitAmplitudesStableCompact(double xmax, double ymax, long np,
                                              double z, double Po,
@@ -4491,8 +4463,6 @@ long gpu_elimit_amplitudes(double xmax, double ymax, long np, double **accepted,
                                             extrapolate_z, xe, ye, accepted,
                                             (ELEMENT_LIST *)eptr);
 #endif
-  if (gpuEnableApertureCompaction && !accepted && globalLossCoordOffset <= 0)
-    return gpuELimitAmplitudesCompact(xmax, ymax, np, z, Po, extrapolate_z, xe, ye);
   return gpuELimitAmplitudesOnCpu(xmax, ymax, np, accepted, z, Po, extrapolate_z,
                                   openCode, exponent, yExponent, (ELEMENT_LIST *)eptr,
                                   "elimit_amplitudes particle loss fallback");
@@ -4909,18 +4879,6 @@ long gpu_csr_csbend_wake_available(long nParticles, long nBins) {
       nBins < gpuBase.csrMinBins)
     return 0;
   return 1;
-}
-
-long gpu_csr_csbend_histogram_available(long nParticles, long nBins) {
-  if (!gpuEnableCsrHistogram)
-    return 0;
-  return gpu_csr_csbend_wake_available(nParticles, nBins);
-}
-
-long gpu_csr_csbend_kick_available(long nParticles, long nBins) {
-  if (!gpuEnableCsrKick)
-    return 0;
-  return gpu_csr_csbend_wake_available(nParticles, nBins);
 }
 
 static long gpuPackCsrCsbendBodyTracking(GPU_CSBEND_DATA *data,
@@ -5385,88 +5343,6 @@ static long gpuComputeCsrHistogramCpu(double *hist, double **part,
 }
 #endif
 
-long gpu_compute_csbend_csr_histogram(double *ctHist, double **part,
-                                      long nParticles, long nBins,
-                                      double ctLower, double dct) {
-  unsigned long count;
-  long nBinned = 0;
-  long iBin, iParticle;
-  double *coordinate;
-  float milliseconds = 0;
-  int status;
-  long startedWallTimer = 0;
-#ifdef GPU_VERIFY
-  double *cpuHist = NULL;
-  long cpuBinned;
-#endif
-
-  if (!gpu_csr_csbend_histogram_available(nParticles, nBins))
-    return -1;
-  if (!ctHist || !part || nParticles <= 1 || nBins < 2 || dct <= 0)
-    return -1;
-
-  if (gpuWallStart <= 0) {
-    gpuWallStart = wallSeconds();
-    startedWallTimer = 1;
-  }
-
-  gpuEnsureCsrScratch(nBins);
-  gpuEnsureCsrCoordScratch(nParticles, 1);
-  coordinate = gpuEnsureCsrHostCoordinateScratch(nParticles);
-  if (!coordinate)
-    return -1;
-  for (iParticle = 0; iParticle < nParticles; iParticle++) {
-    if (!part[iParticle]) {
-      if (startedWallTimer)
-        gpuRecordWallSeconds();
-      return -1;
-    }
-    coordinate[iParticle] = part[iParticle][4];
-  }
-
-  count = (unsigned long)nParticles;
-  status = gpuCudaCopyHostToDevice(gpuCsrScratch.coord, coordinate, count,
-                                   &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("cudaMemcpy(CSR histogram coordinate host to device)", status);
-  gpuRecordMilliseconds(&gpuBase.gpuTransferToDeviceSeconds, milliseconds);
-
-  milliseconds = 0;
-  status = gpuCudaCsrHistogram(gpuCsrScratch.coord, nParticles, 1,
-                               0, ctLower, dct, nBins,
-                               (double *)gpuCsrScratch.ctHist, ctHist,
-                               &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("CSRCSBEND histogram CUDA kernel", status);
-  gpuRecordCsrKernel(milliseconds);
-
-  for (iBin = 0; iBin < nBins; iBin++)
-    nBinned += (long)ctHist[iBin];
-
-#ifdef GPU_VERIFY
-  if (gpuBase.verifyMode) {
-    cpuHist = malloc(nBins * sizeof(*cpuHist));
-    if (!cpuHist)
-      gpuRequiredFailure("unable to allocate CUDA CSRCSBEND histogram verification buffer");
-    cpuBinned = gpuComputeCsrHistogramCpu(cpuHist, part, nParticles,
-                                          nBins, ctLower, dct);
-    if (cpuBinned != nBinned) {
-      fprintf(stderr,
-              "elegant CUDA VERIFY CSRCSBEND histogram bin-count mismatch cpu=%ld gpu=%ld\n",
-              cpuBinned, nBinned);
-      exit(1);
-    }
-    gpuCompareWakeArray("track_through_csbendCSR", "ctHist",
-                        cpuHist, ctHist, nBins);
-    free(cpuHist);
-  }
-#endif
-
-  if (startedWallTimer)
-    gpuRecordWallSeconds();
-  return nBinned;
-}
-
 #ifdef GPU_VERIFY
 static void gpuComputeCsbendCsrWakeCpu(double *dGamma, double *T1, double *T2,
                                        const double *ctHist,
@@ -5676,84 +5552,6 @@ long gpu_copy_csbend_csr_dgamma(double *dGamma, long nBins) {
   return 1;
 }
 
-long gpu_apply_csbend_csr_kick(double **part, long nParticles, long nBins,
-                               double ctLower, double dct,
-                               double Po, double rho0) {
-  double *packed, *dpReturn;
-  unsigned long inputCount, dpCount;
-  long iParticle;
-  float milliseconds = 0;
-  int status;
-  long startedWallTimer = 0;
-
-  if (!gpu_csr_csbend_kick_available(nParticles, nBins))
-    return 0;
-  if (!part || nParticles <= 0 || nBins < 2 || dct <= 0 || !Po || !rho0)
-    return 0;
-  if (!gpuCsrScratch.dGamma || !gpuCsrScratch.dGammaValid ||
-      gpuCsrScratch.dGammaBins != nBins)
-    return 0;
-
-  if (gpuWallStart <= 0) {
-    gpuWallStart = wallSeconds();
-    startedWallTimer = 1;
-  }
-
-  gpuEnsureCsrCoordScratch(nParticles, 3);
-  gpuEnsureCsrKickDpScratch(nParticles);
-  packed = gpuEnsureCsrHostCoordinateScratch(3 * nParticles);
-  dpReturn = gpuEnsureCsrHostKickDpScratch(nParticles);
-  if (!packed || !dpReturn) {
-    if (startedWallTimer)
-      gpuRecordWallSeconds();
-    return 0;
-  }
-
-  for (iParticle = 0; iParticle < nParticles; iParticle++) {
-    if (!part[iParticle]) {
-      if (startedWallTimer)
-        gpuRecordWallSeconds();
-      return 0;
-    }
-    packed[3 * iParticle + 0] = part[iParticle][4];
-    packed[3 * iParticle + 1] = part[iParticle][0];
-    packed[3 * iParticle + 2] = part[iParticle][5];
-  }
-
-  inputCount = (unsigned long)nParticles * 3UL;
-  status = gpuCudaCopyHostToDevice(gpuCsrScratch.coord, packed, inputCount,
-                                   &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("cudaMemcpy(CSR kick particles host to device)", status);
-  gpuRecordMilliseconds(&gpuBase.gpuTransferToDeviceSeconds, milliseconds);
-
-  milliseconds = 0;
-  status = gpuCudaCsrCsbendKick(gpuCsrScratch.coord, nParticles, 3,
-                                (const double *)gpuCsrScratch.dGamma,
-                                (double *)gpuCsrScratch.kickDp,
-                                nBins, ctLower, dct, Po, rho0,
-                                &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("CSRCSBEND kick CUDA kernel", status);
-  gpuRecordCsrKernel(milliseconds);
-
-  milliseconds = 0;
-  dpCount = (unsigned long)nParticles;
-  status = gpuCudaCopyDeviceToHost(dpReturn, gpuCsrScratch.kickDp, dpCount,
-                                   &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("cudaMemcpy(CSR kick dp device to host)", status);
-  gpuRecordMilliseconds(&gpuBase.gpuTransferToHostSeconds, milliseconds);
-
-  for (iParticle = 0; iParticle < nParticles; iParticle++)
-    part[iParticle][5] = dpReturn[iParticle];
-  gpuMarkHostWillChange();
-
-  if (startedWallTimer)
-    gpuRecordWallSeconds();
-  return 1;
-}
-
 long gpu_track_through_csbendCSR(long n_part, void *csbend, double p_error,
                                  double Po, double **accepted,
                                  double z_start, double z_end, void *charge,
@@ -5799,7 +5597,7 @@ long gpu_track_through_matter() { gpuUnsupported("gpu_track_through_matter"); re
 long gpu_scmult_linear_supported(long nParticles, long nBuckets, long nonlinear,
                                   double sliceDuration, long horizontal,
                                   long vertical) {
-  if (!gpuScmultOptInAllowed(nParticles))
+  if (!gpuScmultAllowed(nParticles))
     return 0;
   if (nBuckets != 1 || nonlinear || sliceDuration > 0)
     return 0;
@@ -5818,7 +5616,7 @@ long gpu_scmult_single_bunch_supported(long nParticles, long idSlotsPerBunch,
 
 long gpu_scmult_can_skip_cpu(long nParticles, long idSlotsPerBunch) {
   (void)idSlotsPerBunch;
-  if (!gpuScmultOptInAllowed(nParticles))
+  if (!gpuScmultAllowed(nParticles))
     return 0;
   if (!gpuBase.deviceCoord || !gpuBase.deviceCurrent)
     return 0;
@@ -5826,7 +5624,7 @@ long gpu_scmult_can_skip_cpu(long nParticles, long idSlotsPerBunch) {
 }
 
 long gpu_scmult_can_initialize_on_gpu(long nParticles) {
-  return gpuScmultOptInAllowed(nParticles);
+  return gpuScmultAllowed(nParticles);
 }
 
 long gpu_scmult_count_bunches(long nParticles, long idSlotsPerBunch,
@@ -5839,7 +5637,7 @@ long gpu_scmult_count_bunches(long nParticles, long idSlotsPerBunch,
   if (!nBuckets)
     gpuRequiredFailure("NULL SCMULT bunch-count output pointer in CUDA path");
   *nBuckets = 0;
-  if (!gpuScmultOptInAllowed(nParticles))
+  if (!gpuScmultAllowed(nParticles))
     return 0;
   if (idSlotsPerBunch <= 0) {
     *nBuckets = 1;
@@ -5893,7 +5691,7 @@ long gpu_scmult_compute_centroid_sigma(long nParticles, double Po,
     center[i] = 0;
     sigma[i] = 0;
   }
-  if (!gpuScmultOptInAllowed(nParticles))
+  if (!gpuScmultAllowed(nParticles))
     return 0;
 
   if (gpuWallStart <= 0) {
