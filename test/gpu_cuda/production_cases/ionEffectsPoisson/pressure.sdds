@@ -1,0 +1,11 @@
+SDDS1
+&parameter name=Gasses, type=string &end
+&parameter name=Temperature, units=K, type=double &end
+&column name=s, units=m, type=double &end
+&column name=N2, units=nTorr, type=double &end
+&data mode=ascii no_row_counts=1 &end
+"N2"
+293
+0.0 1.0
+0.5 1.0
+1.0 1.0

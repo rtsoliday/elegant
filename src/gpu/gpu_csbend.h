@@ -18,7 +18,10 @@ long gpu_track_through_csbendCSR(long n_part, void *csbend, double p_error,
                                  char *rootname, void *maxamp,
                                  void *apContour, void *apFileData,
                                  void *eptr);
-long gpu_track_through_driftCSR();
+long gpu_track_through_driftCSR(long np, void *csrDrift, double Po,
+                                double **accepted, double zStart,
+                                double revolutionLength, void *charge,
+                                char *rootname);
 long gpu_csr_csbend_wake_available(long nParticles, long nBins);
 long gpu_csr_csbend_histogram_available(long nParticles, long nBins);
 long gpu_compute_csbend_csr_histogram(double *ctHist, double **part,
@@ -47,7 +50,9 @@ long gpu_csr_csbend_resident_available(void *csbend, long nParticles,
                                        long nBins);
 long gpu_csr_csbend_resident_begin(double *beta0, long nParticles);
 long gpu_track_csbend_csr_enter_simple(long nParticles, double pCentral,
-                                       double coordinateSign);
+                                       double coordinateSign,
+                                       long edge1Effect, double e1,
+                                       double psi1, double rhoActual);
 long gpu_copy_csbend_csr_beta0(double *beta0, long nParticles);
 long gpu_prepare_csbend_csr_histogram_device(double *lower, double *upper,
                                              double *binSize, long *bins,
@@ -63,7 +68,9 @@ long gpu_track_csbend_csr_body_slice(void *csbend, long nParticles,
                                      double sliceLength, double rho0,
                                      double rhoActual);
 long gpu_track_csbend_csr_finalize_simple(long nParticles, double pCentral,
-                                          double coordinateSign);
+                                          double coordinateSign,
+                                          long edge2Effect, double e2,
+                                          double psi2, double rhoActual);
 long gpu_copy_csbend_csr_dgamma(double *dGamma, long nBins);
 void gpu_clear_csr_wake_cpu_shadow(void);
 long gpu_copy_csr_wake_cpu_shadow(double *dGamma, long nBins);

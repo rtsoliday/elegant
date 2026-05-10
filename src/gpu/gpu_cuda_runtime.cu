@@ -164,6 +164,18 @@ __global__ void gpuExactDriftKernel(double *coord, long nParticles, int stride, 
   part[4] += length * sqrt(1 + part[1] * part[1] + part[3] * part[3]);
 }
 
+__global__ void gpuLinearDriftKernel(double *coord, long nParticles, int stride, double length) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  part[0] += part[1] * length;
+  part[2] += part[3] * length;
+  part[4] += length;
+}
+
 __device__ __forceinline__ int gpuKickMapInterpolate(double *xpFactor,
                                                      double *ypFactor,
                                                      const double *xpMap,
@@ -201,6 +213,50 @@ __device__ __forceinline__ int gpuKickMapInterpolate(double *xpFactor,
   return 1;
 }
 
+__device__ __forceinline__ int gpuKickMapTrackParticle(
+  double *part, const GPU_KICKMAP_DATA *map, const double *xpMap,
+  const double *ypMap, int writeOutput) {
+  double x = part[0];
+  double xp = part[1];
+  double y = part[2];
+  double yp = part[3];
+  double s = part[4];
+  double dp = part[5];
+  double dxp, dyp;
+
+  for (long ik = 0; ik < map->nKicks; ik++) {
+    x += xp * map->halfLength;
+    y += yp * map->halfLength;
+    s += map->halfLength * sqrt(1 + xp * xp + yp * yp);
+
+    if (!gpuKickMapInterpolate(&dxp, &dyp, xpMap, ypMap, map, x, y))
+      return 0;
+    if (map->undulator) {
+      double scale = map->kickScale / ((1 + dp) * (1 + dp));
+      xp += dxp * scale;
+      yp += dyp * scale;
+    } else {
+      double scale = map->kickScale / (1 + dp);
+      xp += dxp * scale;
+      yp += dyp * scale;
+    }
+
+    x += xp * map->halfLength;
+    y += yp * map->halfLength;
+    s += map->halfLength * sqrt(1 + xp * xp + yp * yp);
+  }
+
+  if (writeOutput) {
+    part[0] = x;
+    part[1] = xp;
+    part[2] = y;
+    part[3] = yp;
+    part[4] = s;
+    part[5] = dp;
+  }
+  return 1;
+}
+
 __global__ void gpuKickMapTrackCheckedKernel(double *coord, long nParticles,
                                              int stride,
                                              GPU_KICKMAP_DATA map,
@@ -209,36 +265,52 @@ __global__ void gpuKickMapTrackCheckedKernel(double *coord, long nParticles,
                                              unsigned long long *lostCount) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
-  double dxp, dyp;
 
   if (ip >= nParticles)
     return;
   part = coord + ip * stride;
-  for (long ik = 0; ik < map.nKicks; ik++) {
-    part[0] += part[1] * map.halfLength;
-    part[2] += part[3] * map.halfLength;
-    part[4] += map.halfLength *
-               sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  if (!gpuKickMapTrackParticle(part, &map, xpMap, ypMap, 1))
+    atomicAdd(lostCount, 1ULL);
+}
 
-    if (!gpuKickMapInterpolate(&dxp, &dyp, xpMap, ypMap, &map,
-                               part[0], part[2])) {
-      atomicAdd(lostCount, 1ULL);
-      return;
-    }
-    if (map.undulator) {
-      double scale = map.kickScale / ((1 + part[5]) * (1 + part[5]));
-      part[1] += dxp * scale;
-      part[3] += dyp * scale;
-    } else {
-      double scale = map.kickScale / (1 + part[5]);
-      part[1] += dxp * scale;
-      part[3] += dyp * scale;
-    }
+__global__ void gpuKickMapSurvivorFlagKernel(double *coord, long nParticles,
+                                             int stride,
+                                             GPU_KICKMAP_DATA map,
+                                             const double *xpMap,
+                                             const double *ypMap,
+                                             long *survivorPrefix) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
 
-    part[0] += part[1] * map.halfLength;
-    part[2] += part[3] * map.halfLength;
-    part[4] += map.halfLength *
-               sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  if (ip >= nParticles)
+    return;
+  survivorPrefix[ip] =
+    gpuKickMapTrackParticle(coord + ip * stride, &map, xpMap, ypMap, 0) ? 1 : 0;
+}
+
+__global__ void gpuKickMapStableTrackScatterKernel(
+  double *coord, double *scratch, const long *survivorPrefix,
+  long nParticles, int stride, long survivors, GPU_KICKMAP_DATA map,
+  const double *xpMap, const double *ypMap, double zStart, double pRef) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part, *target;
+  long prefix, destination;
+  int survives;
+
+  if (ip >= nParticles)
+    return;
+  prefix = survivorPrefix[ip];
+  survives = (ip + 1 < nParticles) ? survivorPrefix[ip + 1] > prefix :
+                                     survivors > prefix;
+  destination = survives ? prefix : survivors + (ip - prefix);
+  part = coord + ip * stride;
+  target = scratch + destination * stride;
+  for (int ic = 0; ic < stride; ic++)
+    target[ic] = part[ic];
+  if (survives) {
+    gpuKickMapTrackParticle(target, &map, xpMap, ypMap, 1);
+  } else {
+    target[4] = zStart;
+    target[5] = pRef * (1 + target[5]);
   }
 }
 
@@ -582,6 +654,39 @@ __global__ void gpuMultipoleTrackCheckedKernel(double *coord, long nParticles,
     atomicAdd(lostCount, partial[0]);
 }
 
+__global__ void gpuMultipoleSurvivorFlagKernel(double *coord, long nParticles,
+                                               int stride,
+                                               long *survivorPrefix) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (ip >= nParticles)
+    return;
+  survivorPrefix[ip] =
+    gpuMultipoleTrackParticle(coord + ip * stride, stride, 0) ? 1 : 0;
+}
+
+__global__ void gpuMultipoleStableTrackScatterKernel(
+  double *coord, double *scratch, const long *survivorPrefix,
+  long nParticles, int stride, long survivors) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part, *target;
+  long prefix, destination;
+  int survives;
+
+  if (ip >= nParticles)
+    return;
+  prefix = survivorPrefix[ip];
+  survives = (ip + 1 < nParticles) ? survivorPrefix[ip + 1] > prefix :
+                                     survivors > prefix;
+  destination = survives ? prefix : survivors + (ip - prefix);
+  part = coord + ip * stride;
+  target = scratch + destination * stride;
+  for (int ic = 0; ic < stride; ic++)
+    target[ic] = part[ic];
+  if (survives)
+    gpuMultipoleTrackParticle(target, stride, 1);
+}
+
 __global__ void gpuAddCoordinateKernel(double *coord, long nParticles, int stride,
                                        int index, double value) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
@@ -699,6 +804,193 @@ __global__ void gpuRfcaThinKickKernel(double *coord, long nParticles, int stride
   part[3] *= pRatio;
   if (gamma1Raw <= 1)
     part[5] = -1;
+}
+
+__global__ void gpuRfcwRfOnlyMatrixKernel(double *coord, long nParticles, int stride,
+                                          double pCentral, double length,
+                                          double volt, double omega,
+                                          double phase, int end1Focus,
+                                          int end2Focus, double dx, double dy,
+                                          double cMks) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part, p, gamma, beta0, ds1, t, dgamma, gamma1;
+  double dP, R12, R22, x, xp, y, yp, inverseF;
+
+  if (ip >= nParticles)
+    return;
+
+  part = coord + ip * stride;
+  if (part[5] == -1)
+    return;
+
+  part[0] -= dx;
+  part[2] -= dy;
+
+  p = pCentral * (1 + part[5]);
+  gamma = sqrt(p * p + 1);
+  beta0 = p / gamma;
+  ds1 = length / 2 * sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  t = (part[4] + ds1) / (cMks * beta0);
+  dgamma = volt * sin(omega * t + phase);
+
+  if (end1Focus && length) {
+    inverseF = dgamma / (2 * gamma * length);
+    part[1] -= part[0] * inverseF;
+    part[3] -= part[2] * inverseF;
+  }
+
+  gamma1 = gamma + dgamma;
+  dP = sqrt(gamma1 * gamma1 - 1) - p;
+  R22 = 1 / (1 + dP / p);
+  if (fabs(dP / p) > 1e-14)
+    R12 = length * (p / dP * log(1 + dP / p));
+  else
+    R12 = length;
+
+  part[4] += ds1;
+  x = part[0];
+  xp = part[1];
+  part[0] = x + xp * R12;
+  part[1] = xp * R22;
+  y = part[2];
+  yp = part[3];
+  part[2] = y + yp * R12;
+  part[3] = yp * R22;
+  part[4] += length / 2 * sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  part[5] = (p + dP - pCentral) / pCentral;
+
+  if (gamma1 <= 1)
+    part[5] = -1;
+  if (end2Focus && length) {
+    inverseF = -dgamma / (2 * gamma1 * length);
+    part[1] -= part[0] * inverseF;
+    part[3] -= part[2] * inverseF;
+  }
+  part[4] = (p + dP) / gamma1 * part[4] / beta0;
+  part[0] += dx;
+  part[2] += dy;
+}
+
+__global__ void gpuRfcwKickInitialKernel(double *coord, double *inverseF,
+                                         long nParticles, int stride,
+                                         double pCentral, double length,
+                                         double volt, double omega,
+                                         double phase, int end1Focus,
+                                         double cMks) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part, p, gamma, beta, dc4, t, dgamma, gamma1Raw, gamma1;
+  double p1, pz, pz1, pRatio, invF;
+
+  if (ip >= nParticles)
+    return;
+
+  inverseF[ip] = 0;
+  part = coord + ip * stride;
+  if (part[5] == -1)
+    return;
+
+  p = pCentral * (1 + part[5]);
+  gamma = sqrt(p * p + 1);
+  beta = p / gamma;
+  dc4 = length ? length / 2 * sqrt(1 + part[1] * part[1] + part[3] * part[3]) : 0;
+  t = (part[4] + dc4) / (cMks * beta);
+  dgamma = volt * sin(omega * t + phase);
+
+  if (length) {
+    if (end1Focus) {
+      invF = dgamma / (2 * gamma * length);
+      part[1] -= part[0] * invF;
+      part[3] -= part[2] * invF;
+    }
+    part[0] += part[1] * length / 2;
+    part[2] += part[3] * length / 2;
+    part[4] += length / 2 * sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  }
+
+  gamma1Raw = gamma + dgamma;
+  gamma1 = gamma1Raw;
+  if (gamma1 <= 1)
+    gamma1 = 1 + 1e-7;
+  p1 = sqrt(gamma1 * gamma1 - 1);
+  part[5] = (p1 - pCentral) / pCentral;
+  part[4] = t * cMks * p1 / gamma1;
+  pz = p / sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  pz1 = sqrt(pz * pz + gamma1 * gamma1 - gamma * gamma);
+  pRatio = pz / pz1;
+  part[1] *= pRatio;
+  part[3] *= pRatio;
+  if (gamma1Raw <= 1)
+    part[5] = -1;
+  else if (length)
+    inverseF[ip] = -dgamma / (2 * gamma1Raw * length);
+}
+
+__global__ void gpuRfcwKickFinalKernel(double *coord, const double *inverseF,
+                                       long nParticles, int stride,
+                                       double length, int end2Focus) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part, invF;
+
+  if (ip >= nParticles)
+    return;
+
+  part = coord + ip * stride;
+  if (!length)
+    return;
+  part[0] += part[1] * length / 2;
+  part[2] += part[3] * length / 2;
+  part[4] += length / 2 * sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  if (end2Focus) {
+    invF = inverseF[ip];
+    part[1] -= part[0] * invF;
+    part[3] -= part[2] * invF;
+  }
+}
+
+__global__ void gpuRfcwDgammaOverGammaSumsKernel(double *coord, long nParticles,
+                                                 int stride, double pCentral,
+                                                 double length, double volt,
+                                                 double omega, double phase,
+                                                 double cMks,
+                                                 GPU_BEAM_SUM_DATA *result) {
+  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ double sum[GPU_REDUCTION_THREADS];
+  long tid = threadIdx.x;
+  long ip;
+
+  count[tid] = 0;
+  sum[tid] = 0;
+  for (ip = tid; ip < nParticles; ip += blockDim.x) {
+    double *part = coord + ip * stride;
+    double p, gamma, beta, ds, t, dgamma;
+
+    if (part[5] == -1)
+      continue;
+    p = pCentral * (1 + part[5]);
+    gamma = sqrt(p * p + 1);
+    if (gamma == 0)
+      continue;
+    beta = p / gamma;
+    ds = length / 2 * sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+    t = (part[4] + ds) / (cMks * beta);
+    dgamma = volt * sin(omega * t + phase);
+    count[tid]++;
+    sum[tid] += dgamma / gamma;
+  }
+  __syncthreads();
+
+  for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (tid < offset) {
+      count[tid] += count[tid + offset];
+      sum[tid] += sum[tid + offset];
+    }
+    __syncthreads();
+  }
+
+  if (tid == 0) {
+    result->count = count[0];
+    result->centroidSum[6] = sum[0];
+  }
 }
 
 __global__ void gpuSubtractCoordinateKernel(double *coord, long nParticles, int stride,
@@ -1790,9 +2082,12 @@ __global__ void gpuWakeBinKernel(double *coord, long nParticles, int stride,
   if (ip >= nParticles)
     return;
   part = coord + ip * stride;
+  pbin[ip] = -1;
+  if (wake.useBunchFilter &&
+      static_cast<long>(part[wake.bunchIndexColumn]) != wake.selectedBunch)
+    return;
   t = gpuParticleTime(part, wake.pCentral, wake.cMks);
   time[ip] = t;
-  pbin[ip] = -1;
   ib = static_cast<long>((t - wake.tmin) / wake.dt + 0.5);
   if (ib < 0 || ib > wake.bins - 1)
     return;
@@ -2007,9 +2302,12 @@ __global__ void gpuTrwakePrepareKernel(double *coord, long nParticles,
   if (ip >= nParticles)
     return;
   part = coord + ip * stride;
+  pbin[ip] = -1;
+  if (wake.useBunchFilter &&
+      static_cast<long>(part[wake.bunchIndexColumn]) != wake.selectedBunch)
+    return;
   t = gpuParticleTime(part, wake.pCentral, wake.cMks);
   time[ip] = t;
-  pbin[ip] = -1;
   ib = static_cast<long>((t - wake.tmin) / wake.dt + 0.5);
   if (ib < 0 || ib > wake.bins - 1)
     return;
@@ -2374,6 +2672,208 @@ __global__ void gpuTimeSumsKernel(double *coord, long nParticles, int stride,
   if (tid == 0) {
     result->count = nParticles;
     result->centroidSum[6] = sum[0];
+  }
+}
+
+__global__ void gpuSelectedTimeSumsKernel(double *coord, long nParticles,
+                                          int stride, double pCentral,
+                                          double cMks, int bunchColumn,
+                                          long selectedBunch,
+                                          GPU_BEAM_SUM_DATA *result) {
+  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ double sum[GPU_REDUCTION_THREADS];
+  __shared__ double minValue[GPU_REDUCTION_THREADS];
+  __shared__ double maxValue[GPU_REDUCTION_THREADS];
+  long tid = threadIdx.x;
+  long ip;
+
+  count[tid] = 0;
+  sum[tid] = 0;
+  minValue[tid] = DBL_MAX;
+  maxValue[tid] = -DBL_MAX;
+  for (ip = tid; ip < nParticles; ip += blockDim.x) {
+    double *part = coord + ip * stride;
+    double t;
+    if (static_cast<long>(part[bunchColumn]) != selectedBunch)
+      continue;
+    t = gpuParticleTime(part, pCentral, cMks);
+    count[tid]++;
+    sum[tid] += t;
+    if (t < minValue[tid])
+      minValue[tid] = t;
+    if (t > maxValue[tid])
+      maxValue[tid] = t;
+  }
+  __syncthreads();
+
+  for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (tid < offset) {
+      count[tid] += count[tid + offset];
+      sum[tid] += sum[tid + offset];
+      if (minValue[tid + offset] < minValue[tid])
+        minValue[tid] = minValue[tid + offset];
+      if (maxValue[tid + offset] > maxValue[tid])
+        maxValue[tid] = maxValue[tid + offset];
+    }
+    __syncthreads();
+  }
+
+  if (tid == 0) {
+    result->count = count[0];
+    result->centroidSum[6] = sum[0];
+    result->min[6] = count[0] ? minValue[0] : 0;
+    result->max[6] = count[0] ? maxValue[0] : 0;
+  }
+}
+
+__global__ void gpuFiducialTimeSumsKernel(double *coord, long nParticles, int stride,
+                                          double pCentral, double sOffset,
+                                          double cMks, int particleIdColumn,
+                                          long startPID, long endPID,
+                                          GPU_BEAM_SUM_DATA *result) {
+  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ double sum[GPU_REDUCTION_THREADS];
+  long tid = threadIdx.x;
+  long ip;
+
+  count[tid] = 0;
+  sum[tid] = 0;
+  for (ip = tid; ip < nParticles; ip += blockDim.x) {
+    double *part = coord + ip * stride;
+    double p = pCentral * (1 + part[5]);
+    double beta = p / sqrt(p * p + 1);
+    if ((startPID >= 0 || endPID >= 0) &&
+        (particleIdColumn < 0 || particleIdColumn >= stride ||
+         static_cast<long>(part[particleIdColumn]) < startPID ||
+         static_cast<long>(part[particleIdColumn]) > endPID))
+      continue;
+    sum[tid] += (part[4] + sOffset) / (cMks * beta);
+    count[tid]++;
+  }
+  __syncthreads();
+
+  for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (tid < offset) {
+      sum[tid] += sum[tid + offset];
+      count[tid] += count[tid + offset];
+    }
+    __syncthreads();
+  }
+
+  if (tid == 0) {
+    result->count = count[0];
+    for (int i = 0; i < 7; i++)
+      result->centroidSum[i] = 0;
+    result->centroidSum[6] = sum[0];
+  }
+}
+
+__global__ void gpuFiducialFirstKernel(double *coord, long nParticles,
+                                       int stride, double pCentral,
+                                       double sOffset, double cMks,
+                                       int particleIdColumn,
+                                       long startPID, long endPID,
+                                       GPU_BEAM_SUM_DATA *result) {
+  __shared__ double bestTime[GPU_REDUCTION_THREADS];
+  __shared__ long bestIndex[GPU_REDUCTION_THREADS];
+  long tid = threadIdx.x;
+  long ip;
+
+  bestTime[tid] = 0;
+  bestIndex[tid] = LONG_MAX;
+  for (ip = tid; ip < nParticles; ip += blockDim.x) {
+    double *part = coord + ip * stride;
+
+    if ((startPID >= 0 || endPID >= 0) &&
+        (particleIdColumn < 0 || particleIdColumn >= stride ||
+         static_cast<long>(part[particleIdColumn]) < startPID ||
+         static_cast<long>(part[particleIdColumn]) > endPID))
+      continue;
+    if (ip < bestIndex[tid]) {
+      double p = pCentral * (1 + part[5]);
+      double beta = p / sqrt(p * p + 1);
+
+      bestIndex[tid] = ip;
+      bestTime[tid] = (part[4] + sOffset) / (cMks * beta);
+    }
+    break;
+  }
+  __syncthreads();
+
+  for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (tid < offset && bestIndex[tid + offset] < bestIndex[tid]) {
+      bestIndex[tid] = bestIndex[tid + offset];
+      bestTime[tid] = bestTime[tid + offset];
+    }
+    __syncthreads();
+  }
+
+  if (tid == 0 && bestIndex[0] != LONG_MAX) {
+    result->count = 1;
+    result->centroidSum[6] = bestTime[0];
+  }
+}
+
+__global__ void gpuFiducialPmaximumKernel(double *coord, long nParticles,
+                                          int stride, double pCentral,
+                                          double sOffset, double cMks,
+                                          int particleIdColumn,
+                                          long startPID, long endPID,
+                                          GPU_BEAM_SUM_DATA *result) {
+  __shared__ double bestDelta[GPU_REDUCTION_THREADS];
+  __shared__ double bestTime[GPU_REDUCTION_THREADS];
+  __shared__ long bestIndex[GPU_REDUCTION_THREADS];
+  long tid = threadIdx.x;
+  long ip;
+  double baselineDelta;
+
+  bestDelta[tid] = -DBL_MAX;
+  bestTime[tid] = 0;
+  bestIndex[tid] = LONG_MAX;
+  if (nParticles <= 0)
+    return;
+
+  baselineDelta = coord[5];
+  for (ip = tid + 1; ip < nParticles; ip += blockDim.x) {
+    double *part = coord + ip * stride;
+    double delta = part[5];
+
+    if ((startPID >= 0 || endPID >= 0) &&
+        (particleIdColumn < 0 || particleIdColumn >= stride ||
+         static_cast<long>(part[particleIdColumn]) < startPID ||
+         static_cast<long>(part[particleIdColumn]) > endPID))
+      continue;
+    if (delta > baselineDelta &&
+        (delta > bestDelta[tid] ||
+         (delta == bestDelta[tid] && ip < bestIndex[tid]))) {
+      double p = pCentral * (1 + delta);
+      double beta = p / sqrt(p * p + 1);
+
+      bestDelta[tid] = delta;
+      bestTime[tid] = (part[4] + sOffset) / (cMks * beta);
+      bestIndex[tid] = ip;
+    }
+  }
+  __syncthreads();
+
+  for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (tid < offset && bestIndex[tid + offset] != LONG_MAX) {
+      if (bestIndex[tid] == LONG_MAX ||
+          bestDelta[tid + offset] > bestDelta[tid] ||
+          (bestDelta[tid + offset] == bestDelta[tid] &&
+           bestIndex[tid + offset] < bestIndex[tid])) {
+        bestDelta[tid] = bestDelta[tid + offset];
+        bestTime[tid] = bestTime[tid + offset];
+        bestIndex[tid] = bestIndex[tid + offset];
+      }
+    }
+    __syncthreads();
+  }
+
+  if (tid == 0 && bestIndex[0] != LONG_MAX) {
+    result->count = 1;
+    result->max[5] = bestDelta[0];
+    result->centroidSum[6] = bestTime[0];
   }
 }
 
@@ -2764,6 +3264,39 @@ extern "C" int gpuCudaExactDrift(void *coord, long nParticles, int stride,
   return timeKernel(cudaSuccess, NULL);
 }
 
+extern "C" int gpuCudaLinearDrift(void *coord, long nParticles, int stride,
+                                  double length, float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t status;
+  int threads = 256;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+
+  if (milliseconds)
+    *milliseconds = 0;
+  status = cudaEventCreate(&start);
+  if (status != cudaSuccess)
+    return static_cast<int>(status);
+  status = cudaEventCreate(&stop);
+  if (status != cudaSuccess) {
+    cudaEventDestroy(start);
+    return static_cast<int>(status);
+  }
+  cudaEventRecord(start, 0);
+  gpuLinearDriftKernel<<<blocks, threads>>>(static_cast<double *>(coord),
+                                            nParticles, stride, length);
+  cudaEventRecord(stop, 0);
+  status = cudaGetLastError();
+  if (status == cudaSuccess)
+    status = cudaEventSynchronize(stop);
+  if (milliseconds && status == cudaSuccess)
+    cudaEventElapsedTime(milliseconds, start, stop);
+  cudaEventDestroy(start);
+  cudaEventDestroy(stop);
+  if (status != cudaSuccess)
+    return static_cast<int>(status);
+  return timeKernel(cudaSuccess, NULL);
+}
+
 extern "C" int gpuCudaKickMapTrackChecked(void *coord, long nParticles,
                                           int stride,
                                           const GPU_KICKMAP_DATA *data,
@@ -2846,6 +3379,63 @@ extern "C" int gpuCudaKickMapTrackChecked(void *coord, long nParticles,
     return static_cast<int>(cudaStatus);
   *lostCount = static_cast<long>(hostLostCount);
   return static_cast<int>(cudaSuccess);
+}
+
+extern "C" int gpuCudaKickMapTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_KICKMAP_DATA *data, const double *xpFactor,
+  const double *ypFactor, long points, double zStart, double pRef,
+  long *remaining, float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  long survivors;
+  long *devicePrefix = static_cast<long *>(prefix);
+  thrust::device_ptr<long> flags(devicePrefix);
+  const int blockSize = 256;
+  int gridSize;
+  int status;
+
+  if (!remaining)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *remaining = nParticles;
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+  if (!coord || !scratchCoord || !prefix || !data || !xpFactor || !ypFactor ||
+      stride < 6 || nParticles < 0 || points <= 0 ||
+      data->nKicks < 1 || data->nx <= 1 || data->ny <= 1 ||
+      data->dxg == 0 || data->dyg == 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+
+  gridSize = static_cast<int>((nParticles + blockSize - 1) / blockSize);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+
+  gpuKickMapSurvivorFlagKernel<<<gridSize, blockSize>>>(
+    static_cast<double *>(coord), nParticles, stride, *data,
+    xpFactor, ypFactor, devicePrefix);
+  cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess) {
+    survivors = thrust::reduce(flags, flags + nParticles, 0L,
+                               thrust::plus<long>());
+    thrust::exclusive_scan(flags, flags + nParticles, flags);
+    cudaStatus = cudaGetLastError();
+  } else {
+    survivors = nParticles;
+  }
+  if (cudaStatus == cudaSuccess) {
+    gpuKickMapStableTrackScatterKernel<<<gridSize, blockSize>>>(
+      static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+      devicePrefix, nParticles, stride, survivors, *data, xpFactor, ypFactor,
+      zStart, pRef);
+    cudaStatus = cudaGetLastError();
+  }
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  if (status == static_cast<int>(cudaSuccess))
+    *remaining = survivors;
+  return status;
 }
 
 extern "C" int gpuCudaMultipoleTrack(void *coord, long nParticles, int stride,
@@ -2991,6 +3581,61 @@ extern "C" int gpuCudaMultipoleTrackChecked(void *coord, long nParticles,
     return static_cast<int>(cudaStatus);
   *lostCount = static_cast<long>(hostLostCount);
   return static_cast<int>(cudaSuccess);
+}
+
+extern "C" int gpuCudaMultipoleTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_MULTIPOLE_DATA *multipole, long *remaining, float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  long survivors;
+  long *devicePrefix = static_cast<long *>(prefix);
+  thrust::device_ptr<long> flags(devicePrefix);
+  const int blockSize = 256;
+  int gridSize;
+  int status;
+
+  if (!remaining)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *remaining = nParticles;
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+  if (!coord || !scratchCoord || !prefix || !multipole || stride <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+
+  cudaStatus = cudaMemcpyToSymbol(gpuMultipoleData, multipole,
+                                  sizeof(*multipole));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+
+  gridSize = static_cast<int>((nParticles + blockSize - 1) / blockSize);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+
+  gpuMultipoleSurvivorFlagKernel<<<gridSize, blockSize>>>(
+    static_cast<double *>(coord), nParticles, stride, devicePrefix);
+  cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess) {
+    survivors = thrust::reduce(flags, flags + nParticles, 0L,
+                               thrust::plus<long>());
+    thrust::exclusive_scan(flags, flags + nParticles, flags);
+    cudaStatus = cudaGetLastError();
+  } else {
+    survivors = nParticles;
+  }
+  if (cudaStatus == cudaSuccess) {
+    gpuMultipoleStableTrackScatterKernel<<<gridSize, blockSize>>>(
+      static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+      devicePrefix, nParticles, stride, survivors);
+    cudaStatus = cudaGetLastError();
+  }
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  if (status == static_cast<int>(cudaSuccess))
+    *remaining = survivors;
+  return status;
 }
 
 __device__ __forceinline__ int gpuLoadSymplecticFractions(int integrationOrder,
@@ -3456,6 +4101,39 @@ __global__ void gpuCsbendTrackCheckedKernel(double *coord, long nParticles,
     atomicAdd(lostCount, partial[0]);
 }
 
+__global__ void gpuCsbendSurvivorFlagKernel(double *coord, long nParticles,
+                                            int stride,
+                                            long *survivorPrefix) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (ip >= nParticles)
+    return;
+  survivorPrefix[ip] =
+    gpuCsbendTrackParticle(coord + ip * stride, stride, 0) ? 1 : 0;
+}
+
+__global__ void gpuCsbendStableTrackScatterKernel(
+  double *coord, double *scratch, const long *survivorPrefix,
+  long nParticles, int stride, long survivors) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part, *target;
+  long prefix, destination;
+  int survives;
+
+  if (ip >= nParticles)
+    return;
+  prefix = survivorPrefix[ip];
+  survives = (ip + 1 < nParticles) ? survivorPrefix[ip + 1] > prefix :
+                                     survivors > prefix;
+  destination = survives ? prefix : survivors + (ip - prefix);
+  part = coord + ip * stride;
+  target = scratch + destination * stride;
+  for (int ic = 0; ic < stride; ic++)
+    target[ic] = part[ic];
+  if (survives)
+    gpuCsbendTrackParticle(target, stride, 1);
+}
+
 __global__ void gpuCsrCsbendBodySliceCheckedKernel(double *coord,
                                                    long nParticles,
                                                    int stride,
@@ -3484,7 +4162,8 @@ __global__ void gpuCsrCsbendBodySliceCheckedKernel(double *coord,
 
 __global__ void gpuCsrCsbendEnterSimpleCheckedKernel(
   double *coord, long nParticles, int stride, double pCentral,
-  double coordinateSign, double *beta0, unsigned long long *lostCount) {
+  double coordinateSign, int edge1Effect, double e1, double psi1,
+  double rhoActual, double *beta0, unsigned long long *lostCount) {
   extern __shared__ unsigned long long partial[];
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long localCount = 0;
@@ -3509,6 +4188,15 @@ __global__ void gpuCsrCsbendEnterSimpleCheckedKernel(
         }
         part[4] /= beta;
         beta0[ip] = beta;
+        if (edge1Effect) {
+          double rho = (1 + part[5]) * rhoActual;
+          if (!isfinite(rho) || rho == 0) {
+            localCount = 1;
+          } else {
+            part[1] += tan(e1) / rho * part[0];
+            part[3] -= tan(e1 - psi1 / (1 + part[5])) / rho * part[2];
+          }
+        }
       }
     }
   }
@@ -3526,7 +4214,8 @@ __global__ void gpuCsrCsbendEnterSimpleCheckedKernel(
 
 __global__ void gpuCsrCsbendFinalizeSimpleCheckedKernel(
   double *coord, long nParticles, int stride, double pCentral,
-  double coordinateSign, unsigned long long *lostCount) {
+  double coordinateSign, int edge2Effect, double e2, double psi2,
+  double rhoActual, unsigned long long *lostCount) {
   extern __shared__ unsigned long long partial[];
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long localCount = 0;
@@ -3537,6 +4226,15 @@ __global__ void gpuCsrCsbendFinalizeSimpleCheckedKernel(
     if (!isfinite(p1) || p1 <= 0) {
       localCount = 1;
     } else {
+      if (edge2Effect) {
+        double rho = (1 + part[5]) * rhoActual;
+        if (!isfinite(rho) || rho == 0) {
+          localCount = 1;
+        } else {
+          part[1] += tan(e2) / rho * part[0];
+          part[3] -= tan(e2 - psi2 / (1 + part[5])) / rho * part[2];
+        }
+      }
       if (coordinateSign == -1) {
         part[0] = -part[0];
         part[1] = -part[1];
@@ -3639,6 +4337,60 @@ extern "C" int gpuCudaCsbendTrackChecked(void *coord, long nParticles,
   return static_cast<int>(cudaSuccess);
 }
 
+extern "C" int gpuCudaCsbendTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_CSBEND_DATA *csbend, long *remaining, float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  long survivors;
+  long *devicePrefix = static_cast<long *>(prefix);
+  thrust::device_ptr<long> flags(devicePrefix);
+  const int blockSize = 256;
+  int gridSize;
+  int status;
+
+  if (!remaining)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *remaining = nParticles;
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+  if (!coord || !scratchCoord || !prefix || !csbend || stride <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+
+  status = uploadCsbendDataIfNeeded(csbend);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+
+  gridSize = static_cast<int>((nParticles + blockSize - 1) / blockSize);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+
+  gpuCsbendSurvivorFlagKernel<<<gridSize, blockSize>>>(
+    static_cast<double *>(coord), nParticles, stride, devicePrefix);
+  cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess) {
+    survivors = thrust::reduce(flags, flags + nParticles, 0L,
+                               thrust::plus<long>());
+    thrust::exclusive_scan(flags, flags + nParticles, flags);
+    cudaStatus = cudaGetLastError();
+  } else {
+    survivors = nParticles;
+  }
+  if (cudaStatus == cudaSuccess) {
+    gpuCsbendStableTrackScatterKernel<<<gridSize, blockSize>>>(
+      static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+      devicePrefix, nParticles, stride, survivors);
+    cudaStatus = cudaGetLastError();
+  }
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  if (status == static_cast<int>(cudaSuccess))
+    *remaining = survivors;
+  return status;
+}
+
 extern "C" int gpuCudaCsrCsbendBodySliceChecked(void *coord,
                                                 long nParticles,
                                                 int stride,
@@ -3710,6 +4462,10 @@ extern "C" int gpuCudaCsrCsbendEnterSimpleChecked(void *coord,
                                                   int stride,
                                                   double pCentral,
                                                   double coordinateSign,
+                                                  int edge1Effect,
+                                                  double e1,
+                                                  double psi1,
+                                                  double rhoActual,
                                                   double *beta0,
                                                   void *backup,
                                                   void *deviceLostCount,
@@ -3727,7 +4483,8 @@ extern "C" int gpuCudaCsrCsbendEnterSimpleChecked(void *coord,
 
   if (!coord || !beta0 || !backupCoord || !lostCountDevice || !lostCount ||
       stride < 6 || pCentral == 0 ||
-      (coordinateSign != 1 && coordinateSign != -1))
+      (coordinateSign != 1 && coordinateSign != -1) ||
+      (edge1Effect && rhoActual == 0))
     return static_cast<int>(cudaErrorInvalidValue);
   *lostCount = 0;
   if (milliseconds)
@@ -3754,7 +4511,7 @@ extern "C" int gpuCudaCsrCsbendEnterSimpleChecked(void *coord,
   gpuCsrCsbendEnterSimpleCheckedKernel<<<blocks, threads,
                                          threads * sizeof(unsigned long long)>>>(
     static_cast<double *>(coord), nParticles, stride, pCentral,
-    coordinateSign, beta0, lostCountDevice);
+    coordinateSign, edge1Effect, e1, psi1, rhoActual, beta0, lostCountDevice);
   status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
   if (status != static_cast<int>(cudaSuccess))
     return status;
@@ -3776,6 +4533,10 @@ extern "C" int gpuCudaCsrCsbendFinalizeSimpleChecked(void *coord,
                                                      int stride,
                                                      double pCentral,
                                                      double coordinateSign,
+                                                     int edge2Effect,
+                                                     double e2,
+                                                     double psi2,
+                                                     double rhoActual,
                                                      void *backup,
                                                      void *deviceLostCount,
                                                      long *lostCount,
@@ -3792,7 +4553,8 @@ extern "C" int gpuCudaCsrCsbendFinalizeSimpleChecked(void *coord,
 
   if (!coord || !backupCoord || !lostCountDevice || !lostCount ||
       stride < 6 || pCentral == 0 ||
-      (coordinateSign != 1 && coordinateSign != -1))
+      (coordinateSign != 1 && coordinateSign != -1) ||
+      (edge2Effect && rhoActual == 0))
     return static_cast<int>(cudaErrorInvalidValue);
   *lostCount = 0;
   if (milliseconds)
@@ -3819,7 +4581,7 @@ extern "C" int gpuCudaCsrCsbendFinalizeSimpleChecked(void *coord,
   gpuCsrCsbendFinalizeSimpleCheckedKernel<<<blocks, threads,
                                             threads * sizeof(unsigned long long)>>>(
     static_cast<double *>(coord), nParticles, stride, pCentral,
-    coordinateSign, lostCountDevice);
+    coordinateSign, edge2Effect, e2, psi2, rhoActual, lostCountDevice);
   status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
   if (status != static_cast<int>(cudaSuccess))
     return status;
@@ -4958,6 +5720,115 @@ extern "C" int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
 
+extern "C" int gpuCudaRfcwRfOnlyMatrix(void *coord, long nParticles, int stride,
+                                       double pCentral, double length,
+                                       double volt, double omega,
+                                       double phase, int end1Focus,
+                                       int end2Focus, double dx, double dy,
+                                       double cMks,
+                                       float *milliseconds) {
+  cudaEvent_t start, stop;
+  int threads = 256;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuRfcwRfOnlyMatrixKernel<<<blocks, threads>>>(static_cast<double *>(coord), nParticles,
+                                                 stride, pCentral, length,
+                                                 volt, omega, phase,
+                                                 end1Focus, end2Focus, dx, dy,
+                                                 cMks);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaRfcwKickInitial(void *coord, void *inverseF,
+                                      long nParticles, int stride,
+                                      double pCentral, double length,
+                                      double volt, double omega, double phase,
+                                      int end1Focus, double cMks,
+                                      float *milliseconds) {
+  cudaEvent_t start, stop;
+  int threads = 256;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  if (!coord || !inverseF)
+    return static_cast<int>(cudaErrorInvalidValue);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuRfcwKickInitialKernel<<<blocks, threads>>>(
+    static_cast<double *>(coord), static_cast<double *>(inverseF),
+    nParticles, stride, pCentral, length, volt, omega, phase,
+    end1Focus, cMks);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaRfcwKickFinal(void *coord, const void *inverseF,
+                                    long nParticles, int stride,
+                                    double length, int end2Focus,
+                                    float *milliseconds) {
+  cudaEvent_t start, stop;
+  int threads = 256;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  if (!coord || !inverseF)
+    return static_cast<int>(cudaErrorInvalidValue);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuRfcwKickFinalKernel<<<blocks, threads>>>(
+    static_cast<double *>(coord), static_cast<const double *>(inverseF),
+    nParticles, stride, length, end2Focus);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaRfcwDgammaOverGammaSums(void *coord, long nParticles,
+                                              int stride, double pCentral,
+                                              double length, double volt,
+                                              double omega, double phase,
+                                              double cMks,
+                                              GPU_BEAM_SUM_DATA *result,
+                                              float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  GPU_BEAM_SUM_DATA *deviceResult = NULL;
+  int status;
+
+  if (!coord || !result)
+    return static_cast<int>(cudaErrorInvalidValue);
+  std::memset(result, 0, sizeof(*result));
+  cudaStatus = cudaMalloc(&deviceResult, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMemset(deviceResult, 0, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceResult);
+    return static_cast<int>(cudaStatus);
+  }
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  gpuRfcwDgammaOverGammaSumsKernel<<<1, GPU_REDUCTION_THREADS>>>(
+    static_cast<double *>(coord), nParticles, stride, pCentral,
+    length, volt, omega, phase, cMks, deviceResult);
+  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(result, deviceResult, sizeof(*result),
+                          cudaMemcpyDeviceToHost);
+  cudaFree(deviceResult);
+  return static_cast<int>(cudaStatus);
+}
+
 extern "C" int gpuCudaSubtractCoordinate(void *coord, long nParticles, int stride,
                                          int index, double value, float *milliseconds) {
   cudaEvent_t start, stop;
@@ -5066,6 +5937,172 @@ extern "C" int gpuCudaTimeSums(void *coord, long nParticles, int stride,
                                double pCentral, double cMks,
                                GPU_BEAM_SUM_DATA *result, float *milliseconds) {
   return gpuCudaRunReduction(coord, nParticles, stride, pCentral, cMks, -1, result, milliseconds);
+}
+
+extern "C" int gpuCudaSelectedTimeSums(void *coord, long nParticles, int stride,
+                                       double pCentral, double cMks,
+                                       int bunchColumn, long selectedBunch,
+                                       GPU_BEAM_SUM_DATA *result,
+                                       float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  GPU_BEAM_SUM_DATA *deviceResult = NULL;
+  int status;
+
+  if (!result)
+    return static_cast<int>(cudaErrorInvalidValue);
+  std::memset(result, 0, sizeof(*result));
+  if (!coord || nParticles <= 0 || bunchColumn < 0 || bunchColumn >= stride)
+    return static_cast<int>(cudaErrorInvalidValue);
+
+  cudaStatus = cudaMalloc(&deviceResult, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMemset(deviceResult, 0, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceResult);
+    return static_cast<int>(cudaStatus);
+  }
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  gpuSelectedTimeSumsKernel<<<1, GPU_REDUCTION_THREADS>>>(
+    static_cast<double *>(coord), nParticles, stride, pCentral, cMks,
+    bunchColumn, selectedBunch, deviceResult);
+  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(result, deviceResult, sizeof(*result), cudaMemcpyDeviceToHost);
+  cudaFree(deviceResult);
+  return static_cast<int>(cudaStatus);
+}
+
+extern "C" int gpuCudaFiducialTimeSums(void *coord, long nParticles, int stride,
+                                       double pCentral, double sOffset,
+                                       double cMks, int particleIdColumn,
+                                       long startPID, long endPID,
+                                       GPU_BEAM_SUM_DATA *result,
+                                       float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  GPU_BEAM_SUM_DATA *deviceResult = NULL;
+  int status;
+
+  if (!coord || !result)
+    return static_cast<int>(cudaErrorInvalidValue);
+  cudaStatus = cudaMalloc(&deviceResult, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMemset(deviceResult, 0, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceResult);
+    return static_cast<int>(cudaStatus);
+  }
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  gpuFiducialTimeSumsKernel<<<1, GPU_REDUCTION_THREADS>>>(
+    static_cast<double *>(coord), nParticles, stride, pCentral, sOffset,
+    cMks, particleIdColumn, startPID, endPID, deviceResult);
+  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(result, deviceResult, sizeof(*result), cudaMemcpyDeviceToHost);
+  cudaFree(deviceResult);
+  return static_cast<int>(cudaStatus);
+}
+
+extern "C" int gpuCudaFiducialPmaximum(void *coord, long nParticles,
+                                       int stride, double pCentral,
+                                       double sOffset, double cMks,
+                                       int particleIdColumn, long startPID,
+                                       long endPID,
+                                       GPU_BEAM_SUM_DATA *result,
+                                       float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  GPU_BEAM_SUM_DATA *deviceResult = NULL;
+  int status;
+
+  if (!coord || !result || nParticles <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  std::memset(result, 0, sizeof(*result));
+  cudaStatus = cudaMalloc(&deviceResult, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMemset(deviceResult, 0, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceResult);
+    return static_cast<int>(cudaStatus);
+  }
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  gpuFiducialPmaximumKernel<<<1, GPU_REDUCTION_THREADS>>>(
+    static_cast<double *>(coord), nParticles, stride, pCentral, sOffset,
+    cMks, particleIdColumn, startPID, endPID, deviceResult);
+  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(result, deviceResult, sizeof(*result), cudaMemcpyDeviceToHost);
+  cudaFree(deviceResult);
+  return static_cast<int>(cudaStatus);
+}
+
+extern "C" int gpuCudaFiducialFirst(void *coord, long nParticles,
+                                    int stride, double pCentral,
+                                    double sOffset, double cMks,
+                                    int particleIdColumn, long startPID,
+                                    long endPID, GPU_BEAM_SUM_DATA *result,
+                                    float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  GPU_BEAM_SUM_DATA *deviceResult = NULL;
+  int status;
+
+  if (!coord || !result || nParticles <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  std::memset(result, 0, sizeof(*result));
+  cudaStatus = cudaMalloc(&deviceResult, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMemset(deviceResult, 0, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceResult);
+    return static_cast<int>(cudaStatus);
+  }
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  gpuFiducialFirstKernel<<<1, GPU_REDUCTION_THREADS>>>(
+    static_cast<double *>(coord), nParticles, stride, pCentral, sOffset,
+    cMks, particleIdColumn, startPID, endPID, deviceResult);
+  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(result, deviceResult, sizeof(*result), cudaMemcpyDeviceToHost);
+  cudaFree(deviceResult);
+  return static_cast<int>(cudaStatus);
 }
 
 extern "C" int gpuCudaCentroidTimeSums(void *coord, long nParticles, int stride,

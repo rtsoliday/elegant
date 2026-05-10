@@ -58,8 +58,9 @@ FIELD_MAP_TYPES = {
     "FTABLE",
 }
 CUDA_SIMPLE_MULTIPOLE_TYPES = {"KQUAD", "KSEXT", "KOCT", "DQCOR"}
+CUDA_SIMPLE_MULT_TYPES = {"MULT"}
 CUDA_SIMPLE_CSBEND_TYPES = {"CSBEND", "CSBEN"}
-EXISTING_MATRIX_CUDA_TYPES = {"QUAD", "SEXT", "OCTU", "SBEN", "RBEN", "HKICK", "VKICK"}
+EXISTING_MATRIX_CUDA_TYPES = {"QUAD", "SEXT", "OCTU", "SBEN", "RBEN", "HKICK", "VKICK", "HVCOR", "KICKER"}
 MAGNET_TYPES = BEND_TYPES | MULTIPOLE_TYPES | FIELD_MAP_TYPES
 
 ELEMENT_RE = re.compile(
@@ -233,6 +234,16 @@ def classify_element(etype: str, params: dict[str, str]) -> tuple[bool, list[str
             reasons.append("multipole_tables_or_files")
         if param_is_set(params, "FIDUCIAL", "STEERING", "FRINGE_TYPE", "FFRINGE"):
             reasons.append("extra_multipole_modes")
+        return not reasons, reasons
+
+    if upper in CUDA_SIMPLE_MULT_TYPES:
+        if radiation:
+            reasons.append("radiation_or_isr")
+        if advanced_misalignment:
+            reasons.append("advanced_misalignment")
+        order = max_int_param(params, ("ORDER",), default=1)
+        if order < 0 or order > 3:
+            reasons.append("unsupported_high_order_multipole")
         return not reasons, reasons
 
     if upper in CUDA_SIMPLE_CSBEND_TYPES:

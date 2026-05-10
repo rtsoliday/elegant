@@ -9,6 +9,7 @@ extern "C" {
 #  define GPU_BUNCHED_WAKE_UNSUPPORTED 0
 #  define GPU_BUNCHED_WAKE_TRACK 1
 #  define GPU_BUNCHED_WAKE_SKIP 2
+#  define GPU_BUNCHED_WAKE_MATCH_ONLY 3
 #endif
 
 typedef struct GPU_BASE {
@@ -18,6 +19,7 @@ typedef struct GPU_BASE {
   long nOriginal;
   long nParticles;
   long isMaster;
+  long lossOutputNeeded;
   long elementOnGpu;
   long initialized;
   long deviceCount;
@@ -46,6 +48,7 @@ typedef struct GPU_BASE {
   long gpuElementCount;
   long gpuTrackParticleCount;
   long gpuExactDriftCount;
+  long gpuLinearDriftCount;
   long gpuHelperCount;
   long gpuReductionCount;
   long gpuApertureCount;
@@ -170,6 +173,9 @@ typedef struct GPU_WAKE_LONGITUDINAL_DATA {
   long wakePoints;
   long i0;
   int interpolate;
+  int useBunchFilter;
+  int bunchIndexColumn;
+  long selectedBunch;
   double tmin;
   double dt;
   double pCentral;
@@ -184,6 +190,9 @@ typedef struct GPU_TRWAKE_DATA {
   long wakePoints;
   long i0;
   int interpolate;
+  int useBunchFilter;
+  int bunchIndexColumn;
+  long selectedBunch;
   int hasWake[2];
   long driveExponent[2];
   long probeExponent[2];
@@ -242,7 +251,8 @@ typedef struct GPU_KICKMAP_DATA {
 } GPU_KICKMAP_DATA;
 
 GPU_BASE *getGpuBase(void);
-void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **lostPart, long isMaster);
+void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **lostPart,
+                 long isMaster, long lossOutputNeeded);
 void gpuBaseDealloc(void);
 void gpuDisableForRun(const char *reason);
 void setElementGpuData(void *eptr, long nParticles);

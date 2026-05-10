@@ -397,8 +397,8 @@ long do_tracking(
   eptr = beamline->elem;
 
 #ifdef HAVE_GPU
-  // gpuBaseInit(coord, nOriginal, accepted, lostBeam->particle, isMaster);
-  gpuBaseInit(coord, nOriginal, accepted, NULL, isMaster);
+  gpuBaseInit(coord, nOriginal, accepted, NULL, isMaster,
+              run && run->losses && run->losses[0] && !(flags & INHIBIT_FILE_OUTPUT));
 #  if USE_MPI
   if (notSinglePart && run->load_balancing_on == 1)
     gpuDisableForRun("Pelegant load_balancing_on=1 CUDA redistribution is deferred");

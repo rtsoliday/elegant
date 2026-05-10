@@ -28,7 +28,7 @@ DEFAULT_EXPECTATIONS = {
     "CSRCSBEND": 1,
     "CSRDRIFT": 1,
     "RFCW": 1,
-    "MULT": 0,
+    "MULT": 1,
     "BMAPXY": 0,
     "CCBEND": 0,
     "UKICKMAP": 0,

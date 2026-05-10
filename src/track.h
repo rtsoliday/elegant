@@ -4197,6 +4197,8 @@ double findFiducialTime(double **part, long np, double s0, double sOffset,
                         double p0, unsigned long mode);
 extern unsigned long parseFiducialMode(char *mode);
 void setFiducializationBunch(long b, int32_t n);
+long getFiducializationPidRange(unsigned long mode, long *startPID,
+                                long *endPID);
 
 /* prototypes for final_props.c */
 extern void SDDS_FinalOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row,

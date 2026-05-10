@@ -1,0 +1,10 @@
+OK4WIGH: CWIGGLER,L=1.0,PERIODS=10,B_MAX=0.55,STEPS_PER_PERIOD=5,INTEGRATION_ORDER=2,SYNCH_RAD=1,ISR=1,&
+  BY_FILE="/home/soliday/oag/apps/src/elegantTestSet/cwiggler10/hWigglerData.sdds"
+OK4WIGHR: CWIGGLER,L=1.0,PERIODS=10,B_MAX=0.55,STEPS_PER_PERIOD=5,INTEGRATION_ORDER=2,SYNCH_RAD=1,ISR=1,&
+  BY_FILE="/home/soliday/oag/apps/src/elegantTestSet/cwiggler10/hWigglerData.sdds",TILT="pi 2 /"
+OK4WIGV: CWIGGLER,L=1.0,PERIODS=10,B_MAX=0.55,STEPS_PER_PERIOD=5,INTEGRATION_ORDER=2,SYNCH_RAD=1,ISR=1,&
+  BX_FILE="/home/soliday/oag/apps/src/elegantTestSet/cwiggler10/vWigglerData.sdds"
+D1: DRIFT,L=5.0
+MALIN: MALIGN,ON_PASS=0
+W1: WATCH,FILENAME="%s.w1",MODE="centroid"
+BLT: LINE=(MALIN,OK4WIGHR,D1,OK4WIGH,D1,W1)

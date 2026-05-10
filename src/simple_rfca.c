@@ -59,18 +59,27 @@ void setFiducializationBunch(long b, int32_t n) {
 #endif
 }
 
+long getFiducializationPidRange(unsigned long mode, long *startPID,
+                                long *endPID) {
+  if (!startPID || !endPID)
+    return 0;
+  if (fiducializationBunch < 0 || idSlotsPerBunch <= 0 ||
+      mode & FID_MODE_FULLBEAM) {
+    *startPID = *endPID = -1;
+  } else {
+    *startPID = fiducializationBunch * idSlotsPerBunch + 1;
+    *endPID = *startPID + idSlotsPerBunch - 1;
+  }
+  return 1;
+}
+
 double findFiducialTime(double **part, long np, double s0, double sOffset,
                         double p0, unsigned long mode) {
   double tFid = 0.0;
   long i;
   long startPID, endPID;
 
-  if (fiducializationBunch < 0 || idSlotsPerBunch <= 0 || mode & FID_MODE_FULLBEAM)
-    startPID = endPID = -1;
-  else {
-    startPID = fiducializationBunch * idSlotsPerBunch + 1;
-    endPID = startPID + idSlotsPerBunch - 1;
-  }
+  getFiducializationPidRange(mode, &startPID, &endPID);
 #if USE_MPI
   mpiAbort = 0;
 #  if MPI_DEBUG
@@ -100,25 +109,31 @@ double findFiducialTime(double **part, long np, double s0, double sOffset,
     tFid = (s0 + sOffset) / c_mks;
   } else if (mode & FID_MODE_FIRST) {
 #if (!USE_MPI)
-    i = np;
+    long found = 0;
     if (np) {
       for (i = 0; i < np; i++) {
-        if ((startPID < 0 && endPID < 0) || (part[i][6] >= startPID && part[i][6] <= endPID))
+        if ((startPID < 0 && endPID < 0) || (part[i][6] >= startPID && part[i][6] <= endPID)) {
           tFid = (part[i][4] + sOffset) / (c_mks * beta_from_delta(p0, part[i][5]));
+          found = 1;
+          break;
+        }
       }
     }
-    if (i == np)
+    if (!found)
       bombElegant("No available particle for the FID_MODE_FIRST mode in findFiducialTime", NULL);
 #else
     if (myid == 1) { /* If the first particle is lost, Pelegant and elegant will not have the same fiducial time */
-      i = np;
+      long found = 0;
       if (np) {
         for (i = 0; i < np; i++) {
-          if ((startPID < 0 && endPID < 0) || (part[i][6] >= startPID && part[i][6] <= endPID))
+          if ((startPID < 0 && endPID < 0) || (part[i][6] >= startPID && part[i][6] <= endPID)) {
             tFid = (part[i][4] + sOffset) / (c_mks * beta_from_delta(p0, part[i][5]));
+            found = 1;
+            break;
+          }
         }
       }
-      if (i == np)
+      if (!found)
         mpiAbort = MPI_ABORT_RF_FIDUCIALIZATION_ERROR;
     }
     MPI_Bcast(&tFid, 1, MPI_DOUBLE, 1, MPI_COMM_WORLD);

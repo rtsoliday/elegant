@@ -1,0 +1,8 @@
+SDDS1
+&column name=IonName, type=string &end
+&column name=Mass, units=AMU, type=double &end
+&column name=ChargeState, type=long &end
+&column name=SourceName, type=string &end
+&column name=CrossSection, units=Mb, type=double &end
+&data mode=ascii no_row_counts=1 &end
+"N2+" 28.0 1 "N2" 2.0

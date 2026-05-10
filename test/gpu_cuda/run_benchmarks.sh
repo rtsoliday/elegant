@@ -20,7 +20,7 @@ PRODUCTION_SMOKE=0
 PARTICLES_OVERRIDE=
 PASSES_OVERRIDE=
 
-CASES="matrix phase19_matrix_load_balance exact_drift phase2_helpers phase2_time_center phase2_special_matrix phase2_matrix_extended phase2_residency phase3_limit_amplitudes phase3_limit_loss phase3_elimit_amplitudes phase3_elimit_loss phase3_ecol phase3_ecol_loss phase3_scraper phase3_scraper_loss phase15_aperture_data_loss phase15_remove_invalid_loss phase15_rcol_open_loss phase15_ecol_mixed_loss phase15_ecol_open_global_loss phase15_rcol_open_global_loss phase15_scraper_global_loss phase15_scraper_two_sided_global_loss multipole phase17_multipole_misalignment phase4_dqcor phase17_dqcor_misalignment csbend phase17_csbend_misalignment phase4_csbend_expanded phase4_csbend_ho_edge aperture_loss phase5_wake wake_trwake wake_trwake_fixed_bins phase16_wake_smoothing phase16_wake_change_p0 phase16_trwake_smoothing phase16_trwake_tilt phase16_lsc_smoothing_filter phase16_lsc_kick_mode phase16_lsc_auto_leffective phase16_lsc_backtrack phase16_lsc_low_frequency_filter phase16_fiducial_modulate phase16_bunched_wake_single phase16_bunched_wake_filter_skip phase16_bunched_wake_multibucket_skip lsc csr phase6_csr_csbend phase6_csr_bins_512 phase6_csr_bins_4096 phase6_csr_short_bunch phase6_csr_long_bunch phase14_csr_last_wake phase14_csr_filters phase14_csr_saldin54 phase7_scmult_linear phase18_rfca_thin rfcw lcls0"
+CASES="matrix phase19_matrix_load_balance exact_drift phase2_helpers phase2_time_center phase2_special_matrix phase2_matrix_extended phase2_residency phase3_limit_amplitudes phase3_limit_loss phase3_elimit_amplitudes phase3_elimit_loss phase3_ecol phase3_ecol_loss phase3_scraper phase3_scraper_loss phase15_aperture_data_loss phase15_remove_invalid_loss phase15_rcol_open_loss phase15_ecol_mixed_loss phase15_ecol_open_global_loss phase15_rcol_open_global_loss phase15_scraper_global_loss phase15_scraper_two_sided_global_loss multipole phase17_multipole_misalignment phase55_mult_deterministic phase56_mult_loss_compaction phase57_mult_loss_accepted_compaction phase59_mult_loss_output_fallback phase60_mult_global_loss_fallback phase4_dqcor phase17_dqcor_misalignment csbend phase17_csbend_misalignment phase58_csbend_loss_compaction phase61_csbend_advanced_fallback phase62_kickmap_loss_compaction phase63_kickmap_loss_output_fallback phase64_kickmap_global_loss_fallback phase4_csbend_expanded phase4_csbend_ho_edge aperture_loss phase5_wake wake_trwake wake_trwake_fixed_bins phase16_wake_smoothing phase16_wake_change_p0 phase16_trwake_smoothing phase16_trwake_tilt phase16_lsc_smoothing_filter phase16_lsc_kick_mode phase16_lsc_auto_leffective phase16_lsc_backtrack phase16_lsc_low_frequency_filter phase16_fiducial_modulate phase16_bunched_wake_single phase16_bunched_wake_filter_skip phase16_bunched_wake_multibucket_skip phase22_bunched_wake_filter_select phase23_bunched_wake_filter_range phase24_bunched_wake_change_p0_skip lsc csr phase6_csr_csbend phase6_csr_bins_512 phase6_csr_bins_4096 phase6_csr_short_bunch phase6_csr_long_bunch phase14_csr_last_wake phase14_csr_filters phase14_csr_saldin54 phase14_csr_noop_drift_aperture phase14_csr_entry_edge phase14_csr_linear_drift phase7_scmult_linear phase65_scmult_nonlinear_fallback phase66_scmult_sliced_fallback phase67_scmult_multibunch_fallback phase18_rfca_thin phase26_rfca_thin_change_p0 phase27_rfca_thin_fiducial_modes phase28_rfca_thin_offset phase29_rfca_matrix_rf_only phase30_rfca_matrix_fiducial_modes phase39_rfca_kick_rf_only phase21_rfcw_rf_only phase25_rfcw_rf_only_offset phase31_rfcw_rf_only_fiducial_modes phase32_rfcw_matrix_wake phase33_rfcw_kick_wake phase34_rfcw_wakes_at_end phase35_rfcw_matrix_wakes_at_end phase36_rfcw_lsc phase37_rfcw_multikick phase38_rfcw_kick_rf_only phase41_rfcw_wake_pmaximum_fiducial phase42_rfcw_fixed_wake_bins phase43_rfcw_lsc_only phase44_rfcw_single_wake_planes phase45_rf_kick_treference phase46_rfcw_wake_treference phase47_rf_selected_tmean_fiducial phase48_rf_selected_pmaximum_fiducial phase49_rfcw_wake_selected_fiducial phase50_rf_first_fiducial phase51_rf_standing_wave_single phase52_rf_standing_wave_multikick_treference phase53_rfca_standing_wave_multikick_fiducial phase54_rfcw_standing_wave_multikick_fiducial rfcw lcls0"
 PRODUCTION_SMOKE_CASES="lcls0 lcls1 clic1 csbend1 maxamp1 collimate1 collimate2 collimate3 dqcor1"
 
 usage() {
@@ -224,6 +224,8 @@ case_defaults() {
     phase15_rcol_open_loss:baseline) printf '30000 10\n' ;;
     phase15_ecol_mixed_loss:quick) printf '3000 3\n' ;;
     phase15_ecol_mixed_loss:baseline) printf '30000 10\n' ;;
+    phase15_elimit_loss_no_output:quick) printf '3000 3\n' ;;
+    phase15_elimit_loss_no_output:baseline) printf '30000 10\n' ;;
     phase15_ecol_open_global_loss:quick) printf '3000 3\n' ;;
     phase15_ecol_open_global_loss:baseline) printf '30000 10\n' ;;
     phase15_rcol_open_global_loss:quick) printf '3000 3\n' ;;
@@ -236,6 +238,26 @@ case_defaults() {
     multipole:baseline) printf '20000 10\n' ;;
     phase17_multipole_misalignment:quick) printf '3000 2\n' ;;
     phase17_multipole_misalignment:baseline) printf '30000 10\n' ;;
+    phase55_mult_deterministic:quick) printf '3000 2\n' ;;
+    phase55_mult_deterministic:baseline) printf '30000 10\n' ;;
+    phase56_mult_loss_compaction:quick) printf '3000 1\n' ;;
+    phase56_mult_loss_compaction:baseline) printf '30000 5\n' ;;
+    phase57_mult_loss_accepted_compaction:quick) printf '3000 1\n' ;;
+    phase57_mult_loss_accepted_compaction:baseline) printf '30000 5\n' ;;
+    phase59_mult_loss_output_fallback:quick) printf '3000 1\n' ;;
+    phase59_mult_loss_output_fallback:baseline) printf '30000 5\n' ;;
+    phase60_mult_global_loss_fallback:quick) printf '3000 1\n' ;;
+    phase60_mult_global_loss_fallback:baseline) printf '30000 5\n' ;;
+    phase58_csbend_loss_compaction:quick) printf '3000 1\n' ;;
+    phase58_csbend_loss_compaction:baseline) printf '30000 5\n' ;;
+    phase61_csbend_advanced_fallback:quick) printf '3000 2\n' ;;
+    phase61_csbend_advanced_fallback:baseline) printf '30000 8\n' ;;
+    phase62_kickmap_loss_compaction:quick) printf '3000 3\n' ;;
+    phase62_kickmap_loss_compaction:baseline) printf '30000 20\n' ;;
+    phase63_kickmap_loss_output_fallback:quick) printf '3000 3\n' ;;
+    phase63_kickmap_loss_output_fallback:baseline) printf '30000 20\n' ;;
+    phase64_kickmap_global_loss_fallback:quick) printf '3000 3\n' ;;
+    phase64_kickmap_global_loss_fallback:baseline) printf '30000 20\n' ;;
     phase4_dqcor:quick) printf '2000 3\n' ;;
     phase4_dqcor:baseline) printf '20000 20\n' ;;
     phase17_dqcor_misalignment:quick) printf '3000 3\n' ;;
@@ -282,6 +304,12 @@ case_defaults() {
     phase16_bunched_wake_filter_skip:baseline) printf '30000 40\n' ;;
     phase16_bunched_wake_multibucket_skip:quick) printf '1000 5\n' ;;
     phase16_bunched_wake_multibucket_skip:baseline) printf '10000 40\n' ;;
+    phase22_bunched_wake_filter_select:quick) printf '1000 5\n' ;;
+    phase22_bunched_wake_filter_select:baseline) printf '10000 40\n' ;;
+    phase23_bunched_wake_filter_range:quick) printf '1200 4\n' ;;
+    phase23_bunched_wake_filter_range:baseline) printf '12000 30\n' ;;
+    phase24_bunched_wake_change_p0_skip:quick) printf '1200 5\n' ;;
+    phase24_bunched_wake_change_p0_skip:baseline) printf '12000 40\n' ;;
     lsc:quick) printf '3000 1\n' ;;
     lsc:baseline) printf '30000 5\n' ;;
     csr:quick) printf '2000 1\n' ;;
@@ -302,10 +330,84 @@ case_defaults() {
     phase14_csr_filters:baseline) printf '20000 1\n' ;;
     phase14_csr_saldin54:quick) printf '2000 1\n' ;;
     phase14_csr_saldin54:baseline) printf '20000 1\n' ;;
+    phase14_csr_noop_drift_aperture:quick) printf '2000 1\n' ;;
+    phase14_csr_noop_drift_aperture:baseline) printf '20000 1\n' ;;
+    phase14_csr_entry_edge:quick) printf '2000 1\n' ;;
+    phase14_csr_entry_edge:baseline) printf '20000 1\n' ;;
+    phase14_csr_linear_drift:quick) printf '2000 1\n' ;;
+    phase14_csr_linear_drift:baseline) printf '20000 1\n' ;;
     phase7_scmult_linear:quick) printf '3000 1\n' ;;
     phase7_scmult_linear:baseline) printf '30000 3\n' ;;
+    phase65_scmult_nonlinear_fallback:quick) printf '2000 2\n' ;;
+    phase65_scmult_nonlinear_fallback:baseline) printf '10000 10\n' ;;
+    phase66_scmult_sliced_fallback:quick) printf '2000 2\n' ;;
+    phase66_scmult_sliced_fallback:baseline) printf '10000 10\n' ;;
+    phase67_scmult_multibunch_fallback:quick) printf '1000 2\n' ;;
+    phase67_scmult_multibunch_fallback:baseline) printf '10000 10\n' ;;
     phase18_rfca_thin:quick) printf '3000 8\n' ;;
     phase18_rfca_thin:baseline) printf '30000 80\n' ;;
+    phase26_rfca_thin_change_p0:quick) printf '3000 4\n' ;;
+    phase26_rfca_thin_change_p0:baseline) printf '30000 40\n' ;;
+    phase27_rfca_thin_fiducial_modes:quick) printf '3000 4\n' ;;
+    phase27_rfca_thin_fiducial_modes:baseline) printf '30000 40\n' ;;
+    phase28_rfca_thin_offset:quick) printf '3000 4\n' ;;
+    phase28_rfca_thin_offset:baseline) printf '30000 40\n' ;;
+    phase29_rfca_matrix_rf_only:quick) printf '3000 4\n' ;;
+    phase29_rfca_matrix_rf_only:baseline) printf '30000 40\n' ;;
+    phase30_rfca_matrix_fiducial_modes:quick) printf '3000 4\n' ;;
+    phase30_rfca_matrix_fiducial_modes:baseline) printf '30000 40\n' ;;
+    phase39_rfca_kick_rf_only:quick) printf '3000 4\n' ;;
+    phase39_rfca_kick_rf_only:baseline) printf '30000 40\n' ;;
+    phase40_rf_pmaximum_fiducial:quick) printf '3000 4\n' ;;
+    phase40_rf_pmaximum_fiducial:baseline) printf '30000 40\n' ;;
+    phase21_rfcw_rf_only:quick) printf '3000 4\n' ;;
+    phase21_rfcw_rf_only:baseline) printf '30000 40\n' ;;
+    phase25_rfcw_rf_only_offset:quick) printf '3000 4\n' ;;
+    phase25_rfcw_rf_only_offset:baseline) printf '30000 40\n' ;;
+    phase31_rfcw_rf_only_fiducial_modes:quick) printf '3000 4\n' ;;
+    phase31_rfcw_rf_only_fiducial_modes:baseline) printf '30000 40\n' ;;
+    phase32_rfcw_matrix_wake:quick) printf '3000 4\n' ;;
+    phase32_rfcw_matrix_wake:baseline) printf '30000 40\n' ;;
+    phase33_rfcw_kick_wake:quick) printf '3000 4\n' ;;
+    phase33_rfcw_kick_wake:baseline) printf '30000 40\n' ;;
+    phase34_rfcw_wakes_at_end:quick) printf '3000 4\n' ;;
+    phase34_rfcw_wakes_at_end:baseline) printf '30000 40\n' ;;
+    phase35_rfcw_matrix_wakes_at_end:quick) printf '3000 4\n' ;;
+    phase35_rfcw_matrix_wakes_at_end:baseline) printf '30000 40\n' ;;
+    phase36_rfcw_lsc:quick) printf '3000 3\n' ;;
+    phase36_rfcw_lsc:baseline) printf '30000 30\n' ;;
+    phase37_rfcw_multikick:quick) printf '3000 3\n' ;;
+    phase37_rfcw_multikick:baseline) printf '30000 30\n' ;;
+    phase38_rfcw_kick_rf_only:quick) printf '3000 4\n' ;;
+    phase38_rfcw_kick_rf_only:baseline) printf '30000 40\n' ;;
+    phase41_rfcw_wake_pmaximum_fiducial:quick) printf '3000 3\n' ;;
+    phase41_rfcw_wake_pmaximum_fiducial:baseline) printf '30000 30\n' ;;
+    phase42_rfcw_fixed_wake_bins:quick) printf '3000 3\n' ;;
+    phase42_rfcw_fixed_wake_bins:baseline) printf '30000 30\n' ;;
+    phase43_rfcw_lsc_only:quick) printf '3000 3\n' ;;
+    phase43_rfcw_lsc_only:baseline) printf '30000 30\n' ;;
+    phase44_rfcw_single_wake_planes:quick) printf '3000 3\n' ;;
+    phase44_rfcw_single_wake_planes:baseline) printf '30000 30\n' ;;
+    phase45_rf_kick_treference:quick) printf '3000 4\n' ;;
+    phase45_rf_kick_treference:baseline) printf '30000 40\n' ;;
+    phase46_rfcw_wake_treference:quick) printf '3000 3\n' ;;
+    phase46_rfcw_wake_treference:baseline) printf '30000 30\n' ;;
+    phase47_rf_selected_tmean_fiducial:quick) printf '2000 3\n' ;;
+    phase47_rf_selected_tmean_fiducial:baseline) printf '20000 30\n' ;;
+    phase48_rf_selected_pmaximum_fiducial:quick) printf '2000 3\n' ;;
+    phase48_rf_selected_pmaximum_fiducial:baseline) printf '20000 30\n' ;;
+    phase49_rfcw_wake_selected_fiducial:quick) printf '2000 3\n' ;;
+    phase49_rfcw_wake_selected_fiducial:baseline) printf '20000 30\n' ;;
+    phase50_rf_first_fiducial:quick) printf '2000 3\n' ;;
+    phase50_rf_first_fiducial:baseline) printf '20000 30\n' ;;
+    phase51_rf_standing_wave_single:quick) printf '2000 3\n' ;;
+    phase51_rf_standing_wave_single:baseline) printf '20000 30\n' ;;
+    phase52_rf_standing_wave_multikick_treference:quick) printf '2000 3\n' ;;
+    phase52_rf_standing_wave_multikick_treference:baseline) printf '20000 30\n' ;;
+    phase53_rfca_standing_wave_multikick_fiducial:quick) printf '2000 3\n' ;;
+    phase53_rfca_standing_wave_multikick_fiducial:baseline) printf '20000 30\n' ;;
+    phase54_rfcw_standing_wave_multikick_fiducial:quick) printf '2000 3\n' ;;
+    phase54_rfcw_standing_wave_multikick_fiducial:baseline) printf '20000 30\n' ;;
     rfcw:quick) printf '3000 1\n' ;;
     rfcw:baseline) printf '30000 5\n' ;;
     lcls0:quick) printf '0 1\n' ;;
@@ -326,10 +428,14 @@ case_defaults() {
     collimate3:baseline) printf '30000 3\n' ;;
     dqcor1:quick) printf '2000 3\n' ;;
     dqcor1:baseline) printf '20000 20\n' ;;
+    spinTest2:quick) printf '100 128\n' ;;
+    spinTest2:baseline) printf '1000 1024\n' ;;
     scRing2:quick) printf '0 8\n' ;;
     scRing2:baseline) printf '0 64\n' ;;
     scRing2_no_watch:quick) printf '0 8\n' ;;
     scRing2_no_watch:baseline) printf '0 64\n' ;;
+    ionEffectsPoisson:quick) printf '2000 3\n' ;;
+    ionEffectsPoisson:baseline) printf '10000 10\n' ;;
     bmapxy1:quick) printf '1000 1\n' ;;
     bmapxy1:baseline) printf '10000 3\n' ;;
     bmxyz1:quick) printf '25 1\n' ;;
@@ -338,8 +444,18 @@ case_defaults() {
     boffaxe1:baseline) printf '1000 1\n' ;;
     cwiggler10:quick) printf '100 10\n' ;;
     cwiggler10:baseline) printf '1000 20\n' ;;
+    cwiggler10_radiation:quick) printf '100 2\n' ;;
+    cwiggler10_radiation:baseline) printf '1000 10\n' ;;
+    uKickMap4_radiation:quick) printf '100 1\n' ;;
+    uKickMap4_radiation:baseline) printf '1000 1\n' ;;
     uKickMap1:quick) printf '3000 2\n' ;;
     uKickMap1:baseline) printf '30000 5\n' ;;
+    latticeErrors6:quick) printf '3000 2\n' ;;
+    latticeErrors6:baseline) printf '30000 5\n' ;;
+    latticeErrors6_loss_output:quick) printf '3000 2\n' ;;
+    latticeErrors6_loss_output:baseline) printf '30000 5\n' ;;
+    latticeErrors6_global_loss:quick) printf '3000 2\n' ;;
+    latticeErrors6_global_loss:baseline) printf '30000 5\n' ;;
     *) printf '2000 1\n' ;;
   esac
 }

@@ -2294,8 +2294,49 @@ static void compareCSR_LAST_WAKE(const CSR_LAST_WAKE *gpuWake,
 #endif
 
 #if defined(HAVE_GPU) && !USE_MPI
-static long csrDriftImmediatelyFollows(ELEMENT_LIST *eptr) {
-  return eptr && eptr->succ && eptr->succ->type == T_CSRDRIFT;
+static long csrDriftUsesCsrState(CSRDRIFT *csrDrift) {
+  return csrDrift && (csrDrift->csr || csrDrift->LSCBins);
+}
+
+static long csrDriftUsesStupakovOnly(CSRDRIFT *csrDrift) {
+  return csrDrift && csrDrift->csr && csrDrift->useStupakov &&
+         !csrDrift->LSCBins && !csrDrift->linearOptics;
+}
+
+static long csrDriftNeedsCsbendFinalPrep(CSRDRIFT *csrDrift) {
+  if (!csrDriftUsesCsrState(csrDrift))
+    return 0;
+  return !csrDriftUsesStupakovOnly(csrDrift);
+}
+
+static long csrDriftCsbendFinalPrepNeededFollows(ELEMENT_LIST *eptr) {
+  ELEMENT_LIST *next;
+
+  if (!eptr)
+    return 0;
+  for (next = eptr->succ; next; next = next->succ) {
+    if (next->type == T_CSRCSBEND)
+      return 0;
+    if (next->type == T_CSRDRIFT &&
+        csrDriftNeedsCsbendFinalPrep((CSRDRIFT *)next->p_elem))
+      return 1;
+  }
+  return 0;
+}
+
+static long csrDriftStupakovOnlyStateConsumerFollows(ELEMENT_LIST *eptr) {
+  ELEMENT_LIST *next;
+
+  if (!eptr)
+    return 0;
+  for (next = eptr->succ; next; next = next->succ) {
+    if (next->type == T_CSRCSBEND)
+      return 0;
+    if (next->type == T_CSRDRIFT &&
+        csrDriftUsesStupakovOnly((CSRDRIFT *)next->p_elem))
+      return 1;
+  }
+  return 0;
 }
 
 static long csrResidentSimpleFinalTransformAvailable(
@@ -2315,7 +2356,7 @@ static long csrResidentSimpleFinalTransformAvailable(
       return 0;
   if (!(csbend->edgeFlags & BEND_EDGE2_EFFECTS))
     return 1;
-  if (e2 != 0 || psi2 != 0 || csbend->edge_order > 1)
+  if (csbend->edge_order > 1)
     return 0;
   return csbend->edge_effects[csbend->e2Index] == 0 ||
          csbend->edge_effects[csbend->e2Index] == 1;
@@ -2325,6 +2366,10 @@ static long csrResidentSimpleInitialTransformAvailable(
   CSRCSBEND *csbend, double e1, double he1, double psi1,
   double cos_ttilt, double sin_ttilt, double dxi, double dyi,
   double dzi) {
+  (void)e1;
+  (void)he1;
+  (void)psi1;
+
   if (!csbend)
     return 0;
   if ((cos_ttilt != 1 && cos_ttilt != -1) || sin_ttilt != 0)
@@ -2333,7 +2378,7 @@ static long csrResidentSimpleInitialTransformAvailable(
     return 0;
   if (!(csbend->edgeFlags & BEND_EDGE1_EFFECTS))
     return 1;
-  if (e1 != 0 || he1 != 0 || psi1 != 0 || csbend->edge_order > 1)
+  if (csbend->edge_order > 1)
     return 0;
   return csbend->edge_effects[csbend->e1Index] == 0 ||
          csbend->edge_effects[csbend->e1Index] == 1;
@@ -2756,7 +2801,11 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
         csrResidentSimpleInitialTransformAvailable(
           csbend, e1, he1, psi1, cos_ttilt, sin_ttilt, dxi, dyi, dzi))
       gpuCsrResidentDeviceEntryDone =
-        gpu_track_csbend_csr_enter_simple(n_part, Po, cos_ttilt);
+        gpu_track_csbend_csr_enter_simple(
+          n_part, Po, cos_ttilt,
+          (csbend->edgeFlags & BEND_EDGE1_EFFECTS) &&
+            csbend->edge_effects[csbend->e1Index] == 1,
+          e1, psi1, rho_actual);
     if (!gpuCsrResidentDeviceEntryDone)
       forceParticlesToCpu("CSRCSBEND resident initial CPU fallback");
   }
@@ -3489,13 +3538,17 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 
 #if defined(HAVE_GPU) && !USE_MPI
   skipGpuCsrDriftPrep =
-    usedGpuCsrResident && !csrDriftImmediatelyFollows(eptr);
+    usedGpuCsrResident && !csrDriftCsbendFinalPrepNeededFollows(eptr);
   if (useGpuCsrResident) {
     if (csrResidentSimpleFinalTransformAvailable(
           csbend, e2, psi2, cos_ttilt, sin_ttilt,
           dxf, dyf, dzf, dcoord_etilt))
       gpuCsrResidentFinalDone =
-        gpu_track_csbend_csr_finalize_simple(n_part, Po, cos_ttilt);
+        gpu_track_csbend_csr_finalize_simple(
+          n_part, Po, cos_ttilt,
+          (csbend->edgeFlags & BEND_EDGE2_EFFECTS) &&
+            csbend->edge_effects[csbend->e2Index] == 1,
+          e2, psi2, rho_actual);
 #  if defined(GPU_VERIFY)
     forceParticlesToCpu("CSRCSBEND resident final CPU handoff");
 #  else
@@ -3731,6 +3784,24 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
       Msection = Me1 = Me2 = NULL;
     }
   }
+#if defined(HAVE_GPU) && !USE_MPI
+  else if (n_partMoreThanOne && !csbend->csrBlock &&
+           skipGpuCsrDriftPrep &&
+           csrDriftStupakovOnlyStateConsumerFollows(eptr)) {
+    csrWake.valid = 1;
+    csrWake.rho = rho_actual;
+    csrWake.bendingAngle = accumulatingAngle ? fabs(phiBend) : fabs(angle);
+    csrWake.Po = Po;
+    csrWake.SGOrder = csbend->SGOrder;
+    csrWake.SGDerivOrder = csbend->SGDerivOrder;
+    csrWake.SGHalfWidth = csbend->SGHalfWidth;
+    csrWake.SGDerivHalfWidth = csbend->SGDerivHalfWidth;
+    csrWake.GSConstant = CSRConstant * pow(3 * rho0 * rho0, 1. / 3.) / 2;
+    csrWake.MPCharge = macroParticleCharge;
+    csrWake.binRangeFactor = csbend->binRangeFactor;
+    csrWake.trapazoidIntegration = csbend->trapazoidIntegration;
+  }
+#endif
 
   if (csbend->csrBlock)
     accumulatedAngle = 0;

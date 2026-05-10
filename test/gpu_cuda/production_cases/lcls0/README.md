@@ -8,4 +8,10 @@ It was selected because it is a realistic LCLS linac tracking input with a 19999
 
 The wrapper intentionally references the source test-set files instead of copying large SDDS fixtures into this repository.
 
+Action 6 uses this wrapper as the production validation target for the
+wake-bearing `RFCW,N_KICKS=1` CUDA slice.  The May 8, 2026 quick run matched
+all 15 common SDDS files at `1e-11`, reported `wakes=1186` with no RFCW
+CPU-element synchronization, and ran 1.41x faster than the paired CPU quick
+run.
+
 Known note: the source lattice uses the deprecated `N_KICKS` alias on `CSRCSBEND`, so elegant prints deprecation warnings during parsing.  The wrapper preserves that source behavior instead of rewriting the production lattice.

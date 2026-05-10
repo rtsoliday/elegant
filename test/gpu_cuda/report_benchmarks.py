@@ -21,6 +21,7 @@ CUDA_SUMMARY_RE = re.compile(
     r"passive=(?P<passive>\d+)\s+"
     r"matrix=(?P<matrix>\d+)\s+"
     r"exactDrift=(?P<exact_drift>\d+)\s+"
+    r"(?:(?:linearDrift=(?P<linear_drift>\d+)\s+))?"
     r"helpers=(?P<helpers>\d+)\s+"
     r"reductions=(?P<reductions>\d+)\s+"
     r"apertures=(?P<apertures>\d+)\s+"
@@ -53,6 +54,10 @@ CUDA_SYNC_RE = re.compile(
 CUDA_SHORT_ISLAND_RE = re.compile(
     r"short GPU island CPU skips=(?P<skips>\d+)\s+"
     r"maxElements=(?P<max_elements>\d+)"
+)
+SYNC_REASON_RE = re.compile(
+    r"elegant CUDA: (?:read-only )?CPU(?: row)? synchronization requested by "
+    r"(?P<reason>.+?)(?: \(\d+ rows?\))?\.?$"
 )
 
 SYNC_CATEGORY_LABELS = [
@@ -150,8 +155,8 @@ def parse_cuda_log(output_dir: Path) -> CudaLog:
             log.selected_device = match.group(1).strip() if match else line.strip()
         elif "no usable CUDA device found" in line or "using CPU fallback" in line:
             log.fallback = line.strip()
-        elif "CPU synchronization requested by" in line:
-            reason = line.split("CPU synchronization requested by", 1)[1].strip().rstrip(".")
+        elif (reason_match := SYNC_REASON_RE.search(line)):
+            reason = reason_match.group("reason").strip().rstrip(".")
             log.sync_reasons[reason] += 1
             log.sync_groups[normalize_sync_reason(reason)] += 1
         elif "elegant CUDA: elements=" in line:

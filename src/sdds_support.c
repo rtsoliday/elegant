@@ -1135,7 +1135,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
       }
       for (i = 0; i < 7; i++) {
         if (!SDDS_SetRowValues(watch->SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, sample,
-                               Sx_index + i, sqrt(sums->beamSums2->sigma[i][i]),
+                               Sx_index + i, SAFE_SQRT(sums->beamSums2->sigma[i][i]),
                                -1)) {
           SDDS_SetError("Problem setting row values for SDDS table (dump_watch_parameters)");
           SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -2129,9 +2129,10 @@ void dump_sigma(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline, lo
       bombElegant("beamSums2 pointer is NULL in dump_sigma. This is a bug!", NULL);
     if (beam->n_part) {
       for (i = 0; i < 7; i++) {
+        double sigmaValue = SAFE_SQRT(beam->beamSums2->sigma[i][i]);
         if (!SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, ie,
-                               Sx_index + i, sqrt(beam->beamSums2->sigma[i][i]),
-                               sNIndex[i], sqrt(beam->beamSums2->sigma[i][i]),
+                               Sx_index + i, sigmaValue,
+                               sNIndex[i], sigmaValue,
                                -1)) {
           SDDS_SetError("Problem setting SDDS row values (dump_sigma 1)");
           SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -2522,4 +2523,3 @@ void computeEmitTwissFromSigmaMatrix(double *emit, double *emitc, double *beta, 
     }
   }
 }
-

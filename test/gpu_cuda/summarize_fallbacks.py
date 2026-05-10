@@ -13,7 +13,8 @@ from pathlib import Path
 
 
 SYNC_REASON_RE = re.compile(
-    r"elegant CUDA: (?:read-only )?CPU synchronization requested by (?P<reason>.+?)\.?$"
+    r"elegant CUDA: (?:read-only )?CPU(?: row)? synchronization requested by "
+    r"(?P<reason>.+?)(?: \(\d+ rows?\))?\.?$"
 )
 SYNC_SUMMARY_RE = re.compile(
     r"sync\s+requests=(?P<requests>\d+)\s+"
@@ -165,6 +166,7 @@ def render_markdown(
     summaries: list[LogSummary],
     output_root: Path,
     label_prefixes: list[str],
+    run_dirs: list[Path],
     max_rows: int,
 ) -> str:
     reason_counts: Counter[str] = Counter()
@@ -173,12 +175,21 @@ def render_markdown(
         reason_counts.update(item.sync_reasons)
         fallback_counts.update(item.fallback_messages)
 
+    label_text = ", ".join(label_prefixes) if label_prefixes else "none"
+    if run_dirs:
+        run_dir_text = ", ".join(str(path) for path in run_dirs)
+    elif label_prefixes:
+        run_dir_text = "discovered from label prefixes"
+    else:
+        run_dir_text = "all"
+
     lines: list[str] = [
         "# CUDA Fallback Summary",
         "",
         f"Generated: {_dt.datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"Output root: `{output_root}`",
-        f"Label prefixes: `{', '.join(label_prefixes) if label_prefixes else 'all'}`",
+        f"Label prefixes: `{label_text}`",
+        f"Run directories: `{run_dir_text}`",
         f"Scanned stderr files: {len(summaries)}",
         "",
         "## Top Synchronization Reasons",
@@ -295,7 +306,7 @@ def main(argv: list[str]) -> int:
     ]
     stderr_files = discover_stderr_files(output_root, args.label_prefix, run_dirs)
     summaries = [summarize_file(path, output_root) for path in stderr_files]
-    text = render_markdown(summaries, output_root, args.label_prefix, args.max_rows)
+    text = render_markdown(summaries, output_root, args.label_prefix, run_dirs, args.max_rows)
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

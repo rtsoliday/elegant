@@ -1,0 +1,41 @@
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "BL",
+  p_central_mev = 6000,
+  default_order = 1,
+  rootname = <root>,
+  output = "%s.out",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  final = "%s.fin",
+  losses = "%s.los",
+  acceptance = "%s.acc",
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+  show_element_timing = 1,
+  random_number_seed = <seed>,
+&end
+
+&run_control
+  n_passes = <n_passes>,
+&end
+
+&bunched_beam
+  n_particles_per_bunch = <n_particles>,
+  bunch = "%s.bun",
+  emit_x = 3.6e-7,
+  beta_x = 2,
+  alpha_x = 0,
+  emit_y = 2.5e-7,
+  beta_y = 2,
+  alpha_y = 0,
+  sigma_dp = 1e-6,
+  sigma_s = 1e-6,
+  centroid[0] = 8e-4,
+  centroid[2] = -2e-4,
+  distribution_type[0] = 3*"gaussian",
+  distribution_cutoff[0] = 3*3,
+&end
+
+&track
+&end

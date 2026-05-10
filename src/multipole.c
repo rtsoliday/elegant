@@ -488,6 +488,21 @@ long multipole_tracking(
   static long maxOrder = -1;
   static double *xpow = NULL, *ypow = NULL;
 
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    startGpuTimer();
+    i_part = gpu_multipole_tracking(n_part, multipole, p_error, Po,
+                                    accepted, z_start);
+#  ifdef GPU_VERIFY
+    startCpuTimer();
+    multipole_tracking(particle, n_part, multipole, p_error, Po, accepted,
+                       z_start);
+    compareGpuCpu(n_part, "multipole_tracking");
+#  endif /* GPU_VERIFY */
+    return i_part;
+  }
+#endif /* HAVE_GPU */
+
   log_entry("multipole_tracking");
 
   if (!particle)
@@ -1863,4 +1878,3 @@ long checkMultAperture(double xInput, double yInput, double zLocal, MULT_APERTUR
 
   return 1;
 }
-

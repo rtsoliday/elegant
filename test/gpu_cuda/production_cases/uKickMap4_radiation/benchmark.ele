@@ -1,0 +1,45 @@
+&run_setup
+  lattice = "/home/soliday/oag/apps/src/elegantTestSet/uKickMap4/Borland-1021.lte",
+  use_beamline = "RING",
+  rootname = <root>,
+  p_central_mev = 3e3,
+  output = "%s.out",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  final = "%s.fin",
+  magnets = "%s.mag",
+  search_path = "/home/soliday/oag/apps/src/elegantTestSet/uKickMap4",
+  show_element_timing = 1,
+  tracking_updates = 0,
+  random_number_seed = <seed>,
+  semaphore_file = "%s.done",
+&end
+
+&alter_elements name = *, type = CSBEND, item = SYNCH_RAD, value = 1 &end
+&alter_elements name = *, type = UKICKMAP, item = SYNCH_RAD, value = 1 &end
+&alter_elements name = *, type = CWIGGLER, item = SYNCH_RAD, value = 1, allow_missing_elements = 1 &end
+&alter_elements name = *, type = KQUAD, item = SYNCH_RAD, value = 1 &end
+&alter_elements name = *, type = KSEXT, item = SYNCH_RAD, value = 1 &end
+
+&alter_elements name = *, type = CSBEND, item = ISR, value = 1 &end
+&alter_elements name = *, type = UKICKMAP, item = ISR, value = 1 &end
+&alter_elements name = *, type = CWIGGLER, item = ISR, value = 1, allow_missing_elements = 1 &end
+&alter_elements name = *, type = KQUAD, item = ISR, value = 1 &end
+&alter_elements name = *, type = KSEXT, item = ISR, value = 1 &end
+
+&twiss_output
+  filename = "%s.twi",
+  matched = 1,
+  radiation_integrals = 1,
+&end
+
+&run_control
+  n_passes = <n_passes>,
+&end
+
+&bunched_beam
+  n_particles_per_bunch = <n_particles>,
+&end
+
+&track
+&end
