@@ -49,6 +49,7 @@
 #pragma weak hasNormal
 #pragma weak set_up_wake
 #pragma weak set_up_trwake
+#pragma weak track_through_lscdrift
 #pragma weak computeTimeCoordinatesOnly
 #pragma weak binTimeDistribution
 #pragma weak binTransverseTimeDistribution
@@ -6105,6 +6106,8 @@ void gpu_track_through_lscdrift(long np0, void *lsc0, double Po, void *charge0) 
   if (gpuBase.backtrack || lsc->backtrack) {
     double **coord = forceParticlesToCpu("LSCDRIFT backtracking CPU reference");
 
+    if (!track_through_lscdrift)
+      gpuRequiredFailure("CPU LSCDRIFT routine is unavailable");
     gpuBase.elementOnGpu = 0;
     track_through_lscdrift(coord, np0, lsc, Po, charge);
     gpuMarkHostWillChange();
