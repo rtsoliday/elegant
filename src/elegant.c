@@ -38,6 +38,9 @@
 #include "chromDefs.h"
 #include "correctDefs.h"
 #include "tuneDefs.h"
+#if HAVE_GPU
+#  include "gpu_base.h"
+#endif
 
 void doMacroOutput(NAMELIST_TEXT *nltext, RUN *run, char **macroTag, char **macroValue, long macros);
 void traceback_handler(int code);
@@ -112,8 +115,16 @@ void showUsageOrGreeting(unsigned long mode) {
 #endif
   if (mode & SHOW_GREETING)
     puts(GREETING);
-  if (mode & SHOW_USAGE)
+  if (mode & SHOW_USAGE) {
     puts(USAGE);
+#if HAVE_GPU
+    {
+      char gpuUsage[1024];
+      gpuDescribeUsageSettings(gpuUsage, sizeof(gpuUsage));
+      puts(gpuUsage);
+    }
+#endif
+  }
   printFarewell(stdout);
 }
 

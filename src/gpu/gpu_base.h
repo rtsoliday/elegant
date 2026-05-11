@@ -5,6 +5,9 @@
 extern "C" {
 #endif
 
+#define ELEGANT_GPU_DEFAULT_MODE "auto"
+#define ELEGANT_GPU_DEFAULT_MIN_PARTICLES 10000L
+
 #ifndef GPU_BUNCHED_WAKE_UNSUPPORTED
 #  define GPU_BUNCHED_WAKE_UNSUPPORTED 0
 #  define GPU_BUNCHED_WAKE_TRACK 1
@@ -20,6 +23,9 @@ typedef struct GPU_BASE {
   long nParticles;
   long isMaster;
   long lossOutputNeeded;
+  long orderSensitiveOutputNeeded;
+  long reductionOutputNeeded;
+  long backtrack;
   long elementOnGpu;
   long initialized;
   long deviceCount;
@@ -251,8 +257,11 @@ typedef struct GPU_KICKMAP_DATA {
 } GPU_KICKMAP_DATA;
 
 GPU_BASE *getGpuBase(void);
+void gpuDescribeUsageSettings(char *buffer, unsigned long bufferSize);
 void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **lostPart,
-                 long isMaster, long lossOutputNeeded);
+                 long isMaster, long lossOutputNeeded,
+                 long orderSensitiveOutputNeeded, long reductionOutputNeeded,
+                 long alwaysChangeP0, long backtrack);
 void gpuBaseDealloc(void);
 void gpuDisableForRun(const char *reason);
 void setElementGpuData(void *eptr, long nParticles);

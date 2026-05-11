@@ -21,6 +21,8 @@
 #pragma weak imposeApertureData
 #pragma weak trackRfCavityWithWakes
 #pragma weak track_through_rfcw
+#pragma weak findFiducialTime
+#pragma weak do_match_energy
 #pragma weak trackKickMap
 #pragma weak trackUndulatorKickMap
 #pragma weak initializeKickMap
@@ -95,6 +97,11 @@ extern long trackRfCavityWithWakes(double **part, long np, RFCA *rfca,
                                    CHARGE *charge, WAKE *wake,
                                    TRWAKE *trwake, LSCKICK *LSCKick,
                                    long wakesAtEnd);
+extern double findFiducialTime(double **part, long np, double s0,
+                               double sOffset, double p0,
+                               unsigned long mode);
+extern void do_match_energy(double **coord, long np, double *P_central,
+                            long change_beam);
 extern long trackKickMap(double **particle, double **accepted, long nParticles,
                          double pRef, KICKMAP *map, double zStart,
                          double *sigmaDelta2);
@@ -549,15 +556,27 @@ static long gpuExactDriftExplicit = 0;
 static long gpuEnableApertureParallelCompaction = 0;
 static long gpuApertureParallelCompactionExplicit = 0;
 static long gpuApertureParallelCompactionVerifyDisabled = 0;
+static long gpuApertureParallelCompactionOrderDisabled = 0;
 static long gpuEnableApertureAcceptedDevice = 0;
 static long gpuEnableMagnetLossCompaction = 0;
 static long gpuMagnetLossCompactionExplicit = 0;
+static long gpuEnableCsbendTracking = 0;
+static long gpuCsbendTrackingExplicit = 0;
+static long gpuEnableCsrTracking = 0;
+static long gpuCsrTrackingExplicit = 0;
 static long gpuEnableCsrResident = 0;
 static long gpuCsrResidentExplicit = 0;
 static long gpuEnableScmult = 0;
 static long gpuScmultExplicit = 0;
+static long gpuEnableWakeTracking = 0;
+static long gpuWakeTrackingExplicit = 0;
+static long gpuEnableRfcaChangeP0 = 0;
+static long gpuRfcaChangeP0Explicit = 0;
+static long gpuRunAlwaysChangeP0 = 0;
 static long gpuAvoidShortGpuIslands = 1;
 static long gpuShortGpuIslandMaxElements = 4;
+static long gpuHelperMinParticlesExplicit = 0;
+static long gpuReductionMinParticlesExplicit = 0;
 static long unsupportedReported = 0;
 static double gpuWallStart = 0;
 static double gpuPendingExactDriftLength = 0;
@@ -762,8 +781,105 @@ static const char *gpuMode(void) {
   const char *mode = getenv("ELEGANT_GPU_MODE");
 
   if (!mode || !*mode)
-    return "off";
+    return ELEGANT_GPU_DEFAULT_MODE;
   return mode;
+}
+
+static long gpuReferenceOutputUsesCpuHelpers(void) {
+  return gpuBase.orderSensitiveOutputNeeded && !gpuHelperMinParticlesExplicit;
+}
+
+void gpuDescribeUsageSettings(char *buffer, unsigned long bufferSize) {
+  const char *modeEnv = getenv("ELEGANT_GPU_MODE");
+  const char *minParticlesEnv = getenv("ELEGANT_GPU_MIN_PARTICLES");
+  const char *mode = gpuMode();
+  long minParticles = gpuEnvLong("ELEGANT_GPU_MIN_PARTICLES",
+                                 ELEGANT_GPU_DEFAULT_MIN_PARTICLES);
+  char modeDetail[64];
+  char statusBuffer[512];
+  char minParticlesDetail[64];
+  int deviceCount = 0;
+  int status;
+
+  if (!buffer || !bufferSize)
+    return;
+
+  if (modeEnv && *modeEnv)
+    snprintf(modeDetail, sizeof(modeDetail), " (default %s)",
+             ELEGANT_GPU_DEFAULT_MODE);
+  else
+    snprintf(modeDetail, sizeof(modeDetail), " (default)");
+  if (minParticlesEnv && *minParticlesEnv)
+    snprintf(minParticlesDetail, sizeof(minParticlesDetail), " (default %ld)",
+             ELEGANT_GPU_DEFAULT_MIN_PARTICLES);
+  else
+    snprintf(minParticlesDetail, sizeof(minParticlesDetail), " (default)");
+
+  statusBuffer[0] = 0;
+  if (strcmp(mode, "off") == 0) {
+    snprintf(statusBuffer, sizeof(statusBuffer),
+             "CPU fallback (CUDA disabled by ELEGANT_GPU_MODE=off)");
+  } else if (strcmp(mode, "auto") != 0 && strcmp(mode, "required") != 0) {
+    snprintf(statusBuffer, sizeof(statusBuffer),
+             "invalid ELEGANT_GPU_MODE; valid values are off, auto, required (run will fail)");
+  } else {
+    status = gpuCudaRuntimeGetDeviceCount(&deviceCount);
+    if (status != 0 || deviceCount <= 0) {
+      if (strcmp(mode, "required") == 0)
+        snprintf(statusBuffer, sizeof(statusBuffer),
+                 "%s (required mode will fail)",
+                 status == 0 ? "no CUDA devices found" :
+                 gpuCudaRuntimeGetErrorString(status));
+      else
+        snprintf(statusBuffer, sizeof(statusBuffer),
+                 "CPU fallback (%s)",
+                 status == 0 ? "no CUDA devices found" :
+                 gpuCudaRuntimeGetErrorString(status));
+    } else {
+      long activeDevice;
+      if (gpuEnvSet("ELEGANT_GPU_DEVICE")) {
+        activeDevice = gpuEnvLong("ELEGANT_GPU_DEVICE", 0);
+      } else {
+        activeDevice = 0;
+#if USE_MPI
+        if (n_processors > 1) {
+          if (isSlave && notSinglePart)
+            activeDevice = (myid - 1) % deviceCount;
+          else
+            activeDevice = myid % deviceCount;
+        }
+#endif
+      }
+      if (activeDevice < 0 || activeDevice >= deviceCount) {
+        if (strcmp(mode, "required") == 0)
+          snprintf(statusBuffer, sizeof(statusBuffer),
+                   "ELEGANT_GPU_DEVICE=%ld is outside the available range 0-%d (required mode will fail)",
+                   activeDevice, deviceCount - 1);
+        else
+          snprintf(statusBuffer, sizeof(statusBuffer),
+                   "CPU fallback (ELEGANT_GPU_DEVICE=%ld is outside the available range 0-%d)",
+                   activeDevice, deviceCount - 1);
+      } else {
+        char deviceName[256] = "";
+        status = gpuCudaRuntimeGetDeviceName((int)activeDevice, deviceName,
+                                             sizeof(deviceName));
+        snprintf(statusBuffer, sizeof(statusBuffer),
+                 "CUDA device %ld%s%s",
+                 activeDevice,
+                 status == 0 ? ": " : "",
+                 status == 0 ? deviceName : " detected");
+      }
+    }
+  }
+
+  snprintf(buffer, bufferSize,
+           "CUDA settings: ELEGANT_GPU_MODE=%s%s; "
+           "ELEGANT_GPU_MIN_PARTICLES=%ld%s; %s.",
+           mode,
+           modeDetail,
+           minParticles,
+           minParticlesDetail,
+           statusBuffer);
 }
 
 static const char *gpuExactDriftStatus(void) {
@@ -772,10 +888,26 @@ static const char *gpuExactDriftStatus(void) {
   return gpuExactDriftExplicit ? "; exact drift explicitly disabled" : "";
 }
 
+static const char *gpuHelperOutputStatus(void) {
+  if (!gpuBase.orderSensitiveOutputNeeded)
+    return "";
+  return gpuHelperMinParticlesExplicit ?
+         "; output helpers follow explicit helper threshold" :
+         "; output helpers use CPU by default";
+}
+
 static const char *gpuCsrResidentStatus(void) {
   if (gpuEnableCsrResident)
     return gpuCsrResidentExplicit ? "; CSR resident explicitly enabled" : "; CSR resident enabled";
   return gpuCsrResidentExplicit ? "; CSR resident explicitly disabled" : "";
+}
+
+static const char *gpuCsrTrackingStatus(void) {
+  if (gpuEnableCsrTracking)
+    return gpuCsrTrackingExplicit ? "; CSR tracking explicitly enabled" :
+                                    "; CSR tracking enabled by CSR resident override";
+  return gpuCsrTrackingExplicit ? "; CSR tracking explicitly disabled" :
+                                  "; CSR tracking disabled by default";
 }
 
 static const char *gpuScmultStatus(void) {
@@ -784,9 +916,33 @@ static const char *gpuScmultStatus(void) {
   return gpuScmultExplicit ? "; SCMULT explicitly disabled" : "";
 }
 
+static const char *gpuWakeTrackingStatus(void) {
+  if (gpuEnableWakeTracking)
+    return "; wake tracking explicitly enabled";
+  return gpuWakeTrackingExplicit ? "; wake tracking explicitly disabled" :
+                                  "; wake tracking disabled by default";
+}
+
+static const char *gpuRfcaChangeP0Status(void) {
+  if (gpuEnableRfcaChangeP0)
+    return "; RFCA change-p0 explicitly enabled";
+  return gpuRfcaChangeP0Explicit ? "; RFCA change-p0 explicitly disabled" :
+                                   "; RFCA change-p0 disabled by default";
+}
+
+static const char *gpuReductionOutputStatus(void) {
+  if (!gpuBase.reductionOutputNeeded)
+    return "";
+  return gpuReductionMinParticlesExplicit ?
+         "; output reductions follow explicit reduction threshold" :
+         "; output reductions use CPU by default";
+}
+
 static const char *gpuApertureParallelCompactionStatus(void) {
   if (gpuApertureParallelCompactionVerifyDisabled)
     return "; aperture parallel compaction disabled in GPU_VERIFY";
+  if (gpuApertureParallelCompactionOrderDisabled)
+    return "; aperture parallel compaction disabled for order-sensitive output";
   if (gpuEnableApertureParallelCompaction)
     return gpuApertureParallelCompactionExplicit ?
            "; aperture parallel compaction explicitly enabled" :
@@ -802,6 +958,13 @@ static const char *gpuMagnetLossCompactionStatus(void) {
            "; magnet loss compaction enabled for no-loss-output runs";
   return gpuMagnetLossCompactionExplicit ?
          "; magnet loss compaction explicitly disabled" : "";
+}
+
+static const char *gpuCsbendTrackingStatus(void) {
+  if (gpuEnableCsbendTracking)
+    return "; CSBEND tracking explicitly enabled";
+  return gpuCsbendTrackingExplicit ? "; CSBEND tracking explicitly disabled" :
+                                     "; CSBEND tracking disabled by default";
 }
 
 static void gpuRequiredFailure(const char *message) {
@@ -876,13 +1039,16 @@ static long gpuSpecialMatrixElementUsesCpuAfterTrack(ELEMENT_LIST *eptr) {
 static long gpuHelperElementSupported(ELEMENT_LIST *eptr) {
   if (!eptr)
     return 0;
+  if (gpuReferenceOutputUsesCpuHelpers())
+    return 0;
   switch (eptr->type) {
   case T_MALIGN:
   case T_ENERGY:
   case T_MATR:
   case T_EMATRIX:
-  case T_CENTER:
     return 1;
+  case T_CENTER:
+    return 0;
   default:
     break;
   }
@@ -952,6 +1118,8 @@ static long gpuRfcwRfOnlyElementSupported(ELEMENT_LIST *eptr) {
   if (notSinglePart)
     return 0;
 #endif
+  if (gpuReferenceOutputUsesCpuHelpers())
+    return 0;
   if (!eptr || eptr->type != T_RFCW || !eptr->p_elem)
     return 0;
   rfcw = (RFCW *)eptr->p_elem;
@@ -996,6 +1164,8 @@ static long gpuRfcwRfOnlyKickElementSupported(ELEMENT_LIST *eptr) {
   if (notSinglePart)
     return 0;
 #endif
+  if (gpuReferenceOutputUsesCpuHelpers())
+    return 0;
   if (!eptr || eptr->type != T_RFCW || !eptr->p_elem)
     return 0;
   rfcw = (RFCW *)eptr->p_elem;
@@ -1075,6 +1245,7 @@ static long gpuRfcwLscDataSupported(RFCW *rfcw) {
 static long gpuRfcwMatrixWakeElementSupported(ELEMENT_LIST *eptr) {
   RFCW *rfcw;
   double phase = 0;
+  long hasWake = 0, hasTrwake = 0;
 
 #if USE_MPI
   if (notSinglePart)
@@ -1094,7 +1265,10 @@ static long gpuRfcwMatrixWakeElementSupported(ELEMENT_LIST *eptr) {
     return 0;
   if (!gpuRfcwLscDataSupported(rfcw))
     return 0;
-  if (!rfcw->doLSC && !gpuRfcwWakeActive(rfcw, NULL, NULL))
+  gpuRfcwWakeActive(rfcw, &hasWake, &hasTrwake);
+  if (!rfcw->doLSC && !hasWake && !hasTrwake)
+    return 0;
+  if ((hasWake || hasTrwake) && !gpuEnableWakeTracking)
     return 0;
   if (rfcw->n_bins != 0 && rfcw->n_bins < 2)
     return 0;
@@ -1117,6 +1291,7 @@ static long gpuRfcwMatrixWakeElementSupported(ELEMENT_LIST *eptr) {
 static long gpuRfcwKickWakeElementSupported(ELEMENT_LIST *eptr) {
   RFCW *rfcw;
   double phase = 0;
+  long hasWake = 0, hasTrwake = 0;
 
 #if USE_MPI
   if (notSinglePart)
@@ -1136,7 +1311,10 @@ static long gpuRfcwKickWakeElementSupported(ELEMENT_LIST *eptr) {
     return 0;
   if (!gpuRfcwLscDataSupported(rfcw))
     return 0;
-  if (!rfcw->doLSC && !gpuRfcwWakeActive(rfcw, NULL, NULL))
+  gpuRfcwWakeActive(rfcw, &hasWake, &hasTrwake);
+  if (!rfcw->doLSC && !hasWake && !hasTrwake)
+    return 0;
+  if ((hasWake || hasTrwake) && !gpuEnableWakeTracking)
     return 0;
   if (rfcw->n_bins != 0 && rfcw->n_bins < 2)
     return 0;
@@ -1178,10 +1356,16 @@ static long gpuRfcaRemoveInvalidOnlyElementSupported(ELEMENT_LIST *eptr) {
 static long gpuRfcaThinKickElementSupported(ELEMENT_LIST *eptr) {
   RFCA *rfca;
 
+  if (gpuReferenceOutputUsesCpuHelpers())
+    return 0;
   if (!eptr || eptr->type != T_RFCA || !eptr->p_elem)
     return 0;
   rfca = (RFCA *)eptr->p_elem;
   if (rfca->length != 0 || rfca->Q != 0)
+    return 0;
+  if (rfca->volt == 0)
+    return 0;
+  if ((rfca->change_p0 || gpuRunAlwaysChangeP0) && !gpuEnableRfcaChangeP0)
     return 0;
   if (rfca->change_t || rfca->end1Focus || rfca->end2Focus ||
       rfca->linearize || rfca->lockPhase || rfca->backtrack)
@@ -1198,10 +1382,14 @@ static long gpuRfcaRfOnlyMatrixElementSupported(ELEMENT_LIST *eptr) {
   if (notSinglePart)
     return 0;
 #endif
+  if (gpuReferenceOutputUsesCpuHelpers())
+    return 0;
   if (!eptr || eptr->type != T_RFCA || !eptr->p_elem)
     return 0;
   rfca = (RFCA *)eptr->p_elem;
   if (rfca->length <= 0 || rfca->volt == 0 || rfca->Q != 0)
+    return 0;
+  if ((rfca->change_p0 || gpuRunAlwaysChangeP0) && !gpuEnableRfcaChangeP0)
     return 0;
   if (rfca->change_t || rfca->linearize || rfca->lockPhase ||
       rfca->backtrack)
@@ -1226,10 +1414,14 @@ static long gpuRfcaRfOnlyKickElementSupported(ELEMENT_LIST *eptr) {
   if (notSinglePart)
     return 0;
 #endif
+  if (gpuReferenceOutputUsesCpuHelpers())
+    return 0;
   if (!eptr || eptr->type != T_RFCA || !eptr->p_elem)
     return 0;
   rfca = (RFCA *)eptr->p_elem;
   if (rfca->length <= 0 || rfca->volt == 0 || rfca->Q != 0)
+    return 0;
+  if ((rfca->change_p0 || gpuRunAlwaysChangeP0) && !gpuEnableRfcaChangeP0)
     return 0;
   if (rfca->change_t || rfca->linearize || rfca->lockPhase ||
       rfca->backtrack)
@@ -1252,6 +1444,8 @@ static long gpuKickMapElementSupported(ELEMENT_LIST *eptr) {
   if (notSinglePart)
     return 0;
 #endif
+  if (gpuBase.backtrack)
+    return 0;
   if (!eptr || !eptr->p_elem)
     return 0;
   switch (eptr->type) {
@@ -1322,6 +1516,8 @@ static long gpuMultipoleCommonSupported(long nSlices, long nKicks,
 }
 
 static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr) {
+  if (gpuBase.backtrack)
+    return 0;
   if (!eptr || !eptr->p_elem)
     return 0;
 
@@ -1478,6 +1674,10 @@ static long gpuCsbendCommonSupported(CSBEND *csbend) {
 }
 
 static long gpuCsbendElementSupported(ELEMENT_LIST *eptr) {
+  if (!gpuEnableCsbendTracking)
+    return 0;
+  if (gpuBase.backtrack)
+    return 0;
   if (!eptr || !eptr->p_elem || eptr->type != T_CSBEND)
     return 0;
   return gpuCsbendCommonSupported((CSBEND *)eptr->p_elem);
@@ -1494,6 +1694,8 @@ static long gpuWakeDataSupported(WAKE *wake) {
 }
 
 static long gpuWakeElementSupported(ELEMENT_LIST *eptr) {
+  if (!gpuEnableWakeTracking)
+    return 0;
   if (!eptr || !eptr->p_elem || eptr->type != T_WAKE)
     return 0;
   return gpuWakeDataSupported((WAKE *)eptr->p_elem);
@@ -1515,6 +1717,8 @@ static long gpuTrwakeDataSupported(TRWAKE *wake) {
 }
 
 static long gpuTrwakeElementSupported(ELEMENT_LIST *eptr) {
+  if (!gpuEnableWakeTracking)
+    return 0;
   if (!eptr || !eptr->p_elem || eptr->type != T_TRWAKE)
     return 0;
   return gpuTrwakeDataSupported((TRWAKE *)eptr->p_elem);
@@ -1545,9 +1749,14 @@ static long gpuLscDataSupported(LSCDRIFT *lsc) {
 }
 
 static long gpuLscElementSupported(ELEMENT_LIST *eptr) {
+  LSCDRIFT *lsc;
+
   if (!eptr || !eptr->p_elem || eptr->type != T_LSCDRIFT)
     return 0;
-  return gpuLscDataSupported((LSCDRIFT *)eptr->p_elem);
+  lsc = (LSCDRIFT *)eptr->p_elem;
+  if (gpuBase.backtrack || lsc->backtrack)
+    return 0;
+  return gpuLscDataSupported(lsc);
 }
 
 static long gpuExactDriftElement(long type) {
@@ -2907,15 +3116,6 @@ static double gpuCoordinateSumOnDevice(long nParticles, long coordinate) {
   return result.centroidSum[coordinate];
 }
 
-static double gpuMomentumAverageOnDevice(long nParticles, double pCentral) {
-  GPU_BEAM_SUM_DATA result;
-
-  if (nParticles <= 0)
-    return 0;
-  gpuCentroidSumsOnDevice(&result, nParticles, "momentum average reduction kernel");
-  return pCentral * (1 + result.centroidSum[5] / nParticles);
-}
-
 static double gpuTimeSumOnDevice(long nParticles, double pCentral) {
   GPU_BEAM_SUM_DATA result;
   float milliseconds = 0;
@@ -2929,74 +3129,6 @@ static double gpuTimeSumOnDevice(long nParticles, double pCentral) {
   if (status != 0)
     gpuFatalStatus("time-coordinate reduction kernel", status);
   gpuRecordReductionKernel(milliseconds);
-  return result.centroidSum[6];
-}
-
-static double gpuFiducialTimeSumOnDevice(long nParticles, double pCentral,
-                                         double sOffset, long startPID,
-                                         long endPID, long *countOut) {
-  GPU_BEAM_SUM_DATA result;
-  float milliseconds = 0;
-  int status;
-
-  if (nParticles <= 0)
-    return 0;
-  if (countOut)
-    *countOut = 0;
-  gpuCopyHostToDevice(nParticles);
-  status = gpuCudaFiducialTimeSums(gpuBase.deviceCoord, nParticles,
-                                   (int)gpuBase.deviceStride, pCentral,
-                                   sOffset, c_mks, particleIDIndex,
-                                   startPID, endPID, &result, &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("fiducial time-coordinate reduction kernel", status);
-  gpuRecordReductionKernel(milliseconds);
-  if (countOut)
-    *countOut = result.count;
-  return result.centroidSum[6];
-}
-
-static double gpuFiducialPmaximumOnDevice(long nParticles, double pCentral,
-                                          double sOffset, long startPID,
-                                          long endPID) {
-  GPU_BEAM_SUM_DATA result;
-  float milliseconds = 0;
-  int status;
-
-  if (nParticles <= 0)
-    gpuRequiredFailure("No available particle for RF cavity fiducialization");
-  gpuCopyHostToDevice(nParticles);
-  status = gpuCudaFiducialPmaximum(gpuBase.deviceCoord, nParticles,
-                                   (int)gpuBase.deviceStride, pCentral,
-                                   sOffset, c_mks, particleIDIndex,
-                                   startPID, endPID, &result, &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("pmaximum fiducial reduction kernel", status);
-  gpuRecordReductionKernel(milliseconds);
-  if (result.count <= 0)
-    gpuRequiredFailure("No available particle for RF cavity pmaximum fiducialization");
-  return result.centroidSum[6];
-}
-
-static double gpuFiducialFirstOnDevice(long nParticles, double pCentral,
-                                       double sOffset, long startPID,
-                                       long endPID) {
-  GPU_BEAM_SUM_DATA result;
-  float milliseconds = 0;
-  int status;
-
-  if (nParticles <= 0)
-    gpuRequiredFailure("No available particle for RF cavity first fiducialization");
-  gpuCopyHostToDevice(nParticles);
-  status = gpuCudaFiducialFirst(gpuBase.deviceCoord, nParticles,
-                                (int)gpuBase.deviceStride, pCentral,
-                                sOffset, c_mks, particleIDIndex,
-                                startPID, endPID, &result, &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("first fiducial reduction kernel", status);
-  gpuRecordReductionKernel(milliseconds);
-  if (result.count <= 0)
-    gpuRequiredFailure("No available particle for RF cavity first fiducialization");
   return result.centroidSum[6];
 }
 
@@ -3109,6 +3241,8 @@ static long gpuMatrixSupported(VMATRIX *M) {
 }
 
 long gpu_matrix_supported(void *matrix) {
+  if (!gpuParticleCountAllowed(gpuBase.nParticles, gpuBase.matrixMinParticles))
+    return 0;
   return gpuMatrixSupported((VMATRIX *)matrix);
 }
 
@@ -3119,6 +3253,8 @@ long gpu_reductions_enabled(long nParticles) {
   if (notSinglePart)
     return 0;
 #endif
+  if (gpuBase.reductionOutputNeeded && !gpuReductionMinParticlesExplicit)
+    return 0;
   return gpuParticleCountAllowed(nParticles, gpuBase.reductionMinParticles);
 }
 
@@ -3127,7 +3263,9 @@ GPU_BASE *getGpuBase(void) {
 }
 
 void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **lostPart,
-                 long isMaster, long lossOutputNeeded) {
+                 long isMaster, long lossOutputNeeded,
+                 long orderSensitiveOutputNeeded, long reductionOutputNeeded,
+                 long alwaysChangeP0, long backtrack) {
   int deviceCount = 0;
   int status;
   long activeDevice;
@@ -3144,11 +3282,18 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuBase.nParticles = nOriginal;
   gpuBase.isMaster = isMaster;
   gpuBase.lossOutputNeeded = lossOutputNeeded ? 1 : 0;
+  gpuBase.orderSensitiveOutputNeeded = orderSensitiveOutputNeeded ? 1 : 0;
+  gpuBase.reductionOutputNeeded = reductionOutputNeeded ? 1 : 0;
+  gpuBase.backtrack = backtrack ? 1 : 0;
+  gpuRunAlwaysChangeP0 = alwaysChangeP0 ? 1 : 0;
   gpuBase.activeDevice = -1;
-  gpuBase.minParticles = gpuEnvLong("ELEGANT_GPU_MIN_PARTICLES", 10000);
+  gpuBase.minParticles = gpuEnvLong("ELEGANT_GPU_MIN_PARTICLES",
+                                    ELEGANT_GPU_DEFAULT_MIN_PARTICLES);
   gpuBase.matrixMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_MATRIX_PARTICLES", gpuBase.minParticles);
+  gpuHelperMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_HELPER_PARTICLES");
   gpuBase.helperMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_HELPER_PARTICLES", gpuBase.minParticles);
   gpuBase.exactDriftMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_EXACT_DRIFT_PARTICLES", gpuBase.minParticles);
+  gpuReductionMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_REDUCTION_PARTICLES");
   gpuBase.reductionMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_REDUCTION_PARTICLES", gpuBase.minParticles);
   gpuBase.apertureMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_APERTURE_PARTICLES", gpuBase.minParticles);
   gpuBase.magnetMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_MAGNET_PARTICLES", gpuBase.minParticles);
@@ -3168,6 +3313,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuApertureParallelCompactionExplicit =
     gpuEnvSet("ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION");
   gpuApertureParallelCompactionVerifyDisabled = 0;
+  gpuApertureParallelCompactionOrderDisabled = 0;
   gpuEnableApertureParallelCompaction =
     gpuApertureParallelCompactionExplicit ?
     gpuEnvFlag("ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION") :
@@ -3178,22 +3324,44 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuApertureParallelCompactionVerifyDisabled = 1;
   }
 #endif
+  if (gpuEnableApertureParallelCompaction &&
+      gpuBase.orderSensitiveOutputNeeded &&
+      !gpuApertureParallelCompactionExplicit) {
+    gpuEnableApertureParallelCompaction = 0;
+    gpuApertureParallelCompactionOrderDisabled = 1;
+  }
   gpuMagnetLossCompactionExplicit =
     gpuEnvSet("ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION");
   gpuEnableMagnetLossCompaction =
     gpuMagnetLossCompactionExplicit ?
     gpuEnvFlag("ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION") :
     !gpuBase.lossOutputNeeded;
+  gpuCsbendTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSBEND");
+  gpuEnableCsbendTracking = gpuCsbendTrackingExplicit &&
+                            gpuEnvFlag("ELEGANT_GPU_ENABLE_CSBEND");
   gpuEnableApertureAcceptedDevice =
     (gpuEnableApertureParallelCompaction || gpuEnableMagnetLossCompaction) &&
     (!gpuEnvSet("ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE") ||
      gpuEnvFlag("ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE"));
+  gpuCsrTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSR");
   gpuCsrResidentExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSR_RESIDENT");
-  gpuEnableCsrResident = !gpuCsrResidentExplicit ||
-                         gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT");
+  gpuEnableCsrTracking =
+    gpuCsrTrackingExplicit ? gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR") :
+    (gpuCsrResidentExplicit &&
+     gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT"));
+  gpuEnableCsrResident =
+    gpuEnableCsrTracking &&
+    (!gpuCsrResidentExplicit ||
+     gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT"));
   gpuScmultExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_SCMULT");
   gpuEnableScmult = !gpuScmultExplicit ||
                     gpuEnvFlag("ELEGANT_GPU_ENABLE_SCMULT");
+  gpuWakeTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_WAKE_TRACKING");
+  gpuEnableWakeTracking = gpuWakeTrackingExplicit &&
+                          gpuEnvFlag("ELEGANT_GPU_ENABLE_WAKE_TRACKING");
+  gpuRfcaChangeP0Explicit = gpuEnvSet("ELEGANT_GPU_ENABLE_RFCA_CHANGE_P0");
+  gpuEnableRfcaChangeP0 = gpuRfcaChangeP0Explicit &&
+                          gpuEnvFlag("ELEGANT_GPU_ENABLE_RFCA_CHANGE_P0");
 #if USE_MPI
   if (!gpuScmultExplicit)
     gpuEnableScmult = 0;
@@ -3269,7 +3437,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     status = gpuCudaRuntimeGetDeviceName((int)gpuBase.activeDevice, deviceName, sizeof(deviceName));
 #if USE_MPI
     fprintf(stderr,
-              "elegant CUDA: selected device %ld%s%s on MPI rank %d; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s.\n",
+              "elegant CUDA: selected device %ld%s%s on MPI rank %d; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s.\n",
             gpuBase.activeDevice,
             status == 0 ? " " : "",
             status == 0 ? deviceName : "",
@@ -3286,14 +3454,20 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuBase.scmultMinParticles,
             gpuBase.exactDriftMinParticles,
             gpuExactDriftStatus(),
+            gpuHelperOutputStatus(),
+            gpuReductionOutputStatus(),
             gpuApertureParallelCompactionStatus(),
             gpuEnableApertureAcceptedDevice ? "; accepted-device compaction enabled" : "",
             gpuMagnetLossCompactionStatus(),
+            gpuCsbendTrackingStatus(),
+            gpuCsrTrackingStatus(),
             gpuCsrResidentStatus(),
-            gpuScmultStatus());
+            gpuScmultStatus(),
+            gpuWakeTrackingStatus(),
+            gpuRfcaChangeP0Status());
 #else
     fprintf(stderr,
-            "elegant CUDA: selected device %ld%s%s; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s.\n",
+            "elegant CUDA: selected device %ld%s%s; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s.\n",
             gpuBase.activeDevice,
             status == 0 ? " " : "",
             status == 0 ? deviceName : "",
@@ -3309,11 +3483,17 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuBase.scmultMinParticles,
             gpuBase.exactDriftMinParticles,
             gpuExactDriftStatus(),
+            gpuHelperOutputStatus(),
+            gpuReductionOutputStatus(),
             gpuApertureParallelCompactionStatus(),
             gpuEnableApertureAcceptedDevice ? "; accepted-device compaction enabled" : "",
             gpuMagnetLossCompactionStatus(),
+            gpuCsbendTrackingStatus(),
+            gpuCsrTrackingStatus(),
             gpuCsrResidentStatus(),
-            gpuScmultStatus());
+            gpuScmultStatus(),
+            gpuWakeTrackingStatus(),
+            gpuRfcaChangeP0Status());
 #endif
   }
 
@@ -3745,32 +3925,15 @@ void gpu_offset_beam(long nToTrack, MALIGN *offset, double P_central) {
 }
 
 void gpu_do_match_energy(long np, double *P_central, long change_beam) {
-  float milliseconds = 0;
-  double P_average, dp, oldP;
-  int status;
+  double **coord;
 
   if (!P_central)
     gpuRequiredFailure("NULL central momentum pointer in gpu_do_match_energy");
-  if (np <= 0)
-    return;
+  if (!do_match_energy)
+    gpuRequiredFailure("CPU match-energy routine is unavailable");
 
-  oldP = *P_central;
-  P_average = gpuMomentumAverageOnDevice(np, oldP);
-  if (!change_beam) {
-    dp = fabs(P_average - oldP) / oldP;
-    if (dp <= 1e-14)
-      return;
-  }
-
-  gpuCopyHostToDevice(np);
-  status = gpuCudaMatchEnergy(gpuBase.deviceCoord, np, (int)gpuBase.deviceStride,
-                              oldP, P_average, (int)change_beam, &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("match energy kernel", status);
-  gpuRecordHelperKernel(milliseconds);
-  gpuMarkDeviceChanged(np);
-  if (!change_beam)
-    *P_central = P_average;
+  coord = forceParticlesToCpu("match energy CPU reference");
+  do_match_energy(coord, np, P_central, change_beam);
   gpuRecordWallSeconds();
 }
 
@@ -4792,6 +4955,15 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
     {0, 0, 0, 0, 0, 0, 1}};
   double centroid[7];
 
+  if (beamSums && beamSums->beamSums2) {
+    /* The one-pass GPU covariance loses tiny longitudinal variance from
+     * cancellation when absolute arrival times are large.  Use the centered
+     * CPU path for sigma output until the GPU reduction is made two-pass. */
+    gpuAccumulateBeamSumsOnCpu(sums, n_part, p_central, mp_charge,
+                               timeValue, tMin, tMax, startPID, endPID, flags);
+    return;
+  }
+
   if (!gpuBeamSumsSupported(beamSums, timeValue, tMin, tMax, startPID, endPID, flags)) {
     gpuAccumulateBeamSumsOnCpu(sums, n_part, p_central, mp_charge,
                                timeValue, tMin, tMax, startPID, endPID, flags);
@@ -4869,6 +5041,8 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
   beamSums->n_part = newCount;
 }
 long gpu_csr_csbend_wake_available(long nParticles, long nBins) {
+  if (!gpuEnableCsrTracking)
+    return 0;
   if (!gpuBase.initialized || gpuBase.activeDevice < 0)
     return 0;
   if (nParticles <= 1 || nBins < 2)
@@ -5928,6 +6102,15 @@ void gpu_track_through_lscdrift(long np0, void *lsc0, double Po, void *charge0) 
     return;
   if (!lsc)
     gpuRequiredFailure("NULL LSCDRIFT pointer in CUDA path");
+  if (gpuBase.backtrack || lsc->backtrack) {
+    double **coord = forceParticlesToCpu("LSCDRIFT backtracking CPU reference");
+
+    gpuBase.elementOnGpu = 0;
+    track_through_lscdrift(coord, np0, lsc, Po, charge);
+    gpuMarkHostWillChange();
+    gpuRecordWallSeconds();
+    return;
+  }
   if (!gpuLscDataSupported(lsc))
     gpuRequiredFailure("unsupported LSCDRIFT options reached CUDA path");
   if (!charge)
@@ -6311,6 +6494,10 @@ long gpu_multipole_tracking2(long n_part, void *elem0, double p_error,
     return n_part;
   if (!elem)
     gpuRequiredFailure("NULL element pointer in gpu_multipole_tracking2");
+  if (gpuBase.backtrack)
+    return gpuMultipoleOnCpu(n_part, elem, p_error, Po, accepted, z_start,
+                             maxamp, apcontour, apFileData, sigmaDelta2, iSlice,
+                             "multipole_tracking2 backtracking CPU reference");
   if (iSlice >= 0)
     return gpuMultipoleOnCpu(n_part, elem, p_error, Po, accepted, z_start,
                              maxamp, apcontour, apFileData, sigmaDelta2, iSlice,
@@ -6386,6 +6573,9 @@ long gpu_multipole_tracking(long n_part, void *multipole0, double p_error,
     return n_part;
   if (!multipole)
     gpuRequiredFailure("NULL MULT pointer in gpu_multipole_tracking");
+  if (gpuBase.backtrack)
+    return gpuMultOnCpu(n_part, multipole, p_error, Po, accepted, z_start,
+                        "multipole_tracking backtracking CPU reference");
 
   memset(&elem, 0, sizeof(elem));
   elem.type = T_MULT;
@@ -6743,6 +6933,10 @@ long gpu_track_through_csbend(long n_part, void *csbend0, double p_error,
     return n_part;
   if (!csbend)
     gpuRequiredFailure("NULL CSBEND pointer in gpu_track_through_csbend");
+  if (gpuBase.backtrack)
+    return gpuCsbendOnCpu(n_part, csbend, p_error, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour, apFileData,
+                          iSlice, eptr, "track_through_csbend backtracking CPU reference");
   if (iSlice >= 0)
     return gpuCsbendOnCpu(n_part, csbend, p_error, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour, apFileData,
@@ -6961,6 +7155,9 @@ long gpu_track_kickmap(double **particle, double **accepted, long nParticles,
     return nParticles;
   if (!map)
     gpuRequiredFailure("NULL KICKMAP pointer in CUDA path");
+  if (gpuBase.backtrack)
+    return gpuKickMapOnCpu(particle, accepted, nParticles, pRef, map, zStart,
+                           sigmaDelta2, "KICKMAP backtracking CPU reference");
   if (sigmaDelta2)
     return gpuKickMapOnCpu(particle, accepted, nParticles, pRef, map, zStart,
                            sigmaDelta2, "KICKMAP radiation sigma fallback");
@@ -7019,6 +7216,9 @@ long gpu_track_undulator_kickmap(double **particle, double **accepted,
     return nParticles;
   if (!map)
     gpuRequiredFailure("NULL UKICKMAP pointer in CUDA path");
+  if (gpuBase.backtrack)
+    return gpuUndulatorKickMapOnCpu(particle, accepted, nParticles, pRef, map,
+                                    zStart, "UKICKMAP backtracking CPU reference");
   if (!gpuPackUndulatorKickMapTracking(&data, map, pRef))
     return gpuUndulatorKickMapOnCpu(particle, accepted, nParticles, pRef, map,
                                     zStart, "UKICKMAP unsupported CUDA option");
@@ -8619,59 +8819,18 @@ static long gpuRfcwKickWakeOnDevice(long np, RFCW *rfcw,
 
 double gpu_findFiducialTime(long np, double s0, double sOffset,
                             double p0, unsigned long mode) {
-  double tFid = 0;
-  double tsum = 0;
-  long nsum = 0;
-  long startPID = -1, endPID = -1;
+  double **coord;
+  double tFid;
+  long restoreElementOnGpu;
 
-#if USE_MPI
-  mpiAbort = 0;
-#endif
+  if (!findFiducialTime)
+    gpuRequiredFailure("CPU fiducial-time routine is unavailable");
 
-  if (mode & FID_MODE_LIGHT) {
-    printf("Performing \"light\" mode fiducialization with s0=%21.15e, sOffset=%21.15e\n",
-           s0, sOffset);
-    return (s0 + sOffset) / c_mks;
-  }
-
-#if USE_MPI
-  if (notSinglePart)
-    gpuUnsupported("gpu_findFiducialTime MPI full-beam");
-#endif
-  if (!gpuFiducialPidRange(mode, &startPID, &endPID))
-    gpuUnsupported("gpu_findFiducialTime fiducial range");
-  if (mode & FID_MODE_FIRST)
-    return gpuFiducialFirstOnDevice(np, p0, sOffset, startPID, endPID);
-  if (mode & FID_MODE_PMAX)
-    return gpuFiducialPmaximumOnDevice(np, p0, sOffset, startPID, endPID);
-
-  if (!(mode & FID_MODE_TMEAN))
-    gpuUnsupported("gpu_findFiducialTime mode");
-
-  if (isSlave || !notSinglePart) {
-    if (np > 0) {
-      if (sOffset || startPID >= 0 || endPID >= 0)
-        tsum = gpuFiducialTimeSumOnDevice(np, p0, sOffset, startPID,
-                                          endPID, &nsum);
-      else {
-        tsum = gpuTimeSumOnDevice(np, p0);
-        nsum = np;
-      }
-    }
-  }
-
-#if !USE_MPI
-  if (nsum > 0)
-    return tsum / nsum;
-  gpuRequiredFailure("No available particle for RF cavity fiducialization");
-#else
-  if (nsum > 0)
-    tFid = tsum / nsum;
-  else {
-    tFid = -DBL_MAX;
-    mpiAbort = MPI_ABORT_RF_FIDUCIALIZATION_ERROR;
-  }
-#endif
+  coord = copyParticlesToCpuReadOnly("RF fiducialization CPU reference");
+  restoreElementOnGpu = gpuBase.elementOnGpu;
+  gpuBase.elementOnGpu = 0;
+  tFid = findFiducialTime(coord, np, s0, sOffset, p0, mode);
+  gpuBase.elementOnGpu = restoreElementOnGpu;
   return tFid;
 }
 

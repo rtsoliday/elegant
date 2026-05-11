@@ -142,6 +142,46 @@ void reportElementTiming() {
   }
 }
 
+#ifdef HAVE_GPU
+static long gpuWatchCoordinateOutputRequested(WATCH *watch) {
+  if (!watch || watch->disable)
+    return 0;
+  if (watch->initialized)
+    return watch->mode_code == WATCH_COORDINATES;
+  if (!watch->mode || !watch->mode[0])
+    return 1;
+  return strncmp(watch->mode, "coord", 5) == 0;
+}
+
+static long gpuOrderSensitiveOutputRequested(LINE_LIST *beamline, RUN *run,
+                                             unsigned long flags) {
+  ELEMENT_LIST *eptr;
+
+  if (flags & (INHIBIT_FILE_OUTPUT | TEST_PARTICLES))
+    return 0;
+  if (run && run->final && run->final[0])
+    return 1;
+  if (!beamline)
+    return 0;
+  for (eptr = beamline->elem; eptr; eptr = eptr->succ) {
+    if (eptr->type == T_WATCH &&
+        gpuWatchCoordinateOutputRequested((WATCH *)eptr->p_elem))
+      return 1;
+  }
+  return 0;
+}
+
+static long gpuReductionOutputRequested(RUN *run, unsigned long flags) {
+  if (flags & (INHIBIT_FILE_OUTPUT | TEST_PARTICLES))
+    return 0;
+  if (!run)
+    return 0;
+  return (run->centroid && run->centroid[0]) ||
+         (run->bpmCentroid && run->bpmCentroid[0]) ||
+         (run->sigma && run->sigma[0]);
+}
+#endif
+
 long do_tracking(
                  /* Either the beam pointer or the coord pointer must be supplied, but not both */
                  BEAM *beam,
@@ -398,7 +438,11 @@ long do_tracking(
 
 #ifdef HAVE_GPU
   gpuBaseInit(coord, nOriginal, accepted, NULL, isMaster,
-              run && run->losses && run->losses[0] && !(flags & INHIBIT_FILE_OUTPUT));
+              run && run->losses && run->losses[0] && !(flags & INHIBIT_FILE_OUTPUT),
+              gpuOrderSensitiveOutputRequested(beamline, run, flags),
+              gpuReductionOutputRequested(run, flags),
+              run && run->always_change_p0,
+              run && run->backtrack);
 #  if USE_MPI
   if (notSinglePart && run->load_balancing_on == 1)
     gpuDisableForRun("Pelegant load_balancing_on=1 CUDA redistribution is deferred");
