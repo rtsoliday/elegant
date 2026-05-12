@@ -31,6 +31,8 @@ static long ideltaCutover;
 long determineTunesFromTrackingData(double *tune, double **turnByTurnCoord, long turns, double delta);
 long multiparticleLocalMomentumAcceptance(RUN *run, VARY *control, ERRORVAL *errcon, LINE_LIST *beamline, double *startingCoord);
 
+#define MOMENTUM_APERTURE_TRACKING_FLAGS LOSS_COORDINATES_NEEDED
+
 static void momentumOffsetFunction(double **coord, long np, long pass, double *pCentral) {
   MALIGN mal;
 
@@ -398,7 +400,7 @@ long doMomentumApertureSearch(
     reset_special_elements(beamline, RESET_INCLUDE_ALL & ~RESET_INCLUDE_RANDOM);
     code = do_tracking(NULL, coord, 1, NULL, beamline, &pCentral,
                        NULL, NULL, NULL, NULL, run, control->i_step,
-                       FIRST_BEAM_IS_FIDUCIAL + (verbosity > 1 ? 0 : SILENT_RUNNING) + INHIBIT_FILE_OUTPUT, 1, 0, NULL, NULL, NULL, NULL, NULL);
+                       FIRST_BEAM_IS_FIDUCIAL + (verbosity > 1 ? 0 : SILENT_RUNNING) + INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS, 1, 0, NULL, NULL, NULL, NULL, NULL);
     if (!code) {
       printf("Fiducial particle lost. Don't know what to do.\n");
       fflush(stdout);
@@ -524,7 +526,7 @@ long doMomentumApertureSearch(
           pCentral = run->p_central;
           code = do_tracking(NULL, coord, 1, NULL, beamline, &pCentral,
                              NULL, NULL, NULL, NULL, run, control->i_step,
-                             (fiducialize ? FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL : 0) + (verbosity > 4 ? 0 : SILENT_RUNNING) + INHIBIT_FILE_OUTPUT,
+                             (fiducialize ? FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL : 0) + (verbosity > 4 ? 0 : SILENT_RUNNING) + INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
                              control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
           if (!code || !determineTunesFromTrackingData(nominalTune, turnByTurnCoord, turnsStored, 0.0)) {
             printf("Fiducial particle tune is undefined.\n");
@@ -563,7 +565,7 @@ long doMomentumApertureSearch(
             }
             code = do_tracking(NULL, coord, 1, NULL, beamline, &pCentral,
                                NULL, NULL, NULL, NULL, run, control->i_step,
-                               (fiducialize ? FIDUCIAL_BEAM_SEEN : 0) + FIRST_BEAM_IS_FIDUCIAL + (verbosity > 4 ? 0 : SILENT_RUNNING) + (allow_watch_file_output ? 0 : INHIBIT_FILE_OUTPUT),
+                               (fiducialize ? FIDUCIAL_BEAM_SEEN : 0) + FIRST_BEAM_IS_FIDUCIAL + (verbosity > 4 ? 0 : SILENT_RUNNING) + (allow_watch_file_output ? 0 : INHIBIT_FILE_OUTPUT) + MOMENTUM_APERTURE_TRACKING_FLAGS,
                                control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
             if (code && turnsStored > 2) {
               if (!determineTunesFromTrackingData(tune, turnByTurnCoord, turnsStored, delta)) {
@@ -909,7 +911,7 @@ long multiparticleLocalMomentumAcceptance(
   reset_special_elements(beamline, RESET_INCLUDE_ALL & ~RESET_INCLUDE_RANDOM);
   code = do_tracking(NULL, coord, 1, NULL, beamline, &pCentral,
                      NULL, NULL, NULL, NULL, run, control->i_step,
-                     FIRST_BEAM_IS_FIDUCIAL + (verbosity > 4 ? 0 : SILENT_RUNNING) + INHIBIT_FILE_OUTPUT, 1, 0, NULL, NULL, NULL, NULL, NULL);
+                     FIRST_BEAM_IS_FIDUCIAL + (verbosity > 4 ? 0 : SILENT_RUNNING) + INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS, 1, 0, NULL, NULL, NULL, NULL, NULL);
   if (!code) {
     if (myid == 0)
       printf("Fiducial particle lost. Don't know what to do.\n");
@@ -945,7 +947,7 @@ long multiparticleLocalMomentumAcceptance(
     fflush(stdout);
     nLeft = do_tracking(NULL, coord, nEachProcessor, NULL, beamline, &pCentral,
                         NULL, NULL, NULL, NULL, run, control->i_step,
-                        FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL + SILENT_RUNNING + INHIBIT_FILE_OUTPUT,
+                        FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL + SILENT_RUNNING + INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
                         control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     nLost = nEachProcessor - nLeft;
     setTrackingOmniWedgeFunction(NULL);

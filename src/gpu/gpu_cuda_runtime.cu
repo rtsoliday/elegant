@@ -483,6 +483,11 @@ __device__ int gpuMultipoleTrackParticle(double *part, int stride, int writeOutp
   if (!gpuMultipoleConvertSlopesToMomenta(&qx, &qy, xp, yp, dp,
                                           data->expandHamiltonian))
     return 0;
+  if (data->initialSlopeRoundTrip) {
+    if (!gpuMultipoleConvertMomentaToSlopes(&xp, &yp, qx, qy, dp,
+                                            data->expandHamiltonian))
+      return 0;
+  }
 
   switch (data->integrationOrder) {
   case 2:

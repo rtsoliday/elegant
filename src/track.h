@@ -3870,6 +3870,7 @@ long determine_bend_flags(ELEMENT_LIST *eptr, long edge1_effects, long edge2_eff
 #define RESET_RF_FOR_EACH_STEP   0x10000UL
 #define OPTIMIZING               0x20000UL
 #define CENTROID_SUMS_ONLY       0x40000UL
+#define LOSS_COORDINATES_NEEDED  0x80000UL
 /* return values for get_reference_phase and check_reference_phase */
 #define REF_PHASE_RETURNED 1
 #define REF_PHASE_NOT_SET  2

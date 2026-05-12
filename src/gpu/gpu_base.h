@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-#define ELEGANT_GPU_DEFAULT_MODE "auto"
+#define ELEGANT_GPU_DEFAULT_MODE "required"
 #define ELEGANT_GPU_DEFAULT_MIN_PARTICLES 10000L
 
 #ifndef GPU_BUNCHED_WAKE_UNSUPPORTED
@@ -119,6 +119,7 @@ typedef struct GPU_MULTIPOLE_DATA {
   long nSlices;
   int integrationOrder;
   int expandHamiltonian;
+  int initialSlopeRoundTrip;
   int radiationBlock;
   double drift;
   double Po;

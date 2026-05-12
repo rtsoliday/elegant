@@ -143,14 +143,12 @@ void reportElementTiming() {
 }
 
 #ifdef HAVE_GPU
-static long gpuWatchCoordinateOutputRequested(WATCH *watch) {
+static long gpuWatchOutputRequested(WATCH *watch) {
   if (!watch || watch->disable)
     return 0;
   if (watch->initialized)
-    return watch->mode_code == WATCH_COORDINATES;
-  if (!watch->mode || !watch->mode[0])
-    return 1;
-  return strncmp(watch->mode, "coord", 5) == 0;
+    return watch->mode_code >= 0 && watch->mode_code < N_WATCH_MODES;
+  return 1;
 }
 
 static long gpuOrderSensitiveOutputRequested(LINE_LIST *beamline, RUN *run,
@@ -159,13 +157,15 @@ static long gpuOrderSensitiveOutputRequested(LINE_LIST *beamline, RUN *run,
 
   if (flags & (INHIBIT_FILE_OUTPUT | TEST_PARTICLES))
     return 0;
+  if (run && run->output && run->output[0])
+    return 1;
   if (run && run->final && run->final[0])
     return 1;
   if (!beamline)
     return 0;
   for (eptr = beamline->elem; eptr; eptr = eptr->succ) {
     if (eptr->type == T_WATCH &&
-        gpuWatchCoordinateOutputRequested((WATCH *)eptr->p_elem))
+        gpuWatchOutputRequested((WATCH *)eptr->p_elem))
       return 1;
   }
   return 0;
@@ -438,7 +438,9 @@ long do_tracking(
 
 #ifdef HAVE_GPU
   gpuBaseInit(coord, nOriginal, accepted, NULL, isMaster,
-              run && run->losses && run->losses[0] && !(flags & INHIBIT_FILE_OUTPUT),
+              (flags & LOSS_COORDINATES_NEEDED) ||
+                (run && run->losses && run->losses[0] &&
+                 !(flags & INHIBIT_FILE_OUTPUT)),
               gpuOrderSensitiveOutputRequested(beamline, run, flags),
               gpuReductionOutputRequested(run, flags),
               run && run->always_change_p0,
@@ -2575,8 +2577,13 @@ long do_tracking(
                   if (run->apertureData.initialized)
                     nLeft = imposeApertureData(coord, nLeft, accepted, z, *P_central,
                                                &(run->apertureData), eptr);
-                  if (apcontour && !(eptr->type == T_APCONTOUR && apcontour->holdOff))
+                  if (apcontour && !(eptr->type == T_APCONTOUR && apcontour->holdOff)) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu())
+                      coord = forceParticlesToCpu("sticky APCONTOUR");
+#endif
                     nLeft = imposeApContour(coord, apcontour, nLeft, accepted, z, *P_central, eptr);
+                  }
                 }
               }
 #ifdef DEBUG_CRASH

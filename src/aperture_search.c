@@ -17,6 +17,8 @@
 #include "track.h"
 #include "aperture_search.h"
 
+#define APERTURE_TRACKING_FLAGS (SILENT_RUNNING | INHIBIT_FILE_OUTPUT | LOSS_COORDINATES_NEEDED)
+
 #define IC_X 0
 #define IC_Y 1
 #define IC_SLOST 2
@@ -455,7 +457,7 @@ long do_aperture_search_mp(
         coord[iy][ic] += orbit[ic];
     n_survived = do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                              accepted, NULL, NULL, NULL, run, control->i_step,
-                             SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+                             APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     if (verbosity > 1) {
       printf("    %ld particles survived\n", n_survived);
       fflush(stdout);
@@ -534,7 +536,7 @@ long do_aperture_search_mp(
         coord[iy][ic] += orbit[ic];
     n_survived = do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                              accepted, NULL, NULL, NULL, run, control->i_step,
-                             SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+                             APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     if (verbosity > 1) {
       printf("    %ld particles survived\n", n_survived);
       fflush(stdout);
@@ -706,7 +708,7 @@ long do_aperture_search_sp(
       n_trpoint = 1;
       if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                       NULL, NULL, NULL, NULL, run, control->i_step,
-                      SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
+                      APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
         /* stable */
         if (fpSearchOutput)
           fprintf(fpSearchOutput, "%ld\n%le\n%le\n0\n1\n", control->i_step, x, y);
@@ -739,7 +741,7 @@ long do_aperture_search_sp(
           n_trpoint = 1;
           if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                           NULL, NULL, NULL, NULL, run, control->i_step,
-                          SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
+                          APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
             n_stable++;
             x1 = x; /* stable */
             if (fpSearchOutput)
@@ -794,7 +796,7 @@ long do_aperture_search_sp(
       n_trpoint = 1;
       if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                       NULL, NULL, NULL, NULL, run, control->i_step,
-                      SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
+                      APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
         /* stable */
         if (fpSearchOutput)
           fprintf(fpSearchOutput, "%ld\n%le\n%le\n1\n1\n", control->i_step, x, y);
@@ -827,7 +829,7 @@ long do_aperture_search_sp(
           n_trpoint = 1;
           if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                           NULL, NULL, NULL, NULL, run, control->i_step,
-                          SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
+                          APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL)) {
             n_stable++;
             x1 = x; /* stable */
             if (fpSearchOutput)
@@ -1139,7 +1141,7 @@ long do_aperture_search_line(
           n_trpoint = 1;
           if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                           NULL, NULL, NULL, NULL, run, control->i_step,
-                          SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL) != 1) {
+                          APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL) != 1) {
             if (verbosity >= 2) {
               if (!slope_mode)
                 printf("particle lost for x=%e, y=%e\n", index * dx + x0, index * dy + y0);
@@ -1396,7 +1398,7 @@ long do_aperture_search_grid
     effort = 0;
     nLeft = do_tracking(NULL, coord, np, &effort, beamline, &p_central,
                         NULL, NULL, NULL, NULL, run, control->i_step,
-                        SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+                        APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     if (verbosity >= 1) {
       long pid;
       printf("%ld particles left\n", nLeft);
@@ -1700,7 +1702,7 @@ long do_aperture_search_grid_p
     
     nLeftLocal = do_tracking(NULL, coord, npLocal, NULL, beamline, &p_central,
                              NULL, NULL, NULL, NULL, run, control->i_step,
-                             SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+                             APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     
     long *npVector = (long*)malloc(sizeof(long)*n_processors);
     long *nLeftVector = (long*)malloc(sizeof(long)*n_processors);
@@ -2174,7 +2176,7 @@ long do_aperture_search_line_p(
         n_trpoint = 1;
         if (do_tracking(NULL, coord, n_trpoint, &effort, beamline, &p_central,
                         NULL, NULL, NULL, NULL, run, control->i_step,
-                        SILENT_RUNNING|INHIBIT_FILE_OUTPUT, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL) != 1) {
+                        APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL) != 1) {
           /* Particle lost, so record information */
           xLost2[line][step] = coord[0][0];
           yLost2[line][step] = coord[0][2];

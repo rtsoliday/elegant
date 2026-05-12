@@ -576,7 +576,9 @@ static long gpuRfcaChangeP0Explicit = 0;
 static long gpuRunAlwaysChangeP0 = 0;
 static long gpuAvoidShortGpuIslands = 1;
 static long gpuShortGpuIslandMaxElements = 4;
+static long gpuMatrixMinParticlesExplicit = 0;
 static long gpuHelperMinParticlesExplicit = 0;
+static long gpuWakeMinParticlesExplicit = 0;
 static long gpuReductionMinParticlesExplicit = 0;
 static long unsupportedReported = 0;
 static double gpuWallStart = 0;
@@ -1754,6 +1756,8 @@ static long gpuLscElementSupported(ELEMENT_LIST *eptr) {
 
   if (!eptr || !eptr->p_elem || eptr->type != T_LSCDRIFT)
     return 0;
+  if (gpuBase.orderSensitiveOutputNeeded)
+    return 0;
   lsc = (LSCDRIFT *)eptr->p_elem;
   if (gpuBase.backtrack || lsc->backtrack)
     return 0;
@@ -1775,8 +1779,35 @@ static long gpuCsrDriftNoOpElementSupported(ELEMENT_LIST *eptr) {
   return !csrDrift->csr && !csrDrift->LSCBins;
 }
 
+static long gpuParticleCountMeetsThreshold(long nParticles, long minParticles) {
+  return minParticles <= 0 || nParticles >= minParticles;
+}
+
 static long gpuParticleCountAllowed(long nParticles, long minParticles) {
-  return gpuBase.requiredMode || minParticles <= 0 || nParticles >= minParticles;
+  return gpuBase.requiredMode ||
+         gpuParticleCountMeetsThreshold(nParticles, minParticles);
+}
+
+static long gpuMatrixParticleCountAllowed(long nParticles) {
+  if (gpuBase.orderSensitiveOutputNeeded && !gpuMatrixMinParticlesExplicit)
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuBase.matrixMinParticles);
+  return gpuParticleCountAllowed(nParticles, gpuBase.matrixMinParticles);
+}
+
+static long gpuExactDriftParticleCountAllowed(long nParticles) {
+  if (!gpuEnableExactDrift)
+    return 0;
+  if (gpuBase.orderSensitiveOutputNeeded && !gpuExactDriftExplicit)
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuBase.exactDriftMinParticles);
+  return gpuParticleCountAllowed(nParticles, gpuBase.exactDriftMinParticles);
+}
+
+static long gpuWakeParticleCountAllowed(long nParticles) {
+  if (gpuBase.orderSensitiveOutputNeeded && !gpuWakeMinParticlesExplicit)
+    return gpuParticleCountMeetsThreshold(nParticles, gpuBase.wakeMinParticles);
+  return gpuParticleCountAllowed(nParticles, gpuBase.wakeMinParticles);
 }
 
 static long gpuScmultAllowed(long nParticles) {
@@ -1865,9 +1896,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuRfcwRfOnlyKickElementSupported(eptr))
     return gpuParticleCountAllowed(nParticles, gpuBase.helperMinParticles);
   if (gpuRfcwMatrixWakeElementSupported(eptr))
-    return gpuParticleCountAllowed(nParticles, gpuBase.wakeMinParticles);
+    return gpuWakeParticleCountAllowed(nParticles);
   if (gpuRfcwKickWakeElementSupported(eptr))
-    return gpuParticleCountAllowed(nParticles, gpuBase.wakeMinParticles);
+    return gpuWakeParticleCountAllowed(nParticles);
   if (gpuKickMapElementSupported(eptr))
     return gpuParticleCountAllowed(nParticles, gpuBase.magnetMinParticles);
   if (gpuCsbendElementSupported(eptr))
@@ -1875,9 +1906,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuMultipoleElementSupported(eptr))
     return gpuParticleCountAllowed(nParticles, gpuBase.magnetMinParticles);
   if (gpuWakeElementSupported(eptr))
-    return gpuParticleCountAllowed(nParticles, gpuBase.wakeMinParticles);
+    return gpuWakeParticleCountAllowed(nParticles);
   if (gpuTrwakeElementSupported(eptr))
-    return gpuParticleCountAllowed(nParticles, gpuBase.wakeMinParticles);
+    return gpuWakeParticleCountAllowed(nParticles);
   if (gpuLscElementSupported(eptr))
     return gpuParticleCountAllowed(nParticles, gpuBase.lscMinParticles);
   if (gpuCsrCsbendDeviceEntrySupported(eptr, nParticles))
@@ -1885,9 +1916,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuCsrDriftNoOpElementSupported(eptr))
     return gpuParticleCountAllowed(nParticles, gpuBase.csrMinParticles);
   if (gpuSimpleMatrixElement(eptr))
-    return gpuParticleCountAllowed(nParticles, gpuBase.matrixMinParticles);
-  if (gpuEnableExactDrift && gpuExactDriftElement(eptr->type))
-    return gpuParticleCountAllowed(nParticles, gpuBase.exactDriftMinParticles);
+    return gpuMatrixParticleCountAllowed(nParticles);
+  if (gpuExactDriftElement(eptr->type))
+    return gpuExactDriftParticleCountAllowed(nParticles);
   return 0;
 }
 
@@ -3242,7 +3273,7 @@ static long gpuMatrixSupported(VMATRIX *M) {
 }
 
 long gpu_matrix_supported(void *matrix) {
-  if (!gpuParticleCountAllowed(gpuBase.nParticles, gpuBase.matrixMinParticles))
+  if (!gpuMatrixParticleCountAllowed(gpuBase.nParticles))
     return 0;
   return gpuMatrixSupported((VMATRIX *)matrix);
 }
@@ -3290,6 +3321,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuBase.activeDevice = -1;
   gpuBase.minParticles = gpuEnvLong("ELEGANT_GPU_MIN_PARTICLES",
                                     ELEGANT_GPU_DEFAULT_MIN_PARTICLES);
+  gpuMatrixMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_MATRIX_PARTICLES");
   gpuBase.matrixMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_MATRIX_PARTICLES", gpuBase.minParticles);
   gpuHelperMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_HELPER_PARTICLES");
   gpuBase.helperMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_HELPER_PARTICLES", gpuBase.minParticles);
@@ -3298,6 +3330,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuBase.reductionMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_REDUCTION_PARTICLES", gpuBase.minParticles);
   gpuBase.apertureMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_APERTURE_PARTICLES", gpuBase.minParticles);
   gpuBase.magnetMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_MAGNET_PARTICLES", gpuBase.minParticles);
+  gpuWakeMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_WAKE_PARTICLES");
   gpuBase.wakeMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_WAKE_PARTICLES", gpuBase.minParticles);
   gpuBase.lscMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_LSC_PARTICLES", gpuBase.wakeMinParticles);
   gpuBase.csrMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_CSR_PARTICLES", gpuBase.minParticles);
@@ -6312,6 +6345,7 @@ static void gpuInitMultipoleData(GPU_MULTIPOLE_DATA *data, double Po,
   data->nSlices = nSlices;
   data->integrationOrder = integrationOrder;
   data->expandHamiltonian = expandHamiltonian ? 1 : 0;
+  data->initialSlopeRoundTrip = 1;
   data->radiationBlock = 1;
   data->coordLimit = coordLimit;
   data->slopeLimit = slopeLimit;
@@ -6333,6 +6367,7 @@ static long gpuPackMultipoleTracking(GPU_MULTIPOLE_DATA *data,
       return 0;
     gpuInitMultipoleData(data, Po, multipole->length, nSlices, 2,
                          multipole->expandHamiltonian);
+    data->initialSlopeRoundTrip = 0;
     data->order[0] = multipole->order;
     if (multipole->bore)
       data->KnL[0] = dfactorial(multipole->order) * multipole->BTipL /
@@ -6586,6 +6621,16 @@ long gpu_multipole_tracking(long n_part, void *multipole0, double p_error,
   if (!gpuPackMultipoleTracking(&data, &elem, Po))
     return gpuMultOnCpu(n_part, multipole, p_error, Po, accepted, z_start,
                         "multipole_tracking unsupported option");
+  if (data.KnL[0] == 0) {
+    if (data.drift == 0)
+      return n_part;
+    if (gpuExactDriftParticleCountAllowed(n_part)) {
+      gpu_exactDrift(n_part, data.drift);
+      return n_part;
+    }
+    return gpuMultOnCpu(n_part, multipole, p_error, Po, accepted, z_start,
+                        "zero-strength MULT exactDrift CPU reference");
+  }
 
   gpuCopyHostToDevice(n_part);
   status = gpuCudaMultipoleTrackChecked(gpuBase.deviceCoord, n_part,
