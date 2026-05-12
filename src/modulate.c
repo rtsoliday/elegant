@@ -233,7 +233,7 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
 #endif
 
 #if USE_MPI
-  long np_total;
+  long np_total = 0;
   if (notSinglePart) {
     MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     if (np_total == 0)
@@ -325,6 +325,7 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
 #endif
     p_elem = (char *)(modData->element[iMod]->p_elem);
 #ifdef DEBUG
+    print_elem(stdout, modData->element[iMod]);
     printf("applyElementModulations: p_elem = %x\n", p_elem);
     fflush(stdout);
 #endif
@@ -444,7 +445,7 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
     default:
       break;
     }
-
+    
 #ifdef DEBUG
     printf("applyElementModulations: Set parameter value on elements(s)\n");
     fflush(stdout);
