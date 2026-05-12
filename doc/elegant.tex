@@ -89,6 +89,7 @@ command.
   spin-related quantities when spin tracking is enabled.
 \item Optimization of spin-related quantities is supported.
 \item The \verb|particle_tunes| command has the option to include spin tune.
+\item The \verb|moments_output| command has the option to force $e_1>e_2$.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -3927,6 +3928,7 @@ modulation will be applied.
     long verbosity = 0;
     long matched = 1;
     long equilibrium = 1;
+    long force_e1_gt_e2 = 0;
     long radiation = 1;
     long ibs_iterations = 0;
     long ibs_output_iterations = 0;
@@ -3968,6 +3970,8 @@ be output, and not the parameters as a function of s.
 \item \verb|matched| --- A flag indicating, if set, that the periodic or matched moments should be found.
 \item \verb|equilibrium| --- A flag indicating, if set, that the equilibrium moments should be found.  If \verb|matched=1| and \verb|equilibrium=0|,
   then the initial twiss parameters are computed from the periodic solution for the beamline.
+\item \verb|force_e1_gt_e2| --- Sometimes the two transverse modes are misidentified, leading to $e_1 < e_2$. If set, this
+  flag exchanges the two modes to force $e_1>e_2$.
 \item \verb|radiation| --- A flag indicating, if set, that synchrotron radiation effects should be included.
   N.B.: this flag is all that needs to be set if the lattice contains no kick elements. However, if the lattice contains \verb|CSBEND|, \verb|CSRCSBEND|, \verb|KQUAD|, 
   or \verb|KQUAD| elements (or other elements with \verb|SYNCH_RAD| and \verb|ISR| parameters), then the \verb|SYNCH_RAD| and\verb|ISR| must be set to 1 as well.
