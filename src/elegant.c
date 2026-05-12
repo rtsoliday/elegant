@@ -445,9 +445,7 @@ char *getNamelist(char *s, long n, FILE *fp, long *errorCode) {
     return get_namelist_e(s, NAMELIST_BUFLEN, fp, errorCode);
 }
 
-int main(argc, argv)
-     int argc;
-     char **argv;
+int main(int argc, char **argv)
 {
   char **macroTag, **macroValue = NULL;
   long macros;
