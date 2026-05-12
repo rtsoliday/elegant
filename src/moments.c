@@ -1087,6 +1087,23 @@ void computeNaturalEmittances(VMATRIX *Mld, double *sigmaMatrix, double *emittan
   emittance[1] = Rdiag[2 * dim + 2];
   emittance[2] = Rdiag[4 * dim + 4];
 
+  if (force_e1_gt_e2 && emittance[0]<emittance[1]) {
+    double sigmaCopy[6][6];
+    long i1, j1;
+    for (i=0; i<MATDIM; i++) {
+      for (j=0; j<MATDIM; j++) {
+	sigmaCopy[i][j] = sigmaMatrix[sigmaIndex3[i][j]];
+      }
+    }
+    for (i=0; i<MATDIM; i++) {
+      i1 = i<2 ? i+2 : (i<4 ? i-2: i);
+      for (j=0; j<MATDIM; j++) {
+        j1 = j<2 ? j+2 : (j<4 ? j-2: j);
+	sigmaMatrix[sigmaIndex3[i][j]] = sigmaCopy[i1][j1];
+      }
+    }
+    SWAP_DOUBLE(emittance[0], emittance[1]);
+  }
   /* Store these in rpn memories in case needed by optimizer */
   for (i = 0; i < 3; i++) {
     if (enRpnMemory[i] == -1)
