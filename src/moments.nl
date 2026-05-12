@@ -14,6 +14,7 @@
     long verbosity = 0;
     long matched = 1;
     long equilibrium = 1;
+    long force_e1_gt_e2 = 0;
     long radiation = 1;
     long ibs_iterations = 0;
     long ibs_output_iterations = 0;
