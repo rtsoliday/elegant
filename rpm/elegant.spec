@@ -6,9 +6,9 @@ URL:		https://www.aps.anl.gov/Accelerator-Operations-Physics
 Packager:	Robert Soliday <soliday@aps.anl.gov>
 Prefix:		%{_bindir}
 Autoreq:	0
-Version:	2026.1.0
+Version:	2026.2.0
 Release:	1
-Source:		elegant-2026.1.0.tar.gz
+Source:		elegant-2026.2.0.tar.gz
 
 %define debug_package %{nil}
 %undefine __check_files
@@ -119,6 +119,7 @@ install    -m 755 shower2elegant %{buildroot}%{_bindir}/shower2elegant
 install    -m 755 smoothDist6s %{buildroot}%{_bindir}/smoothDist6s
 install    -m 755 spectraCLI %{buildroot}%{_bindir}/spectraCLI
 install    -m 755 spectra2sdds %{buildroot}%{_bindir}/spectra2sdds
+install    -m 755 spin_resonances %{buildroot}%{_bindir}/spin_resonances
 install    -m 755 spiffe2elegant %{buildroot}%{_bindir}/spiffe2elegant
 install -s -m 755 straightDipoleFringeCalc %{buildroot}%{_bindir}/straightDipoleFringeCalc
 install    -m 755 TFBFirSetup %{buildroot}%{_bindir}/TFBFirSetup
@@ -252,6 +253,7 @@ install -m 444 undulatorTuningCurve.spin %{buildroot}%{_prefix}/local/oag/apps/c
 %{_bindir}/smoothDist6s
 %{_bindir}/spectraCLI
 %{_bindir}/spectra2sdds
+%{_bindir}/spin_resonances
 %{_bindir}/spiffe2elegant
 %{_bindir}/straightDipoleFringeCalc
 %{_bindir}/TFBFirSetup
