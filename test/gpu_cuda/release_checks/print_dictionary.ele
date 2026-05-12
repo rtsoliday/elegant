@@ -1,9 +1,0 @@
-&print_dictionary
-  filename = "dictionary.tex",
-  latex_form = 1
-&end
-
-&print_dictionary
-  filename = "dictionary.sdds",
-  SDDS_form = 1
-&end

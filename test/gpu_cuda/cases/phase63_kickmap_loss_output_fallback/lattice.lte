@@ -1,4 +1,0 @@
-KM1: GKICKMAP, L=0.2, INPUT_FILE="../phase62_kickmap_loss_compaction/kickmap.sdds", N_KICKS=4, FACTOR=1
-DR1: DRIF, L=0.05
-CELL: LINE=(KM1,DR1,KM1,DR1,KM1,DR1,KM1,DR1,KM1,DR1)
-BL: LINE=(CELL)

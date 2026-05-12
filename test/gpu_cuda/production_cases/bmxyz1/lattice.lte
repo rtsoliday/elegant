@@ -1,8 +1,0 @@
-BMXYZ: BMXYZ,L=0.8,ACCURACY=1e-4,METHOD="non-adaptive runge-kutta",&
-  FILENAME="/home/soliday/oag/apps/src/elegantTestSet/ftable2/Q98.sdds",&
-  STRENGTH=1,DX=1e-4,DY=-2e-4,TILT=1,PARTICLE_OUTPUT_FILE="%s.bmxyz.pout"
-MALIN: MALIGN,DX=1e-4,DY=-2e-4
-MALOUT: MALIGN,DX=-1e-4,DY=2e-4
-ROTIN: ROTATE,TILT=-1
-ROTOUT: ROTATE,TILT=1
-LQ: LINE=(ROTIN,MALIN,BMXYZ,MALOUT,ROTOUT)
