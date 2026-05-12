@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-#define ELEGANT_GPU_DEFAULT_MODE "required"
+#define ELEGANT_GPU_DEFAULT_MODE "auto"
 #define ELEGANT_GPU_DEFAULT_MIN_PARTICLES 10000L
 
 #ifndef GPU_BUNCHED_WAKE_UNSUPPORTED
