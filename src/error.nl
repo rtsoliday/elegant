@@ -13,7 +13,7 @@
     double error_factor = 1;
 #end
 
-#namelist error static
+#namelist error_element static
     STRING name = NULL;
     STRING exclude = NULL;
     STRING item = NULL;
