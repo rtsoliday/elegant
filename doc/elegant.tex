@@ -49,47 +49,30 @@ at a high level.
 Starting in Version 2025.4, AI coding assistants have been used for addition of new features and generation
 of documentation.
 
-\section{Highlights of What's New in Version 2026.2}
+\section{Highlights of What's New in Version 2026.3}
 
-Here is a summary of what's changed since release 2026.1.  Historical change logs are collected in Section
+Here is a summary of what's changed since release 2026.2.  Historical change logs are collected in Section
 \ref{sect:changeLog}.
-
-The major change is support for spin tracking. This is invoked by setting \verb|spin_tracking=1| in the \verb|run_setup|
-command.
 
 \subsection{Bug Fixes for Elements}
 
 \begin{itemize}
-\item Several elements (e.g., \verb|WATCH|) had a bug in which incomplete filenames (e.g., \verb|%s.w1|) were expanded
-  and then saved in parameter and lattice files.
-\item There was a bug in \verb|EHKICK|, \verb|EVKICK|, and \verb|EKICKER| that resulted in failure to include the
-  path-length increase when then deflection angle was very small.
+\item None.
 \end{itemize}
 
 \subsection{Bug Fixes for Commands}
 \begin{itemize}
-\item The \verb|save_lattice| command incorrectly handled element reflections when \verb|output_seq| was non-zero.
-  This was reported by M. Abo-Bakr (HZB).
+\item None.
 \end{itemize}
 
 \subsection{New and Modified Elements}
 \begin{itemize}
-\item \verb|BUMPER|, \verb|CSBEND|, \verb|DQCOR|, \verb|EHKICK|, \verb|EKICK|, \verb|EVKICK|, \verb|KQUAD|, \verb|KQUSE|, \verb|KSEXT|,
-  \verb|FMULT|, \verb|ROTATE|, and \verb|SOLE| elements support spin tracking. 
-\item The new \verb|POLAR| element can be used to polarize the beam.
-\item The \verb|WATCH| element will output data related to spin when spin-tracking is enabled.
+\item None.
 \end{itemize}
 
 \subsection{New and Modified Commands}
 \begin{itemize}
-\item The \verb|bunched_beam| and \verb|bunched_beam_moments| commands now support specification of the (common) spin vector.
-\item The \verb|modulate_elements| command now supports time- and pass-based modulation delays, as well as a convenience
-  factor for the modulation amplitude.
-\item The \verb|centroid|, \verb|final|, \verb|output|, and \verb|sigma| output files from \verb|run_setup| include
-  spin-related quantities when spin tracking is enabled.
-\item Optimization of spin-related quantities is supported.
-\item The \verb|particle_tunes| command has the option to include spin tune.
-\item The \verb|moments_output| command has the option to force $e_1>e_2$.
+\item None.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -8915,6 +8898,69 @@ terminal input and terminal output, respectively.
 \newpage
 
 \section{Change Log\label{sect:changeLog}}
+
+\subsection{Highlights of What's New in Version 2026.2}
+
+Here is a summary of what's changed since release 2026.1.  Historical change logs are collected in Section
+\ref{sect:changeLog}.
+
+The major change is support for spin tracking. This is invoked by setting \verb|spin_tracking=1| in the \verb|run_setup|
+command.
+
+\subsubsection{Bug Fixes for Elements}
+
+\begin{itemize}
+\item Several elements (e.g., \verb|WATCH|) had a bug in which incomplete filenames (e.g., \verb|%s.w1|) were expanded
+  and then saved in parameter and lattice files.
+\item There was a bug in \verb|EHKICK|, \verb|EVKICK|, and \verb|EKICKER| that resulted in failure to include the
+  path-length increase when then deflection angle was very small.
+\end{itemize}
+
+\subsubsection{Bug Fixes for Commands}
+\begin{itemize}
+\item The \verb|save_lattice| command incorrectly handled element reflections when \verb|output_seq| was non-zero.
+  This was reported by M. Abo-Bakr (HZB).
+\end{itemize}
+
+\subsubsection{New and Modified Elements}
+\begin{itemize}
+\item \verb|BUMPER|, \verb|CSBEND|, \verb|DQCOR|, \verb|EHKICK|, \verb|EKICK|, \verb|EVKICK|, \verb|KQUAD|, \verb|KQUSE|, \verb|KSEXT|,
+  \verb|FMULT|, \verb|ROTATE|, and \verb|SOLE| elements support spin tracking. 
+\item The new \verb|POLAR| element can be used to polarize the beam.
+\item The \verb|WATCH| element will output data related to spin when spin-tracking is enabled.
+\end{itemize}
+
+\subsubsection{New and Modified Commands}
+\begin{itemize}
+\item The \verb|bunched_beam| and \verb|bunched_beam_moments| commands now support specification of the (common) spin vector.
+\item The \verb|modulate_elements| command now supports time- and pass-based modulation delays, as well as a convenience
+  factor for the modulation amplitude.
+\item The \verb|centroid|, \verb|final|, \verb|output|, and \verb|sigma| output files from \verb|run_setup| include
+  spin-related quantities when spin tracking is enabled.
+\item Optimization of spin-related quantities is supported.
+\item The \verb|particle_tunes| command has the option to include spin tune.
+\item The \verb|moments_output| command has the option to force $e_1>e_2$.
+\end{itemize}
+
+\subsubsection{Changes to Examples}
+
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{Changes to Related Programs and Files}
+
+The {\tt elegant} distribution includes many programs and scripts that perform computations with {\tt elegant}
+output data, provide interfaces with other programs, or prepare data for use with {\tt elegant}. These
+are listed in Section \ref{sect:tools}. 
+
+Changes to these tools in this release include
+\begin{itemize}
+\item Added \verb|sddsupsample|, a program to up-sample particle distributions. Written by GPT-5.2-Codex guided by M. Borland.
+\item Added Emacs modes for command and lattice file editing. See documentation below. Written by GPT-5.2-Codex guided by M. Borland.
+\item Added \verb|centroid2floor|, a program to combine reference floor-coordinate and centroid data to make a file
+  with the beam path in global (floor) coordinates.
+\end{itemize}
 
 \subsection{Highlights of What's New in Version 2026.1}
 
