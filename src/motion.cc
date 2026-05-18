@@ -397,9 +397,19 @@ long motion(
       rpn_store((xMaxSeen + xMinSeen) / 2, NULL, xMotionCenterVar);
   }
 
-  if (change_p0)
+#ifdef DEBUG
+  printf("change_p0=%ld, n_part=%ld\n", change_p0, n_part);
+#endif  
+  if (change_p0 && n_part) {
+#ifdef DEBUG
+    printf("Running do_match_energy with p0=%le\n", *pCentral);
+#endif  
     do_match_energy(part, n_part, pCentral, 0);
-
+#ifdef DEBUG
+    printf("Ran do_match_energy, got p0=%le\n", *pCentral);
+#endif  
+  }
+  
   log_exit((char *)"motion");
   return (i_top + 1);
 }
