@@ -246,8 +246,10 @@ VMATRIX *accumulate_matrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long ord
       Pref_input = member->pred->Pref_output;
     else
       Pref_input = member->Pref_input;
-    if (!member->matrix || Pref_input != member->Pref_input)
+    if (!member->matrix || Pref_input != member->Pref_input) {
+      member->Pref_input = Pref_input;
       compute_matrix(member, run, NULL);
+    }
     if (entity_description[member->type].flags & HAS_MATRIX) {
       if (!member->matrix) {
         printf("programming error: matrix not computed for element %s\n",
@@ -551,7 +553,8 @@ long calculate_matrices(
   RUN *run) {
   ELEMENT_LIST *member;
   long n_elements;
-
+  double Pref_input;
+  
   log_entry("calculate_matrices");
 
   n_elements = 0;
@@ -559,7 +562,11 @@ long calculate_matrices(
   line->elem_recirc = NULL;
   line->i_recirc = 0;
   while (member) {
-    if (!member->matrix || (member->pred && member->pred->Pref_output != member->Pref_input))
+    if (member->pred)
+      Pref_input = member->pred->Pref_output;
+    else
+      Pref_input = member->Pref_input;
+    if (!member->matrix || Pref_input!=member->Pref_input)
       compute_matrix(member, run, NULL);
     if (member->type == T_RECIRC) {
       line->elem_recirc = member;
@@ -568,6 +575,7 @@ long calculate_matrices(
     n_elements++;
     member = member->succ;
   }
+
   log_exit("calculate_matrices");
   return (n_elements);
 }
