@@ -154,7 +154,7 @@ void add_error_element(ERRORVAL *errcon, NAMELIST_TEXT *nltext, LINE_LIST *beaml
   /* process namelist text */
   set_namelist_processing_flags(STICKY_NAMELIST_DEFAULTS);
   set_print_namelist_flags(0);
-  if (processNamelist(&error, nltext) == NAMELIST_ERROR)
+  if (processNamelist(&error_element, nltext) == NAMELIST_ERROR)
     bombElegant(NULL, NULL);
   if (name == NULL) {
     if (!element_type)
@@ -162,7 +162,7 @@ void add_error_element(ERRORVAL *errcon, NAMELIST_TEXT *nltext, LINE_LIST *beaml
     SDDS_CopyString(&name, "*");
   }
   if (echoNamelists)
-    print_namelist(stdout, &error);
+    print_namelist(stdout, &error_element);
 
   /* check for valid input and copy to errcon arrays */
   if (item == NULL)
