@@ -39,14 +39,16 @@ static FILE **fpMathematica = NULL;
 static char **mathematicaMatrixName = NULL;
 
 #define IC_S 0
-#define IC_ELEMENT 1
-#define IC_OCCURENCE 2
-#define IC_TYPE 3
-#define IC_SYMPLECTICITY1 4
-#define IC_SYMPLECTICITY1_FULL 5
-#define N_COLUMNS 6
+#define IC_PCENTRAL 1
+#define IC_ELEMENT 2
+#define IC_OCCURENCE 3
+#define IC_TYPE 4
+#define IC_SYMPLECTICITY1 5
+#define IC_SYMPLECTICITY1_FULL 6
+#define N_COLUMNS 7
 static SDDS_DEFINITION column_definition[N_COLUMNS] = {
   {"s", "&column name=s, units=m, type=double, description=\"Distance\" &end"},
+  {"pCentral", "&column name=pCentral, type=double, &end"},
   {"ElementName", "&column name=ElementName, type=string, description=\"Element name\", format_string=%10s &end"},
   {"ElementOccurence",
    "&column name=ElementOccurence, type=long, description=\"Occurence of element\", format_string=%6ld &end"},
@@ -308,7 +310,7 @@ void run_matrix_output(
   long i_SDDS_output, n_SDDS_output = 0;
   long i_output, output_order;
   VMATRIX *M1, *M2, *tmp;
-  char s[256];
+  char s[1024];
   /* double z0; */
   VARY rcContext;
   double Ccopy[6];
@@ -400,12 +402,14 @@ void run_matrix_output(
                  entity_name[member->type], member->name);
           fflush(stdout);
 #endif
+          snprintf(s, 1024, "%s#%ld pInput=%le pOutput=%le", member->name, member->occurence,
+		   member->Pref_input, member->Pref_output);
           if (member->matrix->order > print_order[i_output]) {
             SWAP_LONG(member->matrix->order, print_order[i_output]);
-            print_matrices1(fp_printout[i_output], member->name, printoutFormat[i_output], member->matrix, suppress_below_value[i_output]);
+            print_matrices1(fp_printout[i_output], s, printoutFormat[i_output], member->matrix, suppress_below_value[i_output]);
             SWAP_LONG(member->matrix->order, print_order[i_output]);
           } else
-            print_matrices1(fp_printout[i_output], member->name, printoutFormat[i_output], member->matrix, suppress_below_value[i_output]);
+            print_matrices1(fp_printout[i_output], s, printoutFormat[i_output], member->matrix, suppress_below_value[i_output]);
         }
 #ifdef DEBUG
         printf("concatenating matrix of %s %s\n",
@@ -421,7 +425,7 @@ void run_matrix_output(
         M2 = M1;
         M1 = tmp;
         if (fp_printout[i_output] && !print_full_only[i_output]) {
-          sprintf(s, "%s matrix after last element",
+          snprintf(s, 1024, "%s matrix after last element",
                   individualMatrices[i_output] ? "Effective element" : "Concatenated");
           if (M1->order > print_order[i_output]) {
             SWAP_LONG(M1->order, print_order[i_output]);
@@ -688,7 +692,8 @@ void SDDS_set_matrices(SDDS_TABLE *SDDS_table, VMATRIX *M, VMATRIX *M0, long ord
   }
 
   if (!SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, i_element,
-                         IC_S, elem->end_pos, IC_ELEMENT, elem->name, IC_OCCURENCE, elem->occurence,
+                         IC_S, elem->end_pos, IC_PCENTRAL, elem->Pref_output,
+			 IC_ELEMENT, elem->name, IC_OCCURENCE, elem->occurence,
                          IC_TYPE, entity_name[elem->type],
                          IC_SYMPLECTICITY1, M0 ? checkSymplecticity(M0, 0) : (double)0.0,
                          IC_SYMPLECTICITY1_FULL, checkSymplecticity(M, 0),
