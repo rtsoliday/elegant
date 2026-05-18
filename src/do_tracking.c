@@ -1149,9 +1149,9 @@ long do_tracking(
               printf("element %s#%ld, %ld particles, %ld left\n", eptr->name, eptr->occurence, nToTrack, nLeft);
               fflush(stdout);
 #endif
-              snprintf(buffer, 16384, "Starting %s#%ld (%s) at s=%le to %le m, pass %ld, %ld particles, memory %ld kB\n",
-                       eptr->name, eptr->occurence, entity_name[eptr->type],
-                       last_z, eptr->end_pos, i_pass,
+              snprintf(buffer, 16384, "Starting %s#%ld (%s) at s=%le to %le m, p0 = %le, pass %ld, %ld particles, memory %ld kB\n",
+                       eptr->name, eptr->occurence,  entity_name[eptr->type],
+                       last_z, eptr->end_pos, *P_central, i_pass,
 #if USE_MPI
                        myid == 0 ? (beam ? beam->n_to_track_total : -1) : nToTrack,
 #else
