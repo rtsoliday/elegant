@@ -522,8 +522,10 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
     bombElegant("return data array is null (compute_final_properties)", NULL);
   if (!sums)
     bombElegant("beam sums element is null (compute_final_properties)", NULL);
+  /*
   if (!M || !M->C || !M->R)
     bombElegant("invalid/null transport map (compute_final_properties)", NULL);
+  */
   if (isSlave)
     if (!coord)
       bombElegant("particle coordinate array is null (compute_final_properties)", NULL);
@@ -786,15 +788,22 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
   fflush(stdout);
 #endif
 
-  R = M->R;
   i_data = F_RMAT_OFFSET;
-  for (i = 0; i < 6; i++)
-    for (j = 0; j < 6; j++)
-      data[i_data++] = R[i][j];
-  Rmat.a = R;
-  Rmat.n = Rmat.m = 6;
-  data[i_data] = m_det(&Rmat);
-
+  if (M && (R=M->R)) {
+    R = M->R;
+    for (i = 0; i < 6; i++)
+      for (j = 0; j < 6; j++)
+        data[i_data++] = R[i][j];
+    Rmat.a = R;
+    Rmat.n = Rmat.m = 6;
+    data[i_data] = m_det(&Rmat);
+  } else {
+    for (i = 0; i < 6; i++)
+      for (j = 0; j < 6; j++)
+        data[i_data++] = 0;
+    data[i_data] = 0;
+  }
+  
   /* run time statistics */
   i_data = F_STATS_OFFSET;
 #if defined(__linux__) || defined(__APPLE__)
