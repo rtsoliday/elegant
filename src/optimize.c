@@ -113,9 +113,9 @@ void do_optimization_setup(OPTIMIZATION_DATA *optimization_data, NAMELIST_TEXT *
     bombElegant("n_restarts < 0", NULL);
   if ((optimization_data->restart_reset_threshold = restart_reset_threshold)<0)
     bombElegant("restart_reset_threshold < 0", NULL);
-  if ((optimization_data->matrix_order = matrix_order) < 1 ||
+  if ((optimization_data->matrix_order = matrix_order) < 0 ||
       matrix_order > 3)
-    bombElegant("matrix_order must be 1, 2, or 3", NULL);
+    bombElegant("matrix_order must be 0, 1, 2, or 3", NULL);
   optimization_data->soft_failure = soft_failure;
   if (output_sparsing_factor <= 0)
     output_sparsing_factor = 1;
@@ -2144,7 +2144,8 @@ double optimization_function(double *value, long *invalid) {
   if (beamline->links && beamline->links->n_links)
     rebaseline_element_links(beamline->links, run, beamline);
   i = assert_element_links(beamline->links, run, beamline, STATIC_LINK + DYNAMIC_LINK + LINK_ELEMENT_DEFINITION);
-  i += compute_changed_matrices(beamline, run);
+  if (optimization_data->matrix_order>0)
+    i += compute_changed_matrices(beamline, run);
 #if USE_MPI && MPI_DEBUG
   printf("Mode after compute_changed_matrices: parallelTrackingBasedMatrices = %ld, partOnMaster=%d, parallelStatus=%d, lessPartAllowed=%ld, isSlave=%ld, isMaster=%ld, notSinglePart=%ld, runInSinglePartMode=%ld, trajectoryTracking=%ld\n",
          parallelTrackingBasedMatrices, partOnMaster, parallelStatus, lessPartAllowed, isSlave, isMaster, notSinglePart, runInSinglePartMode, trajectoryTracking);
@@ -2518,8 +2519,10 @@ double optimization_function(double *value, long *invalid) {
 
   if (!*invalid) {
     output->n_z_points = 0;
-    M = accumulate_matrices(beamline->elem, run, NULL,
-                            optimization_data->matrix_order < 1 ? 1 : optimization_data->matrix_order, 0);
+    M = NULL;
+    if (optimization_data->matrix_order>0)
+      M = accumulate_matrices(beamline->elem, run, NULL,
+                              optimization_data->matrix_order < 1 ? 1 : optimization_data->matrix_order, 0);
 
 #if USE_MPI && MPI_DEBUG
   printf("Accumulated matrices\n");
@@ -2672,9 +2675,11 @@ double optimization_function(double *value, long *invalid) {
         rpnStoreHigherMatrixElements(M, &optimization_data->TijkMem,
                                      &optimization_data->UijklMem,
                                      optimization_data->matrix_order);
-      free_matrices(M);
-      free(M);
-      M = NULL;
+      if (M) {
+	free_matrices(M);
+        free(M);
+        M = NULL;
+      }
 
 #if DEBUG
       printf("optimization_function: Checking constraints, invalid = %ld\n", *invalid);
