@@ -44,7 +44,7 @@
  * This alters dp in the above equation, which is not strictly correct, but
  * should be okay for small energy losses.
  *
- * The routines in this directory support two elegant elements:
+ * The routines in this directory support these elegant elements:
  * 1. NIBENDs --- Numerically Integrated BENDs
  *                This is a flat-field magnet with extended-edge effects.
  * 2. NISEPTs --- Numerically Integrated SEPTum-type magnet.
