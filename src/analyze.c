@@ -664,7 +664,7 @@ void finish_transport_analysis(
 
 VMATRIX *determineMatrix(RUN *run, ELEMENT_LIST *eptr, double *startingCoord, double *stepSize) {
   double **coord;
-  long n_track, i, j;
+  long n_track, i, j, nLeft;
   VMATRIX *M;
   double **R, *C;
   double defaultStep[6] = {1e-5, 1e-5, 1e-5, 1e-5, 1e-5, 1e-5};
@@ -866,8 +866,32 @@ VMATRIX *determineMatrix(RUN *run, ELEMENT_LIST *eptr, double *startingCoord, do
     break;
   case T_TWMTA:
   case T_MAPSOLENOID:
+    nLeft=motion(coord, n_track, eptr->p_elem, eptr->type, &run->p_central, &dgamma, dP, NULL, 0.0);
+    if (nLeft!=n_track) {
+      char buffer[1024];
+      snprintf(buffer, 1024, "determineMatrix: %ld of %ld probe particles lost in matrix determination for %s#%ld (pCentral=%le)",
+	       n_track-nLeft, n_track, eptr->name, eptr->occurence, run->p_central);
+      printWarning(buffer, NULL);
+    }
+    break;
   case T_TWLA:
-    motion(coord, n_track, eptr->p_elem, eptr->type, &run->p_central, &dgamma, dP, NULL, 0.0);
+    /*
+    printf("TWLA %s#%ld: before run->p_central=%le, Pref_input=%le, Pref_output=%le\n",
+	   eptr->name, eptr->occurence, run->p_central, eptr->Pref_input, eptr->Pref_output);
+    */
+    nLeft=motion(coord, n_track, eptr->p_elem, eptr->type, &run->p_central, &dgamma, dP, NULL, 0.0);
+    if (((TW_LINAC*)(eptr->p_elem))->change_p0)
+      eptr->Pref_output = eptr->Pref_output_fiducial = run->p_central;
+    /*
+    printf("TWLA %s#%ld: after run->p_central=%le, Pref_input=%le, Pref_output=%le\n",
+	   eptr->name, eptr->occurence, run->p_central, eptr->Pref_input, eptr->Pref_output);
+    */
+    if (nLeft!=n_track) {
+      char buffer[1024];
+      snprintf(buffer, 1024, "determineMatrix: %ld of %ld probe particles lost in matrix determination for %s#%ld (pCentral=%le)",
+	       n_track-nLeft, n_track, eptr->name, eptr->occurence, run->p_central);
+      printWarning(buffer, NULL);
+    }
     break;
   case T_RFCA:
     simple_rf_cavity(coord, n_track, (RFCA *)eptr->p_elem, NULL, &run->p_central, 0);
