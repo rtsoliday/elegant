@@ -205,7 +205,8 @@ void showUsageOrGreeting(unsigned long mode) {
 #define INCLUDE_COMMANDS 74
 #define PARTICLE_TUNES 75
 #define MACRO_OUTPUT 76
-#define N_COMMANDS 77
+#define CORRECT_COUPLING 77
+#define N_COMMANDS 78
 
 char *command[N_COMMANDS] = {
   "run_setup",
@@ -285,6 +286,7 @@ char *command[N_COMMANDS] = {
   "include_commands",
   "particle_tunes",
   "macro_output",
+  "correct_coupling",
 };
 
 char *description[N_COMMANDS] = {
@@ -364,7 +366,8 @@ char *description[N_COMMANDS] = {
   "change_end                       modify the beamline to end at a named location",
   "include_commands                 include commands from a file",
   "particle_tunes                   accumulate data and find tunes for each particle in a multi-particle beam",
-  "macro_output                     output values of commandline macros to a file"};
+  "macro_output                     output values of commandline macros to a file",
+  "correct_coupling                 correct vertical dispersion by adjusting skew quadrupoles (LOCO-style)"};
 
 #define NAMELIST_BUFLEN 65536
 
@@ -417,6 +420,9 @@ void setupLinearChromaticTracking(NAMELIST_TEXT *nltext, LINE_LIST *beamline);
 void setup_coupled_twiss_output(NAMELIST_TEXT *nltext, RUN *run,
                                 LINE_LIST *beamline, long *do_coupled_twiss_output,
                                 long default_order);
+void setup_correct_coupling(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
+long do_correct_coupling(RUN *run, LINE_LIST *beamline);
+void finish_correct_coupling(void);
 void reset_alter_specifications();
 void finishCorrectionOutput();
 void setupElasticScattering(NAMELIST_TEXT *nltext, RUN *run, VARY *control, long twissFlag);
@@ -467,6 +473,7 @@ int main(int argc, char **argv)
   char *saved_lattice = NULL;
   long correction_setuped, run_setuped, run_controled, error_controled, beam_type, commandCode;
   long do_chromatic_correction = 0, do_twiss_output = 0, fl_do_tune_correction = 0, do_coupled_twiss_output = 0;
+  long fl_do_coupling_correction = 0;
   long do_rf_setup = 0, do_floor_coordinates = 0, sceffects_inserted = 0;
   long do_moments_output = 0;
   long do_closed_orbit = 0, do_matrix_output = 0, do_response_output = 0;
@@ -863,7 +870,7 @@ int main(int argc, char **argv)
           run_setuped = run_controled = error_controled = correction_setuped = ionEffectsSeen = 0;
 
           run_setuped = run_controled = error_controled = correction_setuped = do_closed_orbit = do_chromatic_correction =
-            fl_do_tune_correction = do_floor_coordinates = 0;
+            fl_do_tune_correction = fl_do_coupling_correction = do_floor_coordinates = 0;
           do_twiss_output = do_matrix_output = do_response_output = do_coupled_twiss_output = do_moments_output =
             do_find_aperture = do_rf_setup = 0;
           linear_chromatic_tracking_setup_done = losses_include_global_coordinates = 0;
@@ -1255,13 +1262,18 @@ int main(int argc, char **argv)
                 bombElegant("Closed orbit not found", NULL);
             }
             /* Compute twiss parameters with starting_coord as the start of the orbit */
-            if (do_twiss_output && !run_twiss_output(&run_conditions, beamline, starting_coord, 0)) {
-              if (soft_failure) {
-                printWarning("Twiss parameters not defined.", "Continuing to next step.");
-                continue;
-              } else
-                bombElegant("Twiss parameters not defined", NULL);
-            }
+	    /*
+            if (do_twiss_output) {
+              update_twiss_parameters(&run_conditions, beamline, &unstable);
+	      if (unstable) {
+                if (soft_failure) {
+                  printWarning("Twiss parameters not defined.", "Continuing to next step.");
+                  continue;
+                } else
+                  bombElegant("Twiss parameters not defined", NULL);
+              }
+	    }
+	    */
             if (do_rf_setup)
               run_rf_setup(&run_conditions, beamline, 0);
             /* compute moments with starting_coord as the start of the orbit/trajectory */
@@ -1270,7 +1282,7 @@ int main(int argc, char **argv)
             if (do_response_output)
               run_response_output(&run_conditions, beamline, &correct, 0);
 
-            if (correct.mode != -1 || fl_do_tune_correction || do_chromatic_correction) {
+            if (correct.mode != -1 || fl_do_tune_correction || fl_do_coupling_correction || do_chromatic_correction) {
               /* Perform orbit, tune, and/or chromaticity correction */
               if (correct.use_actual_beam && correct.mode == TRAJECTORY_CORRECTION) {
                 if (beam_type == SET_SDDS_BEAM) {
@@ -1292,6 +1304,25 @@ int main(int argc, char **argv)
                                    (i == 0 ? INITIAL_CORRECTION : 0) + (i == correction_iterations - 1 ? FINAL_CORRECTION : 0))) {
                   printWarning("Orbit correction failed.", "Continuing with next step.");
                   continue;
+                }
+                if (fl_do_coupling_correction) {
+                  if (do_closed_orbit &&
+                      !run_closed_orbit(&run_conditions, beamline, starting_coord, NULL, 0)) {
+                    if (soft_failure) {
+                      printWarning("Closed orbit not found.", "Continuing to next step.");
+                      failed = 1;
+                      break;
+                    } else
+                      bombElegant("Closed orbit not found", NULL);
+                  }
+                  if (!do_correct_coupling(&run_conditions, beamline)) {
+                    if (soft_failure) {
+                      printWarning("Coupling correction failed.", "Continuing to next step.");
+                      failed = 1;
+                      break;
+                    } else
+                      bombElegant("Coupling correction failed", NULL);
+                  }
                 }
                 if (fl_do_tune_correction) {
                   if (do_closed_orbit &&
@@ -1512,7 +1543,7 @@ int main(int argc, char **argv)
           show_element_timing = monitor_memory_usage = 0;
           concat_order = print_statistics = p_central = 0;
           run_setuped = run_controled = error_controled = correction_setuped = do_chromatic_correction =
-            fl_do_tune_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
+            fl_do_tune_correction = fl_do_coupling_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
             ionEffectsSeen = back_tracking = losses_include_global_coordinates = 0;
           element_divisions = 0;
           run_conditions.rampData.valuesInitialized =
@@ -1570,6 +1601,12 @@ int main(int argc, char **argv)
             reset_driftCSR();
             finish_coupled_twiss_output();
           }
+          break;
+        case CORRECT_COUPLING:
+          if (!run_setuped || (!do_twiss_output && !twiss_computed))
+            bombElegant("run_setup and twiss_output must precede correct_coupling namelist", NULL);
+          setup_correct_coupling(&namelist_text, &run_conditions, beamline);
+          fl_do_coupling_correction = 1;
           break;
         case TUNE_SHIFT_WITH_AMPLITUDE:
           if (do_twiss_output)
@@ -1629,7 +1666,7 @@ int main(int argc, char **argv)
           show_element_timing = monitor_memory_usage = 0;
           concat_order = print_statistics = p_central = 0;
           run_setuped = run_controled = error_controled = correction_setuped = do_chromatic_correction =
-            fl_do_tune_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
+            fl_do_tune_correction = fl_do_coupling_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
             ionEffectsSeen = 0;
 #if USE_MPI
           runInSinglePartMode = 0; /* We should set the flag to the normal parallel tracking after parallel optimization */
@@ -1760,7 +1797,7 @@ int main(int argc, char **argv)
             printf("semaphore_file = %s\n", semaphore_file ? semaphore_file : NULL);
 #endif
             fill_double_array(starting_coord, 6, 0.0);
-            if (correct.mode != -1 || fl_do_tune_correction || do_chromatic_correction) {
+            if (correct.mode != -1 || fl_do_tune_correction || fl_do_coupling_correction || do_chromatic_correction) {
               for (i = failed = 0; i < correction_iterations; i++) {
                 if (run_control.reset_rf_each_step)
                   delete_phase_references();
@@ -1776,6 +1813,25 @@ int main(int argc, char **argv)
                                    (i == 0 ? INITIAL_CORRECTION : 0) + (i == correction_iterations - 1 ? FINAL_CORRECTION : 0))) {
                   printWarning("Orbit correction failed.", "Continuing with next step.");
                   continue;
+                }
+                if (fl_do_coupling_correction) {
+                  if (do_closed_orbit &&
+                      !run_closed_orbit(&run_conditions, beamline, starting_coord, NULL, 0)) {
+                    if (soft_failure) {
+                      printWarning("Closed orbit not found.", "Continuing to next step.");
+                      failed = 1;
+                      break;
+                    } else
+                      bombElegant("Closed orbit not found", NULL);
+                  }
+                  if (!do_correct_coupling(&run_conditions, beamline)) {
+                    if (soft_failure) {
+                      printWarning("Coupling correction failed.", "Continuing to next step.");
+                      failed = 1;
+                      break;
+                    } else
+                      bombElegant("Coupling correction failed", NULL);
+                  }
                 }
                 if (fl_do_tune_correction) {
                   if (do_closed_orbit &&
@@ -1964,7 +2020,7 @@ int main(int argc, char **argv)
           show_element_timing = monitor_memory_usage = 0;
           concat_order = print_statistics = p_central = 0;
           run_setuped = run_controled = error_controled = correction_setuped = do_chromatic_correction =
-            fl_do_tune_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
+            fl_do_tune_correction = fl_do_coupling_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
             ionEffectsSeen = 0;
           break;
         case LINK_CONTROL:
