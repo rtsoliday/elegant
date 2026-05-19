@@ -2392,6 +2392,8 @@ void compute_twiss_parameters(RUN *run, LINE_LIST *beamline, double *starting_co
 
 void update_twiss_parameters(RUN *run, LINE_LIST *beamline, unsigned long *unstable) {
   unsigned long unstable0;
+  printf("Updating twiss parameters\n");
+  fflush(stdout);
   if (linearChromaticTrackingInitialized) {
     /* This is a kludge to fool SREffects into thinking we've computed twiss parameters.
      * First, propagate the users parameters around the beamline.
