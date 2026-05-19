@@ -23,3 +23,19 @@
     STRING response_file = NULL;
     long verbosity = 0;
 #end
+
+#namelist compute_coupling_correction_matrix,struct
+    STRING filename = NULL;
+    STRING name_pattern = NULL;
+    STRING type_pattern = NULL;
+    STRING item = "K1";
+    STRING bpm_name_pattern = NULL;
+    STRING bpm_type_pattern = "MONI";
+    double response_perturbation = 1e-6;
+    long verbosity = 0;
+#end
+
+#namelist load_coupling_correction_matrix,struct
+    STRING filename = NULL;
+    long verbosity = 0;
+#end
