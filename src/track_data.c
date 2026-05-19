@@ -4292,7 +4292,8 @@ char *mpiAbortDescription[N_MPI_ABORT_TYPES] = {
   "Non-positive particle ID value",
   "RF cavity fiducialization failed",
   "SREFFECTS setup error: EYREF and COUPLING both nonzero",
-  "IO error in particle tune determination"
+  "IO error in particle tune determination",
+  "Problem sharing response matrix",
 };
 #endif
 
