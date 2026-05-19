@@ -2330,6 +2330,9 @@ long do_tracking(
                     /* particles were created and so the particle array was changed */
                     coord = beam->particle;
                   }
+#ifdef HAVE_GPU
+                  gpuSetCpuParticleArray(coord, nLeft);
+#endif
                   if (beam && nMaximum < beam->n_to_track)
                     nMaximum = beam->n_to_track;
                   break;

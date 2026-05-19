@@ -185,16 +185,42 @@ __global__ void gpuTrackParticlesKernel(double *coord, long nParticles, int stri
     part[i] = temp[i];
 }
 
+__device__ __forceinline__ double gpuAddRn(double a, double b) {
+  return __dadd_rn(a, b);
+}
+
+__device__ __forceinline__ double gpuSubRn(double a, double b) {
+  return __dadd_rn(a, -b);
+}
+
+__device__ __forceinline__ double gpuMulRn(double a, double b) {
+  return __dmul_rn(a, b);
+}
+
+__device__ __forceinline__ double gpuDivRn(double a, double b) {
+  return __ddiv_rn(a, b);
+}
+
+__device__ __forceinline__ double gpuExactPathLengthFactor(double xp,
+                                                          double yp) {
+  return sqrt(gpuAddRn(gpuAddRn(1.0, gpuMulRn(xp, xp)),
+                       gpuMulRn(yp, yp)));
+}
+
 __global__ void gpuExactDriftKernel(double *coord, long nParticles, int stride, double length) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
+  double xp, yp;
 
   if (ip >= nParticles)
     return;
   part = coord + ip * stride;
-  part[0] += part[1] * length;
-  part[2] += part[3] * length;
-  part[4] += length * sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  xp = part[1];
+  yp = part[3];
+  part[0] = gpuAddRn(part[0], gpuMulRn(xp, length));
+  part[2] = gpuAddRn(part[2], gpuMulRn(yp, length));
+  part[4] = gpuAddRn(part[4],
+                     gpuMulRn(length, gpuExactPathLengthFactor(xp, yp)));
 }
 
 __global__ void gpuLinearDriftKernel(double *coord, long nParticles, int stride, double length) {
@@ -220,8 +246,8 @@ __device__ __forceinline__ int gpuKickMapInterpolate(double *xpFactor,
 
   if (!isfinite(x) || !isfinite(y))
     return 0;
-  ix = static_cast<long>((x - map->xmin) / map->dxg);
-  iy = static_cast<long>((y - map->ymin) / map->dyg);
+  ix = static_cast<long>(gpuDivRn(gpuSubRn(x, map->xmin), map->dxg));
+  iy = static_cast<long>(gpuDivRn(gpuSubRn(y, map->ymin), map->dyg));
   if (ix < 0 || iy < 0 || ix > map->nx - 1 || iy > map->ny - 1)
     return 0;
   if (ix == map->nx - 1)
@@ -229,20 +255,26 @@ __device__ __forceinline__ int gpuKickMapInterpolate(double *xpFactor,
   if (iy == map->ny - 1)
     iy--;
 
-  fx = (x - (ix * map->dxg + map->xmin)) / map->dxg;
-  fy = (y - (iy * map->dyg + map->ymin)) / map->dyg;
+  fx = gpuDivRn(gpuSubRn(x, gpuAddRn(gpuMulRn((double)ix, map->dxg),
+                                      map->xmin)),
+                map->dxg);
+  fy = gpuDivRn(gpuSubRn(y, gpuAddRn(gpuMulRn((double)iy, map->dyg),
+                                      map->ymin)),
+                map->dyg);
 
-  fa = (1 - fy) * xpMap[ix + iy * map->nx] +
-       fy * xpMap[ix + (iy + 1) * map->nx];
-  fb = (1 - fy) * xpMap[ix + 1 + iy * map->nx] +
-       fy * xpMap[ix + 1 + (iy + 1) * map->nx];
-  *xpFactor = (1 - fx) * fa + fx * fb;
+  fa = gpuAddRn(gpuMulRn(gpuSubRn(1.0, fy), xpMap[ix + iy * map->nx]),
+                gpuMulRn(fy, xpMap[ix + (iy + 1) * map->nx]));
+  fb = gpuAddRn(gpuMulRn(gpuSubRn(1.0, fy), xpMap[ix + 1 + iy * map->nx]),
+                gpuMulRn(fy, xpMap[ix + 1 + (iy + 1) * map->nx]));
+  *xpFactor = gpuAddRn(gpuMulRn(gpuSubRn(1.0, fx), fa),
+                       gpuMulRn(fx, fb));
 
-  fa = (1 - fy) * ypMap[ix + iy * map->nx] +
-       fy * ypMap[ix + (iy + 1) * map->nx];
-  fb = (1 - fy) * ypMap[ix + 1 + iy * map->nx] +
-       fy * ypMap[ix + 1 + (iy + 1) * map->nx];
-  *ypFactor = (1 - fx) * fa + fx * fb;
+  fa = gpuAddRn(gpuMulRn(gpuSubRn(1.0, fy), ypMap[ix + iy * map->nx]),
+                gpuMulRn(fy, ypMap[ix + (iy + 1) * map->nx]));
+  fb = gpuAddRn(gpuMulRn(gpuSubRn(1.0, fy), ypMap[ix + 1 + iy * map->nx]),
+                gpuMulRn(fy, ypMap[ix + 1 + (iy + 1) * map->nx]));
+  *ypFactor = gpuAddRn(gpuMulRn(gpuSubRn(1.0, fx), fa),
+                       gpuMulRn(fx, fb));
   return 1;
 }
 
@@ -258,25 +290,28 @@ __device__ __forceinline__ int gpuKickMapTrackParticle(
   double dxp, dyp;
 
   for (long ik = 0; ik < map->nKicks; ik++) {
-    x += xp * map->halfLength;
-    y += yp * map->halfLength;
-    s += map->halfLength * sqrt(1 + xp * xp + yp * yp);
+    x = gpuAddRn(x, gpuDivRn(gpuMulRn(xp, map->length), 2.0));
+    y = gpuAddRn(y, gpuDivRn(gpuMulRn(yp, map->length), 2.0));
+    s = gpuAddRn(s, gpuMulRn(map->halfLength,
+                             gpuExactPathLengthFactor(xp, yp)));
 
     if (!gpuKickMapInterpolate(&dxp, &dyp, xpMap, ypMap, map, x, y))
       return 0;
     if (map->undulator) {
-      double scale = map->kickScale / ((1 + dp) * (1 + dp));
-      xp += dxp * scale;
-      yp += dyp * scale;
+      double dp1 = gpuAddRn(1.0, dp);
+      double scale = gpuDivRn(map->kickScale, gpuMulRn(dp1, dp1));
+      xp = gpuAddRn(xp, gpuMulRn(dxp, scale));
+      yp = gpuAddRn(yp, gpuMulRn(dyp, scale));
     } else {
-      double scale = map->kickScale / (1 + dp);
-      xp += dxp * scale;
-      yp += dyp * scale;
+      double scale = gpuDivRn(map->kickScale, gpuAddRn(1.0, dp));
+      xp = gpuAddRn(xp, gpuMulRn(dxp, scale));
+      yp = gpuAddRn(yp, gpuMulRn(dyp, scale));
     }
 
-    x += xp * map->halfLength;
-    y += yp * map->halfLength;
-    s += map->halfLength * sqrt(1 + xp * xp + yp * yp);
+    x = gpuAddRn(x, gpuDivRn(gpuMulRn(xp, map->length), 2.0));
+    y = gpuAddRn(y, gpuDivRn(gpuMulRn(yp, map->length), 2.0));
+    s = gpuAddRn(s, gpuMulRn(map->halfLength,
+                             gpuExactPathLengthFactor(xp, yp)));
   }
 
   if (writeOutput) {

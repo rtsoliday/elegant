@@ -249,6 +249,7 @@ typedef struct GPU_KICKMAP_DATA {
   long nKicks;
   long nx;
   long ny;
+  double length;
   double halfLength;
   double xmin;
   double ymin;
@@ -267,6 +268,7 @@ void gpuBaseDealloc(void);
 void gpuDisableForRun(const char *reason);
 void setElementGpuData(void *eptr, long nParticles);
 long getElementOnGpu(void);
+void gpuSetCpuParticleArray(double **coord, long nParticles);
 double **forceParticlesToCpu(const char *reason);
 double **copyParticlesToCpuReadOnly(const char *reason);
 long gpu_matrix_supported(void *M);
