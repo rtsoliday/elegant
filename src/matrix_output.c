@@ -385,10 +385,13 @@ void run_matrix_output(
       print_line(fp_printout[i_output], beamline);
     if (SDDS_matrix_initialized[i_output] && !print_full_only[i_output]) {
       ELEMENT_LIST start_elem;
+      memset(&start_elem, 0, sizeof(start_elem));
       start_elem.end_pos = sStart;
       start_elem.name = "_BEG_";
       start_elem.type = T_MARK;
       start_elem.occurence = 1;
+      start_elem.Pref_input = start_elem.Pref_output =
+        first_member ? first_member->Pref_input : run->p_central;
       SDDS_set_matrices(SDDS_matrix + i_output, M1, NULL, SDDS_order[i_output],
                         control ? control->i_step : -1, &start_elem, 0, n_SDDS_output, individualMatrices[i_output]);
     }
