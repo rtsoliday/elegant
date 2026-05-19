@@ -72,7 +72,9 @@ Here is a summary of what's changed since release 2026.2.  Historical change log
 
 \subsection{New and Modified Commands}
 \begin{itemize}
-\item None.
+\item The \verb|coupled_twiss| command now supplies \verb|alphax1|, \verb|alphax2|, \verb|alphay1|, and \verb|alphay2| in
+  the output file, along with other quantities needed for progagation-based calculations.
+\item The \verb|coupled_twiss| command now supports propagation of coupled lattice functions by setting \verb|matched=0|.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -2098,6 +2100,36 @@ to obtain correction.  In general, it is not necessary and only slows the simula
     long calculate_3d_coupling = 1;
     long verbosity = 0;
     long concat_order = 2;
+    long output_sigma_matrix = 0;
+    long matched = 1;
+    double beta_x1 = 1.0;
+    double beta_x2 = 0.0;
+    double beta_y1 = 0.0;
+    double beta_y2 = 1.0;
+    double alpha_x1 = 0.0;
+    double alpha_x2 = 0.0;
+    double alpha_y1 = 0.0;
+    double alpha_y2 = 0.0;
+    double gamma_x1 = -1.0;
+    double gamma_x2 = -1.0;
+    double gamma_y1 = -1.0;
+    double gamma_y2 = -1.0;
+    double A_xy_1 = 0.0;
+    double A_xpy_1 = 0.0;
+    double A_xyp_1 = 0.0;
+    double A_xpyp_1 = 0.0;
+    double A_xy_2 = 0.0;
+    double A_xpy_2 = 0.0;
+    double A_xyp_2 = 0.0;
+    double A_xpyp_2 = 0.0;
+    double eta_x = 0.0;
+    double etap_x = 0.0;
+    double eta_y = 0.0;
+    double etap_y = 0.0;
+    STRING reference_file = NULL;
+    STRING reference_element = NULL;
+    long reference_element_occurrence = 0;
+    long reflect_reference_values = 0;
 &end
 \end{verbatim}
 
@@ -2122,6 +2154,71 @@ to obtain correction.  In general, it is not necessary and only slows the simula
   I.e., the user is free to enter any emittance ratio desired, whether it is consistent with the
   machine optics or now.
 \item \verb|sigma_dp| ---  Gives the momentum spread, if \verb|emittances_from_twiss_command=0|.
+\item \verb|calculate_3d_coupling| --- If nonzero (and an rf cavity is present so that the longitudinal
+  motion is stable), the eigenvector decomposition is done in full 6-D phase space, producing
+  three modes and a meaningful longitudinal-mode contribution to the sigma matrix (bunch length,
+  dispersion).  If zero, only the two transverse modes are computed.  Forced to zero when
+  \verb|matched=0|, since the longitudinal initial conditions cannot be specified in transport-line
+  mode.
+\item \verb|verbosity| --- Controls the amount of diagnostic information printed to standard output.
+  Higher values produce more detail (eigenvalues, normalized eigenvectors, per-element A and sigma
+  matrices).
+\item \verb|concat_order| --- Order at which transfer matrices are concatenated when forming the
+  one-turn (or transport) map used to find the eigenvectors.
+
+\item \verb|output_sigma_matrix| --- If nonzero, the full upper-triangular sigma matrix is written
+  to the output file as columns named \verb|S|$ij$ (1-indexed), in addition to the standard beam-size
+  columns.
+
+\item \verb|matched| --- A flag indicating, if set, that the periodic (matched) coupled-twiss
+  solution should be found, by diagonalizing the one-turn matrix.  If zero, calculations are
+  performed in transport-line mode starting from the user-supplied initial values
+  \verb|beta_x1|, \verb|alpha_x1|, etc.\ (or from a \verb|reference_file|).  The longitudinal
+  mode is not available in this case, so \verb|calculate_3d_coupling| is forced to zero.
+
+\item \verb|beta_x1|, \verb|beta_x2|, \verb|beta_y1|, \verb|beta_y2| --- If \verb|matched| is zero,
+  the contributions of each transverse eigenmode to the corresponding plane $\beta$ functions at
+  the start of the beamline.  By convention mode~1 is the $x$-like mode (dominant projection in
+  $x$) and mode~2 is the $y$-like mode.  In an uncoupled lattice \verb|beta_x2| and \verb|beta_y1|
+  are zero.  These values are the diagonal entries $(A_k)_{xx}$, $(A_k)_{yy}$ of each mode matrix
+  $A_k$ at the start.
+\item \verb|alpha_x1|, \verb|alpha_x2|, \verb|alpha_y1|, \verb|alpha_y2| --- Initial values of the
+  per-mode $\alpha$ functions (sign-flipped off-diagonal entries $-(A_k)_{xx'}$, $-(A_k)_{yy'}$).
+\item \verb|gamma_x1|, \verb|gamma_x2|, \verb|gamma_y1|, \verb|gamma_y2| --- Initial values of the
+  per-mode $\gamma$ functions ($(A_k)_{x'x'}$, $(A_k)_{y'y'}$).  If left at the default $-1$, the
+  code computes $\gamma = (1 + \alpha^2)/\beta$ for the mode's primary plane and
+  $\gamma = \alpha^2/\beta$ for the secondary plane.  This rank-2 heuristic is exact for an
+  uncoupled initial condition; for a coupled initial condition the user should supply $\gamma$
+  explicitly (e.g.\ via \verb|reference_file|), since $\gamma$ is then an independent quantity not
+  determined by $(\beta, \alpha)$ alone.
+\item \verb|A_xy_1|, \verb|A_xpy_1|, \verb|A_xyp_1|, \verb|A_xpyp_1|,
+      \verb|A_xy_2|, \verb|A_xpy_2|, \verb|A_xyp_2|, \verb|A_xpyp_2| ---
+  Initial values of the four cross-plane entries of each $A_k$ matrix, i.e.\ the per-mode
+  contributions to $\langle x y \rangle$, $\langle x' y \rangle$, $\langle x y' \rangle$,
+  $\langle x' y' \rangle$ (each per unit mode emittance).  Default zero (block-diagonal $A_k$).
+  Required, along with \verb|gamma_*|, to fully reconstruct a coupled $A_k$ at the start of the
+  beamline.
+\item \verb|eta_x|, \verb|etap_x|, \verb|eta_y|, \verb|etap_y| --- If \verb|matched| is zero,
+  the initial dispersion and dispersion slope, used as the transverse part of the dispersion
+  6-vector $\mathbf{d}(0) = (\eta_x, \eta_x', \eta_y, \eta_y', 0, 1)^T$ that is propagated
+  through the lattice independently of the transverse mode matrices.
+
+\item \verb|reference_file| --- If given, the name of a previously-produced
+  \verb|coupled_twiss_output| file from which the 24 initial-condition values
+  (\verb|beta_*|, \verb|alpha_*|, \verb|gamma_*|, the eight \verb|A_*| cross terms, and the four
+  \verb|eta*|) are loaded, overriding values supplied in the namelist.  Incompatible with
+  \verb|matched=1|.  The file must contain all of the standard \verb|coupled_twiss_output|
+  columns (in particular the \verb|gamma*| and \verb|A_*| columns, which were added so that a
+  periodic solution can be reproduced exactly by a downstream non-periodic propagation).
+\item \verb|reference_element| --- Element in \verb|reference_file| at which to take the initial
+  values.  If not given, the values from the last row of \verb|reference_file| are used.
+\item \verb|reference_element_occurrence| --- Ignored if \verb|reference_element| is not given.
+  Otherwise, the occurrence number of \verb|reference_element| to use.  If 0, the last
+  occurrence is used.
+\item \verb|reflect_reference_values| --- If nonzero, the loaded values of $\alpha_{x,y}^{(k)}$,
+  $\eta_{x,y}'$, and the cross-plane entries \verb|A_xpy_|$k$, \verb|A_xyp_|$k$ are multiplied by
+  $-1$ (the entries involving exactly one momentum index).  This corresponds to time-reversal of
+  the reference state and permits matching backwards from the reference point.
 \end{itemize}
 
 This feature was added to {\tt elegant} using code supplied by V. Sajaev, based on Ripkin's method.
