@@ -39,6 +39,7 @@ elegant_SRC = alpha_data.c \
 	corrector_output.c \
 	counter.c \
 	coupled_twiss.c \
+	correct_coupling.c \
 	csbend.c \
 	divideElements.c \
 	do_tracking.c \
@@ -599,6 +600,11 @@ $(OBJ_DIR)/coupled_twiss.$(OBJEXT): $(OBJ_DIR)/coupled_twiss.h
 
 $(OBJ_DIR)/coupled_twiss.h: coupled_twiss.nl
 	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables coupled_twiss.nl $(OBJ_DIR)/coupled_twiss.h
+
+$(OBJ_DIR)/correct_coupling.$(OBJEXT): $(OBJ_DIR)/correct_coupling.h
+
+$(OBJ_DIR)/correct_coupling.h: correct_coupling.nl
+	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables correct_coupling.nl $(OBJ_DIR)/correct_coupling.h
 
 $(OBJ_DIR)/obstructionData.$(OBJEXT): $(OBJ_DIR)/obstructionData.h
 
