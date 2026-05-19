@@ -206,7 +206,9 @@ void showUsageOrGreeting(unsigned long mode) {
 #define PARTICLE_TUNES 75
 #define MACRO_OUTPUT 76
 #define CORRECT_COUPLING 77
-#define N_COMMANDS 78
+#define COMPUTE_COUPLING_CORRECTION_MATRIX 78
+#define LOAD_COUPLING_CORRECTION_MATRIX 79
+#define N_COMMANDS 80
 
 char *command[N_COMMANDS] = {
   "run_setup",
@@ -287,6 +289,8 @@ char *command[N_COMMANDS] = {
   "particle_tunes",
   "macro_output",
   "correct_coupling",
+  "compute_coupling_correction_matrix",
+  "load_coupling_correction_matrix",
 };
 
 char *description[N_COMMANDS] = {
@@ -367,7 +371,9 @@ char *description[N_COMMANDS] = {
   "include_commands                 include commands from a file",
   "particle_tunes                   accumulate data and find tunes for each particle in a multi-particle beam",
   "macro_output                     output values of commandline macros to a file",
-  "correct_coupling                 correct vertical dispersion by adjusting skew quadrupoles (LOCO-style)"};
+  "correct_coupling                 correct vertical dispersion by adjusting skew quadrupoles (LOCO-style)",
+  "compute_coupling_correction_matrix  compute and save the response matrix for coupling correction",
+  "load_coupling_correction_matrix  load a previously-saved coupling-correction response matrix"};
 
 #define NAMELIST_BUFLEN 65536
 
@@ -423,6 +429,8 @@ void setup_coupled_twiss_output(NAMELIST_TEXT *nltext, RUN *run,
 void setup_correct_coupling(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
 long do_correct_coupling(RUN *run, LINE_LIST *beamline);
 void finish_correct_coupling(void);
+void setup_compute_coupling_correction_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
+void setup_load_coupling_correction_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
 void reset_alter_specifications();
 void finishCorrectionOutput();
 void setupElasticScattering(NAMELIST_TEXT *nltext, RUN *run, VARY *control, long twissFlag);
@@ -1607,6 +1615,16 @@ int main(int argc, char **argv)
             bombElegant("run_setup and twiss_output must precede correct_coupling namelist", NULL);
           setup_correct_coupling(&namelist_text, &run_conditions, beamline);
           fl_do_coupling_correction = 1;
+          break;
+        case COMPUTE_COUPLING_CORRECTION_MATRIX:
+          if (!run_setuped)
+            bombElegant("run_setup must precede compute_coupling_correction_matrix namelist", NULL);
+          setup_compute_coupling_correction_matrix(&namelist_text, &run_conditions, beamline);
+          break;
+        case LOAD_COUPLING_CORRECTION_MATRIX:
+          if (!run_setuped)
+            bombElegant("run_setup must precede load_coupling_correction_matrix namelist", NULL);
+          setup_load_coupling_correction_matrix(&namelist_text, &run_conditions, beamline);
           break;
         case TUNE_SHIFT_WITH_AMPLITUDE:
           if (do_twiss_output)
