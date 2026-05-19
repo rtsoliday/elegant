@@ -486,7 +486,7 @@ long vary_beamline(VARY *_control, ERRORVAL *errcon, RUN *run, LINE_LIST *beamli
     i += _control->cell ? compute_changed_matrices(_control->cell, run) : 0;
     _control->i_step += step_incremented;
     if (i) {
-      printf("%ld matrices (re)computed\n", i);
+      printf("%ld matrices (re)computed (error/variation)\n", i);
       fflush(stdout);
       beamline->flags &= ~BEAMLINE_CONCAT_CURRENT;
       beamline->flags &= ~BEAMLINE_TWISS_CURRENT;
