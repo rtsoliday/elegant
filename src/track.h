@@ -165,7 +165,8 @@ extern long enableOutput;
 #define MPI_ABORT_RF_FIDUCIALIZATION_ERROR 7
 #define MPI_ABORT_SREFFECTS_ERROR1 8
 #define MPI_ABORT_PARTICLE_TUNE_IO_ERROR 9
-#define N_MPI_ABORT_TYPES 10
+#define MPI_ABORT_RESPONSE_MATRIX_SHARING 10  
+#define N_MPI_ABORT_TYPES 11
 extern char *mpiAbortDescription[N_MPI_ABORT_TYPES];
 void doMpiAbort(int code, char *format, ...);
 #endif
