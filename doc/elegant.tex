@@ -75,6 +75,11 @@ Here is a summary of what's changed since release 2026.2.  Historical change log
 \item The \verb|coupled_twiss| command now supplies \verb|alphax1|, \verb|alphax2|, \verb|alphay1|, and \verb|alphay2| in
   the output file, along with other quantities needed for progagation-based calculations.
 \item The \verb|coupled_twiss| command now supports propagation of coupled lattice functions by setting \verb|matched=0|.
+\item The \verb|correct_coupling|, \verb|compute_coupling_response_matrix|, and \verb|load_coupling_response_matrix| commands
+  were added, supplying a method of correcting coupling using the vertical dispersion response to (typically) skew quadrupoles.
+\item The \verb|correct_lattice|, \verb|compute_lattice_response_matrix|, and \verb|load_lattice_response_matrix| commands
+  were added, supplying a method of correcting the linear lattice functions ($\beta_x$, $\beta_y$, $\eta_x$) at
+  selected BPMs by adjusting (typically) normal quadrupoles, against a user-supplied design-twiss reference file.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -1591,7 +1596,7 @@ the tracking is appropriate to simulation of dynamics from a touschek scattering
 \begin{itemize}
 \item type: setup command.
 \item function: set up for chromaticity correction.
-\item sequence: should follow \verb|twiss_output|.
+\item sequence: must follow \verb|twiss_output|.
 \item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
 \end{itemize}
 
@@ -1996,7 +2001,7 @@ matrix.
 \begin{itemize}
 \item type: setup command.
 \item function: set up for correction of the tunes.
-\item sequence: should follow \verb|twiss_output|.
+\item sequence: must follow \verb|twiss_output|.
 \item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
 \end{itemize}
 
@@ -2075,6 +2080,500 @@ to obtain correction.  In general, it is not necessary and only slows the simula
 \item \verb|fse_units| --- If non-zero, then the data in the  \verb|response_matrix_output| and \verb|correction_matrix_output|
   files is in units of fractional strength error rather than $K_1L$.
 \end{itemize}
+
+%\begin{latexonly}
+\newpage
+\begin{center}{\Large\verb|compute_coupling_response_matrix|}\end{center}
+%\end{latexonly}
+\subsection{compute\_coupling\_response\_matrix \label{subsec:computecouplingresponsematrix}}
+
+\begin{itemize}
+\item type: setup command.
+\item function: compute and save the response matrix
+  $R_{ij} = \partial\eta_y(\mathrm{BPM}_i)/\partial K_{1,j}$ used by
+  \verb|correct_coupling|, so that subsequent runs can reuse the same matrix
+  via \verb|load_coupling_response_matrix| without rebuilding it.
+\item sequence: must follow \verb|run_setup| and \verb|twiss_output|
+  so a periodic twiss solution is available when the response is computed.
+\item N.B.: can use parallel resources (\verb|Pelegant|). The recommended sequence is to compute the correction
+  matrix using parallel resources, then use \verb|load_coupling_response_matrix| when performing coupling
+  correction, particularly when post-correction simulation does not require parallel resources.
+\item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
+\end{itemize}
+
+\begin{verbatim}
+&compute_coupling_response_matrix
+    STRING filename = NULL;
+    STRING name_pattern = NULL;
+    STRING type_pattern = NULL;
+    STRING item = "K1";
+    STRING bpm_name_pattern = NULL;
+    STRING bpm_type_pattern = "MONI";
+    double response_perturbation = 1e-6;
+    double measurement_noise = 0.0;
+    double measurement_noise_cutoff = 3.0;
+    long verbosity = 0;
+&end
+\end{verbatim}
+
+\begin{itemize}
+\item \verb|filename| --- The (incomplete) name of the SDDS file to which the
+  response matrix is written.  The format includes the BPM/skew element names
+  and occurrences plus the matrix entries, so \verb|load_coupling_response_matrix|
+  can reconstruct the entire knob/BPM inventory from this single file.
+  Suggested value: ``\%s.qsmat''.
+\item \verb|name_pattern|, \verb|type_pattern| --- Space-separated lists of
+  name and type patterns (with the usual \verb|*| / \verb|?| wildcards) used
+  to select the skew-quadrupole elements that act as correction knobs.  At
+  least one of these must be supplied; an element is taken as a knob if it
+  matches any \verb|name_pattern| entry (or all if none is given) and any
+  \verb|type_pattern| entry (or all if none is given).
+\item \verb|item| --- The name of the element parameter to perturb when
+  computing the response (e.g., \verb|K1|).  The skew strength is created by
+  whatever the lattice element provides; commonly this is a \verb|QUAD| or
+  \verb|KQUAD| with \verb|TILT=|$\pi/4$ and \verb|K1| as the knob.
+\item \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists
+  selecting the BPM observation points.  Default
+  \verb|bpm_type_pattern="MONI"| picks all monitor elements.
+\item \verb|response_perturbation| --- Finite-difference step in \verb|item|
+  used to build each column of $R$ (one-sided difference).  Must be small
+  enough to be in the linear regime of the dependence of $\eta_y$ on the
+  knob, but large enough to avoid numerical noise.
+\item \verb|measurement_noise|, \verb|measurement_noise_cutoff| --- RMS
+  amplitude (in meters) and Gaussian cutoff (in units of $\sigma$) of
+  simulated independent noise added to every $\eta_y$ reading taken
+  while the matrix is being built.  Each of the baseline and the
+  $n_{\mathrm{knobs}}$ perturbed readings receives a fresh independent draw,
+  matching how a noisy measurement on a real machine accumulates noise
+  into the response matrix.  Default 0 produces a noise-free (design) matrix.
+  Same semantics as on \verb|correct_coupling|.
+\item \verb|verbosity| --- Higher values print more diagnostic information
+  while the matrix is being built.
+\end{itemize}
+
+The values of \verb|name_pattern|, \verb|type_pattern|, \verb|item|,
+\verb|bpm_name_pattern|, and \verb|bpm_type_pattern| are also recorded
+implicitly in the saved file through the element names and occurrences,
+so a subsequent \verb|correct_coupling| (whether in this run or a later one
+via \verb|load_coupling_response_matrix|) does not need to repeat them.
+
+%\begin{latexonly}
+\newpage
+\begin{center}{\Large\verb|compute_lattice_response_matrix|}\end{center}
+%\end{latexonly}
+\subsection{compute\_lattice\_response\_matrix \label{subsec:computelatticeresponsematrix}}
+
+\begin{itemize}
+\item type: setup command.
+\item function: compute and save the response matrix
+  $R_{ij,k} = \partial o_k(\mathrm{BPM}_i)/\partial K_{1,j}$ used by
+  \verb|correct_lattice|, where $o_k \in \{\beta_x, \beta_y, \eta_x\}$
+  enumerates the three observables tracked per BPM.  The saved matrix
+  can be reused via \verb|load_lattice_response_matrix| without
+  rebuilding it.
+\item sequence: must follow \verb|run_setup| and \verb|twiss_output|
+  so a periodic twiss solution is available when the response is computed.
+\item N.B.: can use parallel resources (\verb|Pelegant|).  The recommended sequence is to compute the response
+  matrix using parallel resources, then use \verb|load_lattice_response_matrix| when performing lattice
+  correction, particularly when post-correction simulation does not require parallel resources.
+\item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
+\end{itemize}
+
+\begin{verbatim}
+&compute_lattice_response_matrix
+    STRING filename = NULL;
+    STRING name_pattern = NULL;
+    STRING type_pattern = NULL;
+    STRING bind_name_pattern = NULL;
+    STRING item = "K1";
+    STRING bpm_name_pattern = NULL;
+    STRING bpm_type_pattern = "MONI";
+    double response_perturbation = 1e-6;
+    double measurement_noise = 0.0;
+    double measurement_noise_cutoff = 3.0;
+    long verbosity = 0;
+&end
+\end{verbatim}
+
+\begin{itemize}
+\item \verb|filename| --- The (incomplete) name of the SDDS file to which the
+  response matrix is written.  The format includes the BPM/knob element names
+  and occurrences, the element parameter that was perturbed, plus all three
+  response columns (\verb|dBetaxDK1|, \verb|dBetayDK1|, \verb|dEtaxDK1|),
+  so \verb|load_lattice_response_matrix| can reconstruct the entire
+  knob/BPM inventory from this single file.  Suggested value: ``\%s.lrm''.
+\item \verb|name_pattern|, \verb|type_pattern| --- Space-separated lists of
+  name and type patterns (with the usual \verb|*| / \verb|?| wildcards) used
+  to select the (normal) quadrupole elements that act as correction knobs.  At
+  least one of these must be supplied; an element is taken as a knob if it
+  matches any \verb|name_pattern| entry (or all if none is given) and any
+  \verb|type_pattern| entry (or all if none is given).
+\item \verb|bind_name_pattern| --- Optional family-binding specification
+  recorded with the saved matrix.  Same semantics as on \verb|correct_lattice|
+  (each entry collapses every matching knob into one family group; see the
+  \verb|correct_lattice| documentation for details).  The intent here is
+  to carry the binding alongside the matrix so a subsequent
+  \verb|load_lattice_response_matrix| + \verb|correct_lattice| inherits it
+  without restating the patterns.  A \verb|correct_lattice| that does
+  set its own \verb|bind_name_pattern| overrides what the matrix file
+  carries.
+\item \verb|item| --- The name of the element parameter to perturb when
+  computing the response (e.g., \verb|K1|).
+\item \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists
+  selecting the BPM observation points.  Default
+  \verb|bpm_type_pattern="MONI"| picks all monitor elements.
+\item \verb|response_perturbation| --- Finite-difference step in \verb|item|
+  used to build each column of $R$ (one-sided difference).  Must be small
+  enough to be in the linear regime of the dependence of $\beta_x$, $\beta_y$,
+  and $\eta_x$ on the knob, but large enough to avoid numerical noise.
+\item \verb|measurement_noise|, \verb|measurement_noise_cutoff| --- RMS
+  amplitude (fractional for $\beta_x$ and $\beta_y$, in meters for 
+  $\eta_x$) and Gaussian cutoff (in units of $\sigma$)
+  of simulated independent noise added to every observable taken while the
+  matrix is being built.  Each of the baseline and the $n_{\mathrm{knobs}}$
+  perturbed readings receives a fresh independent draw, matching how a noisy
+  measurement on a real machine accumulates noise into the response matrix.
+  Default 0 produces a noise-free (design) matrix.
+\item \verb|verbosity| --- Higher values print more diagnostic information
+  while the matrix is being built.
+\end{itemize}
+
+The values of \verb|name_pattern|, \verb|type_pattern|, \verb|item|,
+\verb|bpm_name_pattern|, and \verb|bpm_type_pattern| are also recorded
+implicitly in the saved file through the element names and occurrences,
+so a subsequent \verb|correct_lattice| (whether in this run or a later one
+via \verb|load_lattice_response_matrix|) does not need to repeat them.
+
+%\begin{latexonly}
+\newpage
+\begin{center}{\Large\verb|correct_coupling|}\end{center}
+%\end{latexonly}
+\subsection{correct\_coupling \label{subsec:correctcoupling}}
+
+\begin{itemize}
+\item type: setup command.  Execution is deferred to the simulation steps
+  loop (like \verb|chromaticity| and \verb|correct_tunes|), where the
+  correction is performed once per simulation step between orbit correction
+  and tune correction.
+\item function: minimize the vertical dispersion $\eta_y$ at the selected
+  BPMs by adjusting selected skew-quadrupole knobs.  This emulates the
+  LOCO-style vertical-dispersion channel of real-machine coupling correction.
+\item sequence: must follow \verb|run_setup| and \verb|twiss_output|.  A
+  \verb|track| command (or another action command that triggers the steps
+  loop) must follow in order for the correction to actually run.
+\item N.B.: can use parallel resources (\verb|Pelegant|) for correction matrix computation.
+  However, the recommended sequence is to compute the correction
+  matrix using parallel resources with the \verb|compute_coupling_response_matrix|,
+  then use \verb|load_coupling_response_matrix| when performing coupling
+  correction, particularly when post-correction simulation does not require parallel resources.
+\item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
+\end{itemize}
+
+\begin{verbatim}
+&correct_coupling
+    STRING name_pattern = NULL;
+    STRING type_pattern = NULL;
+    STRING item = "K1";
+    STRING bpm_name_pattern = NULL;
+    STRING bpm_type_pattern = "MONI";
+    long n_iterations = 3;
+    double convergence = 1e-9;
+    double correction_fraction = 0.5;
+    long use_perturbed_matrix = 0;
+    long adaptive_step = 0;
+    double response_perturbation = 1e-6;
+    double svd_threshold = 1e-6;
+    long n_singular_values = 0;
+    double strength_limit = 0;
+    double measurement_noise = 0.0;
+    double measurement_noise_cutoff = 3.0;
+    STRING strength_log = NULL;
+    STRING etay_file = NULL;
+    STRING response_file = NULL;
+    long verbosity = 0;
+&end
+\end{verbatim}
+
+\begin{itemize}
+\item \verb|name_pattern|, \verb|type_pattern|, \verb|item|,
+  \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists and
+  parameter name selecting the skew-quadrupole knobs and BPM observation
+  points; same semantics as in \verb|compute_coupling_response_matrix|.
+  If \verb|compute_coupling_response_matrix| or
+  \verb|load_coupling_response_matrix| has already been issued, the
+  preloaded knob/BPM inventory is used and these namelist values are
+  ignored.
+\item \verb|n_iterations| --- Maximum number of correction iterations.
+\item \verb|convergence| --- Iteration stops early when the RMS $\eta_y$
+  at the BPMs falls below this value (in meters).
+\item \verb|correction_fraction| --- Fraction of the SVD-derived step
+  applied at each iteration.  Values $<1$ improve stability by avoiding
+  overshoot; the default 0.5 is a conservative choice for typical
+  LOCO-style usage.  Must be in $(0,1]$.
+\item \verb|use_perturbed_matrix| --- Controls how often the response
+  matrix is (re)computed inside this command:
+  \begin{itemize}
+  \item 0 (default): build the matrix once during \verb|correct_coupling|
+    setup and reuse it for all iterations and all simulation steps.  Cheap;
+    accurate when the skew knobs are weak and the optics change very little.
+  \item 1: rebuild the matrix at the start of each call to the per-step
+    correction routine (once per simulation step).
+  \item $>1$: rebuild before each iteration within a call.  Most accurate
+    near a coupling resonance, but $\sim n_{\mathrm{iter}} \times n_{\mathrm{skew}}$
+    extra twiss recomputations per step.
+  \end{itemize}
+  If a \verb|compute_coupling_response_matrix| or
+  \verb|load_coupling_response_matrix| command has already provided a
+  matrix, this control is honored on top of the preloaded matrix.
+\item \verb|adaptive_step| --- If nonzero, the effective
+  \verb|correction_fraction| is halved whenever an iteration leaves the
+  RMS $\eta_y$ larger than at the start of the previous iteration.  Same
+  pattern as \verb|chromaticity| uses for its correction fraction.
+\item \verb|response_perturbation| --- Finite-difference step used when
+  this command builds the matrix itself (only relevant when
+  \verb|use_perturbed_matrix>0| or when no preloaded matrix exists).
+\item \verb|svd_threshold| --- Singular values below
+  \verb|svd_threshold| times the largest singular value are dropped from
+  the pseudo-inverse, regularizing the solution.
+\item \verb|n_singular_values| --- If $>0$, additionally cap the number of
+  retained singular values at this many of the largest.
+\item \verb|strength_limit| --- If $>0$, the per-iteration step is uniformly
+  scaled so that no knob's parameter value exceeds \verb|strength_limit| in
+  absolute value after the correction is applied.  Setting all knobs would
+  otherwise require simultaneously honoring per-knob limits, which would
+  distort the SVD direction; uniform scaling preserves the direction at the
+  cost of a shorter step.
+\item \verb|measurement_noise| --- RMS amplitude (in meters) of independent Gaussian
+  measurement noise added to every $\eta_y$ reading at every BPM.  Each
+  reading -- the baseline measurement, the perturbed measurements used to
+  build the response matrix, and the post-correction measurement -- gets a
+  fresh, independent draw, matching how a real machine accumulates
+  measurement noise into the response matrix and into the residual at the
+  noise floor of the BPM system.  Default 0 disables the noise.  
+\item \verb|measurement_noise_cutoff| --- Cutoff on the Gaussian noise distribution,
+  in units of the standard deviation \verb|measurement_noise|.  Ignored when
+  \verb|measurement_noise| is zero.
+\item \verb|strength_log| --- The (incomplete) name of an SDDS file
+  recording, for each iteration, the parameter changes applied to each
+  knob.  Columns include \verb|ElementName|, \verb|ElementOccurence|,
+  \verb|s|, \verb|ElementParameter|, \verb|PreviousParameterValue|,
+  \verb|DeltaParameterValue|, \verb|ParameterValue|; the parameters include
+  \verb|Iteration| and a \verb|Stage| string that is \verb|"uncorrected"|
+  for all but the actually-final iteration of the call (which is tagged
+  \verb|"corrected"|).
+\item \verb|etay_file| --- The (incomplete) name of an SDDS file recording,
+  for each iteration, the value of $\eta_y$ at every BPM, with a parameter
+  giving the iteration's RMS $\eta_y$.
+\item \verb|response_file| --- The (incomplete) name of an SDDS file
+  recording the response matrix.  This is in addition to any file written
+  by a prior \verb|compute_coupling_response_matrix|.
+\item \verb|verbosity| --- Higher values print more diagnostic information.
+\end{itemize}
+
+For a typical correction workflow the user issues a
+\verb|twiss_output|, then \verb|correct_coupling|, then a
+\verb|twiss_output| with \verb|output_at_each_step=1| (to capture the
+post-correction state), then a \verb|bunched_beam|/\verb|track| pair to
+trigger the steps loop.  When a precomputed matrix is to be reused across
+many runs, the matrix can be produced once by
+\verb|compute_coupling_response_matrix| (perhaps in an upstream design
+run) and loaded by \verb|load_coupling_response_matrix| in each
+correction run; in that case the pattern/item parameters need not be
+repeated on \verb|correct_coupling|.
+
+%\begin{latexonly}
+\newpage
+\begin{center}{\Large\verb|correct_lattice|}\end{center}
+%\end{latexonly}
+\subsection{correct\_lattice \label{subsec:correctlattice}}
+
+\begin{itemize}
+\item type: setup command.  Execution is deferred to the simulation steps
+  loop (like \verb|chromaticity| and \verb|correct_tunes|), where the
+  correction is performed once per simulation step between coupling
+  correction and tune correction.
+\item function: drive the linear lattice functions $\beta_x$, $\beta_y$,
+  and $\eta_x$ at the selected BPMs toward design values loaded from a
+  user-supplied reference twiss file by adjusting selected normal-quadrupole
+  knobs.  This emulates the LOCO-style $\beta$-beat and dispersion channels
+  of real-machine optics correction.
+\item sequence: must follow \verb|run_setup| and \verb|twiss_output|.  A
+  \verb|track| command (or another action command that triggers the steps
+  loop) must follow in order for the correction to actually run.
+\item N.B.: can use parallel resources (\verb|Pelegant|) for response matrix computation.
+  However, the recommended sequence is to compute the response
+  matrix using parallel resources with \verb|compute_lattice_response_matrix|,
+  then use \verb|load_lattice_response_matrix| when performing the
+  correction, particularly when post-correction simulation does not require parallel resources.
+\item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
+\end{itemize}
+
+\begin{verbatim}
+&correct_lattice
+    STRING name_pattern = NULL;
+    STRING type_pattern = NULL;
+    STRING bind_name_pattern = NULL;
+    STRING item = "K1";
+    STRING bpm_name_pattern = NULL;
+    STRING bpm_type_pattern = "MONI";
+    long n_iterations = 3;
+    double convergence = 1e-9;
+    double correction_fraction = 0.5;
+    long use_perturbed_matrix = 0;
+    long adaptive_step = 0;
+    double response_perturbation = 1e-6;
+    double svd_threshold = 1e-6;
+    long n_singular_values = 0;
+    double strength_limit = 0;
+    double beta_measurement_noise = 0.0;
+    double eta_measurement_noise = 0.0;
+    double measurement_noise_cutoff = 3.0;
+    STRING reference_file = NULL;
+    double betax_weight = 1.0;
+    double betay_weight = 1.0;
+    double etax_weight = 1.0;
+    STRING strength_log = NULL;
+    STRING response_file = NULL;
+    STRING rms_log = NULL;
+    long verbosity = 0;
+&end
+\end{verbatim}
+
+\begin{itemize}
+\item \verb|name_pattern|, \verb|type_pattern|, \verb|item|,
+  \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists and
+  parameter name selecting the normal-quadrupole knobs and BPM observation
+  points; same semantics as in \verb|compute_lattice_response_matrix|.
+  If \verb|compute_lattice_response_matrix| or
+  \verb|load_lattice_response_matrix| has already been issued, the
+  preloaded knob/BPM inventory is used and these namelist values are
+  ignored.
+\item \verb|bind_name_pattern| --- Optional comma- or space-separated
+  list of patterns (with \verb|*|/\verb|?| wildcards) defining families
+  of knobs whose correction strengths should be {\bf bound} together.
+  Each entry of the list defines one family group: every knob whose
+  element name matches that entry is placed in a single group and
+  receives the same $\Delta K$ from the SVD solver, which is applied
+  identically to every member of the group.  Knobs whose names do not
+  match any entry remain independent, one SVD column each.  A knob
+  matched by multiple entries is placed in the earliest-listed match
+  (first match wins).  Example: \verb|bind_name_pattern = "*Q1 *Q2 *Q3"|
+  collapses every element ending in \verb|Q1|, every element ending in
+  \verb|Q2|, and every element ending in \verb|Q3| into three bound
+  family knobs (rather than three groups per distinct name); this is
+  the natural way to enforce family symmetry across a periodic ring
+  whose elements have per-sector unique names (\verb|S1:Q1|,
+  \verb|S2:Q1|, ..., \verb|S40:Q1|).
+  Precedence: if a prior \verb|compute_lattice_response_matrix| or
+  \verb|load_lattice_response_matrix| already supplied a binding (the
+  matrix file records the pattern as a \verb|BindNamePattern| parameter),
+  the value on \verb|correct_lattice| {\em overrides} it when given and
+  is inherited when omitted (\verb|NULL|).  With no preloaded binding
+  and \verb|NULL| here, every knob is independent.
+\item \verb|n_iterations| --- Maximum number of correction iterations per
+  simulation step.
+\item \verb|convergence| --- Iteration stops early when the weighted RMS
+  residual at the BPMs falls below this value.
+\item \verb|correction_fraction| --- Fraction of the SVD-derived step
+  applied at each iteration.  Values $<1$ improve stability by avoiding
+  overshoot.  Must be in $(0,1]$.
+\item \verb|use_perturbed_matrix| --- Controls how often the response
+  matrix is (re)computed inside this command:
+  \begin{itemize}
+  \item 0 (default): build the matrix once during \verb|correct_lattice|
+    setup and reuse it for all iterations and all simulation steps.  Cheap;
+    accurate when the knobs are weak and the optics change very little.
+  \item 1: rebuild the matrix at the start of each call to the per-step
+    correction routine (once per simulation step).
+  \item $>1$: rebuild before each iteration within a call.  Most accurate
+    far from the design, but $\sim n_{\mathrm{iter}} \times n_{\mathrm{knobs}}$
+    extra twiss recomputations per step.
+  \end{itemize}
+  If a \verb|compute_lattice_response_matrix| or
+  \verb|load_lattice_response_matrix| command has already provided a
+  matrix, this control is honored on top of the preloaded matrix.
+\item \verb|adaptive_step| --- If nonzero, the effective
+  \verb|correction_fraction| is halved whenever an iteration leaves the
+  weighted RMS residual larger than at the start of the previous iteration.
+  Same pattern as \verb|chromaticity| uses for its correction fraction.
+\item \verb|response_perturbation| --- Finite-difference step used when
+  this command builds the matrix itself (only relevant when
+  \verb|use_perturbed_matrix>0| or when no preloaded matrix exists).
+\item \verb|svd_threshold| --- Singular values below
+  \verb|svd_threshold| times the largest singular value are dropped from
+  the pseudo-inverse, regularizing the solution.
+\item \verb|n_singular_values| --- If $>0$, additionally cap the number of
+  retained singular values at this many of the largest.
+\item \verb|strength_limit| --- If $>0$, the per-iteration step is uniformly
+  scaled so that no knob's parameter value exceeds \verb|strength_limit| in
+  absolute value after the correction is applied.  Uniform scaling preserves
+  the SVD direction at the cost of a shorter step.
+\item \verb|beta_measurement_noise|, \verb|eta_measurement_noise| --- RMS
+  amplitude (fractional for beta functions, in meters for dispersion) of independent Gaussian measurement noise added to
+  every $\beta_{x,y}$ and $\eta_x$ reading at every BPM, respectively.  Each
+  reading---baseline, response-matrix construction, and post-correction
+  measurement---gets a fresh, independent draw, matching how a real machine
+  accumulates measurement noise into the response matrix and into the
+  residual at the noise floor of the BPM system.  Defaults 0 disable the
+  noise.
+\item \verb|measurement_noise_cutoff| --- Cutoff on the Gaussian noise
+  distribution, in units of the standard deviation.  Ignored when both noise
+  amplitudes are zero.
+\item \verb|reference_file| --- {\bf Required.}  The name of an SDDS file
+  (typically a \verb|twiss_output| of the unperturbed design lattice)
+  containing the target values of $\beta_x$, $\beta_y$, $\eta_x$ at every
+  BPM.  Required columns are \verb|ElementName|, \verb|betax|, \verb|betay|,
+  \verb|etax|; the optional column \verb|ElementOccurence| is used when
+  present to disambiguate repeated names.  Every BPM matched by the current
+  pattern lists must appear in the reference file, or the run is aborted.
+\item \verb|betax_weight|, \verb|betay_weight|, \verb|etax_weight| ---
+  Per-channel weights applied to the corresponding residual rows (and to
+  the corresponding response-matrix rows) before the SVD solve.  This lets
+  the user re-balance the channels so that they are comparable in the
+  $\ell_2$ sense (for example, weighting $\eta_x$ heavily when the design
+  $\eta_x$ is small compared to the design $\beta_x$/$\beta_y$).  All must
+  be $>0$.
+\item \verb|strength_log| --- The (incomplete) name of an SDDS file
+  recording, for each iteration, the parameter changes applied to each
+  knob.  Columns include \verb|ElementName|, \verb|ElementOccurence|,
+  \verb|s|, \verb|ElementParameter|, \verb|PreviousParameterValue|,
+  \verb|DeltaParameterValue|, \verb|ParameterValue|; the parameters include
+  \verb|Iteration| and a \verb|Stage| string that is \verb|"uncorrected"|
+  for all but the actually-final iteration of the call (which is tagged
+  \verb|"corrected"|).
+\item \verb|response_file| --- The (incomplete) name of an SDDS file
+  recording the response matrix.  This is in addition to any file written
+  by a prior \verb|compute_lattice_response_matrix|.  Each row corresponds
+  to one (BPM, knob) pair with all three observable derivatives
+  (\verb|dBetaxDK1|, \verb|dBetayDK1|, \verb|dEtaxDK1|).
+\item \verb|rms_log| --- The (incomplete) name of an SDDS file recording
+  the per-iteration convergence history.  Each call to the per-step
+  correction routine appends a new page; rows within a page are indexed
+  by \verb|Iteration|, where 0 is the state before any correction is
+  applied and $k+1$ is the state after iteration $k$ has been measured.
+  Columns are \verb|Iteration| (long), \verb|BetaxRms|, \verb|BetayRms|,
+  \verb|EtaxRms| (each the RMS of the corresponding observable's residual
+  $\sqrt{\sum_i (o_i - o_{i,\mathrm{target}})^2 / n_{\mathrm{BPM}}}$, in
+  meters, unweighted), and \verb|WeightedRms| (the RMS of the weighted
+  residual that the SVD solver actually drives down).  The per-channel
+  weights in effect for the page are also recorded as parameters
+  \verb|BetaxWeight|, \verb|BetayWeight|, \verb|EtaxWeight|.
+\item \verb|verbosity| --- Higher values print more diagnostic information.
+\end{itemize}
+
+For a typical correction workflow the user produces a reference twiss
+file from the design lattice (a \verb|run_setup|/\verb|twiss_output|
+pair, with no errors loaded), then in the correction run issues
+\verb|twiss_output|, \verb|correct_lattice| (pointing
+\verb|reference_file| at the design twiss), a \verb|twiss_output| with
+\verb|output_at_each_step=1| (to capture the post-correction state), and
+finally a \verb|bunched_beam|/\verb|track| pair to trigger the steps
+loop.  When a precomputed matrix is to be reused across many runs, the
+matrix can be produced once by \verb|compute_lattice_response_matrix|
+(perhaps in an upstream design run) and loaded by
+\verb|load_lattice_response_matrix| in each correction run; in that case
+the pattern/item parameters need not be repeated on
+\verb|correct_lattice|.
 
 %\begin{latexonly}
 \newpage
@@ -3610,6 +4109,90 @@ in capital letters.
 assigned to the target parameter.
 \item \verb|exclude_self| --- If nonzero, self-links are blocked. It is not recommended to change this.
 \end{itemize}
+
+%\begin{latexonly}
+\newpage
+\begin{center}{\Large\verb|load_coupling_response_matrix|}\end{center}
+%\end{latexonly}
+\subsection{load\_coupling\_response\_matrix \label{subsec:loadcouplingresponsematrix}}
+
+\begin{itemize}
+\item type: setup command.
+\item function: read a previously-saved coupling-correction response matrix
+  (produced by \verb|compute_coupling_response_matrix|) and install it for
+  use by a subsequent \verb|correct_coupling| command, avoiding the cost of
+  rebuilding the matrix.
+\item sequence: must follow \verb|run_setup|.
+\item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
+\end{itemize}
+
+\begin{verbatim}
+&load_coupling_response_matrix
+    STRING filename = NULL;
+    long verbosity = 0;
+&end
+\end{verbatim}
+
+\begin{itemize}
+\item \verb|filename| --- The (incomplete) name of the SDDS file written by
+  a prior \verb|compute_coupling_response_matrix| command.  The file
+  carries the parameter being adjusted (\verb|ElementParameter|), the
+  perturbation that was used to build it, and the full list of BPM and
+  skew elements (by name and occurrence); these are matched against the
+  current beamline to install the matrix.  An error is reported if any
+  expected element is not present in the current beamline.
+\item \verb|verbosity| --- Higher values print more diagnostic information.
+\end{itemize}
+
+If either \verb|compute_coupling_response_matrix| or
+\verb|load_coupling_response_matrix| is given before
+\verb|correct_coupling|, the precomputed matrix is used and the
+knob/BPM/parameter selection on \verb|correct_coupling| is not required
+(and is ignored if supplied).  If neither is given, \verb|correct_coupling|
+builds the matrix itself according to its own \verb|use_perturbed_matrix|
+control.
+
+%\begin{latexonly}
+\newpage
+\begin{center}{\Large\verb|load_lattice_response_matrix|}\end{center}
+%\end{latexonly}
+\subsection{load\_lattice\_response\_matrix \label{subsec:loadlatticeresponsematrix}}
+
+\begin{itemize}
+\item type: setup command.
+\item function: read a previously-saved lattice-correction response matrix
+  (produced by \verb|compute_lattice_response_matrix|) and install it for
+  use by a subsequent \verb|correct_lattice| command, avoiding the cost of
+  rebuilding the matrix.
+\item sequence: must follow \verb|run_setup|.
+\item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
+\end{itemize}
+
+\begin{verbatim}
+&load_lattice_response_matrix
+    STRING filename = NULL;
+    long verbosity = 0;
+&end
+\end{verbatim}
+
+\begin{itemize}
+\item \verb|filename| --- The (incomplete) name of the SDDS file written by
+  a prior \verb|compute_lattice_response_matrix| command.  The file
+  carries the parameter being adjusted (\verb|ElementParameter|), the
+  perturbation that was used to build it, and the full list of BPM and
+  quadrupole elements (by name and occurrence); these are matched against
+  the current beamline to install the matrix.  An error is reported if
+  any expected element is not present in the current beamline.
+\item \verb|verbosity| --- Higher values print more diagnostic information.
+\end{itemize}
+
+If either \verb|compute_lattice_response_matrix| or
+\verb|load_lattice_response_matrix| is given before
+\verb|correct_lattice|, the precomputed matrix is used and the
+knob/BPM/parameter selection on \verb|correct_lattice| is not required
+(and is ignored if supplied).  If neither is given, \verb|correct_lattice|
+builds the matrix itself according to its own \verb|use_perturbed_matrix|
+control.
 
 %\begin{latexonly}
 \newpage
