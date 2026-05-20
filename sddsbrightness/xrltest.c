@@ -146,16 +146,16 @@ MatEntry materialTable[MAX_ENTRY] = {
 int getXRLFunctions (char *command)
 {
   const char delimiters[] = "( ),";
-  char *token, *endp;
+  char *token, *endp, *saveptr;
   int  k;
   
   // printf( "getXRLFunctions: %s\n", command);
   
   k = 0;
-  token = strtok (command, delimiters);
+  token = strtok_r (command, delimiters, &saveptr);
   while( token != NULL ) {
     // printf( "token is \"%s\"\n", token );
-    strcpy(strVar[k], token);
+    snprintf(strVar[k], 64, "%s", token);
     /* Convert the token to number */
     if ( isdigit(token[0]) == 0 ) {
       // printf("%s is not a number.\n", token);
@@ -167,7 +167,7 @@ int getXRLFunctions (char *command)
       intVar[k] = floatVar[k];
     }
 
-    token = strtok( NULL, delimiters );
+    token = strtok_r( NULL, delimiters, &saveptr );
     k++;
   }
 
@@ -180,28 +180,28 @@ int getXRLFunctions (char *command)
 ************************************/
 char* getUnits (char *name)
 {
-  strcpy (units, " ");
-  if(strstr(name, "CSb") == name)          { strcpy (units, "barn/atom");
-  } else if(strstr(name, "DCSb") == name)  { strcpy (units, "barn/atom/sterad");
-  } else if(strstr(name, "DCSPb") == name) { strcpy (units, "barn/atom/sterad");
-  } else if(strcmp(strVar[0], "CS_KN") == 0)   { strcpy (units, "barn/atom");
-  } else if(strcmp(strVar[0], "DCS_KN") == 0)  { strcpy (units, "barn/atom");
-  } else if(strcmp(strVar[0], "DCSP_KN") == 0) { strcpy (units, "barn/atom");
-  } else if(strcmp(strVar[0], "DCS_Thoms") == 0)  { strcpy (units, "barn/atom");
-  } else if(strcmp(strVar[0], "DCSP_Thoms") == 0) { strcpy (units, "barn/atom");
-  } else if(strstr(name, "CS") == name)     { strcpy (units, "cm2/g");
-  } else if(strstr(name, "DCS") == name)    { strcpy (units, "cm2/g");
-  } else if(strstr(name, "DCSP") == name)   { strcpy (units, "cm2/g");
-  } else if(strstr(name, "AtomicWeight") == name)    { strcpy (units, "AMU");
-  } else if(strstr(name, "MomentTransf") != NULL)    { strcpy (units, "Ang^-1");
-  } else if(strstr(name, "Energy") != NULL)          { strcpy (units, "keV");
-  } else if(strstr(name, "AtomicLevelWidth") != NULL){ strcpy (units, "keV");
-  } else if(strcmp(strVar[0], "ElectronConfig") == 0) { strcpy (units, "electron");
-  } else if(strcmp(strVar[0], "FF_Rayl") == 0)  { strcpy (units, "electron");
-  } else if(strcmp(strVar[0], "SF_Compt") == 0) { strcpy (units, "electron");
-  } else if(strcmp(strVar[0], "Fi") == 0)  { strcpy (units, "electron");
-  } else if(strcmp(strVar[0], "Fii") == 0) { strcpy (units, "electron");
-  } else if(strstr(name, "ComptonProfile") != NULL){ strcpy (units, "electron?");
+  snprintf (units, sizeof(units), " ");
+  if(strstr(name, "CSb") == name)          { snprintf (units, sizeof(units), "barn/atom");
+  } else if(strstr(name, "DCSb") == name)  { snprintf (units, sizeof(units), "barn/atom/sterad");
+  } else if(strstr(name, "DCSPb") == name) { snprintf (units, sizeof(units), "barn/atom/sterad");
+  } else if(strcmp(strVar[0], "CS_KN") == 0)   { snprintf (units, sizeof(units), "barn/atom");
+  } else if(strcmp(strVar[0], "DCS_KN") == 0)  { snprintf (units, sizeof(units), "barn/atom");
+  } else if(strcmp(strVar[0], "DCSP_KN") == 0) { snprintf (units, sizeof(units), "barn/atom");
+  } else if(strcmp(strVar[0], "DCS_Thoms") == 0)  { snprintf (units, sizeof(units), "barn/atom");
+  } else if(strcmp(strVar[0], "DCSP_Thoms") == 0) { snprintf (units, sizeof(units), "barn/atom");
+  } else if(strstr(name, "CS") == name)     { snprintf (units, sizeof(units), "cm2/g");
+  } else if(strstr(name, "DCS") == name)    { snprintf (units, sizeof(units), "cm2/g");
+  } else if(strstr(name, "DCSP") == name)   { snprintf (units, sizeof(units), "cm2/g");
+  } else if(strstr(name, "AtomicWeight") == name)    { snprintf (units, sizeof(units), "AMU");
+  } else if(strstr(name, "MomentTransf") != NULL)    { snprintf (units, sizeof(units), "Ang^-1");
+  } else if(strstr(name, "Energy") != NULL)          { snprintf (units, sizeof(units), "keV");
+  } else if(strstr(name, "AtomicLevelWidth") != NULL){ snprintf (units, sizeof(units), "keV");
+  } else if(strcmp(strVar[0], "ElectronConfig") == 0) { snprintf (units, sizeof(units), "electron");
+  } else if(strcmp(strVar[0], "FF_Rayl") == 0)  { snprintf (units, sizeof(units), "electron");
+  } else if(strcmp(strVar[0], "SF_Compt") == 0) { snprintf (units, sizeof(units), "electron");
+  } else if(strcmp(strVar[0], "Fi") == 0)  { snprintf (units, sizeof(units), "electron");
+  } else if(strcmp(strVar[0], "Fii") == 0) { snprintf (units, sizeof(units), "electron");
+  } else if(strstr(name, "ComptonProfile") != NULL){ snprintf (units, sizeof(units), "electron?");
 
   }
   return units;
