@@ -161,6 +161,16 @@ extern int gpuCudaSetCentralMomentum(void *coord, long nParticles, int stride,
 extern int gpuCudaMatchEnergy(void *coord, long nParticles, int stride,
                               double oldP, double averageP, int changeBeam,
                               float *milliseconds);
+extern int gpuCudaMatchEnergyAndAverage(void *coord, long nParticles,
+                                        int stride, double oldP,
+                                        int changeBeam,
+                                        GPU_BEAM_SUM_DATA *result,
+                                        float *milliseconds);
+extern int gpuCudaCenteredBeamSums(void *coord, long nParticles, int stride,
+                                   double pCentral, double cMks,
+                                   const double *centroid,
+                                   GPU_BEAM_SUM_DATA *result,
+                                   float *milliseconds);
 extern int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
                                double pCentral, double volt, double omega,
                                double phase, double cMks,
@@ -578,10 +588,10 @@ static long gpuRfcaChangeP0Explicit = 0;
 static long gpuRunAlwaysChangeP0 = 0;
 static long gpuAvoidShortGpuIslands = 1;
 static long gpuShortGpuIslandMaxElements = 4;
-static long gpuMatrixMinParticlesExplicit = 0;
+static long gpuMatrixDriftMinParticlesExplicit = 0;
 static long gpuHelperMinParticlesExplicit = 0;
 static long gpuWakeMinParticlesExplicit = 0;
-static long gpuReductionMinParticlesExplicit = 0;
+static long gpuOutputDriftReductionMinParticlesExplicit = 0;
 static long unsupportedReported = 0;
 static double gpuWallStart = 0;
 static double gpuPendingExactDriftLength = 0;
@@ -685,6 +695,17 @@ static long gpuEnvSet(const char *name) {
   const char *value = getenv(name);
 
   return value && *value;
+}
+
+static long gpuEnvSetEither(const char *name, const char *legacyName) {
+  return gpuEnvSet(name) || gpuEnvSet(legacyName);
+}
+
+static long gpuEnvLongEither(const char *name, const char *legacyName,
+                             long defaultValue) {
+  if (gpuEnvSet(name))
+    return gpuEnvLong(name, defaultValue);
+  return gpuEnvLong(legacyName, defaultValue);
 }
 
 static long gpuReasonContains(const char *reason, const char *fragment) {
@@ -889,8 +910,17 @@ void gpuDescribeUsageSettings(char *buffer, unsigned long bufferSize) {
 
 static const char *gpuExactDriftStatus(void) {
   if (gpuEnableExactDrift)
-    return gpuExactDriftExplicit ? "; exact drift explicitly enabled" : "; exact drift enabled";
-  return gpuExactDriftExplicit ? "; exact drift explicitly disabled" : "";
+    return "; exact drift explicitly enabled";
+  return gpuExactDriftExplicit ? "; exact drift explicitly disabled" :
+                                 "; exact drift disabled by default";
+}
+
+static const char *gpuMatrixTrackingStatus(void) {
+  if (!gpuBase.orderSensitiveOutputNeeded)
+    return "";
+  return gpuMatrixDriftMinParticlesExplicit ?
+         "; matrix tracking follows explicit matrix-drift threshold" :
+         "; matrix tracking uses CPU for order-sensitive output by default";
 }
 
 static const char *gpuHelperOutputStatus(void) {
@@ -945,8 +975,8 @@ static const char *gpuRfcaChangeP0Status(void) {
 static const char *gpuReductionOutputStatus(void) {
   if (!gpuBase.reductionOutputNeeded)
     return "";
-  return gpuReductionMinParticlesExplicit ?
-         "; output reductions follow explicit reduction threshold" :
+  return gpuOutputDriftReductionMinParticlesExplicit ?
+         "; output reductions follow explicit output-drift reduction threshold" :
          "; output reductions use CPU by default";
 }
 
@@ -1806,9 +1836,8 @@ static long gpuParticleCountAllowed(long nParticles, long minParticles) {
 }
 
 static long gpuMatrixParticleCountAllowed(long nParticles) {
-  if (gpuBase.orderSensitiveOutputNeeded && !gpuMatrixMinParticlesExplicit)
-    return gpuParticleCountMeetsThreshold(nParticles,
-                                          gpuBase.matrixMinParticles);
+  if (gpuBase.orderSensitiveOutputNeeded && !gpuMatrixDriftMinParticlesExplicit)
+    return 0;
   return gpuParticleCountAllowed(nParticles, gpuBase.matrixMinParticles);
 }
 
@@ -3302,7 +3331,7 @@ long gpu_reductions_enabled(long nParticles) {
   if (notSinglePart)
     return 0;
 #endif
-  if (gpuBase.reductionOutputNeeded && !gpuReductionMinParticlesExplicit)
+  if (gpuBase.reductionOutputNeeded && !gpuOutputDriftReductionMinParticlesExplicit)
     return 0;
   return gpuParticleCountAllowed(nParticles, gpuBase.reductionMinParticles);
 }
@@ -3338,13 +3367,23 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuBase.activeDevice = -1;
   gpuBase.minParticles = gpuEnvLong("ELEGANT_GPU_MIN_PARTICLES",
                                     ELEGANT_GPU_DEFAULT_MIN_PARTICLES);
-  gpuMatrixMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_MATRIX_PARTICLES");
-  gpuBase.matrixMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_MATRIX_PARTICLES", gpuBase.minParticles);
+  gpuMatrixDriftMinParticlesExplicit =
+    gpuEnvSetEither("ELEGANT_GPU_MIN_MATRIX_DRIFT_PARTICLES",
+                    "ELEGANT_GPU_MIN_MATRIX_PARTICLES");
+  gpuBase.matrixMinParticles =
+    gpuEnvLongEither("ELEGANT_GPU_MIN_MATRIX_DRIFT_PARTICLES",
+                     "ELEGANT_GPU_MIN_MATRIX_PARTICLES",
+                     gpuBase.minParticles);
   gpuHelperMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_HELPER_PARTICLES");
   gpuBase.helperMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_HELPER_PARTICLES", gpuBase.minParticles);
   gpuBase.exactDriftMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_EXACT_DRIFT_PARTICLES", gpuBase.minParticles);
-  gpuReductionMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_REDUCTION_PARTICLES");
-  gpuBase.reductionMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_REDUCTION_PARTICLES", gpuBase.minParticles);
+  gpuOutputDriftReductionMinParticlesExplicit =
+    gpuEnvSetEither("ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES",
+                    "ELEGANT_GPU_MIN_REDUCTION_PARTICLES");
+  gpuBase.reductionMinParticles =
+    gpuEnvLongEither("ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES",
+                     "ELEGANT_GPU_MIN_REDUCTION_PARTICLES",
+                     gpuBase.minParticles);
   gpuBase.apertureMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_APERTURE_PARTICLES", gpuBase.minParticles);
   gpuBase.magnetMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_MAGNET_PARTICLES", gpuBase.minParticles);
   gpuWakeMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_WAKE_PARTICLES");
@@ -3359,7 +3398,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuBase.hostCoordBase = coord ? (void *)coord[0] : NULL;
   gpuVerbose = gpuEnvFlag("ELEGANT_GPU_VERBOSE");
   gpuExactDriftExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_EXACT_DRIFT");
-  gpuEnableExactDrift = !gpuExactDriftExplicit ||
+  gpuEnableExactDrift = gpuExactDriftExplicit &&
                         gpuEnvFlag("ELEGANT_GPU_ENABLE_EXACT_DRIFT");
   gpuApertureParallelCompactionExplicit =
     gpuEnvSet("ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION");
@@ -3491,7 +3530,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     status = gpuCudaRuntimeGetDeviceName((int)gpuBase.activeDevice, deviceName, sizeof(deviceName));
 #if USE_MPI
     fprintf(stderr,
-              "elegant CUDA: selected device %ld%s%s on MPI rank %d; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
+              "elegant CUDA: selected device %ld%s%s on MPI rank %d; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
             gpuBase.activeDevice,
             status == 0 ? " " : "",
             status == 0 ? deviceName : "",
@@ -3508,6 +3547,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuBase.scmultMinParticles,
             gpuBase.exactDriftMinParticles,
             gpuExactDriftStatus(),
+            gpuMatrixTrackingStatus(),
             gpuHelperOutputStatus(),
             gpuReductionOutputStatus(),
             gpuApertureParallelCompactionStatus(),
@@ -3522,7 +3562,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuRfcaChangeP0Status());
 #else
     fprintf(stderr,
-            "elegant CUDA: selected device %ld%s%s; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
+            "elegant CUDA: selected device %ld%s%s; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
             gpuBase.activeDevice,
             status == 0 ? " " : "",
             status == 0 ? deviceName : "",
@@ -3538,6 +3578,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuBase.scmultMinParticles,
             gpuBase.exactDriftMinParticles,
             gpuExactDriftStatus(),
+            gpuMatrixTrackingStatus(),
             gpuHelperOutputStatus(),
             gpuReductionOutputStatus(),
             gpuApertureParallelCompactionStatus(),
@@ -4003,19 +4044,54 @@ static long gpuMatchEnergyParticlesRemain(long np) {
 }
 
 void gpu_do_match_energy(long np, double *P_central, long change_beam) {
+#if USE_MPI
   double **coord;
+#endif
+  GPU_BEAM_SUM_DATA result;
+  double oldP, averageP;
+  float milliseconds = 0;
+  int status;
+  long beamChanged;
 
   if (!P_central)
     gpuRequiredFailure("NULL central momentum pointer in gpu_do_match_energy");
-  if (!do_match_energy)
-    gpuRequiredFailure("CPU match-energy routine is unavailable");
   if (!gpuMatchEnergyParticlesRemain(np)) {
     gpuRecordWallSeconds();
     return;
   }
 
-  coord = forceParticlesToCpu("match energy CPU reference");
-  do_match_energy(coord, np, P_central, change_beam);
+#if USE_MPI
+  if (notSinglePart) {
+    if (!do_match_energy)
+      gpuRequiredFailure("CPU match-energy routine is unavailable");
+    coord = forceParticlesToCpu("match energy CPU reference");
+    do_match_energy(coord, np, P_central, change_beam);
+    gpuRecordWallSeconds();
+    return;
+  }
+#endif
+
+  oldP = *P_central;
+  gpuCopyHostToDevice(np);
+  status = gpuCudaMatchEnergyAndAverage(gpuBase.deviceCoord, np,
+                                        (int)gpuBase.deviceStride,
+                                        oldP, (int)change_beam,
+                                        &result, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("match energy reduction/update kernel", status);
+  gpuRecordHelperKernel(milliseconds);
+  if (result.count <= 0) {
+    gpuRecordWallSeconds();
+    return;
+  }
+  averageP = result.centroidSum[5];
+  beamChanged = change_beam ||
+                oldP == 0 || fabs(averageP - oldP) / fabs(oldP) > 1e-14;
+
+  if (beamChanged)
+    gpuMarkDeviceChanged(np);
+  if (!change_beam && beamChanged)
+    *P_central = averageP;
   gpuRecordWallSeconds();
 }
 
@@ -5022,7 +5098,7 @@ static void gpuAccumulateBeamSumsOnCpu(void *sums, long n_part, double p_central
 void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double mp_charge,
                               double *timeValue, double tMin, double tMax,
                               long startPID, long endPID, unsigned long flags) {
-  GPU_BEAM_SUM_DATA result;
+  GPU_BEAM_SUM_DATA result, centeredResult;
   BEAM_SUMS *beamSums = (BEAM_SUMS *)sums;
   float milliseconds = 0;
   long oldCount, newCount, i, j, sparseAllowed;
@@ -5037,10 +5113,8 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
     {0, 0, 0, 0, 0, 0, 1}};
   double centroid[7];
 
-  if (beamSums && beamSums->beamSums2) {
-    /* The one-pass GPU covariance loses tiny longitudinal variance from
-     * cancellation when absolute arrival times are large.  Use the centered
-     * CPU path for sigma output until the GPU reduction is made two-pass. */
+  if (beamSums && beamSums->beamSums2 &&
+      !gpuOutputDriftReductionMinParticlesExplicit) {
     gpuAccumulateBeamSumsOnCpu(sums, n_part, p_central, mp_charge,
                                timeValue, tMin, tMax, startPID, endPID, flags);
     return;
@@ -5065,10 +5139,10 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
   if (status != 0)
     gpuFatalStatus("beam sums reduction kernel", status);
   gpuRecordReductionKernel(milliseconds);
-  gpuRecordWallSeconds();
 
   if (result.count <= 0) {
     beamSums->charge = 0;
+    gpuRecordWallSeconds();
     return;
   }
 
@@ -5078,6 +5152,19 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
     centroid[i] = result.centroidSum[i] / result.count;
     beamSums->centroid[i] = (beamSums->centroid[i] * oldCount + result.centroidSum[i]) / newCount;
   }
+
+  if (beamSums->beamSums2) {
+    memset(&centeredResult, 0, sizeof(centeredResult));
+    status = gpuCudaCenteredBeamSums(gpuBase.deviceCoord, n_part, (int)gpuBase.deviceStride,
+                                     p_central, c_mks, centroid,
+                                     &centeredResult, &milliseconds);
+    if (status != 0)
+      gpuFatalStatus("centered beam sums reduction kernel", status);
+    gpuRecordReductionKernel(milliseconds);
+    if (centeredResult.count != result.count)
+      gpuRequiredFailure("centered beam sums particle count mismatch");
+  }
+  gpuRecordWallSeconds();
 
   if (!(flags & BEAM_SUMS_NOMINMAX) && beamSums->beamSums2) {
     for (i = 0; i < 7; i++) {
@@ -5108,8 +5195,7 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
           beamSums->beamSums2->sigman[j][i] = beamSums->beamSums2->sigman[i][j] = 0;
           continue;
         }
-        Sij = result.productSum[gpuUpperTriangularIndex(i, j)] -
-              result.centroidSum[i] * result.centroidSum[j] / result.count;
+        Sij = centeredResult.productSum[gpuUpperTriangularIndex(i, j)];
         if (i == j && Sij < 0)
           Sij = 0;
         beamSums->beamSums2->sigma[j][i] =
@@ -8917,18 +9003,48 @@ static long gpuRfcwKickWakeOnDevice(long np, RFCW *rfcw,
 
 double gpu_findFiducialTime(long np, double s0, double sOffset,
                             double p0, unsigned long mode) {
-  double **coord;
   double tFid;
-  long restoreElementOnGpu;
+  GPU_BEAM_SUM_DATA result;
+  float milliseconds = 0;
+  int status = 0;
+  long startPID = -1, endPID = -1;
 
-  if (!findFiducialTime)
-    gpuRequiredFailure("CPU fiducial-time routine is unavailable");
+  if (mode & FID_MODE_LIGHT)
+    return (s0 + sOffset) / c_mks;
 
-  coord = copyParticlesToCpuReadOnly("RF fiducialization CPU reference");
-  restoreElementOnGpu = gpuBase.elementOnGpu;
-  gpuBase.elementOnGpu = 0;
-  tFid = findFiducialTime(coord, np, s0, sOffset, p0, mode);
-  gpuBase.elementOnGpu = restoreElementOnGpu;
+  if (np <= 0)
+    gpuRequiredFailure("No available particle for RF cavity fiducialization");
+  if (!gpuFiducialPidRange(mode, &startPID, &endPID))
+    gpuRequiredFailure("invalid fiducial PID range for CUDA RF fiducialization");
+
+  memset(&result, 0, sizeof(result));
+  startGpuTimer();
+  gpuCopyHostToDevice(np);
+  if (mode & FID_MODE_TMEAN)
+    status = gpuCudaFiducialTimeSums(
+      gpuBase.deviceCoord, np, (int)gpuBase.deviceStride, p0, sOffset,
+      c_mks, particleIDIndex, startPID, endPID, &result, &milliseconds);
+  else if (mode & FID_MODE_FIRST)
+    status = gpuCudaFiducialFirst(
+      gpuBase.deviceCoord, np, (int)gpuBase.deviceStride, p0, sOffset,
+      c_mks, particleIDIndex, startPID, endPID, &result, &milliseconds);
+  else if (mode & FID_MODE_PMAX)
+    status = gpuCudaFiducialPmaximum(
+      gpuBase.deviceCoord, np, (int)gpuBase.deviceStride, p0, sOffset,
+      c_mks, particleIDIndex, startPID, endPID, &result, &milliseconds);
+  else
+    gpuRequiredFailure("invalid fiducial mode in CUDA RF fiducialization");
+  if (status != 0)
+    gpuFatalStatus("RF fiducialization reduction kernel", status);
+  gpuRecordReductionKernel(milliseconds);
+  gpuRecordWallSeconds();
+
+  if (result.count <= 0)
+    gpuRequiredFailure("No available particle for RF cavity fiducialization");
+  if (mode & FID_MODE_TMEAN)
+    tFid = result.centroidSum[6] / result.count;
+  else
+    tFid = result.centroidSum[6];
   return tFid;
 }
 

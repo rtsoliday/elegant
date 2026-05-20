@@ -843,6 +843,80 @@ __global__ void gpuMatchEnergyKernel(double *coord, long nParticles, int stride,
   }
 }
 
+__global__ void gpuMatchEnergyAndAverageKernel(double *coord, long nParticles,
+                                               int stride, double oldP,
+                                               int changeBeam,
+                                               GPU_BEAM_SUM_DATA *result) {
+  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ double sum[GPU_REDUCTION_THREADS];
+  __shared__ double error[GPU_REDUCTION_THREADS];
+  long tid = threadIdx.x;
+  long ip;
+  double averageP;
+
+  count[tid] = 0;
+  sum[tid] = 0;
+  error[tid] = 0;
+  for (ip = tid; ip < nParticles; ip += blockDim.x) {
+    double *part = coord + ip * stride;
+    double value = oldP * (1 + part[5]);
+    double y = value - error[tid];
+    double tmp = sum[tid] + y;
+    error[tid] = (tmp - sum[tid]) - y;
+    sum[tid] = tmp;
+    count[tid]++;
+  }
+  __syncthreads();
+
+  for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (tid < offset) {
+      double y, tmp;
+      count[tid] += count[tid + offset];
+      y = sum[tid + offset] - error[tid];
+      tmp = sum[tid] + y;
+      error[tid] = (tmp - sum[tid]) - y;
+      sum[tid] = tmp;
+      y = error[tid + offset] - error[tid];
+      tmp = sum[tid] + y;
+      error[tid] = (tmp - sum[tid]) - y;
+      sum[tid] = tmp;
+    }
+    __syncthreads();
+  }
+
+  if (count[0] <= 0)
+    return;
+  averageP = sum[0] / count[0];
+  if (tid == 0) {
+    result->count = count[0];
+    result->centroidSum[5] = averageP;
+  }
+  __syncthreads();
+
+  if (!changeBeam) {
+    double dp, dr;
+    if (oldP != 0 && fabs(averageP - oldP) / fabs(oldP) <= 1e-14)
+      return;
+    dp = (oldP - averageP) / averageP;
+    dr = oldP / averageP;
+    for (ip = tid; ip < nParticles; ip += blockDim.x) {
+      double *part = coord + ip * stride;
+      part[5] = dp + part[5] * dr;
+    }
+  } else {
+    double dPCentroid = oldP - averageP;
+    for (ip = tid; ip < nParticles; ip += blockDim.x) {
+      double *part = coord + ip * stride;
+      double p = (1 + part[5]) * oldP;
+      double beta = p / sqrt(p * p + 1);
+      double t = part[4] / beta;
+      p += dPCentroid;
+      part[5] = (p - oldP) / oldP;
+      part[4] = t * (p / sqrt(p * p + 1));
+    }
+  }
+}
+
 __global__ void gpuRfcaThinKickKernel(double *coord, long nParticles, int stride,
                                       double pCentral, double volt,
                                       double omega, double phase,
@@ -2656,26 +2730,37 @@ __global__ void gpuFiducialTimeSumsKernel(double *coord, long nParticles, int st
   __shared__ double sum[GPU_REDUCTION_THREADS];
   long tid = threadIdx.x;
   long ip;
+  double error;
 
   count[tid] = 0;
   sum[tid] = 0;
+  error = 0;
   for (ip = tid; ip < nParticles; ip += blockDim.x) {
     double *part = coord + ip * stride;
     double p = pCentral * (1 + part[5]);
     double beta = p / sqrt(p * p + 1);
+    double value, y, tmp;
+
     if ((startPID >= 0 || endPID >= 0) &&
         (particleIdColumn < 0 || particleIdColumn >= stride ||
          static_cast<long>(part[particleIdColumn]) < startPID ||
          static_cast<long>(part[particleIdColumn]) > endPID))
       continue;
-    sum[tid] += (part[4] + sOffset) / (cMks * beta);
+    value = (part[4] + sOffset) / (cMks * beta);
+    y = value - error;
+    tmp = sum[tid] + y;
+    error = (tmp - sum[tid]) - y;
+    sum[tid] = tmp;
     count[tid]++;
   }
   __syncthreads();
 
   for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
     if (tid < offset) {
-      sum[tid] += sum[tid + offset];
+      double y = sum[tid + offset] - error;
+      double tmp = sum[tid] + y;
+      error = (tmp - sum[tid]) - y;
+      sum[tid] = tmp;
       count[tid] += count[tid + offset];
     }
     __syncthreads();
@@ -2907,6 +2992,54 @@ __global__ void gpuBeamSumsKernel(double *coord, long nParticles, int stride,
       result->min[i] = minValue[i][0];
       result->max[i] = maxValue[i][0];
     }
+    for (i = 0; i < 28; i++)
+      result->productSum[i] = product[i][0];
+  }
+}
+
+__global__ void gpuCenteredBeamSumsKernel(double *coord, long nParticles,
+                                          int stride, double pCentral,
+                                          double cMks,
+                                          const double *centroid,
+                                          GPU_BEAM_SUM_DATA *result) {
+  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ double product[28][GPU_REDUCTION_THREADS];
+  long tid = threadIdx.x;
+  long ip;
+  int i, j;
+
+  count[tid] = 0;
+  for (i = 0; i < 28; i++)
+    product[i][tid] = 0;
+
+  for (ip = tid; ip < nParticles; ip += blockDim.x) {
+    double *part = coord + ip * stride;
+    double value[7];
+    value[0] = part[0] - centroid[0];
+    value[1] = part[1] - centroid[1];
+    value[2] = part[2] - centroid[2];
+    value[3] = part[3] - centroid[3];
+    value[4] = part[4] - centroid[4];
+    value[5] = part[5] - centroid[5];
+    value[6] = gpuParticleTime(part, pCentral, cMks) - centroid[6];
+    count[tid]++;
+    for (i = 0; i < 7; i++)
+      for (j = i; j < 7; j++)
+        product[gpuUpperTriangularIndex(i, j)][tid] += value[i] * value[j];
+  }
+  __syncthreads();
+
+  for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (tid < offset) {
+      count[tid] += count[tid + offset];
+      for (i = 0; i < 28; i++)
+        product[i][tid] += product[i][tid + offset];
+    }
+    __syncthreads();
+  }
+
+  if (tid == 0) {
+    result->count = count[0];
     for (i = 0; i < 28; i++)
       result->productSum[i] = product[i][0];
   }
@@ -5564,6 +5697,47 @@ extern "C" int gpuCudaMatchEnergy(void *coord, long nParticles, int stride,
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
 
+extern "C" int gpuCudaMatchEnergyAndAverage(void *coord, long nParticles,
+                                            int stride, double oldP,
+                                            int changeBeam,
+                                            GPU_BEAM_SUM_DATA *result,
+                                            float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  GPU_BEAM_SUM_DATA *deviceResult = NULL;
+  int status;
+
+  if (!coord || !result || nParticles <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  std::memset(result, 0, sizeof(*result));
+  cudaStatus = cudaMalloc(&deviceResult, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMemset(deviceResult, 0, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceResult);
+    return static_cast<int>(cudaStatus);
+  }
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  gpuMatchEnergyAndAverageKernel<<<1, GPU_REDUCTION_THREADS>>>(
+    static_cast<double *>(coord), nParticles, stride, oldP, changeBeam,
+    deviceResult);
+  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(result, deviceResult, sizeof(*result),
+                          cudaMemcpyDeviceToHost);
+  cudaFree(deviceResult);
+  return static_cast<int>(cudaStatus);
+}
+
 extern "C" int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
                                    double pCentral, double volt, double omega,
                                    double phase, double cMks,
@@ -5977,6 +6151,65 @@ extern "C" int gpuCudaBeamSums(void *coord, long nParticles, int stride,
                                double pCentral, double cMks,
                                GPU_BEAM_SUM_DATA *result, float *milliseconds) {
   return gpuCudaRunReduction(coord, nParticles, stride, pCentral, cMks, 1, result, milliseconds);
+}
+
+extern "C" int gpuCudaCenteredBeamSums(void *coord, long nParticles,
+                                       int stride, double pCentral,
+                                       double cMks, const double *centroid,
+                                       GPU_BEAM_SUM_DATA *result,
+                                       float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  GPU_BEAM_SUM_DATA *deviceResult = NULL;
+  double *deviceCentroid = NULL;
+  int status;
+
+  if (!coord || !centroid || !result || nParticles <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  std::memset(result, 0, sizeof(*result));
+
+  cudaStatus = cudaMalloc(&deviceResult, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMalloc(&deviceCentroid, sizeof(double) * 7);
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceResult);
+    return static_cast<int>(cudaStatus);
+  }
+  cudaStatus = cudaMemset(deviceResult, 0, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceCentroid);
+    cudaFree(deviceResult);
+    return static_cast<int>(cudaStatus);
+  }
+  cudaStatus = cudaMemcpy(deviceCentroid, centroid, sizeof(double) * 7,
+                          cudaMemcpyHostToDevice);
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceCentroid);
+    cudaFree(deviceResult);
+    return static_cast<int>(cudaStatus);
+  }
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceCentroid);
+    cudaFree(deviceResult);
+    return status;
+  }
+  gpuCenteredBeamSumsKernel<<<1, GPU_REDUCTION_THREADS>>>(
+    static_cast<double *>(coord), nParticles, stride, pCentral, cMks,
+    deviceCentroid, deviceResult);
+  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceCentroid);
+    cudaFree(deviceResult);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(result, deviceResult, sizeof(*result),
+                          cudaMemcpyDeviceToHost);
+  cudaFree(deviceCentroid);
+  cudaFree(deviceResult);
+  return static_cast<int>(cudaStatus);
 }
 
 extern "C" int gpuCudaLongMinMax(void *coord, long nParticles, int stride,
