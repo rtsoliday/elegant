@@ -206,9 +206,12 @@ void showUsageOrGreeting(unsigned long mode) {
 #define PARTICLE_TUNES 75
 #define MACRO_OUTPUT 76
 #define CORRECT_COUPLING 77
-#define COMPUTE_COUPLING_CORRECTION_MATRIX 78
-#define LOAD_COUPLING_CORRECTION_MATRIX 79
-#define N_COMMANDS 80
+#define COMPUTE_COUPLING_RESPONSE_MATRIX 78
+#define LOAD_COUPLING_RESPONSE_MATRIX 79
+#define CORRECT_LATTICE 80
+#define COMPUTE_LATTICE_RESPONSE_MATRIX 81
+#define LOAD_LATTICE_RESPONSE_MATRIX 82
+#define N_COMMANDS 83
 
 char *command[N_COMMANDS] = {
   "run_setup",
@@ -289,8 +292,11 @@ char *command[N_COMMANDS] = {
   "particle_tunes",
   "macro_output",
   "correct_coupling",
-  "compute_coupling_correction_matrix",
-  "load_coupling_correction_matrix",
+  "compute_coupling_response_matrix",
+  "load_coupling_response_matrix",
+  "correct_lattice",
+  "compute_lattice_response_matrix",
+  "load_lattice_response_matrix",
 };
 
 char *description[N_COMMANDS] = {
@@ -372,8 +378,11 @@ char *description[N_COMMANDS] = {
   "particle_tunes                   accumulate data and find tunes for each particle in a multi-particle beam",
   "macro_output                     output values of commandline macros to a file",
   "correct_coupling                 correct vertical dispersion by adjusting skew quadrupoles (LOCO-style)",
-  "compute_coupling_correction_matrix  compute and save the response matrix for coupling correction",
-  "load_coupling_correction_matrix  load a previously-saved coupling-correction response matrix"};
+  "compute_coupling_response_matrix  compute and save the response matrix for coupling correction",
+  "load_coupling_response_matrix  load a previously-saved coupling-correction response matrix",
+  "correct_lattice                 correct linear lattice (beta_x, beta_y, eta_x) by adjusting normal quadrupoles",
+  "compute_lattice_response_matrix compute and save the response matrix for lattice correction",
+  "load_lattice_response_matrix    load a previously-saved lattice-correction response matrix"};
 
 #define NAMELIST_BUFLEN 65536
 
@@ -429,8 +438,13 @@ void setup_coupled_twiss_output(NAMELIST_TEXT *nltext, RUN *run,
 void setup_correct_coupling(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
 long do_correct_coupling(RUN *run, LINE_LIST *beamline);
 void finish_correct_coupling(void);
-void setup_compute_coupling_correction_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
-void setup_load_coupling_correction_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
+void setup_compute_coupling_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
+void setup_load_coupling_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
+void setup_correct_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
+long do_correct_lattice(RUN *run, LINE_LIST *beamline);
+void finish_correct_lattice(void);
+void setup_compute_lattice_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
+void setup_load_lattice_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
 void reset_alter_specifications();
 void finishCorrectionOutput();
 void setupElasticScattering(NAMELIST_TEXT *nltext, RUN *run, VARY *control, long twissFlag);
@@ -482,6 +496,7 @@ int main(int argc, char **argv)
   long correction_setuped, run_setuped, run_controled, error_controled, beam_type, commandCode;
   long do_chromatic_correction = 0, do_twiss_output = 0, fl_do_tune_correction = 0, do_coupled_twiss_output = 0;
   long fl_do_coupling_correction = 0;
+  long fl_do_lattice_correction = 0;
   long do_rf_setup = 0, do_floor_coordinates = 0, sceffects_inserted = 0;
   long do_moments_output = 0;
   long do_closed_orbit = 0, do_matrix_output = 0, do_response_output = 0;
@@ -878,7 +893,7 @@ int main(int argc, char **argv)
           run_setuped = run_controled = error_controled = correction_setuped = ionEffectsSeen = 0;
 
           run_setuped = run_controled = error_controled = correction_setuped = do_closed_orbit = do_chromatic_correction =
-            fl_do_tune_correction = fl_do_coupling_correction = do_floor_coordinates = 0;
+            fl_do_tune_correction = fl_do_coupling_correction = fl_do_lattice_correction = do_floor_coordinates = 0;
           do_twiss_output = do_matrix_output = do_response_output = do_coupled_twiss_output = do_moments_output =
             do_find_aperture = do_rf_setup = 0;
           linear_chromatic_tracking_setup_done = losses_include_global_coordinates = 0;
@@ -1290,7 +1305,7 @@ int main(int argc, char **argv)
             if (do_response_output)
               run_response_output(&run_conditions, beamline, &correct, 0);
 
-            if (correct.mode != -1 || fl_do_tune_correction || fl_do_coupling_correction || do_chromatic_correction) {
+            if (correct.mode != -1 || fl_do_tune_correction || fl_do_coupling_correction || fl_do_lattice_correction || do_chromatic_correction) {
               /* Perform orbit, tune, and/or chromaticity correction */
               if (correct.use_actual_beam && correct.mode == TRAJECTORY_CORRECTION) {
                 if (beam_type == SET_SDDS_BEAM) {
@@ -1330,6 +1345,25 @@ int main(int argc, char **argv)
                       break;
                     } else
                       bombElegant("Coupling correction failed", NULL);
+                  }
+                }
+                if (fl_do_lattice_correction) {
+                  if (do_closed_orbit &&
+                      !run_closed_orbit(&run_conditions, beamline, starting_coord, NULL, 0)) {
+                    if (soft_failure) {
+                      printWarning("Closed orbit not found.", "Continuing to next step.");
+                      failed = 1;
+                      break;
+                    } else
+                      bombElegant("Closed orbit not found", NULL);
+                  }
+                  if (!do_correct_lattice(&run_conditions, beamline)) {
+                    if (soft_failure) {
+                      printWarning("Lattice correction failed.", "Continuing to next step.");
+                      failed = 1;
+                      break;
+                    } else
+                      bombElegant("Lattice correction failed", NULL);
                   }
                 }
                 if (fl_do_tune_correction) {
@@ -1551,7 +1585,7 @@ int main(int argc, char **argv)
           show_element_timing = monitor_memory_usage = 0;
           concat_order = print_statistics = p_central = 0;
           run_setuped = run_controled = error_controled = correction_setuped = do_chromatic_correction =
-            fl_do_tune_correction = fl_do_coupling_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
+            fl_do_tune_correction = fl_do_coupling_correction = fl_do_lattice_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
             ionEffectsSeen = back_tracking = losses_include_global_coordinates = 0;
           element_divisions = 0;
           run_conditions.rampData.valuesInitialized =
@@ -1611,20 +1645,36 @@ int main(int argc, char **argv)
           }
           break;
         case CORRECT_COUPLING:
-          if (!run_setuped || (!do_twiss_output && !twiss_computed))
+          if (!run_setuped)
             bombElegant("run_setup and twiss_output must precede correct_coupling namelist", NULL);
           setup_correct_coupling(&namelist_text, &run_conditions, beamline);
           fl_do_coupling_correction = 1;
           break;
-        case COMPUTE_COUPLING_CORRECTION_MATRIX:
-          if (!run_setuped)
-            bombElegant("run_setup must precede compute_coupling_correction_matrix namelist", NULL);
-          setup_compute_coupling_correction_matrix(&namelist_text, &run_conditions, beamline);
+        case COMPUTE_COUPLING_RESPONSE_MATRIX:
+          if (!run_setuped || (!do_twiss_output && !twiss_computed))
+            bombElegant("run_setup and twiss_output must precede compute_coupling_response_matrix namelist", NULL);
+          setup_compute_coupling_response_matrix(&namelist_text, &run_conditions, beamline);
           break;
-        case LOAD_COUPLING_CORRECTION_MATRIX:
+        case LOAD_COUPLING_RESPONSE_MATRIX:
           if (!run_setuped)
-            bombElegant("run_setup must precede load_coupling_correction_matrix namelist", NULL);
-          setup_load_coupling_correction_matrix(&namelist_text, &run_conditions, beamline);
+            bombElegant("run_setup must precede load_coupling_response_matrix namelist", NULL);
+          setup_load_coupling_response_matrix(&namelist_text, &run_conditions, beamline);
+          break;
+        case CORRECT_LATTICE:
+          if (!run_setuped || (!do_twiss_output && !twiss_computed))
+            bombElegant("run_setup and twiss_output must precede correct_lattice namelist", NULL);
+          setup_correct_lattice(&namelist_text, &run_conditions, beamline);
+          fl_do_lattice_correction = 1;
+          break;
+        case COMPUTE_LATTICE_RESPONSE_MATRIX:
+          if (!run_setuped || (!do_twiss_output && !twiss_computed))
+            bombElegant("run_setup and twiss_output must precede compute_lattice_response_matrix namelist", NULL);
+          setup_compute_lattice_response_matrix(&namelist_text, &run_conditions, beamline);
+          break;
+        case LOAD_LATTICE_RESPONSE_MATRIX:
+          if (!run_setuped)
+            bombElegant("run_setup must precede load_lattice_response_matrix namelist", NULL);
+          setup_load_lattice_response_matrix(&namelist_text, &run_conditions, beamline);
           break;
         case TUNE_SHIFT_WITH_AMPLITUDE:
           if (do_twiss_output)
@@ -1684,7 +1734,7 @@ int main(int argc, char **argv)
           show_element_timing = monitor_memory_usage = 0;
           concat_order = print_statistics = p_central = 0;
           run_setuped = run_controled = error_controled = correction_setuped = do_chromatic_correction =
-            fl_do_tune_correction = fl_do_coupling_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
+            fl_do_tune_correction = fl_do_coupling_correction = fl_do_lattice_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
             ionEffectsSeen = 0;
 #if USE_MPI
           runInSinglePartMode = 0; /* We should set the flag to the normal parallel tracking after parallel optimization */
@@ -1815,7 +1865,7 @@ int main(int argc, char **argv)
             printf("semaphore_file = %s\n", semaphore_file ? semaphore_file : NULL);
 #endif
             fill_double_array(starting_coord, 6, 0.0);
-            if (correct.mode != -1 || fl_do_tune_correction || fl_do_coupling_correction || do_chromatic_correction) {
+            if (correct.mode != -1 || fl_do_tune_correction || fl_do_coupling_correction || fl_do_lattice_correction || do_chromatic_correction) {
               for (i = failed = 0; i < correction_iterations; i++) {
                 if (run_control.reset_rf_each_step)
                   delete_phase_references();
@@ -1849,6 +1899,25 @@ int main(int argc, char **argv)
                       break;
                     } else
                       bombElegant("Coupling correction failed", NULL);
+                  }
+                }
+                if (fl_do_lattice_correction) {
+                  if (do_closed_orbit &&
+                      !run_closed_orbit(&run_conditions, beamline, starting_coord, NULL, 0)) {
+                    if (soft_failure) {
+                      printWarning("Closed orbit not found.", "Continuing to next step.");
+                      failed = 1;
+                      break;
+                    } else
+                      bombElegant("Closed orbit not found", NULL);
+                  }
+                  if (!do_correct_lattice(&run_conditions, beamline)) {
+                    if (soft_failure) {
+                      printWarning("Lattice correction failed.", "Continuing to next step.");
+                      failed = 1;
+                      break;
+                    } else
+                      bombElegant("Lattice correction failed", NULL);
                   }
                 }
                 if (fl_do_tune_correction) {
@@ -2038,7 +2107,7 @@ int main(int argc, char **argv)
           show_element_timing = monitor_memory_usage = 0;
           concat_order = print_statistics = p_central = 0;
           run_setuped = run_controled = error_controled = correction_setuped = do_chromatic_correction =
-            fl_do_tune_correction = fl_do_coupling_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
+            fl_do_tune_correction = fl_do_coupling_correction = fl_do_lattice_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
             ionEffectsSeen = 0;
           break;
         case LINK_CONTROL:
