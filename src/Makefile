@@ -40,6 +40,8 @@ elegant_SRC = alpha_data.c \
 	counter.c \
 	coupled_twiss.c \
 	correct_coupling.c \
+	correct_lattice.c \
+	correctionEngine.c \
 	csbend.c \
 	divideElements.c \
 	do_tracking.c \
@@ -605,6 +607,11 @@ $(OBJ_DIR)/correct_coupling.$(OBJEXT): $(OBJ_DIR)/correct_coupling.h
 
 $(OBJ_DIR)/correct_coupling.h: correct_coupling.nl
 	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables correct_coupling.nl $(OBJ_DIR)/correct_coupling.h
+
+$(OBJ_DIR)/correct_lattice.$(OBJEXT): $(OBJ_DIR)/correct_lattice.h
+
+$(OBJ_DIR)/correct_lattice.h: correct_lattice.nl
+	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables correct_lattice.nl $(OBJ_DIR)/correct_lattice.h
 
 $(OBJ_DIR)/obstructionData.$(OBJEXT): $(OBJ_DIR)/obstructionData.h
 
