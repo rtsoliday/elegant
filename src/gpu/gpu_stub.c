@@ -571,8 +571,9 @@ static long gpuApertureParallelCompactionOrderDisabled = 0;
 static long gpuEnableApertureAcceptedDevice = 0;
 static long gpuEnableMagnetLossCompaction = 0;
 static long gpuMagnetLossCompactionExplicit = 0;
-static long gpuEnableCsbendTracking = 0;
-static long gpuCsbendTrackingExplicit = 0;
+static long gpuEnableCsbendDrift = 0;
+static long gpuCsbendDriftExplicit = 0;
+static long gpuDeviceIslandHasCsbend = 0;
 static long gpuEnableCsrTracking = 0;
 static long gpuCsrTrackingExplicit = 0;
 static long gpuEnableCsrResident = 0;
@@ -1002,11 +1003,11 @@ static const char *gpuMagnetLossCompactionStatus(void) {
          "; magnet loss compaction explicitly disabled" : "";
 }
 
-static const char *gpuCsbendTrackingStatus(void) {
-  if (gpuEnableCsbendTracking)
-    return "; CSBEND tracking explicitly enabled";
-  return gpuCsbendTrackingExplicit ? "; CSBEND tracking explicitly disabled" :
-                                     "; CSBEND tracking disabled by default";
+static const char *gpuCsbendDriftStatus(void) {
+  if (gpuEnableCsbendDrift)
+    return "; CSBEND drift paths explicitly enabled";
+  return gpuCsbendDriftExplicit ? "; CSBEND drift paths explicitly disabled" :
+                                  "; CSBEND drift paths disabled by default";
 }
 
 static void gpuRequiredFailure(const char *message) {
@@ -1722,7 +1723,7 @@ static long gpuCsbendCommonSupported(CSBEND *csbend) {
 }
 
 static long gpuCsbendElementSupported(ELEMENT_LIST *eptr) {
-  if (!gpuEnableCsbendTracking)
+  if (!gpuEnableCsbendDrift)
     return 0;
   if (gpuBase.backtrack)
     return 0;
@@ -1841,6 +1842,19 @@ static long gpuMatrixParticleCountAllowed(long nParticles) {
   return gpuParticleCountAllowed(nParticles, gpuBase.matrixMinParticles);
 }
 
+static long gpuCsbendDriftActive(void) {
+  return gpuEnableCsbendDrift &&
+         gpuDeviceIslandHasCsbend;
+}
+
+static long gpuCsbendDriftMatrixParticleCountAllowed(long nParticles) {
+  if (gpuBase.orderSensitiveOutputNeeded &&
+      !gpuMatrixDriftMinParticlesExplicit &&
+      gpuCsbendDriftActive())
+    return gpuParticleCountAllowed(nParticles, gpuBase.matrixMinParticles);
+  return gpuMatrixParticleCountAllowed(nParticles);
+}
+
 static long gpuExactDriftParticleCountAllowed(long nParticles) {
   if (!gpuEnableExactDrift)
     return 0;
@@ -1848,6 +1862,15 @@ static long gpuExactDriftParticleCountAllowed(long nParticles) {
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuBase.exactDriftMinParticles);
   return gpuParticleCountAllowed(nParticles, gpuBase.exactDriftMinParticles);
+}
+
+static long gpuCsbendDriftExactDriftParticleCountAllowed(long nParticles) {
+  if (gpuBase.orderSensitiveOutputNeeded &&
+      !gpuExactDriftExplicit &&
+      gpuCsbendDriftActive())
+    return gpuParticleCountAllowed(nParticles,
+                                   gpuBase.exactDriftMinParticles);
+  return gpuExactDriftParticleCountAllowed(nParticles);
 }
 
 static long gpuWakeParticleCountAllowed(long nParticles) {
@@ -1962,9 +1985,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuCsrDriftNoOpElementSupported(eptr))
     return gpuParticleCountAllowed(nParticles, gpuBase.csrMinParticles);
   if (gpuSimpleMatrixElement(eptr))
-    return gpuMatrixParticleCountAllowed(nParticles);
+    return gpuCsbendDriftMatrixParticleCountAllowed(nParticles);
   if (gpuExactDriftElement(eptr->type))
-    return gpuExactDriftParticleCountAllowed(nParticles);
+    return gpuCsbendDriftExactDriftParticleCountAllowed(nParticles);
   return 0;
 }
 
@@ -2057,6 +2080,7 @@ static void gpuReleaseDeviceBuffer(void) {
   gpuBase.deviceCapacity = 0;
   gpuBase.deviceStride = 0;
   gpuBase.deviceCurrent = 0;
+  gpuDeviceIslandHasCsbend = 0;
   gpuPendingExactDriftLength = 0;
   gpuPendingExactDriftCount = 0;
   gpuPendingExactDriftParticles = 0;
@@ -2518,6 +2542,7 @@ static void gpuNoticeHostBaseChange(void) {
     gpuBase.hostCoordBase = hostBase;
     gpuBase.deviceCurrent = 0;
     gpuBase.hostCurrent = 1;
+    gpuDeviceIslandHasCsbend = 0;
   }
 }
 
@@ -3026,6 +3051,7 @@ static void gpuMarkHostWillChange(void) {
   gpuBase.elementOnGpu = 0;
   gpuBase.hostCurrent = 1;
   gpuBase.deviceCurrent = 0;
+  gpuDeviceIslandHasCsbend = 0;
   if (gpuAcceptedBuffer.hostAccepted) {
     gpuAcceptedBuffer.hostCurrent = 1;
     gpuAcceptedBuffer.deviceCurrent = 0;
@@ -3036,6 +3062,8 @@ static void gpuMarkDeviceChanged(long nParticles) {
   gpuBase.deviceCurrent = 1;
   gpuBase.hostCurrent = 0;
   gpuBase.nParticles = nParticles;
+  if (gpuBase.element && ((ELEMENT_LIST *)gpuBase.element)->type == T_CSBEND)
+    gpuDeviceIslandHasCsbend = 1;
 }
 
 static void gpuFlushPendingExactDrift(const char *reason) {
@@ -3319,7 +3347,7 @@ static long gpuMatrixSupported(VMATRIX *M) {
 }
 
 long gpu_matrix_supported(void *matrix) {
-  if (!gpuMatrixParticleCountAllowed(gpuBase.nParticles))
+  if (!gpuCsbendDriftMatrixParticleCountAllowed(gpuBase.nParticles))
     return 0;
   return gpuMatrixSupported((VMATRIX *)matrix);
 }
@@ -3363,6 +3391,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuBase.orderSensitiveOutputNeeded = orderSensitiveOutputNeeded ? 1 : 0;
   gpuBase.reductionOutputNeeded = reductionOutputNeeded ? 1 : 0;
   gpuBase.backtrack = backtrack ? 1 : 0;
+  gpuDeviceIslandHasCsbend = 0;
   gpuRunAlwaysChangeP0 = alwaysChangeP0 ? 1 : 0;
   gpuBase.activeDevice = -1;
   gpuBase.minParticles = gpuEnvLong("ELEGANT_GPU_MIN_PARTICLES",
@@ -3426,9 +3455,9 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuMagnetLossCompactionExplicit ?
     gpuEnvFlag("ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION") :
     !gpuBase.lossOutputNeeded;
-  gpuCsbendTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSBEND");
-  gpuEnableCsbendTracking = gpuCsbendTrackingExplicit &&
-                            gpuEnvFlag("ELEGANT_GPU_ENABLE_CSBEND");
+  gpuCsbendDriftExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSBEND_DRIFT");
+  gpuEnableCsbendDrift = gpuCsbendDriftExplicit &&
+                         gpuEnvFlag("ELEGANT_GPU_ENABLE_CSBEND_DRIFT");
   gpuEnableApertureAcceptedDevice =
     (gpuEnableApertureParallelCompaction || gpuEnableMagnetLossCompaction) &&
     (!gpuEnvSet("ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE") ||
@@ -3553,7 +3582,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuApertureParallelCompactionStatus(),
             gpuEnableApertureAcceptedDevice ? "; accepted-device compaction enabled" : "",
             gpuMagnetLossCompactionStatus(),
-            gpuCsbendTrackingStatus(),
+            gpuCsbendDriftStatus(),
             gpuCsrTrackingStatus(),
             gpuCsrResidentStatus(),
             gpuScmultStatus(),
@@ -3584,7 +3613,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuApertureParallelCompactionStatus(),
             gpuEnableApertureAcceptedDevice ? "; accepted-device compaction enabled" : "",
             gpuMagnetLossCompactionStatus(),
-            gpuCsbendTrackingStatus(),
+            gpuCsbendDriftStatus(),
             gpuCsrTrackingStatus(),
             gpuCsrResidentStatus(),
             gpuScmultStatus(),
@@ -7149,6 +7178,7 @@ long gpu_track_through_csbend(long n_part, void *csbend0, double p_error,
       long remaining = gpuCsbendStableCompact(
         &data, n_part, accepted,
         "track_through_csbend stable magnet loss compaction");
+      gpuDeviceIslandHasCsbend = 1;
       if (&multipoleKicksDone)
         multipoleKicksDone +=
           n_part * data.nSlices * (data.integrationOrder == 4 ? 4 : 1);
@@ -7160,6 +7190,7 @@ long gpu_track_through_csbend(long n_part, void *csbend0, double p_error,
                           iSlice, eptr, "track_through_csbend particle loss fallback");
   }
   gpuMarkDeviceChanged(n_part);
+  gpuDeviceIslandHasCsbend = 1;
   gpuRecordWallSeconds();
   if (&multipoleKicksDone)
     multipoleKicksDone +=
