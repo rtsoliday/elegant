@@ -131,11 +131,11 @@ void LRC_retwiss(RUN *run, LINE_LIST *beamline, ELEMENT_LIST *changed) {
 
 void LRC_buildResponseMatrix(RUN *run, LINE_LIST *beamline,
                              LRC_Knob *knobs, long nKnob,
-                             LRC_Bpm *bpms, long nBpm, long nObs,
+                             long nObs,
                              LRC_ReaderFn reader, void *ctx,
                              double perturbation,
                              double **R) {
-  long nRows = nObs * nBpm;
+  long nRows = nObs;
   double *baseline = tmalloc(sizeof(*baseline) * nRows);
   double *pert     = tmalloc(sizeof(*pert)     * nRows);
   long i, j;
@@ -148,7 +148,7 @@ void LRC_buildResponseMatrix(RUN *run, LINE_LIST *beamline,
 #endif
 
   /* baseline measurement */
-  reader(bpms, nBpm, nObs, baseline, ctx);
+  reader(nObs, baseline, ctx);
 
   for (j = 0; j < nKnob; j++) {
 #if USE_MPI
@@ -158,7 +158,7 @@ void LRC_buildResponseMatrix(RUN *run, LINE_LIST *beamline,
     double k0 = *knobs[j].valuePtr;
     *knobs[j].valuePtr = k0 + perturbation;
     LRC_retwiss(run, beamline, knobs[j].elem);
-    reader(bpms, nBpm, nObs, pert, ctx);
+    reader(nObs, pert, ctx);
 #if USE_MPI
     if (myid == 0) {
       for (i = 0; i < nRows; i++)
@@ -178,7 +178,7 @@ void LRC_buildResponseMatrix(RUN *run, LINE_LIST *beamline,
   }
 
   /* Re-read baseline after restoration, defending against retwiss drift. */
-  reader(bpms, nBpm, nObs, baseline, ctx);
+  reader(nObs, baseline, ctx);
 
 #if USE_MPI
   /* Gather non-master columns onto the master. */
