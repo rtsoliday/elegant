@@ -20,26 +20,47 @@
     double strength_limit = 0;
     double measurement_noise = 0.0;
     double measurement_noise_cutoff = 3.0;
+    double etay_weight = 1.0;
+    STRING cross_h_steering = NULL;
+    STRING cross_v_steering = NULL;
+    STRING cross_x_bpm_name_pattern = NULL;
+    STRING cross_x_bpm_type_pattern = "MONI HMON";
+    STRING cross_y_bpm_name_pattern = NULL;
+    STRING cross_y_bpm_type_pattern = "MONI VMON";
+    double cross_response_weight = 0.0;
+    double cross_steering_kick = 1e-5;
+    double cross_measurement_noise = 0.0;
     STRING strength_log = NULL;
     STRING etay_file = NULL;
     STRING response_file = NULL;
+    STRING rms_log = NULL;
     long verbosity = 0;
 #end
 
 #namelist compute_coupling_response_matrix,struct
     STRING filename = NULL;
+    STRING cross_filename = NULL;
     STRING name_pattern = NULL;
     STRING type_pattern = NULL;
     STRING item = "K1";
     STRING bpm_name_pattern = NULL;
     STRING bpm_type_pattern = "MONI";
+    STRING cross_h_steering = NULL;
+    STRING cross_v_steering = NULL;
+    STRING cross_x_bpm_name_pattern = NULL;
+    STRING cross_x_bpm_type_pattern = "MONI HMON";
+    STRING cross_y_bpm_name_pattern = NULL;
+    STRING cross_y_bpm_type_pattern = "MONI VMON";
+    double cross_steering_kick = 1e-5;
     double response_perturbation = 1e-6;
     double measurement_noise = 0.0;
+    double cross_measurement_noise = 0.0;
     double measurement_noise_cutoff = 3.0;
     long verbosity = 0;
 #end
 
 #namelist load_coupling_response_matrix,struct
     STRING filename = NULL;
+    STRING cross_filename = NULL;
     long verbosity = 0;
 #end
