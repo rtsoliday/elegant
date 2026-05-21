@@ -421,9 +421,9 @@ __device__ __forceinline__ int gpuMultipoleConvertSlopesToMomenta(double *qx,
     *qx = (1 + delta) * xp;
     *qy = (1 + delta) * yp;
   } else {
-    double denom = sqrt(1 + xp * xp + yp * yp);
-    *qx = (1 + delta) * xp / denom;
-    *qy = (1 + delta) * yp / denom;
+    double factor = (1 + delta) / sqrt(1 + xp * xp + yp * yp);
+    *qx = xp * factor;
+    *qy = yp * factor;
   }
   return 1;
 }
@@ -438,12 +438,12 @@ __device__ __forceinline__ int gpuMultipoleConvertMomentaToSlopes(double *xp,
     *xp = qx / (1 + delta);
     *yp = qy / (1 + delta);
   } else {
-    double denom = (1 + delta) * (1 + delta) - qx * qx - qy * qy;
-    if (denom <= 0)
+    double factor = (1 + delta) * (1 + delta) - qx * qx - qy * qy;
+    if (factor <= 0)
       return 0;
-    denom = sqrt(denom);
-    *xp = qx / denom;
-    *yp = qy / denom;
+    factor = 1 / sqrt(factor);
+    *xp = qx * factor;
+    *yp = qy * factor;
   }
   return 1;
 }
@@ -2559,7 +2559,7 @@ __global__ void gpuCsrCsbendKickInPlaceKernel(double *coord,
                                               double rho0) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
-  double ct, x, dp, f, kick;
+  double ct, x, dp, f, binPosition;
   long iBin;
 
   if (ip >= nParticles)
@@ -2568,12 +2568,13 @@ __global__ void gpuCsrCsbendKickInPlaceKernel(double *coord,
   ct = part[4];
   x = part[0];
   dp = part[5];
-  iBin = static_cast<long>((ct - ctLower) / dct);
-  f = (ct - ctLower) / dct - iBin;
+  binPosition = (ct - ctLower) / dct;
+  iBin = static_cast<long>(binPosition);
+  f = binPosition;
+  f -= iBin;
   if (iBin >= 0 && iBin < nBins - 1) {
-    kick = ((1 - f) * dGamma[iBin] + f * dGamma[iBin + 1]) /
-           Po * (1 + x / rho0);
-    dp += kick;
+    dp += ((1 - f) * dGamma[iBin] + f * dGamma[iBin + 1]) /
+          Po * (1 + x / rho0);
   }
   part[5] = dp;
 }
@@ -3921,7 +3922,7 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
         y += qy * dsh / onePlusDp;
         qx += dsh * onePlusDp / (2 * data->rho0);
       } else {
-        double f = onePlusDp * onePlusDp - qy * qy;
+        double f = (1 + dp) * (1 + dp) - qy * qy;
         double sinPhi, phi, sine, cosi, tang, cosPhi, factor;
 
         if (f <= 0)
@@ -3941,7 +3942,7 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
         factor = (data->rho0 + x) * cosPhi / f *
                  (tang - sinPhi / cosPhi);
         y += qy * factor;
-        dist += factor * onePlusDp;
+        dist += factor * (1 + dp);
         f = cosPhi / cosi;
         x = data->rho0 * (f - 1) + f * x;
       }
@@ -4217,7 +4218,8 @@ __global__ void gpuCsrCsbendEnterSimpleCheckedKernel(
           if (!isfinite(rho) || rho == 0) {
             localCount = 1;
           } else {
-            part[1] += tan(e1) / rho * part[0];
+            double deltaXp = tan(e1) / rho * part[0];
+            part[1] += deltaXp;
             part[3] -= tan(e1 - psi1 / (1 + part[5])) / rho * part[2];
           }
         }
@@ -4250,12 +4252,15 @@ __global__ void gpuCsrCsbendFinalizeSimpleCheckedKernel(
     if (!isfinite(p1) || p1 <= 0) {
       localCount = 1;
     } else {
+      double beta1 = p1 / sqrt(p1 * p1 + 1);
+      part[4] = part[4] * beta1;
       if (edge2Effect) {
         double rho = (1 + part[5]) * rhoActual;
         if (!isfinite(rho) || rho == 0) {
           localCount = 1;
         } else {
-          part[1] += tan(e2) / rho * part[0];
+          double deltaXp = tan(e2) / rho * part[0];
+          part[1] += deltaXp;
           part[3] -= tan(e2 - psi2 / (1 + part[5])) / rho * part[2];
         }
       }
@@ -4265,9 +4270,8 @@ __global__ void gpuCsrCsbendFinalizeSimpleCheckedKernel(
         part[2] = -part[2];
         part[3] = -part[3];
       }
-      part[4] *= p1 / sqrt(p1 * p1 + 1);
-    }
-  }
+	    }
+	  }
   partial[threadIdx.x] = localCount;
   __syncthreads();
 

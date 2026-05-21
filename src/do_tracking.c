@@ -2692,7 +2692,7 @@ long do_tracking(
               }
 #endif
 #ifdef HAVE_GPU
-              coord = forceParticlesToCpu("performSliceAnalysisOutput");
+              coord = copyParticlesToCpuReadOnly("performSliceAnalysisOutput");
 #endif
               performSliceAnalysisOutput(sliceAnalysis, coord, nToTrack,
                                          !sliceAnDone, step,
@@ -2869,7 +2869,7 @@ long do_tracking(
             }
 #endif
 #ifdef HAVE_GPU
-            coord = forceParticlesToCpu("performSliceAnalysisOutput");
+            coord = copyParticlesToCpuReadOnly("performSliceAnalysisOutput");
 #endif
             performSliceAnalysisOutput(sliceAnalysis, coord, nToTrack,
                                        !sliceAnDone, step,

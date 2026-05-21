@@ -41,6 +41,9 @@
 #pragma weak rotate_xy
 #pragma weak multipoleKicksDone
 #pragma weak track_through_csbend
+#ifdef GPU_VERIFY
+#pragma weak gpu_verify_csrcsbend_cpu_body_slice
+#endif
 #pragma weak computeCSBENDFieldCoefficients
 #pragma weak Fx_xy
 #pragma weak Fy_xy
@@ -122,6 +125,15 @@ extern long track_through_csbend(double **part, long n_part, CSBEND *csbend,
                                  MAXAMP *maxamp, APCONTOUR *apContour,
                                  APERTURE_DATA *apFileData, long iSlice,
                                  ELEMENT_LIST *eptr);
+#ifdef GPU_VERIFY
+extern long gpu_verify_csrcsbend_cpu_body_slice(double *coord,
+                                                CSRCSBEND *csbend,
+                                                double beta0,
+                                                double sliceLength,
+                                                double rho0,
+                                                double rhoActual,
+                                                double Po);
+#endif
 extern long multipole_tracking(double **particle, long n_part, MULT *multipole,
                                double p_error, double Po, double **accepted,
                                double z_start);
@@ -934,16 +946,19 @@ static const char *gpuHelperOutputStatus(void) {
 
 static const char *gpuCsrResidentStatus(void) {
   if (gpuEnableCsrResident)
-    return gpuCsrResidentExplicit ? "; CSR resident explicitly enabled" : "; CSR resident enabled";
-  return gpuCsrResidentExplicit ? "; CSR resident explicitly disabled" : "";
+    return "; CSR resident drift explicitly enabled";
+  if (gpuCsrResidentExplicit)
+    return gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT_DRIFT") ?
+           "; CSR resident drift requested but CSR drift tracking disabled" :
+           "; CSR resident drift explicitly disabled";
+  return "";
 }
 
 static const char *gpuCsrTrackingStatus(void) {
   if (gpuEnableCsrTracking)
-    return gpuCsrTrackingExplicit ? "; CSR tracking explicitly enabled" :
-                                    "; CSR tracking enabled by CSR resident override";
-  return gpuCsrTrackingExplicit ? "; CSR tracking explicitly disabled" :
-                                  "; CSR tracking disabled by default";
+    return "; CSR drift tracking explicitly enabled";
+  return gpuCsrTrackingExplicit ? "; CSR drift tracking explicitly disabled" :
+                                  "; CSR drift tracking disabled by default";
 }
 
 static const char *gpuScmultStatus(void) {
@@ -2009,14 +2024,9 @@ static long gpuResidentCsrCsbendFollowsIsland(ELEMENT_LIST *eptr,
 
 static long gpuCsrCsbendDeviceEntrySupported(ELEMENT_LIST *eptr,
                                              long nParticles) {
-#ifdef GPU_VERIFY
-  (void)eptr;
-  (void)nParticles;
-  return 0;
-#else
   CSRCSBEND *csbend;
 
-  if (!gpuEnableCsrResident || !gpuBase.deviceCurrent || gpuBase.hostCurrent ||
+  if (!gpuEnableCsrResident || !gpuBase.deviceCurrent ||
       !eptr || eptr->type != T_CSRCSBEND || !eptr->p_elem || nParticles <= 0)
     return 0;
   csbend = (CSRCSBEND *)eptr->p_elem;
@@ -2034,7 +2044,6 @@ static long gpuCsrCsbendDeviceEntrySupported(ELEMENT_LIST *eptr,
     return 0;
   return gpu_csr_csbend_resident_available(csbend, nParticles,
                                            csbend->bins);
-#endif
 }
 
 static long gpuShouldUseCpuForShortGpuIsland(ELEMENT_LIST *eptr, long nParticles) {
@@ -3462,16 +3471,15 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     (gpuEnableApertureParallelCompaction || gpuEnableMagnetLossCompaction) &&
     (!gpuEnvSet("ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE") ||
      gpuEnvFlag("ELEGANT_GPU_ENABLE_APERTURE_ACCEPTED_DEVICE"));
-  gpuCsrTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSR");
-  gpuCsrResidentExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSR_RESIDENT");
+  gpuCsrTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSR_DRIFT");
+  gpuCsrResidentExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSR_RESIDENT_DRIFT");
   gpuEnableCsrTracking =
-    gpuCsrTrackingExplicit ? gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR") :
-    (gpuCsrResidentExplicit &&
-     gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT"));
+    gpuCsrTrackingExplicit &&
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_DRIFT");
   gpuEnableCsrResident =
     gpuEnableCsrTracking &&
-    (!gpuCsrResidentExplicit ||
-     gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT"));
+    gpuCsrResidentExplicit &&
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT_DRIFT");
   gpuScmultExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_SCMULT");
   gpuEnableScmult = !gpuScmultExplicit ||
                     gpuEnvFlag("ELEGANT_GPU_ENABLE_SCMULT");
@@ -5554,13 +5562,19 @@ long gpu_apply_csbend_csr_kick_device(long nParticles, long nBins,
 
 long gpu_track_csbend_csr_body_slice(void *csbend0, long nParticles,
                                      double sliceLength, double localRho0,
-                                     double localRhoActual) {
+                                     double localRhoActual, double Po) {
   CSRCSBEND *csbend = (CSRCSBEND *)csbend0;
   GPU_CSBEND_DATA data;
   long lostCount = 0;
   float milliseconds = 0;
   int status;
   long startedWallTimer = 0;
+#ifdef GPU_VERIFY
+  double *cpuStorage = NULL, **cpuCoord = NULL, *cpuBeta0 = NULL;
+  double *gpuStorage = NULL;
+  long stride = 0, ip, ic;
+  unsigned long count = 0;
+#endif
 
   if (!gpuEnableCsrResident || !gpuBase.deviceCurrent ||
       !csbend || nParticles <= 0 || !gpuCsrScratch.kickDp)
@@ -5573,6 +5587,41 @@ long gpu_track_csbend_csr_body_slice(void *csbend0, long nParticles,
     gpuWallStart = wallSeconds();
     startedWallTimer = 1;
   }
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode) {
+    double **coord =
+      copyParticlesToCpuReadOnly("CSRCSBEND resident body verification input");
+
+    stride = gpuBase.deviceStride;
+    count = (unsigned long)nParticles * (unsigned long)stride;
+    cpuStorage = (double *)malloc(count * sizeof(*cpuStorage));
+    gpuStorage = (double *)malloc(count * sizeof(*gpuStorage));
+    cpuCoord = (double **)malloc(nParticles * sizeof(*cpuCoord));
+    cpuBeta0 = (double *)malloc(nParticles * sizeof(*cpuBeta0));
+    if (!cpuStorage || !gpuStorage || !cpuCoord || !cpuBeta0)
+      gpuRequiredFailure("unable to allocate CUDA CSRCSBEND resident body verification buffers");
+    for (ip = 0; ip < nParticles; ip++) {
+      cpuCoord[ip] = cpuStorage + ip * stride;
+      memcpy(cpuCoord[ip], coord[ip], (size_t)stride * sizeof(**cpuCoord));
+    }
+    status = gpuCudaCopyDeviceToHost(cpuBeta0, gpuCsrScratch.kickDp,
+                                     (unsigned long)nParticles, &milliseconds);
+    if (status != 0)
+      gpuFatalStatus("cudaMemcpy(CSRCSBEND beta0 device to verify host)",
+                     status);
+    gpuRecordMilliseconds(&gpuBase.gpuTransferToHostSeconds, milliseconds);
+    if (!gpu_verify_csrcsbend_cpu_body_slice)
+      gpuRequiredFailure("CSRCSBEND resident body verification needs CPU CSBEND routines");
+
+    for (ip = 0; ip < nParticles; ip++) {
+      if (!gpu_verify_csrcsbend_cpu_body_slice(cpuCoord[ip], csbend,
+                                               cpuBeta0[ip], sliceLength,
+                                               localRho0, localRhoActual,
+                                               Po))
+        gpuRequiredFailure("CSRCSBEND resident body CPU-shadow particle loss");
+    }
+  }
+#endif
   gpuEnsureCsrBodyScratch(nParticles, gpuBase.deviceStride);
   status = gpuCudaCsrCsbendBodySliceChecked(gpuBase.deviceCoord, nParticles,
                                             (int)gpuBase.deviceStride,
@@ -5584,17 +5633,221 @@ long gpu_track_csbend_csr_body_slice(void *csbend0, long nParticles,
   if (status != 0)
     gpuFatalStatus("CSRCSBEND resident body CUDA checked kernel", status);
   gpuRecordMagnetKernel(milliseconds);
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode && !lostCount) {
+    double absTol = gpuCompareAbsTolerance();
+    double relTol = gpuCompareRelTolerance();
+    double maxAbs = 0, maxRel = 0;
+    long mismatches = 0;
+
+    status = gpuCudaCopyDeviceToHost(gpuStorage, gpuBase.deviceCoord, count,
+                                     &milliseconds);
+    if (status != 0)
+      gpuFatalStatus("cudaMemcpy(CSRCSBEND body device to verify host)",
+                     status);
+    gpuRecordMilliseconds(&gpuBase.gpuTransferToHostSeconds, milliseconds);
+    for (ip = 0; ip < nParticles; ip++) {
+      for (ic = 0; ic < 6 && ic < stride; ic++) {
+        double absDiff, relDiff;
+        double cpu = cpuCoord[ip][ic];
+        double gpu = gpuStorage[ip * stride + ic];
+        if (!gpuValuesClose(cpu, gpu, absTol, relTol, &absDiff, &relDiff)) {
+          if (mismatches < 10)
+            fprintf(stderr,
+                    "elegant CUDA VERIFY mismatch CSRCSBEND resident body particle=%ld coord=%ld cpu=%.17e gpu=%.17e abs=%.3e rel=%.3e\n",
+                    ip, ic, cpu, gpu, absDiff, relDiff);
+          mismatches++;
+        }
+        if (absDiff > maxAbs)
+          maxAbs = absDiff;
+        if (relDiff > maxRel)
+          maxRel = relDiff;
+      }
+    }
+    if (mismatches) {
+      fprintf(stderr,
+              "elegant CUDA VERIFY failed for CSRCSBEND resident body: %ld mismatches, maxAbs=%.3e, maxRel=%.3e, absTol=%.3e, relTol=%.3e\n",
+              mismatches, maxAbs, maxRel, absTol, relTol);
+      exit(1);
+    }
+    if (gpuVerbose)
+      fprintf(stderr,
+              "elegant CUDA VERIFY passed for CSRCSBEND resident body: maxAbs=%.3e maxRel=%.3e\n",
+              maxAbs, maxRel);
+  }
+#endif
   if (lostCount) {
+#ifdef GPU_VERIFY
+    free(cpuStorage);
+    free(cpuCoord);
+    free(cpuBeta0);
+    free(gpuStorage);
+#endif
     if (startedWallTimer)
       gpuRecordWallSeconds();
     return 0;
   }
   gpuMarkDeviceChanged(nParticles);
 
+#ifdef GPU_VERIFY
+  free(cpuStorage);
+  free(cpuCoord);
+  free(cpuBeta0);
+  free(gpuStorage);
+#endif
   if (startedWallTimer)
     gpuRecordWallSeconds();
   return 1;
 }
+
+#ifdef GPU_VERIFY
+static long gpuVerifyCsrCsbendEnterSimpleCpu(double *coord, double *beta0,
+                                             double pCentral,
+                                             double coordinateSign,
+                                             long edge1Effect, double e1,
+                                             double psi1,
+                                             double rhoActual) {
+  double p0, beta;
+
+  if (!coord || !beta0)
+    return 0;
+  p0 = pCentral * (1 + coord[5]);
+  if (!isfinite(p0))
+    return 0;
+  beta = p0 / sqrt(p0 * p0 + 1);
+  if (!isfinite(beta) || beta == 0)
+    return 0;
+  if (coordinateSign == -1) {
+    coord[0] = -coord[0];
+    coord[1] = -coord[1];
+    coord[2] = -coord[2];
+    coord[3] = -coord[3];
+  }
+  coord[4] /= beta;
+  *beta0 = beta;
+  if (edge1Effect) {
+    double rho = (1 + coord[5]) * rhoActual;
+    if (!isfinite(rho) || rho == 0)
+      return 0;
+    {
+      double delta_xp = tan(e1) / rho * coord[0];
+      coord[1] += delta_xp;
+    }
+    coord[3] -= tan(e1 - psi1 / (1 + coord[5])) / rho * coord[2];
+  }
+  return 1;
+}
+
+static long gpuVerifyCsrCsbendFinalizeSimpleCpu(double *coord,
+                                                double pCentral,
+                                                double coordinateSign,
+                                                long edge2Effect, double e2,
+                                                double psi2,
+                                                double rhoActual) {
+  double p1, beta1;
+
+  if (!coord)
+    return 0;
+  p1 = pCentral * (1 + coord[5]);
+  if (!isfinite(p1) || p1 <= 0)
+    return 0;
+  beta1 = p1 / sqrt(p1 * p1 + 1);
+  coord[4] = coord[4] * beta1;
+  if (edge2Effect) {
+    double rho = (1 + coord[5]) * rhoActual;
+    if (!isfinite(rho) || rho == 0)
+      return 0;
+    {
+      double delta_xp = tan(e2) / rho * coord[0];
+      coord[1] += delta_xp;
+    }
+    coord[3] -= tan(e2 - psi2 / (1 + coord[5])) / rho * coord[2];
+  }
+  if (coordinateSign == -1) {
+    coord[0] = -coord[0];
+    coord[1] = -coord[1];
+    coord[2] = -coord[2];
+    coord[3] = -coord[3];
+  }
+  return 1;
+}
+
+static void gpuVerifyCsrCsbendCompareCoords(const char *label,
+                                            double **cpuCoord,
+                                            const double *gpuStorage,
+                                            long nParticles,
+                                            long stride) {
+  double absTol = gpuCompareAbsTolerance();
+  double relTol = gpuCompareRelTolerance();
+  double maxAbs = 0, maxRel = 0;
+  long ip, ic, mismatches = 0;
+
+  for (ip = 0; ip < nParticles; ip++) {
+    for (ic = 0; ic < 6 && ic < stride; ic++) {
+      double absDiff, relDiff;
+      double cpu = cpuCoord[ip][ic];
+      double gpu = gpuStorage[ip * stride + ic];
+      if (!gpuValuesClose(cpu, gpu, absTol, relTol, &absDiff, &relDiff)) {
+        if (mismatches < 10)
+          fprintf(stderr,
+                  "elegant CUDA VERIFY mismatch %s particle=%ld coord=%ld cpu=%.17e gpu=%.17e abs=%.3e rel=%.3e\n",
+                  label, ip, ic, cpu, gpu, absDiff, relDiff);
+        mismatches++;
+      }
+      if (absDiff > maxAbs)
+        maxAbs = absDiff;
+      if (relDiff > maxRel)
+        maxRel = relDiff;
+    }
+  }
+  if (mismatches) {
+    fprintf(stderr,
+            "elegant CUDA VERIFY failed for %s: %ld mismatches, maxAbs=%.3e, maxRel=%.3e, absTol=%.3e, relTol=%.3e\n",
+            label, mismatches, maxAbs, maxRel, absTol, relTol);
+    exit(1);
+  }
+  if (gpuVerbose)
+    fprintf(stderr,
+            "elegant CUDA VERIFY passed for %s: maxAbs=%.3e maxRel=%.3e\n",
+            label, maxAbs, maxRel);
+}
+
+static void gpuVerifyCsrCsbendCompareBeta0(const double *cpuBeta0,
+                                           const double *gpuBeta0,
+                                           long nParticles) {
+  double absTol = gpuCompareAbsTolerance();
+  double relTol = gpuCompareRelTolerance();
+  double maxAbs = 0, maxRel = 0;
+  long ip, mismatches = 0;
+
+  for (ip = 0; ip < nParticles; ip++) {
+    double absDiff, relDiff;
+    double cpu = cpuBeta0[ip];
+    double gpu = gpuBeta0[ip];
+    if (!gpuValuesClose(cpu, gpu, absTol, relTol, &absDiff, &relDiff)) {
+      if (mismatches < 10)
+        fprintf(stderr,
+                "elegant CUDA VERIFY mismatch CSRCSBEND resident entry beta0 particle=%ld cpu=%.17e gpu=%.17e abs=%.3e rel=%.3e\n",
+                ip, cpu, gpu, absDiff, relDiff);
+      mismatches++;
+    }
+    if (absDiff > maxAbs)
+      maxAbs = absDiff;
+    if (relDiff > maxRel)
+      maxRel = relDiff;
+  }
+  if (mismatches) {
+    fprintf(stderr,
+            "elegant CUDA VERIFY failed for CSRCSBEND resident entry beta0: %ld mismatches, maxAbs=%.3e, maxRel=%.3e, absTol=%.3e, relTol=%.3e\n",
+            mismatches, maxAbs, maxRel, absTol, relTol);
+    exit(1);
+  }
+  if (gpuVerbose)
+    fprintf(stderr,
+            "elegant CUDA VERIFY passed for CSRCSBEND resident entry beta0: maxAbs=%.3e maxRel=%.3e\n",
+            maxAbs, maxRel);
+}
+#endif
 
 long gpu_track_csbend_csr_enter_simple(long nParticles, double pCentral,
                                        double coordinateSign,
@@ -5604,6 +5857,12 @@ long gpu_track_csbend_csr_enter_simple(long nParticles, double pCentral,
   float milliseconds = 0;
   int status;
   long startedWallTimer = 0;
+#ifdef GPU_VERIFY
+  double *cpuStorage = NULL, **cpuCoord = NULL;
+  double *gpuStorage = NULL, *cpuBeta0 = NULL, *gpuBeta0 = NULL;
+  long stride = 0, ip;
+  unsigned long count = 0;
+#endif
 
   if (!gpuEnableCsrResident || !gpuBase.deviceCurrent ||
       nParticles <= 0 || !pCentral ||
@@ -5615,6 +5874,31 @@ long gpu_track_csbend_csr_enter_simple(long nParticles, double pCentral,
     gpuWallStart = wallSeconds();
     startedWallTimer = 1;
   }
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode) {
+    double **coord =
+      copyParticlesToCpuReadOnly("CSRCSBEND resident entry verification input");
+
+    stride = gpuBase.deviceStride;
+    count = (unsigned long)nParticles * (unsigned long)stride;
+    cpuStorage = (double *)malloc(count * sizeof(*cpuStorage));
+    gpuStorage = (double *)malloc(count * sizeof(*gpuStorage));
+    cpuCoord = (double **)malloc(nParticles * sizeof(*cpuCoord));
+    cpuBeta0 = (double *)malloc(nParticles * sizeof(*cpuBeta0));
+    gpuBeta0 = (double *)malloc(nParticles * sizeof(*gpuBeta0));
+    if (!cpuStorage || !gpuStorage || !cpuCoord || !cpuBeta0 || !gpuBeta0)
+      gpuRequiredFailure("unable to allocate CUDA CSRCSBEND entry verification buffers");
+    for (ip = 0; ip < nParticles; ip++) {
+      cpuCoord[ip] = cpuStorage + ip * stride;
+      memcpy(cpuCoord[ip], coord[ip], (size_t)stride * sizeof(**cpuCoord));
+      if (!gpuVerifyCsrCsbendEnterSimpleCpu(cpuCoord[ip], cpuBeta0 + ip,
+                                            pCentral, coordinateSign,
+                                            edge1Effect, e1, psi1,
+                                            rhoActual))
+        gpuRequiredFailure("CSRCSBEND resident entry CPU-shadow particle loss");
+    }
+  }
+#endif
   gpuEnsureCsrKickDpScratch(nParticles);
   gpuEnsureCsrBodyScratch(nParticles, gpuBase.deviceStride);
   status = gpuCudaCsrCsbendEnterSimpleChecked(
@@ -5627,12 +5911,45 @@ long gpu_track_csbend_csr_enter_simple(long nParticles, double pCentral,
     gpuFatalStatus("CSRCSBEND resident initial-coordinate CUDA checked kernel", status);
   gpuRecordMagnetKernel(milliseconds);
   if (lostCount) {
+#ifdef GPU_VERIFY
+    free(cpuStorage);
+    free(cpuCoord);
+    free(gpuStorage);
+    free(cpuBeta0);
+    free(gpuBeta0);
+#endif
     if (startedWallTimer)
       gpuRecordWallSeconds();
     return 0;
   }
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode) {
+    status = gpuCudaCopyDeviceToHost(gpuStorage, gpuBase.deviceCoord, count,
+                                     &milliseconds);
+    if (status != 0)
+      gpuFatalStatus("cudaMemcpy(CSRCSBEND entry device to verify host)",
+                     status);
+    gpuRecordMilliseconds(&gpuBase.gpuTransferToHostSeconds, milliseconds);
+    status = gpuCudaCopyDeviceToHost(gpuBeta0, gpuCsrScratch.kickDp,
+                                     (unsigned long)nParticles, &milliseconds);
+    if (status != 0)
+      gpuFatalStatus("cudaMemcpy(CSRCSBEND entry beta0 device to verify host)",
+                     status);
+    gpuRecordMilliseconds(&gpuBase.gpuTransferToHostSeconds, milliseconds);
+    gpuVerifyCsrCsbendCompareCoords("CSRCSBEND resident entry",
+                                    cpuCoord, gpuStorage, nParticles, stride);
+    gpuVerifyCsrCsbendCompareBeta0(cpuBeta0, gpuBeta0, nParticles);
+  }
+#endif
   gpuMarkDeviceChanged(nParticles);
 
+#ifdef GPU_VERIFY
+  free(cpuStorage);
+  free(cpuCoord);
+  free(gpuStorage);
+  free(cpuBeta0);
+  free(gpuBeta0);
+#endif
   if (startedWallTimer)
     gpuRecordWallSeconds();
   return 1;
@@ -5646,6 +5963,12 @@ long gpu_track_csbend_csr_finalize_simple(long nParticles, double pCentral,
   float milliseconds = 0;
   int status;
   long startedWallTimer = 0;
+#ifdef GPU_VERIFY
+  double *cpuStorage = NULL, **cpuCoord = NULL;
+  double *gpuStorage = NULL;
+  long stride = 0, ip;
+  unsigned long count = 0;
+#endif
 
   if (!gpuEnableCsrResident || !gpuBase.deviceCurrent ||
       nParticles <= 0 || !pCentral)
@@ -5655,6 +5978,29 @@ long gpu_track_csbend_csr_finalize_simple(long nParticles, double pCentral,
     gpuWallStart = wallSeconds();
     startedWallTimer = 1;
   }
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode) {
+    double **coord =
+      copyParticlesToCpuReadOnly("CSRCSBEND resident finalize verification input");
+
+    stride = gpuBase.deviceStride;
+    count = (unsigned long)nParticles * (unsigned long)stride;
+    cpuStorage = (double *)malloc(count * sizeof(*cpuStorage));
+    gpuStorage = (double *)malloc(count * sizeof(*gpuStorage));
+    cpuCoord = (double **)malloc(nParticles * sizeof(*cpuCoord));
+    if (!cpuStorage || !gpuStorage || !cpuCoord)
+      gpuRequiredFailure("unable to allocate CUDA CSRCSBEND finalize verification buffers");
+    for (ip = 0; ip < nParticles; ip++) {
+      cpuCoord[ip] = cpuStorage + ip * stride;
+      memcpy(cpuCoord[ip], coord[ip], (size_t)stride * sizeof(**cpuCoord));
+      if (!gpuVerifyCsrCsbendFinalizeSimpleCpu(cpuCoord[ip], pCentral,
+                                               coordinateSign,
+                                               edge2Effect, e2, psi2,
+                                               rhoActual))
+        gpuRequiredFailure("CSRCSBEND resident finalize CPU-shadow particle loss");
+    }
+  }
+#endif
   gpuEnsureCsrBodyScratch(nParticles, gpuBase.deviceStride);
   status = gpuCudaCsrCsbendFinalizeSimpleChecked(
     gpuBase.deviceCoord, nParticles, (int)gpuBase.deviceStride,
@@ -5665,12 +6011,34 @@ long gpu_track_csbend_csr_finalize_simple(long nParticles, double pCentral,
     gpuFatalStatus("CSRCSBEND resident final-coordinate CUDA checked kernel", status);
   gpuRecordMagnetKernel(milliseconds);
   if (lostCount) {
+#ifdef GPU_VERIFY
+    free(cpuStorage);
+    free(cpuCoord);
+    free(gpuStorage);
+#endif
     if (startedWallTimer)
       gpuRecordWallSeconds();
     return 0;
   }
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode) {
+    status = gpuCudaCopyDeviceToHost(gpuStorage, gpuBase.deviceCoord, count,
+                                     &milliseconds);
+    if (status != 0)
+      gpuFatalStatus("cudaMemcpy(CSRCSBEND finalize device to verify host)",
+                     status);
+    gpuRecordMilliseconds(&gpuBase.gpuTransferToHostSeconds, milliseconds);
+    gpuVerifyCsrCsbendCompareCoords("CSRCSBEND resident finalize",
+                                    cpuCoord, gpuStorage, nParticles, stride);
+  }
+#endif
   gpuMarkDeviceChanged(nParticles);
 
+#ifdef GPU_VERIFY
+  free(cpuStorage);
+  free(cpuCoord);
+  free(gpuStorage);
+#endif
   if (startedWallTimer)
     gpuRecordWallSeconds();
   return 1;

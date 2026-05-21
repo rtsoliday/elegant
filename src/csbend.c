@@ -1850,6 +1850,38 @@ long integrate_csbend_ordn(
   return 1;
 }
 
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+long gpu_verify_csrcsbend_cpu_body_slice(double *coord, CSRCSBEND *csbend,
+                                         double beta0, double sliceLength,
+                                         double localRho0,
+                                         double localRhoActual, double Po) {
+  double Qi[6], Qf[6], dz_lost = 0;
+
+  (void)localRhoActual;
+  if (!coord || !csbend || beta0 == 0)
+    return 0;
+  Qi[0] = coord[0];
+  Qi[1] = coord[1];
+  Qi[2] = coord[2];
+  Qi[3] = coord[3];
+  Qi[4] = 0;
+  Qi[5] = coord[5];
+  convertToDipoleCanonicalCoordinates(Qi, 0);
+  if (!integrate_csbend_ordn(Qf, Qi, NULL, NULL, sliceLength, 1, -1,
+                             localRho0, Po, &dz_lost, NULL,
+                             csbend->integration_order, NULL))
+    return 0;
+  convertFromDipoleCanonicalCoordinates(Qf, 0);
+  coord[0] = Qf[0];
+  coord[1] = Qf[1];
+  coord[2] = Qf[2];
+  coord[3] = Qf[3];
+  coord[4] += Qf[4] / beta0;
+  coord[5] = Qf[5];
+  return 1;
+}
+#endif
+
 long integrate_csbend_ordn_expanded(double *Qf, double *Qi, double *sigmaDelta2, double s, long n,
                                     long iSlice, double rho0, double p0, double *dz_lost,
                                     MULT_APERTURE_DATA *apData, short integration_order, ELEMENT_LIST *eptr)
@@ -2795,7 +2827,6 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 #if defined(HAVE_GPU) && !USE_MPI
   if (csrGpuCsbendDeviceEntryRequested) {
     if (n_partMoreThanOne &&
-        !(tContext.sliceAnalysis && tContext.sliceAnalysis->active) &&
         !maxamp && !apContour && (!apFileData || !apFileData->initialized) &&
         gpu_csr_csbend_resident_available(csbend, n_part, nBins) &&
         csrResidentSimpleInitialTransformAvailable(
@@ -2910,7 +2941,6 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 #if defined(HAVE_GPU) && !USE_MPI
   useGpuCsrResident =
     n_partMoreThanOne &&
-    !(tContext.sliceAnalysis && tContext.sliceAnalysis->active) &&
     !maxamp && !apContour && (!apFileData || !apFileData->initialized) &&
     gpu_csr_csbend_resident_available(csbend, n_part, nBins);
   if (useGpuCsrResident && !gpuCsrResidentDeviceEntryDone &&
@@ -2937,7 +2967,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
           gpuCsrResidentBodyDone =
             gpu_track_csbend_csr_body_slice(csbend, n_part,
                                             csbend->length / csbend->nSlices,
-                                            rho0, rho_actual);
+                                            rho0, rho_actual, Po);
           if (!gpuCsrResidentBodyDone) {
             forceParticlesToCpu("CSRCSBEND resident body fallback");
             if (gpuCsrResidentDeviceEntryDone &&
@@ -3446,14 +3476,20 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
           (csbend->sliceAnalysisInterval == 0 ||
            kick % csbend->sliceAnalysisInterval == 0)) {
 #if (!USE_MPI)
-        convertFromCSBendCoords(part, n_part, rho0, cos_ttilt, sin_ttilt, 1);
-        performSliceAnalysisOutput(tContext.sliceAnalysis, part, n_part,
+        double **sliceAnalysisPart = part;
+#  if defined(HAVE_GPU)
+        if (useGpuCsrResident)
+          sliceAnalysisPart =
+            copyParticlesToCpuReadOnly("CSRCSBEND resident slice analysis output");
+#  endif
+        convertFromCSBendCoords(sliceAnalysisPart, n_part, rho0, cos_ttilt, sin_ttilt, 1);
+        performSliceAnalysisOutput(tContext.sliceAnalysis, sliceAnalysisPart, n_part,
                                    0, tContext.step, Po,
                                    macroParticleCharge * n_part,
                                    tContext.elementName,
                                    z_start + (kick * (z_end - z_start)) / (csbend->nSlices - 1),
                                    1);
-        convertToCSBendCoords(part, n_part, rho0, cos_ttilt, sin_ttilt, 1);
+        convertToCSBendCoords(sliceAnalysisPart, n_part, rho0, cos_ttilt, sin_ttilt, 1);
 #else
         if (isMaster)
           printf("Pelegant does not support slice analysis output inside an element now.");

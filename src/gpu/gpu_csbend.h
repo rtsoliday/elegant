@@ -58,7 +58,7 @@ long gpu_apply_csbend_csr_kick_device(long nParticles, long nBins,
                                       double Po, double rho0);
 long gpu_track_csbend_csr_body_slice(void *csbend, long nParticles,
                                      double sliceLength, double rho0,
-                                     double rhoActual);
+                                     double rhoActual, double Po);
 long gpu_track_csbend_csr_finalize_simple(long nParticles, double pCentral,
                                           double coordinateSign,
                                           long edge2Effect, double e2,
