@@ -35,15 +35,13 @@ typedef struct {
   ELEMENT_LIST *elem;
 } LRC_Bpm;
 
-/* Observable reader. Writes nObs doubles per BPM into obs (length nObs*nBpm)
- * using the row-major layout
- *     obs[i_obs + nObs*i_bpm]
- * so that each BPM's observables sit contiguously. The reader is responsible
- * for whatever measurement noise simulation the calling command wants; the
- * engine itself never adds noise. The opaque ctx pointer is passed through
- * unchanged. */
-typedef void (*LRC_ReaderFn)(LRC_Bpm *bpms, long nBpm, long nObs,
-                             double *obs, void *ctx);
+/* Observable reader. Writes nObs doubles into obs[]; the meaning of each
+ * slot is up to the caller (per-BPM observables, per-(corrector, BPM) pairs,
+ * arbitrary mixed channels). The engine treats nObs as opaque length and
+ * never accesses obs[] itself. The reader is responsible for whatever
+ * measurement noise simulation the calling command wants; the engine itself
+ * never adds noise. The opaque ctx pointer is passed through unchanged. */
+typedef void (*LRC_ReaderFn)(long nObs, double *obs, void *ctx);
 
 /* Free a list of patterns allocated by addPatterns(). */
 void LRC_freePatternList(char ***patterns, long *n);
@@ -72,21 +70,32 @@ ELEMENT_LIST *LRC_findElementByNameOccurence(LINE_LIST *beamline,
  * may have changed). Calls update_twiss_parameters() and warns if unstable. */
 void LRC_retwiss(RUN *run, LINE_LIST *beamline, ELEMENT_LIST *changed);
 
-/* Build the (nObs*nBpm) x nKnob response matrix R by one-sided finite
- * difference: R[i_obs + nObs*i_bpm][j] = (obs_pert - obs_base)/pert.
+/* Build the nObs x nKnob response matrix R by one-sided finite difference:
+ *     R[i][j] = (obs_pert[i] - obs_base[i]) / pert
  *
- * R must be pre-allocated by the caller (e.g. via czarray_2d) with the
- * stated dimensions. Each knob's perturbation is applied, the twiss is
- * recomputed, the reader is invoked, the knob is restored, and twiss is
- * recomputed back. After the call R is populated on the master processor;
- * its state on non-master processors is undefined.
+ * nObs is the total number of observable rows the reader produces; the
+ * engine doesn't care about their meaning or internal layout (per-BPM,
+ * per-(corrector, BPM), mixed channels, etc.).
+ *
+ * R must be pre-allocated by the caller (e.g. via czarray_2d) as nObs x nKnob.
+ * Each knob's perturbation is applied, the twiss is recomputed, the reader is
+ * invoked, the knob is restored, and twiss is recomputed back.
+ *
+ * MPI: the engine splits knobs across ranks (knob j is processed by rank
+ * j%n_processors), and slaves ship their R columns to master at the end.
+ * The reader is called only on the owning rank for each knob, so it must
+ * be safe to call serially (no collective MPI inside).  Readers that drive
+ * closed-orbit searches should bracket the engine call with
+ * parallelTrackingBasedMatrices = 0 (see compute_orbcor_matrices1p for
+ * the canonical pattern) so per-rank tracking doesn't try to coordinate
+ * collectively.
  *
  * The reader is called both for the baseline measurement and for each
  * perturbed measurement, so simulated measurement noise (if any) is applied
  * naturally in both. */
 void LRC_buildResponseMatrix(RUN *run, LINE_LIST *beamline,
                              LRC_Knob *knobs, long nKnob,
-                             LRC_Bpm *bpms, long nBpm, long nObs,
+                             long nObs,
                              LRC_ReaderFn reader, void *ctx,
                              double perturbation,
                              double **R);
