@@ -136,8 +136,10 @@ static void readBetaEtaAtBpms(LRC_Bpm *bpms, long nBpm, double *obs) {
   }
 }
 
-/* LRC_ReaderFn-compatible trampoline. nObs is always LCC_N_OBS. */
-static void betaEtaReader(LRC_Bpm *bpms, long nBpm, long nObs, double *obs, void *ctx) {
+/* LRC_ReaderFn-compatible trampoline.  Reads (betax, betay, etax) at every
+ * vertical-and-horizontal BPM in the module-scope bpms[] array.  nObs is the
+ * total observable count (LCC_N_OBS * nBpm); the engine treats it opaquely. */
+static void betaEtaReader(long nObs, double *obs, void *ctx) {
   (void)nObs; (void)ctx;
   readBetaEtaAtBpms(bpms, nBpm, obs);
 }
@@ -297,8 +299,22 @@ static void loadTargetFromReferenceFile(char *filename) {
 static void buildResponseMatrix(RUN *run, LINE_LIST *beamline, long iterTag, double perturbation) {
   long i, j;
 
-  LRC_buildResponseMatrix(run, beamline, knobs, nKnob, bpms, nBpm, LCC_N_OBS,
+  /* Bracket with parallelTrackingBasedMatrices = 0, matching
+   * compute_orbcor_matrices1p()'s pattern.  Although betaEtaReader itself is
+   * a pure twiss-memory read, the engine's per-knob LRC_retwiss invokes
+   * update_twiss_parameters -> fill_in_matrices -> compute_matrix(), which
+   * can dispatch to tracking-based matrix computation for elements like
+   * KQUAD with TRACKING_MATRIX=1, APPLE, KICKMAP, or high-order CSBEND.
+   * Those tracking paths expect every rank at the same call; the engine's
+   * outer-parallel split puts only the knob's owning rank inside, so the
+   * collective tracking would deadlock with no peers.  Clearing the flag
+   * forces single-particle tracking on the calling rank and is a no-op for
+   * pure-analytic elements. */
+  long parTrackSave = parallelTrackingBasedMatrices;
+  parallelTrackingBasedMatrices = 0;
+  LRC_buildResponseMatrix(run, beamline, knobs, nKnob, LCC_N_OBS * nBpm,
                           betaEtaReader, NULL, perturbation, R);
+  parallelTrackingBasedMatrices = parTrackSave;
   responseValid = 1;
   if (verbosity > 1) {
     if (iterTag < 0)
@@ -554,9 +570,20 @@ long do_correct_lattice(RUN *run, LINE_LIST *beamline) {
 
   if (!initialized)
     return 0;
+
+  /* Bracket the entire routine with parallelTrackingBasedMatrices = 0.  The
+   * per-iteration application of corrections recomputes the changed elements'
+   * matrices via compute_matrix(), which for tracking-based-matrix element
+   * types (KQUAD/TRACKING_MATRIX, APPLE, KICKMAP, high-order CSBEND, ...)
+   * would otherwise dispatch to collective parallel tracking and deadlock
+   * under Pelegant.  See same logic in buildResponseMatrix above. */
+  long parTrackSave = parallelTrackingBasedMatrices;
+  parallelTrackingBasedMatrices = 0;
+
   if (!(beamline->flags & BEAMLINE_TWISS_DONE)) {
     printWarning("correct_lattice: twiss_output must be issued before correct_lattice; nothing done",
                  NULL);
+    parallelTrackingBasedMatrices = parTrackSave;
     return 1;
   }
 
@@ -797,6 +824,7 @@ long do_correct_lattice(RUN *run, LINE_LIST *beamline) {
   free_czarray_2d((void **)Rweighted, nRows, nKnob);
   free_czarray_2d((void **)Rgrouped,  nRows, nGroup);
   free(dKgroup);
+  parallelTrackingBasedMatrices = parTrackSave;
   return 1;
 }
 
