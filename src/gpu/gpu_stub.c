@@ -603,6 +603,7 @@ static long gpuAvoidShortGpuIslands = 1;
 static long gpuShortGpuIslandMaxElements = 4;
 static long gpuMatrixDriftMinParticlesExplicit = 0;
 static long gpuHelperMinParticlesExplicit = 0;
+static long gpuMagnetMinParticlesExplicit = 0;
 static long gpuWakeMinParticlesExplicit = 0;
 static long gpuOutputDriftReductionMinParticlesExplicit = 0;
 static long unsupportedReported = 0;
@@ -942,6 +943,14 @@ static const char *gpuHelperOutputStatus(void) {
   return gpuHelperMinParticlesExplicit ?
          "; output helpers follow explicit helper threshold" :
          "; output helpers use CPU by default";
+}
+
+static const char *gpuMagnetTrackingStatus(void) {
+  if (!gpuBase.orderSensitiveOutputNeeded)
+    return "";
+  return gpuMagnetMinParticlesExplicit ?
+         "; magnet tracking follows explicit magnet threshold" :
+         "; magnet tracking uses CPU for order-sensitive output by default";
 }
 
 static const char *gpuCsrResidentStatus(void) {
@@ -1857,6 +1866,12 @@ static long gpuMatrixParticleCountAllowed(long nParticles) {
   return gpuParticleCountAllowed(nParticles, gpuBase.matrixMinParticles);
 }
 
+static long gpuMagnetParticleCountAllowed(long nParticles) {
+  if (gpuBase.orderSensitiveOutputNeeded && !gpuMagnetMinParticlesExplicit)
+    return 0;
+  return gpuParticleCountAllowed(nParticles, gpuBase.magnetMinParticles);
+}
+
 static long gpuCsbendDriftActive(void) {
   return gpuEnableCsbendDrift &&
          gpuDeviceIslandHasCsbend;
@@ -1984,11 +1999,11 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuRfcwKickWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuKickMapElementSupported(eptr))
-    return gpuParticleCountAllowed(nParticles, gpuBase.magnetMinParticles);
+    return gpuMagnetParticleCountAllowed(nParticles);
   if (gpuCsbendElementSupported(eptr))
-    return gpuParticleCountAllowed(nParticles, gpuBase.magnetMinParticles);
+    return gpuMagnetParticleCountAllowed(nParticles);
   if (gpuMultipoleElementSupported(eptr))
-    return gpuParticleCountAllowed(nParticles, gpuBase.magnetMinParticles);
+    return gpuMagnetParticleCountAllowed(nParticles);
   if (gpuWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuTrwakeElementSupported(eptr))
@@ -3423,6 +3438,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
                      "ELEGANT_GPU_MIN_REDUCTION_PARTICLES",
                      gpuBase.minParticles);
   gpuBase.apertureMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_APERTURE_PARTICLES", gpuBase.minParticles);
+  gpuMagnetMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_MAGNET_PARTICLES");
   gpuBase.magnetMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_MAGNET_PARTICLES", gpuBase.minParticles);
   gpuWakeMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_WAKE_PARTICLES");
   gpuBase.wakeMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_WAKE_PARTICLES", gpuBase.minParticles);
@@ -3567,7 +3583,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     status = gpuCudaRuntimeGetDeviceName((int)gpuBase.activeDevice, deviceName, sizeof(deviceName));
 #if USE_MPI
     fprintf(stderr,
-              "elegant CUDA: selected device %ld%s%s on MPI rank %d; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
+              "elegant CUDA: selected device %ld%s%s on MPI rank %d; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
             gpuBase.activeDevice,
             status == 0 ? " " : "",
             status == 0 ? deviceName : "",
@@ -3589,6 +3605,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuReductionOutputStatus(),
             gpuApertureParallelCompactionStatus(),
             gpuEnableApertureAcceptedDevice ? "; accepted-device compaction enabled" : "",
+            gpuMagnetTrackingStatus(),
             gpuMagnetLossCompactionStatus(),
             gpuCsbendDriftStatus(),
             gpuCsrTrackingStatus(),
@@ -3599,7 +3616,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuRfcaChangeP0Status());
 #else
     fprintf(stderr,
-            "elegant CUDA: selected device %ld%s%s; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
+            "elegant CUDA: selected device %ld%s%s; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
             gpuBase.activeDevice,
             status == 0 ? " " : "",
             status == 0 ? deviceName : "",
@@ -3620,6 +3637,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuReductionOutputStatus(),
             gpuApertureParallelCompactionStatus(),
             gpuEnableApertureAcceptedDevice ? "; accepted-device compaction enabled" : "",
+            gpuMagnetTrackingStatus(),
             gpuMagnetLossCompactionStatus(),
             gpuCsbendDriftStatus(),
             gpuCsrTrackingStatus(),
@@ -4325,6 +4343,9 @@ static long gpuRectangularCollimatorStableCompact(RCOL *rcol, long np,
 
   if (np <= 0)
     return np;
+  if (rcol->length > 0 && !gpuExactDriftParticleCountAllowed(np))
+    return gpuRectangularCollimatorOnCpu(rcol, np, accepted, z, Po, eptr,
+                                         "rectangular_collimator stable length drift below CUDA exactDrift gate");
   gpuCopyHostToDevice(np);
   gpuEnsureApertureScratch(np);
   status = gpuCudaRectangularCollimatorStableCompact(
@@ -4389,8 +4410,12 @@ long gpu_rectangular_collimator(void *rcol0, long np, double **accepted,
                                            "rectangular_collimator exit loss fallback");
     }
   }
-  if (rcol->length > 0)
+  if (rcol->length > 0) {
+    if (!gpuExactDriftParticleCountAllowed(np))
+      return gpuRectangularCollimatorOnCpu(rcol, np, accepted, z, Po, (ELEMENT_LIST *)eptr,
+                                           "rectangular_collimator length drift below CUDA exactDrift gate");
     gpu_exactDrift(np, rcol->length);
+  }
   gpuRecordWallSeconds();
   return np;
 }
@@ -4632,6 +4657,9 @@ static long gpuEllipticalCollimatorStableCompact(ECOL *ecol, long np,
 
   if (np <= 0)
     return np;
+  if (ecol->length > 0 && !gpuExactDriftParticleCountAllowed(np))
+    return gpuEllipticalCollimatorOnCpu(ecol, np, accepted, z, Po, eptr,
+                                        "elliptical_collimator stable length drift below CUDA exactDrift gate");
   gpuCopyHostToDevice(np);
   gpuEnsureApertureScratch(np);
   status = gpuCudaEllipticalCollimatorStableCompact(
@@ -4700,8 +4728,12 @@ long gpu_elliptical_collimator(void *ecol0, long np, double **accepted,
     return gpuEllipticalCollimatorOnCpu(ecol, np, accepted, z, Po, (ELEMENT_LIST *)eptr,
                                         "elliptical_collimator exit loss fallback");
   }
-  if (ecol->length > 0)
+  if (ecol->length > 0) {
+    if (!gpuExactDriftParticleCountAllowed(np))
+      return gpuEllipticalCollimatorOnCpu(ecol, np, accepted, z, Po, (ELEMENT_LIST *)eptr,
+                                          "elliptical_collimator length drift below CUDA exactDrift gate");
     gpu_exactDrift(np, ecol->length);
+  }
   gpuRecordWallSeconds();
   return np;
 }
@@ -4871,6 +4903,9 @@ static long gpuScraperStableCompact(SCRAPER *scraper, long np,
 
   if (np <= 0)
     return np;
+  if (scraper->length > 0 && !gpuExactDriftParticleCountAllowed(np))
+    return gpuBeamScraperOnCpu(scraper, np, accepted, z, Po, eptr,
+                               "beam_scraper stable length drift below CUDA exactDrift gate");
   gpuCopyHostToDevice(np);
   gpuEnsureApertureScratch(np);
   status = gpuCudaScraperStableCompact(
@@ -4921,8 +4956,12 @@ long gpu_beam_scraper(void *scraper0, long np, double **accepted,
     dflag[0] = direction & DIRECTION_PLUS_Y ? 1 : 0;
     dflag[1] = direction & DIRECTION_MINUS_Y ? 1 : 0;
   } else {
-    if (scraper->length)
+    if (scraper->length) {
+      if (!gpuExactDriftParticleCountAllowed(np))
+        return gpuBeamScraperOnCpu(scraper, np, accepted, z, Po, (ELEMENT_LIST *)eptr,
+                                   "beam_scraper length drift below CUDA exactDrift gate");
       gpu_exactDrift(np, scraper->length);
+    }
     gpuRecordWallSeconds();
     return np;
   }
@@ -4969,8 +5008,12 @@ long gpu_beam_scraper(void *scraper0, long np, double **accepted,
     return gpuBeamScraperOnCpu(scraper, np, accepted, z, Po, (ELEMENT_LIST *)eptr,
                                "beam_scraper exit loss fallback");
   }
-  if (scraper->length > 0)
+  if (scraper->length > 0) {
+    if (!gpuExactDriftParticleCountAllowed(np))
+      return gpuBeamScraperOnCpu(scraper, np, accepted, z, Po, (ELEMENT_LIST *)eptr,
+                                 "beam_scraper length drift below CUDA exactDrift gate");
     gpu_exactDrift(np, scraper->length);
+  }
   gpuRecordWallSeconds();
   return np;
 }
