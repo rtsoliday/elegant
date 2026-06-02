@@ -15,6 +15,7 @@
 #include "mdb.h"
 #include "track.h"
 #include "vary.h"
+#include "correctorStash.h"
 #if defined(__APPLE__) || defined(__linux__)
 #  include <unistd.h>
 #endif
@@ -436,6 +437,21 @@ long vary_beamline(VARY *_control, ERRORVAL *errcon, RUN *run, LINE_LIST *beamli
 
   parameters_loaded = 0;
   do_alter_elements(run, beamline, 1, 1);
+
+  /* On the first vary_beamline() tick after &run_setup, snapshot the current
+   * corrector values for every correction module that has been set up; on
+   * subsequent ticks restore them so each step starts from the post-&run_setup
+   * baseline instead of inheriting the previous step's converged correctors.
+   * This runs BEFORE do_load_parameters() so that &load_parameters with
+   * change_defined_values=0 (which executes inside the steps loop) gets the
+   * last word -- if the parameter file specifies corrector values for the
+   * current step, those values override the reasserted snapshot.  Conversely,
+   * load_parameters commands with change_defined_values=1 take effect outside
+   * the steps loop (when the command is issued), so they are already baked
+   * into the post-&run_setup state captured by the first-tick snapshot.
+   * Reassertion still precedes perturb_beamline() (assert_perturbations below). */
+  corrector_stash_step_tick(run, beamline);
+
   if (!(_control->i_step >= _control->n_steps && !_control->n_indices))
     parameters_loaded = do_load_parameters(beamline, 0, NULL);
   do_alter_elements(run, beamline, 0, 1);
