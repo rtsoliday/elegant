@@ -1,0 +1,442 @@
+#!/usr/bin/env python3
+
+"""
+swapOutPolarization.py -- track the time evolution of average
+polarization and Touschek lifetime of a multibunch beam during swap-out
+operation with topup-style conditional injection.
+
+Model:
+  * N bunches in a storage ring, each starts unpolarized (P=0) and
+    carrying initial charge q0 = targetCurrent / nBunches, so the
+    initial total beam current equals targetCurrent.
+  * Every swap_interval seconds, the total current is checked:
+        - if Itot < targetCurrent, the weakest bunch is replaced by
+          a fresh unpolarized bunch carrying injectedCharge units of
+          population (P=0);
+        - if Itot >= targetCurrent, no injection is performed and
+          the bunches continue evolving freely until the next check.
+    Ties among multiple bunches at the minimum population are broken
+    at random.
+  * Between swaps, each bunch evolves under
+      dN_b/dt = -N_b/tau_gas - N_b^2 / [ q0 * tau_T0 * R(P_b) ]
+      dP_b/dt = (P_eq - P_b) / tau_p
+    with the Sokolov-Ternov self-polarization time tau_p and the
+    equilibrium polarization P_eq read from an elegant twiss_output
+    SDDS file with radiation_integrals=1.  The tau_T0 normalization
+    is the Touschek lifetime at the initial per-bunch charge q0 with
+    P=0; the N_b^2/q0 form makes the loss rate proportional to bunch
+    current as it should be for a two-body interaction.
+  * R(P) = tau_T(P) / tau_T(P=0) is interpolated from a user-supplied
+    SDDS table (e.g. produced by running touschekLifetime at several
+    polarization values and taking the ratio).  R(0) should equal 1.
+
+Output (SDDS file or stdout text), sampled on a dense time grid:
+  t                 -- time, s
+  PWeightedMean              -- current-weighted polarization across all bunches
+  PMean             -- simple mean polarization across all bunches
+  Itot              -- total beam current (same units as targetCurrent)
+  ItotOverTarget    -- Itot / targetCurrent (dimensionless)
+  tauTouschek       -- effective Touschek lifetime of the multibunch
+                       beam, including polarization suppression
+  tauTouschekUnpol  -- same but evaluated with R(P)=1, for comparison
+  tauTotal          -- effective total lifetime including gas
+
+Usage example:
+  swapOutPolarization.py -twiss=ring.twi \\
+      -tLifetimeRatioTable=ratioVsP.sdds \\
+      -tauGas=20hr -tauTouschek=2hr \\
+      -nBunches=48 -swapInterval=120s -totalTime=24hr \\
+      -targetCurrent=200 -injectedCharge=2.0 \\
+      -output=swapPol.sdds
+"""
+
+import argparse
+import sys
+import numpy as np
+from scipy.integrate import solve_ivp
+
+# Try both common import styles for the soliday.sdds package.
+try:
+    import soliday.sdds as sdds
+except ImportError:
+    import sdds  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# SDDS helpers wrapping the Python SDDS module
+# ---------------------------------------------------------------------------
+def _unwrap_scalar(value):
+    """Convert possible 1-element SDDS containers to a plain scalar."""
+    if isinstance(value, (list, tuple)):
+        if len(value) == 1:
+            return value[0]
+    return value
+
+
+def read_twiss_inputs(filename, page=1):
+    """Load tauP, Peq, and PassLength from an elegant twiss SDDS file."""
+    obj = sdds.SDDS(0)
+    obj.load(filename)
+    try:
+        tauP    = float(_unwrap_scalar(obj.getParameterValue("tauP",       page=page)))
+        Peq     = float(_unwrap_scalar(obj.getParameterValue("Peq",        page=page)))
+        passLen = float(_unwrap_scalar(obj.getParameterValue("PassLength", page=page)))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to read tauP / Peq / PassLength from {filename!r} "
+            f"on page {page}.  Was the twiss file generated with "
+            f"radiation_integrals=1 on a recent elegant build?"
+        ) from exc
+    return tauP, Peq, passLen
+
+
+def read_ratio_table(filename, page=1):
+    """Load (polarization, tLifetimeRatio) columns from an SDDS file."""
+    obj = sdds.SDDS(0)
+    obj.load(filename)
+    try:
+        P_col = np.asarray(obj.getColumnValueList("polarization",   page),
+                           dtype=float)
+        R_col = np.asarray(obj.getColumnValueList("tLifetimeRatio", page),
+                           dtype=float)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to read 'polarization' and 'tLifetimeRatio' columns "
+            f"from {filename!r} on page {page}."
+        ) from exc
+    return P_col, R_col
+
+
+# ---------------------------------------------------------------------------
+# Time-string parser:  "3600s" / "1hr" / "60min" / "1d" / bare = sec
+# ---------------------------------------------------------------------------
+def parse_time(s):
+    s = s.strip().lower()
+    for suffix, factor in [("hr", 3600.0), ("h", 3600.0),
+                           ("min", 60.0),
+                           ("d", 86400.0),
+                           ("s", 1.0)]:
+        if s.endswith(suffix):
+            return float(s[: -len(suffix)]) * factor
+    return float(s)  # bare number: seconds
+
+
+# Numerical constants
+C_LIGHT = 2.99792458e8   # m/s, for converting between current and charge
+
+
+# ---------------------------------------------------------------------------
+# Command-line parsing (touschekLifetime-style "-opt=value")
+# ---------------------------------------------------------------------------
+def parse_args(argv):
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument("-twiss",               dest="twiss",         required=True, type=str)
+    p.add_argument("-tLifetimeRatioTable", dest="ratio_table",   required=True, type=str,
+                   help="SDDS file with columns 'polarization' and "
+                        "'tLifetimeRatio' giving tau_T(P)/tau_T(0).")
+    p.add_argument("-tauGas",              dest="tau_gas",       required=True, type=str)
+    p.add_argument("-tauTouschek",         dest="tau_T0",        required=True, type=str,
+                   help="P=0 Touschek lifetime per bunch at the initial "
+                        "per-bunch charge q0 = targetCurrent/nBunches.")
+    p.add_argument("-nBunches",            dest="n_bunches",     required=True, type=int)
+    p.add_argument("-swapInterval",        dest="swap_int",      required=True, type=str)
+    p.add_argument("-totalTime",           dest="total_time",    required=True, type=str)
+    p.add_argument("-targetCurrent",       dest="target_mA",     required=True, type=float,
+                   help="initial total beam current in milliamperes; this is "
+                        "also the topup threshold (the swap-out only injects "
+                        "when Itot < targetCurrent).  At t=0 each bunch carries "
+                        "targetCurrent/nBunches of the equivalent charge.")
+    p.add_argument("-injectedCharge",      dest="inject_nC",     required=True, type=float,
+                   help="charge of the fresh bunch installed at each swap-out "
+                        "injection, in nanocoulombs.")
+    p.add_argument("-nSteps",              dest="n_steps",       default=2000,  type=int,
+                   help="approximate number of output time samples (default 2000).")
+    p.add_argument("-output",              dest="output",        default=None,  type=str,
+                   help="output SDDS file; without this, columns are printed "
+                        "to stdout as whitespace-separated text.")
+    p.add_argument("-seed",                dest="seed",          default=42,    type=int)
+    p.add_argument("-usePsign",            dest="use_p_sign",    default=False,
+                   action="store_true",
+                   help="use signed P from the twiss file (default uses |P|, "
+                        "which is the physically meaningful magnitude for the "
+                        "Touschek-suppression table).")
+
+    # Convert "-key=value" to "-key value" for argparse.
+    norm = []
+    for a in argv:
+        if a.startswith("-") and "=" in a:
+            k, v = a.split("=", 1)
+            norm += [k, v]
+        else:
+            norm.append(a)
+    return p.parse_args(norm)
+
+
+# ---------------------------------------------------------------------------
+# SDDS writer using the sdds Python module
+# ---------------------------------------------------------------------------
+def write_sdds(filename, t_arr, PWeightedMean, PMean, Itot_mA, Iratio,
+               tauTou, tauTouUn, tauTot, params, ascii_output=False):
+    """Write the swap-out time-evolution to an SDDS file.
+
+    params is an iterable of (name, value, type, units, description) tuples
+    where type is one of 'long' / 'double' / 'string' and units / description
+    may be empty strings.
+    """
+    obj = sdds.SDDS(0)
+    obj.setDescription(
+        "swap-out polarization evolution",
+        "Average polarization and Touschek lifetime vs time for a multibunch "
+        "beam under swap-out topup operation.",
+    )
+    obj.mode = sdds.SDDS_ASCII if ascii_output else sdds.SDDS_BINARY
+
+    # --- parameter schema + values ---
+    type_map = {
+        "long":   sdds.SDDS_LONG,
+        "double": sdds.SDDS_DOUBLE,
+        "string": sdds.SDDS_STRING,
+    }
+    for name, val, typ, units, desc in params:
+        obj.defineParameter(name, units=units, description=desc, type=type_map[typ])
+        if typ == "long":
+            obj.setParameterValue(name, int(val), 1)
+        elif typ == "string":
+            obj.setParameterValue(name, str(val), 1)
+        else:
+            obj.setParameterValue(name, float(val), 1)
+
+    # --- column schema + data ---
+    columns = [
+        ("t",                "s",   "time since injection start"),
+        ("PWeightedMean",             "",    "current-weighted average polarization"),
+        ("PMean",            "",    "simple per-bunch mean polarization"),
+        ("Itot",             "mA",  "total beam current"),
+        ("ItotOverTarget",   "",    "Itot / targetCurrent (dimensionless)"),
+        ("tauTouschek",      "s",   "effective multibunch Touschek lifetime "
+                                    "with polarization suppression"),
+        ("tauTouschekUnpol", "s",   "effective multibunch Touschek lifetime "
+                                    "evaluated with R(P)=1 (no polarization "
+                                    "suppression), for comparison"),
+        ("tauTotal",         "s",   "effective total lifetime: "
+                                    "1/tauTotal = 1/tauGas + 1/tauTouschek"),
+    ]
+    data = [t_arr, PWeightedMean, PMean, Itot_mA, Iratio, tauTou, tauTouUn, tauTot]
+    for (name, units, desc), arr in zip(columns, data):
+        obj.defineColumn(name, units=units, description=desc, type=sdds.SDDS_DOUBLE)
+        obj.setColumnValueList(name, [float(x) for x in arr], 1)
+
+    obj.save(filename)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(0)
+    args = parse_args(sys.argv[1:])
+
+    # --- inputs from twiss file ---
+    tauP, Peq_signed, pass_length = read_twiss_inputs(args.twiss)
+    if tauP <= 0:
+        sys.exit("error: twiss file has tauP <= 0; no polarization buildup.")
+    if pass_length <= 0:
+        sys.exit("error: twiss file PassLength <= 0; cannot convert current<->charge.")
+    # The Touschek-suppression table is naturally a function of |P| (since
+    # the analyzing power depends on P^2); convert sign accordingly unless
+    # the user explicitly opts in to signed P.
+    Peq = Peq_signed if args.use_p_sign else abs(Peq_signed)
+
+    # --- inputs from CLI ---
+    tau_gas  = parse_time(args.tau_gas)
+    tau_T0   = parse_time(args.tau_T0)
+    swap_int = parse_time(args.swap_int)
+    t_end    = parse_time(args.total_time)
+    N        = args.n_bunches
+    rng      = np.random.default_rng(args.seed)
+    if swap_int <= 0 or t_end <= 0 or N <= 0:
+        sys.exit("error: -swapInterval, -totalTime, -nBunches must be > 0")
+
+    # Charge-current conversion using the ring revolution period T_rev = C/c.
+    # For a single bunch: I[A] = Q[C] / T_rev[s] = Q * c / C.
+    # In our preferred units (nC, mA): I[mA] = Q[nC] * 1e3/1e9 * c/C
+    #                                        = Q[nC] * c / (C * 1e6)
+    # Equivalently mA_per_nC := c / (C * 1e6).
+    mA_per_nC = C_LIGHT / (pass_length * 1.0e6)
+
+    target_mA   = args.target_mA          # user's target current in mA
+    inject_nC   = args.inject_nC          # user's injection charge per swap, nC
+    q0_nC       = target_mA / N / mA_per_nC   # initial per-bunch charge (nC)
+    target_nC   = target_mA / mA_per_nC       # total target charge in nC
+
+    # --- ratio table:  polarization -> tau_T(P)/tau_T(0) ---
+    pol_tab, ratio_tab = read_ratio_table(args.ratio_table)
+    # Sort by polarization so np.interp behaves
+    order = np.argsort(pol_tab)
+    pol_tab, ratio_tab = pol_tab[order], ratio_tab[order]
+    if np.any(ratio_tab <= 0):
+        sys.exit("error: tLifetimeRatio table contains nonpositive values.")
+
+    def R_of_P(P):
+        """tau_T(P)/tau_T(0); clamped at table endpoints."""
+        return np.interp(np.abs(P), pol_tab, ratio_tab,
+                         left=ratio_tab[0], right=ratio_tab[-1])
+
+    print(f"# tauP          = {tauP:.6e} s  ({tauP/3600:.4f} hr)", file=sys.stderr)
+    print(f"# Peq (used)    = {Peq:.6e}  (signed value in twiss: {Peq_signed:.6e})", file=sys.stderr)
+    print(f"# tauGas        = {tau_gas:.6e} s  ({tau_gas/3600:.4f} hr)", file=sys.stderr)
+    print(f"# tauTouschek0  = {tau_T0:.6e} s  ({tau_T0/3600:.4f} hr)  @ per-bunch charge q0", file=sys.stderr)
+    print(f"# circumference = {pass_length:.6e} m  (T_rev = {pass_length/C_LIGHT*1e6:.4f} us)", file=sys.stderr)
+    print(f"# nBunches      = {N}", file=sys.stderr)
+    print(f"# targetCurrent = {target_mA:.6e} mA  (= {target_nC:.6e} nC total)", file=sys.stderr)
+    print(f"# q0 per bunch  = {q0_nC:.6e} nC  (= {q0_nC*mA_per_nC:.6e} mA)", file=sys.stderr)
+    print(f"# injectedCharge= {inject_nC:.6e} nC  (= {inject_nC*mA_per_nC:.6e} mA)", file=sys.stderr)
+    print(f"# swapInterval  = {swap_int:.6e} s  ({swap_int/3600:.4f} hr)", file=sys.stderr)
+    print(f"# totalTime     = {t_end:.6e} s  ({t_end/3600:.4f} hr)", file=sys.stderr)
+    print(f"# Ratio table   : {len(pol_tab)} rows, P=[{pol_tab[0]:.3f},{pol_tab[-1]:.3f}], "
+          f"R=[{ratio_tab[0]:.4f},{ratio_tab[-1]:.4f}]", file=sys.stderr)
+
+    # --- per-bunch ODE system in absolute charge units (nC) ---
+    # State y = [Q_1, ..., Q_N, P_1, ..., P_N]  with Q_b in nC.
+    # Touschek normalization: the user-supplied tau_T0 is the Touschek
+    # lifetime when the bunch carries the initial charge q0, so the loss
+    # rate scales as (Q_b/q0):
+    #   dQ_b/dt|_T = -Q_b * (Q_b/q0) / [tau_T0 * R(P_b)]
+    #              = -Q_b^2 / [q0 * tau_T0 * R(P_b)].
+    def dydt(t, y):
+        Qs = y[:N]
+        Ps = y[N:]
+        R = R_of_P(Ps)
+        dQ = -Qs / tau_gas - (Qs * Qs) / (q0_nC * tau_T0 * R)
+        dP = (Peq - Ps) / tauP
+        return np.concatenate([dQ, dP])
+
+    y = np.zeros(2 * N)
+    y[:N] = q0_nC  # all bunches at the initial (target/N) charge
+
+    # --- swap-check schedule:  every swap_int starting at t=swap_int ---
+    swap_times = np.arange(swap_int, t_end + 0.5 * swap_int, swap_int)
+
+    # --- output time grid ---
+    n_steps = max(args.n_steps, len(swap_times) * 4)
+    t_grid = np.linspace(0.0, t_end, n_steps)
+
+    PWeightedMean    = np.zeros_like(t_grid)
+    PMean   = np.zeros_like(t_grid)
+    Itot_mA = np.zeros_like(t_grid)
+    Iratio  = np.zeros_like(t_grid)
+    tauTou  = np.zeros_like(t_grid)
+    tauTouU = np.zeros_like(t_grid)
+    tauTot  = np.zeros_like(t_grid)
+
+    n_injections = 0  # count of actual injections (vs. swap checks)
+
+    # Walk forward swap by swap, integrating ODE on each segment and
+    # recording samples that fall in that segment.
+    t_seg_start = 0.0
+    grid_idx = 0
+    next_swap_idx = 0
+    while grid_idx < len(t_grid):
+        t_seg_end = (swap_times[next_swap_idx]
+                     if next_swap_idx < len(swap_times) else t_end + 1e-9)
+        # Sample indices that lie in [t_seg_start, t_seg_end]
+        i0 = grid_idx
+        while (i0 < len(t_grid)
+               and t_grid[i0] >= t_seg_start - 1e-12
+               and t_grid[i0] <= t_seg_end + 1e-12):
+            i0 += 1
+        seg_grid = t_grid[grid_idx:i0]
+        if len(seg_grid) == 0:
+            sol = solve_ivp(dydt, (t_seg_start, t_seg_end), y, method="RK45",
+                            rtol=1e-8, atol=1e-10)
+            y = sol.y[:, -1]
+        else:
+            eval_grid = seg_grid.copy()
+            if eval_grid[0] > t_seg_start + 1e-12:
+                eval_grid = np.concatenate(([t_seg_start], eval_grid))
+            sol = solve_ivp(dydt, (t_seg_start, t_seg_end), y,
+                            t_eval=eval_grid, method="RK45",
+                            rtol=1e-8, atol=1e-10)
+            ys = sol.y[:, -len(seg_grid):]
+            Qs = ys[:N, :]                  # per-bunch charge (nC) over time
+            Ps = ys[N:, :]                  # per-bunch P
+            tot_nC = Qs.sum(axis=0)
+            tot_safe = np.where(tot_nC > 0, tot_nC, 1.0)
+            PWeightedMean[grid_idx:i0]    = (Qs * Ps).sum(axis=0) / tot_safe
+            PMean[grid_idx:i0]   = Ps.mean(axis=0)
+            Itot_mA[grid_idx:i0] = tot_nC * mA_per_nC
+            Iratio[grid_idx:i0]  = tot_nC / target_nC
+            # Effective multibunch Touschek lifetime:
+            #   dQ_tot/dt|_T = -sum_b Q_b^2 / [q0 * tau_T0 * R(P_b)]
+            #   tau_T_eff = Q_tot * q0 * tau_T0 / sum_b [Q_b^2 / R(P_b)]
+            R_arr = R_of_P(Ps)
+            tau_T_eff       = tot_nC * q0_nC * tau_T0 / (Qs * Qs / R_arr).sum(axis=0)
+            tau_T_eff_unpol = tot_nC * q0_nC * tau_T0 / (Qs * Qs).sum(axis=0)
+            tauTou[grid_idx:i0]  = tau_T_eff
+            tauTouU[grid_idx:i0] = tau_T_eff_unpol
+            # Total effective lifetime including gas:
+            #   1/tau_total = 1/tau_gas + 1/tau_T_eff
+            tauTot[grid_idx:i0]  = 1.0 / (1.0 / tau_gas + 1.0 / tau_T_eff)
+            y = sol.y[:, -1]
+            grid_idx = i0
+
+        # Apply swap event at the end of this segment.
+        # Only inject when the current is below the target -- this is the
+        # topup behaviour: the swap-out check happens every swap_int, but
+        # an injection only fires if the beam has decayed below target.
+        if next_swap_idx < len(swap_times):
+            Qs = y[:N]
+            if Qs.sum() < target_nC:
+                min_Q = Qs.min()
+                cands = np.where(Qs <= min_Q + 1e-12)[0]
+                chosen = int(rng.choice(cands))
+                y[chosen]     = inject_nC
+                y[N + chosen] = 0.0
+                n_injections += 1
+            next_swap_idx += 1
+            t_seg_start = t_seg_end
+        else:
+            break
+
+    # --- output ---
+    if args.output:
+        # (name, value, type, units, description)
+        params = [
+            ("nBunches",       N,             "long",   "",   "number of bunches in the ring"),
+            ("tauP",           tauP,          "double", "s",  "Sokolov-Ternov self-polarization time"),
+            ("Peq",            Peq_signed,    "double", "",   "equilibrium polarization (signed) from twiss"),
+            ("Peq_used",       Peq,           "double", "",   "polarization magnitude used in the table lookup"),
+            ("tauGas",         tau_gas,       "double", "s",  "gas-scattering lifetime per bunch"),
+            ("tauTouschek0",   tau_T0,        "double", "s",  "P=0 Touschek lifetime at initial per-bunch charge q0"),
+            ("swapInterval",   swap_int,      "double", "s",  "interval between swap-out injection checks"),
+            ("targetCurrent",  target_mA,     "double", "mA", "initial / topup target total beam current"),
+            ("injectedCharge", inject_nC,     "double", "nC", "fresh bunch charge installed per injection"),
+            ("circumference",  pass_length,   "double", "m",  "ring circumference (from twiss PassLength)"),
+            ("nInjections",    n_injections,  "long",   "",   "number of swap-out injections actually performed"),
+        ]
+        write_sdds(args.output, t_grid, PWeightedMean, PMean, Itot_mA, Iratio,
+                   tauTou, tauTouU, tauTot, params)
+        print(f"# Wrote {len(t_grid)} rows to {args.output}", file=sys.stderr)
+    else:
+        print("# t[s]            PWeightedMean             PMean            Itot[mA]         "
+              "Itot/Target     tauTouschek[s]  tauTouschekUnpol[s] tauTotal[s]")
+        for j in range(len(t_grid)):
+            print(f"{t_grid[j]:14.6e}  {PWeightedMean[j]:14.6e}  {PMean[j]:14.6e}  "
+                  f"{Itot_mA[j]:14.6e}  {Iratio[j]:14.6e}  "
+                  f"{tauTou[j]:14.6e}  {tauTouU[j]:14.6e}  {tauTot[j]:14.6e}")
+
+    # Headline
+    jf = -1
+    print(f"# Final t = {t_grid[jf]/3600:.4f} hr: "
+          f"PWeightedMean = {PWeightedMean[jf]:.6e}, PMean = {PMean[jf]:.6e}, "
+          f"Itot = {Itot_mA[jf]:.4f} mA ({Iratio[jf]*100:.2f}% of target), "
+          f"tauTouschek = {tauTou[jf]/3600:.4f} hr, "
+          f"tauTotal = {tauTot[jf]/3600:.4f} hr, "
+          f"injections = {n_injections}",
+          file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
