@@ -80,6 +80,12 @@ Here is a summary of what's changed since release 2026.2.  Historical change log
 \item The \verb|correct_lattice|, \verb|compute_lattice_response_matrix|, and \verb|load_lattice_response_matrix| commands
   were added, supplying a method of correcting the linear lattice functions ($\beta_x$, $\beta_y$, $\eta_x$) at
   selected BPMs by adjusting (typically) normal quadrupoles, against a user-supplied design-twiss reference file.
+\item The \verb|correct|, \verb|correct_tunes|, \verb|correct_chromaticity|, \verb|correct_coupling|, and \verb|correct_lattice|
+  commands all have a \verb|reset_correctors_each_step| qualifier that can be used to force correctors back to the initial
+  values at the start of each step. Previous versions would automatically propagate the previous corrector strengths into the
+  next step. This is almost certainly not what is wanted in most cases, in light of which we decided to change the default behavior.
+\item The \verb|twiss_output| command now computes the equilibrium polarization and self-polarization time when
+  \verb|radiation_integrals=1|.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -96,10 +102,8 @@ are listed in Section \ref{sect:tools}.
 
 Changes to these tools in this release include
 \begin{itemize}
-\item Added \verb|sddsupsample|, a program to up-sample particle distributions. Written by GPT-5.2-Codex guided by M. Borland.
-\item Added Emacs modes for command and lattice file editing. See documentation below. Written by GPT-5.2-Codex guided by M. Borland.
-\item Added \verb|centroid2floor|, a program to combine reference floor-coordinate and centroid data to make a file
-  with the beam path in global (floor) coordinates.
+\item The \verb|touschekLifetime| program now computes the lifetime including polarization, based on
+  \cite{PhysRevAccelBeams.27.124401}.
 \end{itemize}
 
 \subsection{Known Bugs, Problems, and Limitations}
@@ -1624,6 +1628,7 @@ the tracking is appropriate to simulation of dynamics from a touschek scattering
     STRING response_matrix_output = NULL;
     STRING correction_matrix_output = NULL;
     long fse_units = 0;
+    long reset_correctors_each_step = 1;
 &end
 \end{verbatim}
 
@@ -1678,6 +1683,12 @@ to obtain correction.  In general, it is not necessary and only slows the simula
   to which the response and correction matrices will be written.
 \item \verb|fse_units| --- If non-zero, then the data in the  \verb|response_matrix_output| and \verb|correction_matrix_output|
   files is in units of fractional strength error rather than $K_2L$.
+\item \verb|reset_correctors_each_step| --- If nonzero (the default), the chromaticity
+  sextupole strengths are snapshotted on the first \verb|vary_beamline| tick after
+  \verb|run_setup| and reasserted at the start of every subsequent step, before
+  errors and variations are added.  Set to 0 to inherit the previous step's converged
+  sextupole strengths.  See the description under \verb|&correct| for the wider behavior.
+This parameter was added in version 2026.3 and changed the default behavior for multi-step simulations.
 \end{itemize}
 
 %\begin{latexonly}
@@ -1821,6 +1832,7 @@ during the computations.
     long force_alternation = 0;
     long n_iterations = 1;
     long prezero_correctors = 1;
+    long reset_correctors_each_step = 1;
     long track_before_and_after = 0;
     long start_from_centroid = 1;
     long use_actual_beam = 0;
@@ -1906,6 +1918,25 @@ matrix should be computed and used.  This will improve convergence but isn't alw
 \item \verb|minimum_cycles| --- The minimum number of x-y cycles to perform, even if the correction does not improve.
 \item \verb|n_iterations| --- Number of iterations of the correction in each plane for each x/y cycle.
 \item \verb|prezero_correctors| --- Flag indicating whether to set the correctors to zero before starting.
+\item \verb|reset_correctors_each_step| --- If nonzero (the default), on the first
+step after each \verb|run_setup| the steering-corrector values
+are snapshotted, and on every subsequent step they are restored to that snapshot
+before errors and variations are reapplied.  This ensures that each step starts
+from the post-\verb|run_setup| baseline rather than inheriting the previous step's
+converged correctors.  Set to 0 to recover the historical behavior in which each
+step begins with the prior step's correctors still in place.  Unlike
+\verb|prezero_correctors| (which acts only on the initial correction pass within a
+single step), this option spans the multi-step loop driven by \verb|n_steps| in
+\verb|&run_control|.  The reassertion runs before \verb|do_load_parameters| inside
+the steps loop, so \verb|&load_parameters| commands with
+\verb|change_defined_values=0| (which take effect inside the loop) still get the
+last word: if the parameter file specifies corrector values for the current step,
+those values override the reasserted snapshot for that step.
+\verb|&load_parameters| with \verb|change_defined_values=1| takes effect when the
+command is issued (outside the loop) and is therefore baked into the snapshot
+captured on the first tick.
+This parameter was added in version 2026.3 and changed the default behavior for multi-step simulations.
+
 \item \verb|track_before_and_after| --- Flag indicating whether tracking should be done both before and after
 correction.
 \item \verb|start_from_centroid| --- Flag indicating that correction
@@ -2029,6 +2060,7 @@ matrix.
     STRING response_matrix_output = NULL;
     STRING correction_matrix_output = NULL;
     long fse_units = 0;
+    long reset_correctors_each_step = 1;
 &end
 \end{verbatim}
 
@@ -2079,6 +2111,12 @@ to obtain correction.  In general, it is not necessary and only slows the simula
   to which the response and correction matrices will be written. 
 \item \verb|fse_units| --- If non-zero, then the data in the  \verb|response_matrix_output| and \verb|correction_matrix_output|
   files is in units of fractional strength error rather than $K_1L$.
+\item \verb|reset_correctors_each_step| --- If nonzero (the default), the tune-correcting
+  quadrupole strengths are snapshotted on the first \verb|vary_beamline| tick after
+  \verb|run_setup| and reasserted at the start of every subsequent step, before
+  errors and variations are added.  Set to 0 to inherit the previous step's converged
+  tune correctors.  See the description under \verb|&correct| for the wider behavior.
+This parameter was added in version 2026.3 and changed the default behavior for multi-step simulations.
 \end{itemize}
 
 %\begin{latexonly}
@@ -2104,13 +2142,22 @@ to obtain correction.  In general, it is not necessary and only slows the simula
 \begin{verbatim}
 &compute_coupling_response_matrix
     STRING filename = NULL;
-    STRING name_pattern = NULL;
-    STRING type_pattern = NULL;
-    STRING item = "K1";
+    STRING cross_filename = NULL;
+    STRING correction_elements = NULL;
+    STRING items = NULL;
+    STRING exclude = NULL;
     STRING bpm_name_pattern = NULL;
     STRING bpm_type_pattern = "MONI";
+    STRING cross_h_steering = NULL;
+    STRING cross_v_steering = NULL;
+    STRING cross_x_bpm_name_pattern = NULL;
+    STRING cross_x_bpm_type_pattern = "MONI HMON";
+    STRING cross_y_bpm_name_pattern = NULL;
+    STRING cross_y_bpm_type_pattern = "MONI VMON";
+    double cross_steering_kick = 1e-5;
     double response_perturbation = 1e-6;
     double measurement_noise = 0.0;
+    double cross_measurement_noise = 0.0;
     double measurement_noise_cutoff = 3.0;
     long verbosity = 0;
 &end
@@ -2118,20 +2165,35 @@ to obtain correction.  In general, it is not necessary and only slows the simula
 
 \begin{itemize}
 \item \verb|filename| --- The (incomplete) name of the SDDS file to which the
-  response matrix is written.  The format includes the BPM/skew element names
+  $\eta_y$ response matrix is written.  The format includes the BPM/skew element names
   and occurrences plus the matrix entries, so \verb|load_coupling_response_matrix|
   can reconstruct the entire knob/BPM inventory from this single file.
   Suggested value: ``\%s.qsmat''.
-\item \verb|name_pattern|, \verb|type_pattern| --- Space-separated lists of
-  name and type patterns (with the usual \verb|*| / \verb|?| wildcards) used
-  to select the skew-quadrupole elements that act as correction knobs.  At
-  least one of these must be supplied; an element is taken as a knob if it
-  matches any \verb|name_pattern| entry (or all if none is given) and any
-  \verb|type_pattern| entry (or all if none is given).
-\item \verb|item| --- The name of the element parameter to perturb when
-  computing the response (e.g., \verb|K1|).  The skew strength is created by
-  whatever the lattice element provides; commonly this is a \verb|QUAD| or
-  \verb|KQUAD| with \verb|TILT=|$\pi/4$ and \verb|K1| as the knob.
+\item \verb|cross_filename| --- The (incomplete) name of a {\em second} SDDS
+  file to which the cross-plane response matrix is written.  When supplied,
+  the cross-plane channel is built alongside $\eta_y$ during this command,
+  using \verb|cross_h_steering|, \verb|cross_v_steering|, the cross-plane BPM
+  patterns, and \verb|cross_steering_kick| below.  The file records the H/V
+  probe-corrector inventory (name, occurrence, item), the cross-plane BPM
+  inventory, the response coefficients, and the spec strings themselves as
+  parameters so \verb|load_coupling_response_matrix| can reconstruct
+  everything without the user re-supplying it.  Default \verb|NULL| means
+  no cross-plane matrix is built or saved -- existing $\eta_y$-only files
+  are produced byte-identical to earlier versions.
+\item \verb|correction_elements| --- Whitespace/comma-separated list of
+  wildcard patterns (one per family) selecting the elements that act as
+  correction knobs in the matrix.  Required.  First-match-wins on element
+  name; element types lacking the family's \verb|items[k]| parameter are
+  silently skipped.  Same semantics as on \verb|correct_coupling|.
+\item \verb|items| --- Parallel whitespace-separated list of parameter names,
+  one per family.  Defaults to \verb|"K1"| applied to every family.  When the
+  family items differ (e.g., \verb|items = "K1 KNL"|) the resulting matrix
+  file records the per-knob item in its \verb|KnobParameter| column so
+  \verb|load_coupling_response_matrix| reconstructs the per-knob inventory
+  correctly.
+\item \verb|exclude| --- Optional whitespace-separated list of patterns of
+  element names to drop from the knob inventory even if they match one of the
+  \verb|correction_elements| entries.
 \item \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists
   selecting the BPM observation points.  Default
   \verb|bpm_type_pattern="MONI"| picks all monitor elements.
@@ -2147,15 +2209,31 @@ to obtain correction.  In general, it is not necessary and only slows the simula
   matching how a noisy measurement on a real machine accumulates noise
   into the response matrix.  Default 0 produces a noise-free (design) matrix.
   Same semantics as on \verb|correct_coupling|.
+\item \verb|cross_h_steering|, \verb|cross_v_steering|,
+  \verb|cross_x_bpm_*_pattern|, \verb|cross_y_bpm_*_pattern|,
+  \verb|cross_steering_kick|, \verb|cross_measurement_noise| --- Same
+  semantics as on \verb|correct_coupling|; see that command's documentation.
+  Only consulted when \verb|cross_filename| is supplied; recorded verbatim
+  into the cross-plane file so a subsequent \verb|load_coupling_response_matrix|
+  carries them through.
 \item \verb|verbosity| --- Higher values print more diagnostic information
   while the matrix is being built.
 \end{itemize}
 
-The values of \verb|name_pattern|, \verb|type_pattern|, \verb|item|,
-\verb|bpm_name_pattern|, and \verb|bpm_type_pattern| are also recorded
-implicitly in the saved file through the element names and occurrences,
-so a subsequent \verb|correct_coupling| (whether in this run or a later one
-via \verb|load_coupling_response_matrix|) does not need to repeat them.
+The values of \verb|correction_elements| and \verb|items| are recorded
+verbatim in the saved file as the \verb|CorrectionElements| and
+\verb|CorrectionItems| SDDS parameters (the joined whitespace-separated
+family lists), and the resolved per-knob inventory is recorded
+explicitly through the element names, occurrences, and the per-knob
+\verb|KnobParameter| column.  A subsequent \verb|correct_coupling|
+(whether in this run or a later one via \verb|load_coupling_response_matrix|)
+can therefore omit \verb|correction_elements| / \verb|items| entirely
+and inherit them from the file.  If they {\em are} supplied on
+\verb|correct_coupling| they must agree with the values recorded in the
+matrix file, or the run is aborted with an explicit diagnostic.  The
+\verb|exclude|, \verb|bpm_name_pattern|, and \verb|bpm_type_pattern|
+values are recorded implicitly through the resolved BPM and knob
+inventories.
 
 %\begin{latexonly}
 \newpage
@@ -2182,10 +2260,10 @@ via \verb|load_coupling_response_matrix|) does not need to repeat them.
 \begin{verbatim}
 &compute_lattice_response_matrix
     STRING filename = NULL;
-    STRING name_pattern = NULL;
-    STRING type_pattern = NULL;
+    STRING correction_elements = NULL;
+    STRING items = NULL;
+    STRING exclude = NULL;
     STRING bind_name_pattern = NULL;
-    STRING item = "K1";
     STRING bpm_name_pattern = NULL;
     STRING bpm_type_pattern = "MONI";
     double response_perturbation = 1e-6;
@@ -2202,12 +2280,20 @@ via \verb|load_coupling_response_matrix|) does not need to repeat them.
   response columns (\verb|dBetaxDK1|, \verb|dBetayDK1|, \verb|dEtaxDK1|),
   so \verb|load_lattice_response_matrix| can reconstruct the entire
   knob/BPM inventory from this single file.  Suggested value: ``\%s.lrm''.
-\item \verb|name_pattern|, \verb|type_pattern| --- Space-separated lists of
-  name and type patterns (with the usual \verb|*| / \verb|?| wildcards) used
-  to select the (normal) quadrupole elements that act as correction knobs.  At
-  least one of these must be supplied; an element is taken as a knob if it
-  matches any \verb|name_pattern| entry (or all if none is given) and any
-  \verb|type_pattern| entry (or all if none is given).
+\item \verb|correction_elements| --- Whitespace/comma-separated list of
+  wildcard patterns (one per family) selecting the elements that act as
+  correction knobs in the matrix.  Required.  Same semantics as on
+  \verb|correct_lattice|: first-match-wins on element name; element types
+  lacking the family's \verb|items[k]| parameter are silently skipped.
+\item \verb|items| --- Parallel whitespace-separated list of parameter names,
+  one per family.  Defaults to \verb|"K1"| applied to every family.  When the
+  family items differ (e.g., \verb|items = "K1 FSE"|) the resulting matrix
+  file records the per-knob item in its \verb|KnobParameter| column so
+  \verb|load_lattice_response_matrix| reconstructs the per-knob inventory
+  correctly.
+\item \verb|exclude| --- Optional whitespace-separated list of patterns of
+  element names to drop from the knob inventory even if they match one of
+  the \verb|correction_elements| entries.
 \item \verb|bind_name_pattern| --- Optional family-binding specification
   recorded with the saved matrix.  Same semantics as on \verb|correct_lattice|
   (each entry collapses every matching knob into one family group; see the
@@ -2217,8 +2303,6 @@ via \verb|load_coupling_response_matrix|) does not need to repeat them.
   without restating the patterns.  A \verb|correct_lattice| that does
   set its own \verb|bind_name_pattern| overrides what the matrix file
   carries.
-\item \verb|item| --- The name of the element parameter to perturb when
-  computing the response (e.g., \verb|K1|).
 \item \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists
   selecting the BPM observation points.  Default
   \verb|bpm_type_pattern="MONI"| picks all monitor elements.
@@ -2238,11 +2322,20 @@ via \verb|load_coupling_response_matrix|) does not need to repeat them.
   while the matrix is being built.
 \end{itemize}
 
-The values of \verb|name_pattern|, \verb|type_pattern|, \verb|item|,
-\verb|bpm_name_pattern|, and \verb|bpm_type_pattern| are also recorded
-implicitly in the saved file through the element names and occurrences,
-so a subsequent \verb|correct_lattice| (whether in this run or a later one
-via \verb|load_lattice_response_matrix|) does not need to repeat them.
+The values of \verb|correction_elements| and \verb|items| are recorded
+verbatim in the saved file as the \verb|CorrectionElements| and
+\verb|CorrectionItems| SDDS parameters (the joined whitespace-separated
+family lists), and the resolved per-knob inventory is recorded
+explicitly through the element names, occurrences, and the per-knob
+\verb|KnobParameter| column.  A subsequent \verb|correct_lattice|
+(whether in this run or a later one via \verb|load_lattice_response_matrix|)
+can therefore omit \verb|correction_elements| / \verb|items| entirely
+and inherit them from the file.  If they {\em are} supplied on
+\verb|correct_lattice| they must agree with the values recorded in the
+matrix file, or the run is aborted with an explicit diagnostic.  The
+\verb|exclude|, \verb|bpm_name_pattern|, and \verb|bpm_type_pattern|
+values are recorded implicitly through the resolved BPM and knob
+inventories.
 
 %\begin{latexonly}
 \newpage
@@ -2257,7 +2350,7 @@ via \verb|load_lattice_response_matrix|) does not need to repeat them.
   and tune correction.
 \item function: minimize the vertical dispersion $\eta_y$ at the selected
   BPMs by adjusting selected skew-quadrupole knobs.  This emulates the
-  LOCO-style vertical-dispersion channel of real-machine coupling correction.
+  LOCO-style \cite{Safranek-LOCO} vertical-dispersion channel of real-machine coupling correction.
 \item sequence: must follow \verb|run_setup| and \verb|twiss_output|.  A
   \verb|track| command (or another action command that triggers the steps
   loop) must follow in order for the correction to actually run.
@@ -2266,50 +2359,98 @@ via \verb|load_lattice_response_matrix|) does not need to repeat them.
   matrix using parallel resources with the \verb|compute_coupling_response_matrix|,
   then use \verb|load_coupling_response_matrix| when performing coupling
   correction, particularly when post-correction simulation does not require parallel resources.
+  Correction itself will benefit from parallel resources when the cross-plane matrix is included.
 \item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
 \end{itemize}
 
 \begin{verbatim}
 &correct_coupling
-    STRING name_pattern = NULL;
-    STRING type_pattern = NULL;
-    STRING item = "K1";
+    STRING correction_elements = NULL;
+    STRING items = NULL;
+    STRING lower_limits = NULL;
+    STRING upper_limits = NULL;
+    STRING exclude = NULL;
     STRING bpm_name_pattern = NULL;
     STRING bpm_type_pattern = "MONI";
     long n_iterations = 3;
     double convergence = 1e-9;
+    double change_tolerance = 0.1;
     double correction_fraction = 0.5;
     long use_perturbed_matrix = 0;
     long adaptive_step = 0;
     double response_perturbation = 1e-6;
     double svd_threshold = 1e-6;
     long n_singular_values = 0;
-    double strength_limit = 0;
+    long auto_sv_threshold = 1;
+    double auto_sv_threshold_factor = 3.0;
     double measurement_noise = 0.0;
     double measurement_noise_cutoff = 3.0;
+    double etay_weight = 1.0;
+    STRING cross_h_steering = NULL;
+    STRING cross_v_steering = NULL;
+    STRING cross_x_bpm_name_pattern = NULL;
+    STRING cross_x_bpm_type_pattern = "MONI HMON";
+    STRING cross_y_bpm_name_pattern = NULL;
+    STRING cross_y_bpm_type_pattern = "MONI VMON";
+    double cross_response_weight = 0.0;
+    double cross_steering_kick = 1e-5;
+    double cross_measurement_noise = 0.0;
     STRING strength_log = NULL;
     STRING etay_file = NULL;
     STRING response_file = NULL;
+    STRING rms_log = NULL;
+    long reset_correctors_each_step = 1;
     long verbosity = 0;
 &end
 \end{verbatim}
 
 \begin{itemize}
-\item \verb|name_pattern|, \verb|type_pattern|, \verb|item|,
-  \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists and
-  parameter name selecting the skew-quadrupole knobs and BPM observation
-  points; same semantics as in \verb|compute_coupling_response_matrix|.
-  If \verb|compute_coupling_response_matrix| or
-  \verb|load_coupling_response_matrix| has already been issued, the
-  preloaded knob/BPM inventory is used and these namelist values are
-  ignored.
+\item \verb|correction_elements| --- Whitespace/comma-separated list of
+  wildcard patterns (one per family) selecting elements whose parameter will
+  be adjusted to correct coupling.  Required unless a prior
+  \verb|compute_coupling_response_matrix| or \verb|load_coupling_response_matrix|
+  has already populated the knob inventory.  Each element matched by some
+  pattern that is not also matched by an \verb|exclude| pattern becomes one
+  knob (one SVD column unless joined into a bundle by another command);
+  an element matched by multiple patterns is assigned to the first matching
+  family (first-match-wins).  Element types that do not expose the family's
+  \verb|items[k]| parameter as a double are silently skipped.
+\item \verb|items| --- Parallel whitespace-separated list of parameter names,
+  one per entry in \verb|correction_elements|.  Defaults to \verb|"K1"|
+  applied to every family when omitted.  When supplied the token count must
+  match \verb|correction_elements|; otherwise \verb|elegant| bombs with an
+  explicit message.
+\item \verb|lower_limits|, \verb|upper_limits| --- Parallel space-separated
+  signed bounds on the parameter value, one per family.  Either list may be
+  omitted to disable that side of the clamp for every knob; when supplied
+  the token count must match \verb|correction_elements|.  After every
+  iteration the SVD-derived step is uniformly scaled, if necessary, so that
+  no knob ends up below its family's \verb|lower_limits| or above its family's
+  \verb|upper_limits| value (signed; not magnitudes).  Uniform scaling
+  preserves the SVD direction at the cost of a shorter step.
+\item \verb|exclude| --- Optional whitespace-separated list of patterns of
+  element names to drop from the knob inventory even if they match one of
+  the \verb|correction_elements| entries.
+\item \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists for
+  the observation BPMs; same semantics as in
+  \verb|compute_coupling_response_matrix|.  Ignored when a preloaded matrix
+  carries its own BPM list.
 \item \verb|n_iterations| --- Maximum number of correction iterations.
 \item \verb|convergence| --- Iteration stops early when the RMS $\eta_y$
   at the BPMs falls below this value (in meters).
+\item \verb|change_tolerance| --- Stagnation cutoff on relative
+  iteration-to-iteration improvement.  Iteration stops when the
+  fractional drop $(r_{k-1} - r_k)/r_{k-1}$ in the weighted RMS residual
+  is non-negative but smaller than this value.  Default $0.1$ stops
+  when an iteration improved the residual by less than 10\%.  Set to 0
+  to disable the check and rely solely on \verb|convergence| /
+  \verb|n_iterations|.  A negative improvement (residual grew) is not
+  treated as stagnation: the \verb|adaptive_step| machinery at the top
+  of the next iteration can roll back and shrink the step instead.
+  Must be in $[0, 1)$.
 \item \verb|correction_fraction| --- Fraction of the SVD-derived step
   applied at each iteration.  Values $<1$ improve stability by avoiding
-  overshoot; the default 0.5 is a conservative choice for typical
-  LOCO-style usage.  Must be in $(0,1]$.
+  overshoot. Must be in $(0,1]$.
 \item \verb|use_perturbed_matrix| --- Controls how often the response
   matrix is (re)computed inside this command:
   \begin{itemize}
@@ -2327,8 +2468,10 @@ via \verb|load_lattice_response_matrix|) does not need to repeat them.
   matrix, this control is honored on top of the preloaded matrix.
 \item \verb|adaptive_step| --- If nonzero, the effective
   \verb|correction_fraction| is halved whenever an iteration leaves the
-  RMS $\eta_y$ larger than at the start of the previous iteration.  Same
-  pattern as \verb|chromaticity| uses for its correction fraction.
+  RMS $\eta_y$ larger than at the start of the previous iteration, and the
+  skew-knob values are simultaneously rolled back to the previous
+  iteration's start.  The next iteration then tries a smaller step from
+  the better operating point rather than compounding the bad step.
 \item \verb|response_perturbation| --- Finite-difference step used when
   this command builds the matrix itself (only relevant when
   \verb|use_perturbed_matrix>0| or when no preloaded matrix exists).
@@ -2337,12 +2480,20 @@ via \verb|load_lattice_response_matrix|) does not need to repeat them.
   the pseudo-inverse, regularizing the solution.
 \item \verb|n_singular_values| --- If $>0$, additionally cap the number of
   retained singular values at this many of the largest.
-\item \verb|strength_limit| --- If $>0$, the per-iteration step is uniformly
-  scaled so that no knob's parameter value exceeds \verb|strength_limit| in
-  absolute value after the correction is applied.  Setting all knobs would
-  otherwise require simultaneously honoring per-knob limits, which would
-  distort the SVD direction; uniform scaling preserves the direction at the
-  cost of a shorter step.
+\item \verb|auto_sv_threshold| --- If nonzero (default), after each iteration's
+  step is applied the lattice is checked for stability; if the resulting twiss
+  is unstable, the step is rolled back, the working SV-cutoff threshold is
+  multiplied by \verb|auto_sv_threshold_factor|, and the SVD is re-solved.
+  This is repeated until the lattice is stable, the SV-cutoff drops every
+  singular value (in which case no step is applied this iteration), or 20
+  retries have elapsed (in which case the step is rolled back and the
+  iteration is treated as a no-op).  The working threshold is local to each
+  iteration; the next iteration starts again from the namelist
+  \verb|svd_threshold|.  Set to 0 to disable the retry loop and accept the
+  first-attempt step even when it leaves the lattice unstable.
+\item \verb|auto_sv_threshold_factor| --- Multiplicative bump applied to the
+  working SV threshold on each retry inside \verb|auto_sv_threshold|.  Default
+  3 corresponds to roughly half a decade per retry.
 \item \verb|measurement_noise| --- RMS amplitude (in meters) of independent Gaussian
   measurement noise added to every $\eta_y$ reading at every BPM.  Each
   reading -- the baseline measurement, the perturbed measurements used to
@@ -2367,8 +2518,79 @@ via \verb|load_lattice_response_matrix|) does not need to repeat them.
 \item \verb|response_file| --- The (incomplete) name of an SDDS file
   recording the response matrix.  This is in addition to any file written
   by a prior \verb|compute_coupling_response_matrix|.
+\item \verb|etay_weight| --- Weight applied to every $\eta_y$ row of the
+  residual vector before the weighted SVD solve.  Default 1.0 reproduces
+  the original $\eta_y$-only behavior.  Set to 0 to disable the $\eta_y$
+  channel entirely (useful when combined with the cross-plane channel).
+\item \verb|cross_response_weight| --- Weight applied to every cross-plane
+  row of the residual vector.  Default 0.0 disables the channel; any
+  positive value enables it and turns on the cross-plane steering machinery
+  described below.  When both \verb|etay_weight| and
+  \verb|cross_response_weight| are positive the two channels are combined
+  in a single SVD solve, scaled by their respective weights.
+\item \verb|cross_h_steering|, \verb|cross_v_steering| --- Comma-separated
+  lists selecting the probe steering correctors used to measure the
+  cross-plane orbit response.  Each entry has the form
+  \verb|TYPE/ITEM[/NAMEPATTERN]|, where \verb|TYPE| is an element type
+  (\verb|EHKICK|, \verb|EVKICK|, \verb|HKICK|, \verb|VKICK|,
+  \verb|EKICKER|, \verb|KQUAD|, \verb|DQCOR|, ...), \verb|ITEM| is the
+  parameter name of the steering knob on that type (\verb|KICK| for the
+  pure correctors; \verb|HKICK|/\verb|VKICK| for combined-function
+  elements), and the optional \verb|NAMEPATTERN| (defaulting to \verb|*|)
+  restricts the selection to elements whose names match.  Example:
+  \verb|"EHKICK/KICK, EKICKER/HKICK, KQUAD/HKICK/*H*"|.  At least one of
+  \verb|cross_h_steering| / \verb|cross_v_steering| must be supplied when
+  \verb|cross_response_weight > 0|.
+\item \verb|cross_x_bpm_name_pattern|, \verb|cross_x_bpm_type_pattern| ---
+  Pattern lists selecting BPMs that read the horizontal centroid (used for
+  the V-corrector $\to$ x cross-plane block).  Defaults include \verb|MONI|
+  and \verb|HMON|.
+\item \verb|cross_y_bpm_name_pattern|, \verb|cross_y_bpm_type_pattern| ---
+  Pattern lists selecting BPMs that read the vertical centroid (used for
+  the H-corrector $\to$ y cross-plane block).  Defaults include \verb|MONI|
+  and \verb|VMON|.
+\item \verb|cross_steering_kick| --- Magnitude (in radians) of the probe
+  kick applied to each steering corrector when measuring the cross-plane
+  orbit response.  Must be small enough that the orbit response is in the
+  linear regime, but large enough to be well above closed-orbit numerical
+  noise.  Default $10^{-5}$.
+\item \verb|cross_measurement_noise| --- RMS amplitude (in meters) of
+  Gaussian noise added to every cross-plane orbit reading.  Cutoff is
+  shared with \verb|measurement_noise_cutoff|.  Default 0 disables the
+  noise.
+\item \verb|rms_log| --- The (incomplete) name of an SDDS file recording,
+  per call to the correction routine, the per-iteration RMS residual
+  broken down by channel.  Each page has columns \verb|Iteration|
+  (\verb|0| = initial state; \verb|k+1| = state after iteration \verb|k|),
+  \verb|EtayRms| (RMS $\eta_y$ at the BPMs, unweighted, in meters),
+  \verb|CrossRms| (RMS cross-plane response, m per rad of probe kick;
+  \verb|0| when the channel is off), and \verb|WeightedRms| (the actual
+  optimization metric driven by the SVD).  Parameters record the channel
+  weights in effect.
+\item \verb|reset_correctors_each_step| --- If nonzero (the default), the skew-quadrupole
+  knob strengths are snapshotted on the first \verb|vary_beamline| tick after
+  \verb|run_setup| and reasserted at the start of every subsequent step, before
+  errors and variations are added.  Set to 0 to inherit the previous step's converged
+  skew strengths.  See the description under \verb|&correct| for the wider behavior.
 \item \verb|verbosity| --- Higher values print more diagnostic information.
 \end{itemize}
+
+\paragraph{Cross-plane channel.}  When \verb|cross_response_weight > 0|,
+the SVD residual gains an additional block of rows: the change in the
+cross-plane closed-orbit centroid at each selected BPM per unit kick
+applied to each selected steering corrector.  Specifically, for each H
+probe corrector, the vertical centroid at every \verb|cross_y_bpm_*|
+monitor enters one row; for each V probe corrector, the horizontal
+centroid at every \verb|cross_x_bpm_*| monitor enters one row.  These
+rows are zero in an uncoupled lattice, and grow with coupling, so
+driving them toward zero through skew-quad knobs minimizes the
+machine's coupling.  The cross-plane reader works by perturbing each
+probe corrector by \verb|cross_steering_kick|, finding the closed orbit
+of the perturbed lattice, subtracting the unperturbed orbit, and
+dividing by the kick; the implementation is completely independent of
+the orbit-correction setup (\verb|&correct|, \verb|&steering_element|).
+The cost is one closed-orbit calculation per probe corrector per skew-knob
+perturbation, so users should pick a modest subset of correctors.
 
 For a typical correction workflow the user issues a
 \verb|twiss_output|, then \verb|correct_coupling|, then a
@@ -2378,8 +2600,14 @@ trigger the steps loop.  When a precomputed matrix is to be reused across
 many runs, the matrix can be produced once by
 \verb|compute_coupling_response_matrix| (perhaps in an upstream design
 run) and loaded by \verb|load_coupling_response_matrix| in each
-correction run; in that case the pattern/item parameters need not be
-repeated on \verb|correct_coupling|.
+correction run.  In that case \verb|correction_elements| and \verb|items|
+need not be repeated on \verb|correct_coupling| -- they are inherited
+from the matrix file's \verb|CorrectionElements| and \verb|CorrectionItems|
+parameters.  This lets the user specify only \verb|lower_limits| and
+\verb|upper_limits| aligned with the inherited family count without
+having to restate the patterns; if patterns or items {\em are} restated
+they must agree with those recorded in the matrix file, otherwise the
+run aborts with a clear diagnostic.
 
 %\begin{latexonly}
 \newpage
@@ -2395,8 +2623,9 @@ repeated on \verb|correct_coupling|.
 \item function: drive the linear lattice functions $\beta_x$, $\beta_y$,
   and $\eta_x$ at the selected BPMs toward design values loaded from a
   user-supplied reference twiss file by adjusting selected normal-quadrupole
-  knobs.  This emulates the LOCO-style $\beta$-beat and dispersion channels
-  of real-machine optics correction.
+  knobs.  This emulates the LOCO-style \cite{Safranek-LOCO} $\beta$-beat and dispersion channels
+  of real-machine optics correction, except that the LOCO lattice measurement is not simulated.
+  Instead, we assume that measurements can be performed, with optional user-defined errors.
 \item sequence: must follow \verb|run_setup| and \verb|twiss_output|.  A
   \verb|track| command (or another action command that triggers the steps
   loop) must follow in order for the correction to actually run.
@@ -2405,26 +2634,32 @@ repeated on \verb|correct_coupling|.
   matrix using parallel resources with \verb|compute_lattice_response_matrix|,
   then use \verb|load_lattice_response_matrix| when performing the
   correction, particularly when post-correction simulation does not require parallel resources.
+  Correction itself does not benefit from parallel resources since it is based on direct lattice
+  function calculations, not simulated LOCO \cite{Safranek-LOCO}.
 \item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
 \end{itemize}
 
 \begin{verbatim}
 &correct_lattice
-    STRING name_pattern = NULL;
-    STRING type_pattern = NULL;
+    STRING correction_elements = NULL;
+    STRING items = NULL;
+    STRING lower_limits = NULL;
+    STRING upper_limits = NULL;
+    STRING exclude = NULL;
     STRING bind_name_pattern = NULL;
-    STRING item = "K1";
     STRING bpm_name_pattern = NULL;
     STRING bpm_type_pattern = "MONI";
     long n_iterations = 3;
     double convergence = 1e-9;
+    double change_tolerance = 0.1;
     double correction_fraction = 0.5;
     long use_perturbed_matrix = 0;
     long adaptive_step = 0;
     double response_perturbation = 1e-6;
     double svd_threshold = 1e-6;
     long n_singular_values = 0;
-    double strength_limit = 0;
+    long auto_sv_threshold = 1;
+    double auto_sv_threshold_factor = 3.0;
     double beta_measurement_noise = 0.0;
     double eta_measurement_noise = 0.0;
     double measurement_noise_cutoff = 3.0;
@@ -2435,19 +2670,40 @@ repeated on \verb|correct_coupling|.
     STRING strength_log = NULL;
     STRING response_file = NULL;
     STRING rms_log = NULL;
+    long reset_correctors_each_step = 1;
     long verbosity = 0;
 &end
 \end{verbatim}
 
 \begin{itemize}
-\item \verb|name_pattern|, \verb|type_pattern|, \verb|item|,
-  \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists and
-  parameter name selecting the normal-quadrupole knobs and BPM observation
-  points; same semantics as in \verb|compute_lattice_response_matrix|.
-  If \verb|compute_lattice_response_matrix| or
-  \verb|load_lattice_response_matrix| has already been issued, the
-  preloaded knob/BPM inventory is used and these namelist values are
-  ignored.
+\item \verb|correction_elements| --- Whitespace/comma-separated list of
+  wildcard patterns (one per family) selecting elements whose parameter will
+  be adjusted to correct the lattice functions.  Required unless a prior
+  \verb|compute_lattice_response_matrix| or \verb|load_lattice_response_matrix|
+  has already populated the knob inventory.  Each element matched by some
+  pattern that is not also matched by an \verb|exclude| pattern becomes one
+  knob (one SVD column unless joined into a bundle by \verb|bind_name_pattern|);
+  an element matched by multiple patterns is assigned to the first matching
+  family (first-match-wins).  Element types that do not expose the family's
+  \verb|items[k]| parameter as a double are silently skipped.
+\item \verb|items| --- Parallel whitespace-separated list of parameter names,
+  one per entry in \verb|correction_elements|.  Defaults to \verb|"K1"|
+  applied to every family when omitted.  When supplied the token count must
+  match \verb|correction_elements|.
+\item \verb|lower_limits|, \verb|upper_limits| --- Parallel space-separated
+  signed bounds on the parameter value, one per family.  Either list may be
+  omitted to disable that side of the clamp for every knob; when supplied
+  the token count must match \verb|correction_elements|.  After every
+  iteration the SVD-derived step is uniformly scaled, if necessary, so that
+  no knob ends up below its family's \verb|lower_limits| or above its family's
+  \verb|upper_limits| value (signed; not magnitudes).
+\item \verb|exclude| --- Optional whitespace-separated list of patterns of
+  element names to drop from the knob inventory even if they match one of
+  the \verb|correction_elements| entries.
+\item \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists for
+  the observation BPMs; same semantics as in
+  \verb|compute_lattice_response_matrix|.  Ignored when a preloaded matrix
+  carries its own BPM list.
 \item \verb|bind_name_pattern| --- Optional comma- or space-separated
   list of patterns (with \verb|*|/\verb|?| wildcards) defining families
   of knobs whose correction strengths should be {\bf bound} together.
@@ -2474,6 +2730,16 @@ repeated on \verb|correct_coupling|.
   simulation step.
 \item \verb|convergence| --- Iteration stops early when the weighted RMS
   residual at the BPMs falls below this value.
+\item \verb|change_tolerance| --- Stagnation cutoff on relative
+  iteration-to-iteration improvement.  Iteration stops when the
+  fractional drop $(r_{k-1} - r_k)/r_{k-1}$ in the weighted RMS residual
+  is non-negative but smaller than this value.  Default $0.1$ stops
+  when an iteration improved the residual by less than 10\%.  Set to 0
+  to disable the check and rely solely on \verb|convergence| /
+  \verb|n_iterations|.  A negative improvement (residual grew) is not
+  treated as stagnation: the \verb|adaptive_step| machinery at the top
+  of the next iteration can roll back and shrink the step instead.
+  Must be in $[0, 1)$.
 \item \verb|correction_fraction| --- Fraction of the SVD-derived step
   applied at each iteration.  Values $<1$ improve stability by avoiding
   overshoot.  Must be in $(0,1]$.
@@ -2494,8 +2760,10 @@ repeated on \verb|correct_coupling|.
   matrix, this control is honored on top of the preloaded matrix.
 \item \verb|adaptive_step| --- If nonzero, the effective
   \verb|correction_fraction| is halved whenever an iteration leaves the
-  weighted RMS residual larger than at the start of the previous iteration.
-  Same pattern as \verb|chromaticity| uses for its correction fraction.
+  weighted RMS residual larger than at the start of the previous iteration,
+  and the knob values are simultaneously rolled back to the previous
+  iteration's start.  The next iteration then tries a smaller step from
+  the better operating point rather than compounding the bad step.
 \item \verb|response_perturbation| --- Finite-difference step used when
   this command builds the matrix itself (only relevant when
   \verb|use_perturbed_matrix>0| or when no preloaded matrix exists).
@@ -2504,10 +2772,10 @@ repeated on \verb|correct_coupling|.
   the pseudo-inverse, regularizing the solution.
 \item \verb|n_singular_values| --- If $>0$, additionally cap the number of
   retained singular values at this many of the largest.
-\item \verb|strength_limit| --- If $>0$, the per-iteration step is uniformly
-  scaled so that no knob's parameter value exceeds \verb|strength_limit| in
-  absolute value after the correction is applied.  Uniform scaling preserves
-  the SVD direction at the cost of a shorter step.
+\item \verb|auto_sv_threshold|, \verb|auto_sv_threshold_factor| --- Same
+  rollback-and-retry-with-bumped-SV-cutoff behaviour as documented under
+  \verb|&correct_coupling|.  Defaults: \verb|auto_sv_threshold = 1|,
+  \verb|auto_sv_threshold_factor = 3.0|.
 \item \verb|beta_measurement_noise|, \verb|eta_measurement_noise| --- RMS
   amplitude (fractional for beta functions, in meters for dispersion) of independent Gaussian measurement noise added to
   every $\beta_{x,y}$ and $\eta_x$ reading at every BPM, respectively.  Each
@@ -2558,6 +2826,12 @@ repeated on \verb|correct_coupling|.
   residual that the SVD solver actually drives down).  The per-channel
   weights in effect for the page are also recorded as parameters
   \verb|BetaxWeight|, \verb|BetayWeight|, \verb|EtaxWeight|.
+\item \verb|reset_correctors_each_step| --- If nonzero (the default), the
+  normal-quadrupole knob strengths are snapshotted on the first
+  \verb|vary_beamline| tick after \verb|run_setup| and reasserted at the start of
+  every subsequent step, before errors and variations are added.  Set to 0 to
+  inherit the previous step's converged knob strengths.  See the description
+  under \verb|&correct| for the wider behavior.
 \item \verb|verbosity| --- Higher values print more diagnostic information.
 \end{itemize}
 
@@ -2571,9 +2845,15 @@ finally a \verb|bunched_beam|/\verb|track| pair to trigger the steps
 loop.  When a precomputed matrix is to be reused across many runs, the
 matrix can be produced once by \verb|compute_lattice_response_matrix|
 (perhaps in an upstream design run) and loaded by
-\verb|load_lattice_response_matrix| in each correction run; in that case
-the pattern/item parameters need not be repeated on
-\verb|correct_lattice|.
+\verb|load_lattice_response_matrix| in each correction run.  In that case
+\verb|correction_elements| and \verb|items| need not be repeated on
+\verb|correct_lattice| -- they are inherited from the matrix file's
+\verb|CorrectionElements| and \verb|CorrectionItems| parameters.  This
+lets the user specify only \verb|lower_limits| and \verb|upper_limits|
+aligned with the inherited family count without having to restate the
+patterns; if patterns or items {\em are} restated they must agree with
+those recorded in the matrix file, otherwise the run aborts with a clear
+diagnostic.
 
 %\begin{latexonly}
 \newpage
@@ -4129,6 +4409,7 @@ assigned to the target parameter.
 \begin{verbatim}
 &load_coupling_response_matrix
     STRING filename = NULL;
+    STRING cross_filename = NULL;
     long verbosity = 0;
 &end
 \end{verbatim}
@@ -4141,16 +4422,42 @@ assigned to the target parameter.
   skew elements (by name and occurrence); these are matched against the
   current beamline to install the matrix.  An error is reported if any
   expected element is not present in the current beamline.
+  The file's \verb|CorrectionElements| and \verb|CorrectionItems|
+  parameters (the family-list strings used when the matrix was built)
+  are also loaded into the active correction state, so a subsequent
+  \verb|correct_coupling| may omit \verb|correction_elements| and
+  \verb|items| and inherit them from the matrix file.  When those
+  parameters {\em are} restated on \verb|correct_coupling| they must
+  agree with the loaded values or the run aborts with an explicit
+  diagnostic.
+\item \verb|cross_filename| --- Optional.  The (incomplete) name of the
+  second SDDS file produced by a prior
+  \verb|compute_coupling_response_matrix| run with \verb|cross_filename|
+  set.  When supplied, the cross-plane response matrix is also installed:
+  the H and V probe-corrector inventories (with their items and
+  occurrences), the cross-plane BPM inventories, and the response
+  coefficients are restored, and the \verb|cross_h_steering| /
+  \verb|cross_v_steering| / probe-kick magnitude from the file become the
+  defaults inherited by a subsequent \verb|correct_coupling|.  The user
+  still has to opt in by setting \verb|cross_response_weight > 0| on
+  \verb|correct_coupling|; the loaded data alone does not auto-enable
+  the channel.  Default \verb|NULL| -- no cross-plane channel is
+  installed, preserving the original $\eta_y$-only behavior.
 \item \verb|verbosity| --- Higher values print more diagnostic information.
 \end{itemize}
 
 If either \verb|compute_coupling_response_matrix| or
 \verb|load_coupling_response_matrix| is given before
 \verb|correct_coupling|, the precomputed matrix is used and the
-knob/BPM/parameter selection on \verb|correct_coupling| is not required
-(and is ignored if supplied).  If neither is given, \verb|correct_coupling|
-builds the matrix itself according to its own \verb|use_perturbed_matrix|
-control.
+knob/BPM/item selection on \verb|correct_coupling| is not required.
+When the user does restate \verb|correction_elements| or \verb|items|
+on \verb|correct_coupling|, the values must match those carried by the
+matrix file or the run aborts.  In all cases \verb|lower_limits| and
+\verb|upper_limits| may be supplied freely on \verb|correct_coupling|
+to clamp the inherited knobs; their token count must agree with the
+inherited family count.  If neither command provides a matrix,
+\verb|correct_coupling| builds it itself according to its own
+\verb|use_perturbed_matrix| control.
 
 %\begin{latexonly}
 \newpage
@@ -4183,16 +4490,29 @@ control.
   quadrupole elements (by name and occurrence); these are matched against
   the current beamline to install the matrix.  An error is reported if
   any expected element is not present in the current beamline.
+  The file's \verb|CorrectionElements| and \verb|CorrectionItems|
+  parameters (the family-list strings used when the matrix was built)
+  are also loaded into the active correction state, so a subsequent
+  \verb|correct_lattice| may omit \verb|correction_elements| and
+  \verb|items| and inherit them from the matrix file.  When those
+  parameters {\em are} restated on \verb|correct_lattice| they must
+  agree with the loaded values or the run aborts with an explicit
+  diagnostic.
 \item \verb|verbosity| --- Higher values print more diagnostic information.
 \end{itemize}
 
 If either \verb|compute_lattice_response_matrix| or
 \verb|load_lattice_response_matrix| is given before
 \verb|correct_lattice|, the precomputed matrix is used and the
-knob/BPM/parameter selection on \verb|correct_lattice| is not required
-(and is ignored if supplied).  If neither is given, \verb|correct_lattice|
-builds the matrix itself according to its own \verb|use_perturbed_matrix|
-control.
+knob/BPM/item selection on \verb|correct_lattice| is not required.
+When the user does restate \verb|correction_elements| or \verb|items|
+on \verb|correct_lattice|, the values must match those carried by the
+matrix file or the run aborts.  In all cases \verb|lower_limits| and
+\verb|upper_limits| may be supplied freely on \verb|correct_lattice|
+to clamp the inherited knobs; their token count must agree with the
+inherited family count.  If neither command provides a matrix,
+\verb|correct_lattice| builds it itself according to its own
+\verb|use_perturbed_matrix| control.
 
 %\begin{latexonly}
 \newpage
@@ -6980,6 +7300,40 @@ Twiss parameters should be computed and included in output.
 and included in output. {\em N.B.: Radiation integral computation is not correct for systems with vertical
 bending, nor does it take into account coupling.  See the \verb|moments_output| command if you need such
 computations.}
+
+When \verb|radiation_integrals=1| is set, the output also includes the
+Sokolov-Ternov\cite{SokolovTernov1964} self-polarization time and equilibrium polarization for
+a planar ring, computed automatically alongside the existing radiation
+integrals.  Expressions in the form
+used here are collected in the review by Mane, Shatunov, and
+Yokoya~\cite{Mane2005}.  The new parameters are:
+\begin{itemize}
+\item \verb|I3pos|, \verb|I3neg| --- the sign-resolved third radiation
+  integral, $I_{3,\pm} \equiv \int ds/|\rho|^3$ taken separately over the
+  positive- and negative-bending regions.  By
+  construction \verb|I3pos + I3neg| \verb|= I3|.  Dipoles bin by
+  sign of their bend angle; wigglers, undulators and similar symmetric
+  insertion devices contribute half to each side since their net
+  polarizing contribution is zero.
+\item \verb|tauP| --- Sokolov-Ternov self-polarization time
+  $\tau_p$ in seconds,
+  $\tau_p^{-1} = (5\sqrt{3}/8)\,r_e\hbar\gamma^5 I_3 / (m_e\,C)$,
+  with $C$ the ring circumference.
+\item \verb|Peq| --- equilibrium polarization (planar-ring reduction
+  of the Derbenev-Kondratenko formula),
+  $P_{\rm eq} = (8/(5\sqrt{3}))(I_{3,+}-I_{3,-})/I_3$.
+  For a planar ring whose dipoles all curve the same way,
+  $P_{\rm eq} = \pm P_{\rm ST,limit}$, with the sign indicating
+  the direction of polarization relative to the lattice's bend-angle
+  convention.  Anti-bends and wigglers reduce
+  $|P_{\rm eq}|$ below $P_{\rm ST,limit}$.
+\item \verb|PstLimit| --- the ideal Sokolov-Ternov polarization limit
+  $8/(5\sqrt{3}) \approx 0.92376$ for a uniform planar guide field.
+\end{itemize}
+These quantities assume a planar ring with predominantly vertical
+guide field; spin-orbit depolarization from horizontal field
+components, resonance crossings, and beam-beam effects is not
+included.  
 \item \verb|beta_X|, \verb|alpha_X|, \verb|eta_X|, \verb|etap_X| --- If \verb|matched| is zero, the initial values for
 the X plane.
 
@@ -9225,7 +9579,8 @@ touschekLifetime {\em outputFile}
  {-charge={\em nC}|-particles={\em value}} \{-coupling={\em value}|-emityInput={\em value}\}
  {-RF=Voltage={\em MV},harmonic={\em value}[,superperiods={\em number}][,limit] | -length={\em mm}} 
  [-emitInput={\em valueInMeters}] [-deltaInput={\em value}] [-verbosity={\em value}]
- [-ignoreMismatch] [-deltaLimit={\em valueInPercent}] [-method={\em 0|1}]
+ [-ignoreMismatch[=silently]] [-deltaLimit={\em valueInPercent}] [-method={\em 0|1}] 
+ [-polarization]
 }\end{flushleft}
 
 \item {\bf files:}
@@ -9277,6 +9632,8 @@ specified, the value from the parameter \verb|Sdelta0| in {\em twissFile} is use
   method is also used in {\tt elegant}. 1 - substitute variable {\em
     $\tau$} with variable {\em k}, with $\tau=\tan^2(k)$. These two
   methods give you same results.
+\item {\tt polarization} --- If given, the Touschek lifetime is adjusted to reflect polarization, based on
+  \cite{PhysRevAccelBeams.27.124401}.
 \end{itemize}
 
 \item {\bf Note:} If using \verb|Pelegant| to compute the momentum aperture with \verb|output_mode=1|, it is necessary to first run the script
@@ -12630,6 +12987,18 @@ Y.-P. Sun and C.-Y. Yao, ``Tracking With Space Harmonics in ELEGANT Code,'' Proc
 
 \bibitem{KuboOide} K. Kubo and K. Oide, ``Intrabeam scattering in electron storage rings,''
  Phys. Rev. ST Accel. Beams, vol. 4, no. 12, 124401, 2001.
+
+\bibitem{Safranek-LOCO} J. Safranek, ``Experimental Determination of Storage Ring Optics Using Orbit Response Measurements,''
+  NIM A, vol. 388, page 27, 1997.
+
+\bibitem{PhysRevAccelBeams.27.124401} H. Fu {\em et al.}, ``New analytical formula on the Touschek lifetime of the
+  polarized electron beam in electron storage rings,'' Phys. Rev. Accel. Beams, vol. 27, 124401, 2024.
+
+\bibitem{SokolovTernov1964} A. A. Sokolov and I. M. Ternov, ``On polarization and spin effects in
+  the theory of synchrotron radiation,'' Sov. Phys. Doklady, vol. 8, page 1203, 1964.
+
+\bibitem{Mane2005} S. R. Mane, Yu. M. Shatunov, and K. Yokoya, ``Spin-polarized charged
+  particle beams in high-energy accelerators,'' Rep. Prog. Phys., vol. 68, page 1997, 2005.
 
 \end{thebibliography}
 
