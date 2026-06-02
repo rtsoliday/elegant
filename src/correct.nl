@@ -38,6 +38,7 @@
     long force_alternation = 0;
     long n_iterations = 10;
     long prezero_correctors = 1;
+    long reset_correctors_each_step = 1;
     long track_before_and_after = 0;
     long start_from_centroid = 1;
     long use_actual_beam = 0;
