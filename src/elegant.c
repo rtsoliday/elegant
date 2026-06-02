@@ -38,6 +38,7 @@
 #include "chromDefs.h"
 #include "correctDefs.h"
 #include "tuneDefs.h"
+#include "correctorStash.h"
 #if HAVE_GPU
 #  include "gpu_base.h"
 #endif
@@ -887,6 +888,9 @@ int main(int argc, char **argv)
           beam_type = -1;
           initialize_structures(NULL, &run_control, &error_control, &correct, &beam, output_data,
                                 &optimize, &chrom_corr_data, &tune_corr_data, &links);
+          /* Drop any prior per-step corrector snapshots so the next
+           * vary_beamline() tick takes a fresh baseline. */
+          corrector_stash_invalidate_all();
           reset_alter_specifications();
           clearSliceAnalysis();
           finish_load_parameters();
