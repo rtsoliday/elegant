@@ -17,6 +17,10 @@
 #include "track.h"
 #include "match_string.h"
 #include "correctDefs.h"
+#include "correctorStash.h"
+
+static CORRECTOR_STASH orbitStash = { NULL, NULL, NULL, NULL, 0, 0, 1, 0, "orbit" };
+static CORRECTION *orbit_stash_correct = NULL;
 
 #define TRAJECTORY_MODE 0
 #define ORBIT_MODE 1
@@ -212,6 +216,8 @@ void correction_setup(
   _correct->verbose = verbose;
   _correct->track_before_and_after = track_before_and_after;
   _correct->prezero_correctors = prezero_correctors;
+  orbit_stash_correct = _correct;
+  orbitStash.reassert = reset_correctors_each_step ? 1 : 0;
   _correct->use_response_from_computed_orbits = use_response_from_computed_orbits;
   _correct->start_from_centroid = start_from_centroid;
   _correct->use_actual_beam = use_actual_beam;
@@ -4684,4 +4690,44 @@ void reorderCorrectorArray(ELEMENT_LIST **ucorr, long *sl_index, double *kick_co
   free(ucorr2);
   free(sl_index2);
   free(kick_coef2);
+}
+
+/* ---------------------------------------------------------------- */
+/* Per-step corrector stash hooks (orbit/trajectory).
+ * Walks both planes' CMFx/CMFy ucorr[] lists and records each corrector's
+ * parameter index via SLx/SLy.param_index[sl_index[i]]. */
+
+static void orbit_stash_add_plane(CORMON_DATA *CM, STEERING_LIST *SL) {
+  long i;
+  if (CM == NULL || CM->ucorr == NULL) return;
+  for (i = 0; i < CM->ncor; i++) {
+    long sl = CM->sl_index[i];
+    if (sl < 0 || sl >= SL->n_corr_types) continue;
+    corstash_add(&orbitStash, CM->ucorr[i], SL->param_index[sl]);
+  }
+}
+
+void correct_save_correctors(RUN *run, LINE_LIST *beamline) {
+  (void)run; (void)beamline;
+  if (orbit_stash_correct == NULL || orbit_stash_correct->disable) return;
+  corstash_clear(&orbitStash);
+  if (orbit_stash_correct->method != COUPLED_CORRECTION) {
+    if (orbit_stash_correct->xplane)
+      orbit_stash_add_plane(orbit_stash_correct->CMFx, &orbit_stash_correct->SLx);
+    if (orbit_stash_correct->yplane)
+      orbit_stash_add_plane(orbit_stash_correct->CMFy, &orbit_stash_correct->SLy);
+  } else {
+    orbit_stash_add_plane(orbit_stash_correct->CMFx, &orbit_stash_correct->SLx);
+    orbit_stash_add_plane(orbit_stash_correct->CMFy, &orbit_stash_correct->SLy);
+  }
+  corstash_snapshot(&orbitStash);
+}
+
+long correct_reassert_correctors(RUN *run, LINE_LIST *beamline) {
+  return corstash_reassert(&orbitStash, run, beamline);
+}
+
+void correct_invalidate_correctors(void) {
+  corstash_clear(&orbitStash);
+  orbit_stash_correct = NULL;
 }
