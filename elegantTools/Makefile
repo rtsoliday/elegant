@@ -53,6 +53,7 @@ SCRIPTS = analyzeMagnets \
 	smoothDist6s \
 	spiffe2elegant \
 	spin_resonances \
+	swapOutPolarization \
 	TFBFirSetup \
 	track2mag \
 	track2sdds \
