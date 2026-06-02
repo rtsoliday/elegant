@@ -1877,7 +1877,7 @@ static char *twiss_name[N_TWISS_QUANS] = {
   "Ax", "Ay"};
 static long twiss_mem[N_TWISS_QUANS] = {-1};
 
-static char *radint_name[14] = {
+static char *radint_name[19] = {
   "ex0",
   "Sdelta0",
   "Jx",
@@ -1892,8 +1892,18 @@ static char *radint_name[14] = {
   "I3",
   "I4",
   "I5",
+  "I3pos",
+  "I3neg",
+  "tauP",
+  "Peq",
+  "PstLimit",
 };
-static long radint_mem[14] = {
+static long radint_mem[19] = {
+  -1,
+  -1,
+  -1,
+  -1,
+  -1,
   -1,
   -1,
   -1,
@@ -2431,12 +2441,17 @@ double optimization_function(double *value, long *invalid) {
       rpn_store(beamline->radIntegrals.Uo, NULL, radint_mem[8]);
       for (i = 0; i < 5; i++)
 	rpn_store(beamline->radIntegrals.RI[i], NULL, radint_mem[i + 9]);
+      rpn_store(beamline->radIntegrals.I3pos,    NULL, radint_mem[14]);
+      rpn_store(beamline->radIntegrals.I3neg,    NULL, radint_mem[15]);
+      rpn_store(beamline->radIntegrals.tauP,     NULL, radint_mem[16]);
+      rpn_store(beamline->radIntegrals.Peq,      NULL, radint_mem[17]);
+      rpn_store(beamline->radIntegrals.PstLimit, NULL, radint_mem[18]);
 #if DEBUG
       printf("Radiation integrals stored.\n");
       fflush(stdout);
 #endif
     } else {
-      for (i = 0; i < 14; i++)
+      for (i = 0; i < 19; i++)
 	rpn_store(DBL_MAX/2, NULL, radint_mem[i]);
     }
   }
