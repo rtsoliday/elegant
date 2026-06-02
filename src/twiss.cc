@@ -377,6 +377,7 @@ void propagate_twiss_parameters(TWISS *twiss0, double *tune, long *waists,
   double *func, path[6], path0[6], detR[2], length, sTotal;
   double **R = NULL, C[2], S[2], Cp[2], Sp[2], D[2], Dp[2], sin_dphi, cos_dphi, dphi;
   double lastRI[6];
+  double lastI3pos = 0, lastI3neg = 0;
   // long n_mat_computed;
   long i, j, plane, hasMatrix, hasPath;
   // long otherPlane;
@@ -460,6 +461,8 @@ void propagate_twiss_parameters(TWISS *twiss0, double *tune, long *waists,
   if (radIntegrals) {
     for (i = 0; i < 6; i++)
       lastRI[i] = radIntegrals->RI[i] = 0;
+    radIntegrals->I3pos = 0;
+    radIntegrals->I3neg = 0;
   }
   waists[0] = waists[1] = 0;
 
@@ -621,10 +624,17 @@ void propagate_twiss_parameters(TWISS *twiss0, double *tune, long *waists,
                             beta[1], alpha[1], gamma[1], eta[1], etap[1],
                             path0, run->p_central);
       if (elem->type == T_MRADINTEGRALS) {
+        double mrFactor = ((MRADINTEGRALS *)elem->p_elem)->factor;
         for (i = 0; i < 6; i++) {
-          radIntegrals->RI[i] = (radIntegrals->RI[i] - lastRI[i]) * (((MRADINTEGRALS *)elem->p_elem)->factor) + lastRI[i];
+          radIntegrals->RI[i] = (radIntegrals->RI[i] - lastRI[i]) * mrFactor + lastRI[i];
           lastRI[i] = radIntegrals->RI[i];
         }
+        /* Rescale the sign-split I3 contributions by the same factor to keep
+         * I3pos + I3neg == RI[2] consistent. */
+        radIntegrals->I3pos = (radIntegrals->I3pos - lastI3pos) * mrFactor + lastI3pos;
+        radIntegrals->I3neg = (radIntegrals->I3neg - lastI3neg) * mrFactor + lastI3neg;
+        lastI3pos = radIntegrals->I3pos;
+        lastI3neg = radIntegrals->I3neg;
       }
     }
     if (elem->type == T_ROTATE && !(((ROTATE *)elem->p_elem)->excludeOptics)) {
@@ -1102,7 +1112,12 @@ static SDDS_DEFINITION column_definition[N_COLUMNS_WRI] = {
 #define IP_TAUDELTA IP_ALPHAC + 13
 #define IP_JDELTA IP_ALPHAC + 14
 #define IP_U0 IP_ALPHAC + 15
-#define N_PARAMETERS IP_U0 + 1
+#define IP_I3POS IP_ALPHAC + 16
+#define IP_I3NEG IP_ALPHAC + 17
+#define IP_TAUP IP_ALPHAC + 18
+#define IP_PEQ IP_ALPHAC + 19
+#define IP_PSTLIMIT IP_ALPHAC + 20
+#define N_PARAMETERS IP_PSTLIMIT + 1
 static SDDS_DEFINITION parameter_definition[N_PARAMETERS] = {
   {(char *)"Step", (char *)"&parameter name=Step, type=long, description=\"Simulation step\" &end"},
   {(char *)"SVNVersion", (char *)"&parameter name=SVNVersion, type=string, description=\"SVN version number\", fixed_value=" SVN_VERSION " &end"},
@@ -1185,6 +1200,11 @@ static SDDS_DEFINITION parameter_definition[N_PARAMETERS] = {
   {(char *)"taudelta", (char *)"&parameter name=taudelta, type=double, description=\"Longitudinal damping time\", units=s &end"},
   {(char *)"Jdelta", (char *)"&parameter name=Jdelta, type=double, description=\"Longitudinal damping partition number\" &end"},
   {(char *)"U0", (char *)"&parameter name=U0, type=double, units=MeV, description=\"Energy loss per turn\" &end"},
+  {(char *)"I3pos", (char *)"&parameter name=I3pos, type=double, units=1/m$a2$n, description=\"Third radiation integral over positive-bending regions (Sokolov-Ternov polarizing piece)\" &end"},
+  {(char *)"I3neg", (char *)"&parameter name=I3neg, type=double, units=1/m$a2$n, description=\"Third radiation integral over negative-bending regions (Sokolov-Ternov depolarizing piece)\" &end"},
+  {(char *)"tauP", (char *)"&parameter name=tauP, type=double, units=s, description=\"Sokolov-Ternov self-polarization time\" &end"},
+  {(char *)"Peq", (char *)"&parameter name=Peq, type=double, description=\"Equilibrium polarization (planar-ring DK formula); 8/(5*sqrt(3)) for a single-direction planar ring, suppressed by wigglers and antibends\" &end"},
+  {(char *)"PstLimit", (char *)"&parameter name=PstLimit, type=double, description=\"Ideal Sokolov-Ternov polarization limit 8/(5*sqrt(3))\" &end"},
 };
 
 #define IP_DNUXDJX 0
@@ -1493,6 +1513,11 @@ void dump_twiss_parameters(
                             IP_JDELTA, radIntegrals->Jdelta,
                             IP_U0, radIntegrals->Uo,
                             IP_ENX0, radIntegrals->ex0 * sqrt(sqr(run->p_central) + 1),
+                            IP_I3POS, radIntegrals->I3pos,
+                            IP_I3NEG, radIntegrals->I3neg,
+                            IP_TAUP, radIntegrals->tauP,
+                            IP_PEQ, radIntegrals->Peq,
+                            IP_PSTLIMIT, radIntegrals->PstLimit,
                             -1)) {
       SDDS_SetError((char *)"Problem setting SDDS parameters (dump_twiss_parameters 2)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -2965,6 +2990,11 @@ void incrementRadIntegrals(RADIATION_INTEGRALS *radIntegrals, double *dI, ELEMEN
     radIntegrals->RI[2] += I3 * n_periods;
     radIntegrals->RI[3] += I4 * n_periods;
     radIntegrals->RI[4] += I5 * n_periods;
+    /* Sokolov-Ternov: a symmetric wiggler contributes equally to + and -
+     * half-periods so net polarizing contribution is zero, but it still
+     * contributes to the spin-flip rate I3_tot. */
+    radIntegrals->I3pos += 0.5 * I3 * n_periods;
+    radIntegrals->I3neg += 0.5 * I3 * n_periods;
   } else if (elem->type == T_CWIGGLER) {
     CWIGGLER *wiggler;
     wiggler = (CWIGGLER *)(elem->p_elem);
@@ -2979,6 +3009,8 @@ void incrementRadIntegrals(RADIATION_INTEGRALS *radIntegrals, double *dI, ELEMEN
       radIntegrals->RI[2] += I3 * n_periods;
       radIntegrals->RI[3] += I4 * n_periods;
       radIntegrals->RI[4] += I5 * n_periods;
+      radIntegrals->I3pos += 0.5 * I3 * n_periods;
+      radIntegrals->I3neg += 0.5 * I3 * n_periods;
     }
     if (wiggler->BPeak[0]) {
       /* Bx */
@@ -2989,6 +3021,8 @@ void incrementRadIntegrals(RADIATION_INTEGRALS *radIntegrals, double *dI, ELEMEN
                                    &I1, &I2, &I3, &I4, &I5);
       radIntegrals->RI[1] += I2 * n_periods;
       radIntegrals->RI[2] += I3 * n_periods;
+      radIntegrals->I3pos += 0.5 * I3 * n_periods;
+      radIntegrals->I3neg += 0.5 * I3 * n_periods;
     }
   } else if (elem->type == T_APPLE) {
     APPLE *wiggler;
@@ -3004,6 +3038,8 @@ void incrementRadIntegrals(RADIATION_INTEGRALS *radIntegrals, double *dI, ELEMEN
       radIntegrals->RI[2] += I3 * n_periods;
       radIntegrals->RI[3] += I4 * n_periods;
       radIntegrals->RI[4] += I5 * n_periods;
+      radIntegrals->I3pos += 0.5 * I3 * n_periods;
+      radIntegrals->I3neg += 0.5 * I3 * n_periods;
     }
     if (wiggler->BPeak[0]) {
       /* Bx */
@@ -3014,6 +3050,8 @@ void incrementRadIntegrals(RADIATION_INTEGRALS *radIntegrals, double *dI, ELEMEN
                                    &I1, &I2, &I3, &I4, &I5);
       radIntegrals->RI[1] += I2 * n_periods;
       radIntegrals->RI[2] += I3 * n_periods;
+      radIntegrals->I3pos += 0.5 * I3 * n_periods;
+      radIntegrals->I3neg += 0.5 * I3 * n_periods;
     }
   } else if (elem->type == T_UKICKMAP) {
     UKICKMAP *ukmap;
@@ -3028,14 +3066,21 @@ void incrementRadIntegrals(RADIATION_INTEGRALS *radIntegrals, double *dI, ELEMEN
       radIntegrals->RI[2] += I3 * n_periods;
       radIntegrals->RI[3] += I4 * n_periods;
       radIntegrals->RI[4] += I5 * n_periods;
+      radIntegrals->I3pos += 0.5 * I3 * n_periods;
+      radIntegrals->I3neg += 0.5 * I3 * n_periods;
     }
   } else if (elem->type == T_CCBEND) {
+    double ccbendAngle = ((CCBEND *)elem->p_elem)->angle;
     addCcbendRadiationIntegrals((CCBEND *)elem->p_elem, coord, pCentral, eta0, etap0, beta0, alpha0, &I1, &I2, &I3, &I4, &I5, elem);
     radIntegrals->RI[0] += I1;
     radIntegrals->RI[1] += I2;
     radIntegrals->RI[2] += I3;
     radIntegrals->RI[3] += I4;
     radIntegrals->RI[4] += I5;
+    if (ccbendAngle > 0)
+      radIntegrals->I3pos += I3;
+    else if (ccbendAngle < 0)
+      radIntegrals->I3neg += I3;
   } else if (elem->type == T_LGBEND) {
     LGBEND *lgbend;
     lgbend = (LGBEND *)elem->p_elem;
@@ -3050,6 +3095,13 @@ void incrementRadIntegrals(RADIATION_INTEGRALS *radIntegrals, double *dI, ELEMEN
     radIntegrals->RI[2] += I3;
     radIntegrals->RI[3] += I4;
     radIntegrals->RI[4] += I5;
+    {
+      double lgbendAngle = ((LGBEND *)elem->p_elem)->angle;
+      if (lgbendAngle > 0)
+        radIntegrals->I3pos += I3;
+      else if (lgbendAngle < 0)
+        radIntegrals->I3neg += I3;
+    }
   } else {
     MULT *mult = NULL;
     double KnMult = 0;
@@ -3262,6 +3314,14 @@ void incrementRadIntegrals(RADIATION_INTEGRALS *radIntegrals, double *dI, ELEMEN
       radIntegrals->RI[2] += I3 * n_periods;
       radIntegrals->RI[3] += I4 * n_periods;
       radIntegrals->RI[4] += I5 * n_periods;
+      /* Sokolov-Ternov: bin I3 by sign of bend angle.  Quadrupole/sextupole
+       * "bends" from off-axis trajectories (T_QUAD, T_SEXT, T_MULT, etc.)
+       * also enter this branch via the synthesized angle; binning by their
+       * effective angle sign is the right treatment. */
+      if (angle > 0)
+        radIntegrals->I3pos += I3 * n_periods;
+      else if (angle < 0)
+        radIntegrals->I3neg += I3 * n_periods;
     }
   }
   if (dI) {
@@ -3290,6 +3350,42 @@ void completeRadiationIntegralComputation(RADIATION_INTEGRALS *RI, LINE_LIST *be
   RI->taudelta = RI->tauy * RI->Jy / RI->Jdelta;
   RI->sigmadelta = gamma * sqrt(55. / 32. / sqrt(3.) * hbar_mks / (particleMass * c_mks) * RI->RI[2] / (2 * RI->RI[1] + RI->RI[3]));
   RI->ex0 = sqr(gamma) * 55. / 32. / sqrt(3.) * hbar_mks / (particleMass * c_mks) * RI->RI[4] / (RI->RI[1] - RI->RI[3]);
+
+  /* Sokolov-Ternov self-polarization for a planar ring with sign-correct
+   * Derbenev-Kondratenko reduction of the third radiation integral:
+   *   1/tau_p = (5*sqrt(3)/8) * r_e * hbar * gamma^5 * I3 / (m_e * C)
+   *   P_eq    = (8/(5*sqrt(3))) * (I3pos - I3neg) / (I3pos + I3neg)
+   *
+   * The polarization rate is from Sokolov and Ternov, generalized to an
+   * arbitrary lattice by replacing 1/|rho|^3 with its ring average I3/C:
+   *   A.A. Sokolov and I.M. Ternov, Sov. Phys. Dokl. 8, 1203 (1964);
+   *   V.N. Baier, "Radiative polarization of electrons in storage
+   *     rings," Sov. Phys. Usp. 14, 695 (1972), Eq. (3.2).
+   * The (I3pos - I3neg)/(I3pos + I3neg) form for P_eq is the planar-
+   * ring reduction of the full Derbenev-Kondratenko formula:
+   *   Ya.S. Derbenev and A.M. Kondratenko, Sov. Phys. JETP 37, 968 (1973).
+   * Both formulas are collected in modern form in the review
+   *   S.R. Mane, Yu.M. Shatunov, K. Yokoya, "Spin-polarized charged
+   *     particle beams in high-energy accelerators," Rep. Prog. Phys.
+   *     68, 1997 (2005), Section 4.
+   *
+   * The DK split reduces to the pure 8/(5*sqrt(3)) limit for a single-
+   * direction planar ring.  Wigglers/antibends suppress P_eq. */
+  {
+    double C = beamline->revolution_length * n_periods;
+    double i3 = RI->RI[2];
+    double i3sum = RI->I3pos + RI->I3neg;
+    RI->PstLimit = 8.0 / (5.0 * sqrt(3.0));
+    if (i3 > 0 && C > 0)
+      RI->tauP = (8.0 / (5.0 * sqrt(3.0))) * particleMass * C
+                 / (particleRadius * hbar_mks * ipow5(gamma) * i3);
+    else
+      RI->tauP = 0;
+    if (i3sum > 0)
+      RI->Peq = RI->PstLimit * (RI->I3pos - RI->I3neg) / i3sum;
+    else
+      RI->Peq = 0;
+  }
 
   RI->computed = 1;
 }
