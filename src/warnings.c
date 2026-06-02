@@ -10,9 +10,21 @@ WARNING_RECORD **warningRecord = NULL;
 static long warnings = 0;
 static FILE *fpWarn = NULL;
 static htab *hash_table = NULL;
+/* Nestable suppression counter.  When >0, printWarning prints nothing and
+ * does not bump per-text counters; used by correction routines that
+ * intentionally try a step that might destabilise the lattice and roll back. */
+static long warningSuppressDepth = 0;
 
 void setWarningFilePointer(FILE *fp) {
   fpWarn = fp;
+}
+
+void pushWarningSuppression(void) {
+  warningSuppressDepth++;
+}
+
+void popWarningSuppression(void) {
+  if (warningSuppressDepth > 0) warningSuppressDepth--;
 }
 
 void printWarning(char *text, char *detail) {
@@ -37,6 +49,7 @@ void printWarningForTracking(char *text, char *detail)
 void printWarningWithContext(char *context1, char *context2, char *text, char *detail) {
   WARNING_RECORD *wrPointer = NULL;
 
+  if (warningSuppressDepth > 0) return;
   if (!hash_table)
     hash_table = hcreate(12);
   if (hcount(hash_table) == 0 ||
