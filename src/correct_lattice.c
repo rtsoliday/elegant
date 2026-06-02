@@ -17,7 +17,8 @@
  *      R[i,j] = d obs_i / d K1_j
  * (with i indexing 3*nBpm observables and j indexing the quad knobs) is
  * built via the shared correctionEngine, SVD-pseudo-inverted, and
- * applied with the usual correction_fraction + strength_limit machinery.
+ * applied with the usual correction_fraction + per-knob signed-bound clamp
+ * (per-family lower/upper limits set via the correction_elements family list).
  *
  * Three commands:
  *   compute_lattice_response_matrix  -- build R and save it to a file.
@@ -37,15 +38,42 @@
 #include "matrixOp.h"
 #include "track.h"
 #include "correctionEngine.h"
+#include "correctorStash.h"
 #include "correct_lattice.h"
 
-/* Module-level state retained between setup/do/finish. */
+/* Per-step reassertion stash; populated from knobs[] at save time. */
+static CORRECTOR_STASH clStash = { NULL, NULL, NULL, NULL, 0, 0, 1, 0, "lattice" };
+
+/* Module-level state retained between setup/do/finish.  quadName/quadType/
+ * quadItem are populated only by &compute_lattice_response_matrix and
+ * &load_lattice_response_matrix; the &correct_lattice namelist uses its own
+ * family-list state defined further down. */
 static long initialized = 0;
 static char **quadName = NULL;       long nQuadName = 0;
 static char **quadType = NULL;       long nQuadType = 0;
 static char **bpmName = NULL;        long nBpmName = 0;
 static char **bpmType = NULL;        long nBpmType = 0;
-static char *quadItem = NULL;
+static char *quadItem = NULL;        /* item used by compute_/load_ */
+
+/* Family-list state populated from &correct_lattice's correction_elements/
+ * items/lower_limits/upper_limits/exclude.  nFamily == nCorrPatterns.
+ * itemsList[k] is the item for family k (always non-NULL after setup; default
+ * "K1" when the user omits the items list).  lowerList/upperList are NULL
+ * when the user omits the respective limit list. */
+static char **corrPatterns = NULL;       static long nCorrPatterns = 0;
+static char *corrPatternStr = NULL;      /* verbatim user string, for echoing */
+static char **itemsList = NULL;          static long nItemsList = 0;
+static double *lowerList = NULL;         static long nLowerList = 0;
+static double *upperList = NULL;         static long nUpperList = 0;
+static char **excludePatterns = NULL;    static long nExcludePatterns = 0;
+
+/* Per-knob arrays sized nKnob; populated by buildPerKnobItemAndBounds() after
+ * the knob inventory is finalised.  knobItem[j] is a non-owning pointer into
+ * itemsList[] (when families are in use) or into quadItem (preloaded only). */
+static char **knobItem = NULL;
+static double *knobLower = NULL;         /* NULL ⇒ no lower bound on any knob */
+static double *knobUpper = NULL;         /* NULL ⇒ no upper bound on any knob */
+static long *knobFamily = NULL;          /* family index per knob, or -1 */
 
 static SDDS_DATASET SDDSstrengthLog, SDDSresponse, SDDSrmsLog;
 static short SDDSstrengthLogInit = 0, SDDSresponseInit = 0, SDDSrmsLogInit = 0;
@@ -186,16 +214,193 @@ static void computeKnobGroups(void) {
 }
 
 /****************************************************************************/
+/* Parse a whitespace-separated list of floating-point values into a freshly
+ * allocated array.  *nOut receives the count.  Returns NULL when the input is
+ * NULL/empty; bombs on any token that does not scan as a double. */
+static double *parseDoubleList(const char *input0, long *nOut, const char *ctx) {
+  *nOut = 0;
+  if (input0 == NULL) return NULL;
+  char *input;
+  cp_str(&input, (char *)input0);
+  char *ptr;
+  double *vals = NULL;
+  long n = 0;
+  while ((ptr = get_token(input))) {
+    double v;
+    if (sscanf(ptr, "%le", &v) != 1)
+      bombElegantVA("correct_lattice: %s contains non-numeric token \"%s\"", ctx, ptr);
+    vals = SDDS_Realloc(vals, sizeof(*vals) * (n + 1));
+    vals[n++] = v;
+  }
+  free(input);
+  *nOut = n;
+  return vals;
+}
+
+/* Test whether element name `name` matches any pattern in the exclude list. */
+static int matchesExclude(const char *name) {
+  long k;
+  for (k = 0; k < nExcludePatterns; k++)
+    if (wild_match((char *)name, excludePatterns[k])) return 1;
+  return 0;
+}
+
+/* Walk the beamline once; for each element not in the exclude list, find the
+ * first family pattern matching its name and (if the element exposes the
+ * family's item parameter as a double) record it as a knob.  Element types
+ * lacking that item are silently skipped.  Allocates knobs[] and knobFamily[].
+ * Returns the number of knobs collected. */
+static long collectKnobsFromFamilies(LINE_LIST *beamline) {
+  ELEMENT_LIST *eptr = beamline->elem;
+  long cap = 0;
+  nKnob = 0;
+  if (knobs)      { free(knobs);      knobs = NULL; }
+  if (knobFamily) { free(knobFamily); knobFamily = NULL; }
+  while (eptr) {
+    long fam;
+    for (fam = 0; fam < nCorrPatterns; fam++) {
+      if (!wild_match(eptr->name, corrPatterns[fam])) continue;
+      if (matchesExclude(eptr->name)) break;  /* first family matched; excluded */
+      long paramIndex = confirm_parameter(itemsList[fam], eptr->type);
+      if (paramIndex < 0 ||
+          entity_description[eptr->type].parameter[paramIndex].type != IS_DOUBLE)
+        break;  /* element matches the family but lacks the item; skip element */
+      if (nKnob == cap) {
+        cap = cap ? 2 * cap : 32;
+        knobs      = SDDS_Realloc(knobs,      sizeof(*knobs)      * cap);
+        knobFamily = SDDS_Realloc(knobFamily, sizeof(*knobFamily) * cap);
+      }
+      knobs[nKnob].elem        = eptr;
+      knobs[nKnob].paramIndex  = paramIndex;
+      knobs[nKnob].valuePtr    = (double *)(eptr->p_elem +
+          entity_description[eptr->type].parameter[paramIndex].offset);
+      knobs[nKnob].initialValue = *knobs[nKnob].valuePtr;
+      knobFamily[nKnob] = fam;
+      nKnob++;
+      break;  /* first-match-wins; do not consider later families */
+    }
+    eptr = eptr->succ;
+  }
+  return nKnob;
+}
+
+/* Free the per-knob owned strings in knobItem[] and the array itself. */
+static void freeKnobItem(void) {
+  if (!knobItem) return;
+  long j;
+  for (j = 0; j < nKnob; j++)
+    if (knobItem[j]) free(knobItem[j]);
+  free(knobItem);
+  knobItem = NULL;
+}
+
+/* Build the per-knob (item, lower, upper) arrays.  Assumes knobs[] and (when
+ * families are in use) knobFamily[] are populated.  knobItem[] owns its
+ * strings (cp_str'd) so the per-knob items survive after itemsList[] is
+ * freed by setup_load_lattice_response_matrix or by a later setup call.
+ *
+ * When the caller supplied a family list (nCorrPatterns>0), the per-knob
+ * (item, lower, upper) are rebuilt from it -- this is the only path through
+ * which lower/upper become set.  When no family list was supplied but a
+ * preloaded knobItem[] already exists (load_lattice_response_matrix populated
+ * it from the matrix file, possibly with per-knob items), it is left intact.
+ * Otherwise, every knob inherits quadItem (the legacy single-item field). */
+static void buildPerKnobItemAndBounds(void) {
+  long j;
+  if (knobLower) { free(knobLower); knobLower = NULL; }
+  if (knobUpper) { free(knobUpper); knobUpper = NULL; }
+  if (nKnob == 0) { freeKnobItem(); return; }
+  if (nCorrPatterns > 0 && knobFamily) {
+    freeKnobItem();
+    knobItem = tmalloc(sizeof(*knobItem) * nKnob);
+    for (j = 0; j < nKnob; j++) cp_str(&knobItem[j], itemsList[knobFamily[j]]);
+    if (lowerList) {
+      knobLower = tmalloc(sizeof(*knobLower) * nKnob);
+      for (j = 0; j < nKnob; j++) knobLower[j] = lowerList[knobFamily[j]];
+    }
+    if (upperList) {
+      knobUpper = tmalloc(sizeof(*knobUpper) * nKnob);
+      for (j = 0; j < nKnob; j++) knobUpper[j] = upperList[knobFamily[j]];
+    }
+  } else if (knobItem == NULL) {
+    knobItem = tmalloc(sizeof(*knobItem) * nKnob);
+    for (j = 0; j < nKnob; j++) cp_str(&knobItem[j], quadItem ? quadItem : "K1");
+  }
+  /* else: preloaded per-knob knobItem[] is preserved as-is */
+}
+
+/* When a preloaded inventory exists AND the user supplied a family list, the
+ * family list serves only to assign items/bounds to the already-collected
+ * knobs (by name match).  This routine fills knobFamily[] in that case and
+ * additionally bombs if any preloaded knob would otherwise be associated with
+ * a family whose item disagrees with the preloaded quadItem (since the
+ * response matrix is column-bound to quadItem). */
+static void assignFamiliesToPreloadedKnobs(void) {
+  long j, k;
+  if (knobFamily) { free(knobFamily); knobFamily = NULL; }
+  if (nKnob == 0 || nCorrPatterns == 0) return;
+  knobFamily = tmalloc(sizeof(*knobFamily) * nKnob);
+  for (j = 0; j < nKnob; j++) {
+    knobFamily[j] = -1;
+    for (k = 0; k < nCorrPatterns; k++) {
+      if (!wild_match(knobs[j].elem->name, corrPatterns[k])) continue;
+      if (matchesExclude(knobs[j].elem->name))
+        bombElegantVA("correct_lattice: preloaded knob %s is matched by exclude pattern "
+                      "but cannot be removed once the response matrix is built; "
+                      "rebuild the matrix without this element",
+                      knobs[j].elem->name);
+      if (quadItem && itemsList && strcmp(quadItem, itemsList[k]) != 0)
+        bombElegantVA("correct_lattice: preloaded knob %s would be assigned to family "
+                      "\"%s\" whose item \"%s\" disagrees with the preloaded item \"%s\"",
+                      knobs[j].elem->name, corrPatterns[k], itemsList[k], quadItem);
+      knobFamily[j] = k;
+      break;
+    }
+    /* Unmatched preloaded knobs stay knobFamily[j] = -1 and get no per-knob
+     * limit (their entry in knobLower/knobUpper will be unbounded). */
+  }
+}
+
+/****************************************************************************/
 /* Walk the beamline, collect knobs/BPMs (lazy), allocate working buffers. */
 static long collectAndAllocate(LINE_LIST *beamline) {
   if (knobs == NULL) {
-    nKnob = LRC_collectKnobs(beamline, quadName, nQuadName, quadType, nQuadType,
-                             quadItem, &knobs);
-    nBpm  = LRC_collectBpms (beamline, bpmName,  nBpmName,  bpmType,  nBpmType,  &bpms);
+    /* No preloaded inventory ⇒ build the knob inventory from the family list. */
+    if (nCorrPatterns == 0)
+      bombElegant("correct_lattice: correction_elements must be supplied "
+                  "(unless compute_lattice_response_matrix or "
+                  "load_lattice_response_matrix has been issued)", NULL);
+    collectKnobsFromFamilies(beamline);
+    nBpm = LRC_collectBpms(beamline, bpmName, nBpmName, bpmType, nBpmType, &bpms);
     if (nKnob == 0)
-      bombElegant("correct_lattice: no quadrupole knobs matched name_pattern/type_pattern", NULL);
+      bombElegant("correct_lattice: no knobs matched correction_elements", NULL);
     if (nBpm == 0)
       bombElegant("correct_lattice: no BPMs matched bpm_name_pattern/bpm_type_pattern", NULL);
+    buildPerKnobItemAndBounds();
+  } else {
+    /* Preloaded inventory; assign families (and per-knob bounds) if the user
+     * supplied a family list on this correct_lattice command. */
+    assignFamiliesToPreloadedKnobs();
+    buildPerKnobItemAndBounds();
+    /* Re-derive per-knob items/bounds.  For unmatched preloaded knobs, the
+     * lower/upper entry stays unbounded by way of leaving lower/upper arrays
+     * disabled below. */
+    if (nCorrPatterns == 0) {
+      /* No family list at all ⇒ leave knobLower/knobUpper NULL (unbounded). */
+    } else if (knobLower || knobUpper) {
+      /* Per-knob arrays have been built; for any j with knobFamily[j]==-1 we
+       * need to clear that entry to "unbounded".  Sentinel: set the entry to
+       * a value that disables the clamp on that side.  The asymmetric form of
+       * LRC_clampStepToLimitArray inspects each knob independently, so we
+       * encode "no bound" by placing the bound at +/-infty. */
+      long j;
+      if (knobLower)
+        for (j = 0; j < nKnob; j++)
+          if (knobFamily[j] < 0) knobLower[j] = -DBL_MAX;
+      if (knobUpper)
+        for (j = 0; j < nKnob; j++)
+          if (knobFamily[j] < 0) knobUpper[j] = DBL_MAX;
+    }
   }
   if (yMeas == NULL) {
     long nRows = LCC_N_OBS * nBpm;
@@ -234,6 +439,17 @@ static void freeModuleState(void) {
   if (knobGroup) { free(knobGroup); knobGroup = NULL; }
   nGroup = 0;
   if (quadItem) { free(quadItem); quadItem = NULL; }
+  LRC_freePatternList(&corrPatterns, &nCorrPatterns);
+  if (corrPatternStr) { free(corrPatternStr); corrPatternStr = NULL; }
+  LRC_freePatternList(&itemsList, &nItemsList);
+  LRC_freePatternList(&excludePatterns, &nExcludePatterns);
+  if (lowerList) { free(lowerList); lowerList = NULL; }
+  if (upperList) { free(upperList); upperList = NULL; }
+  nLowerList = nUpperList = 0;
+  freeKnobItem();
+  if (knobLower) { free(knobLower); knobLower = NULL; }
+  if (knobUpper) { free(knobUpper); knobUpper = NULL; }
+  if (knobFamily) { free(knobFamily); knobFamily = NULL; }
   nKnob = nBpm = 0;
   responseValid = 0;
 }
@@ -375,28 +591,20 @@ void setup_correct_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline)
   if (echoNamelists)
     print_namelist(stdout, &correct_lattice);
 
-  /* When a preloaded matrix exists, the knob/BPM inventory and item already
-   * live in module state and the patterns/item on this namelist are ignored. */
-  if (!responseValid && name_pattern == NULL && type_pattern == NULL)
-    bombElegant("correct_lattice: at least one of name_pattern, type_pattern must be supplied "
-                "(unless compute_lattice_response_matrix or load_lattice_response_matrix has been issued)",
-                NULL);
-  if (!responseValid && (item == NULL || strlen(item) == 0))
-    bombElegant("correct_lattice: item cannot be empty", NULL);
   if (reference_file == NULL)
     bombElegant("correct_lattice: reference_file is required", NULL);
   if (n_iterations < 0)
     bombElegant("correct_lattice: n_iterations must be >= 0", NULL);
   if (correction_fraction <= 0 || correction_fraction > 1)
     bombElegant("correct_lattice: correction_fraction must be in (0, 1]", NULL);
+  if (change_tolerance < 0 || change_tolerance >= 1)
+    bombElegant("correct_lattice: change_tolerance must be in [0, 1)", NULL);
   if (response_perturbation <= 0)
     bombElegant("correct_lattice: response_perturbation must be > 0", NULL);
   if (svd_threshold < 0)
     bombElegant("correct_lattice: svd_threshold must be >= 0", NULL);
   if (n_singular_values < 0)
     bombElegant("correct_lattice: n_singular_values must be >= 0", NULL);
-  if (strength_limit < 0)
-    bombElegant("correct_lattice: strength_limit must be >= 0", NULL);
   if (beta_measurement_noise < 0 || eta_measurement_noise < 0)
     bombElegant("correct_lattice: measurement_noise values must be >= 0", NULL);
   if ((beta_measurement_noise > 0 || eta_measurement_noise > 0) && measurement_noise_cutoff <= 0)
@@ -404,17 +612,112 @@ void setup_correct_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline)
   if (betax_weight <= 0 || betay_weight <= 0 || etax_weight <= 0)
     bombElegant("correct_lattice: channel weights must be > 0", NULL);
 
+  /* Per-step reassertion control honored by vary_beamline(). */
+  clStash.reassert = reset_correctors_each_step ? 1 : 0;
+
+  /* Family-list parsing.  Same convention as &correct_tunes:
+   * whitespace/comma-separated, parallel to correction_elements.
+   *
+   * When a matrix was preloaded by load_/compute_lattice_response_matrix and
+   * carried CorrectionElements/CorrectionItems metadata, corrPatterns/itemsList
+   * are already populated.  Preserve them when the user didn't supply
+   * correction_elements/items; when the user did supply, validate against the
+   * preloaded values and bomb on disagreement. */
+  LRC_freePatternList(&excludePatterns,  &nExcludePatterns);
+  if (lowerList) { free(lowerList); lowerList = NULL; }
+  if (upperList) { free(upperList); upperList = NULL; }
+  nLowerList = nUpperList = 0;
+
+  if (correction_elements && *correction_elements) {
+    if (responseValid && corrPatternStr && strcmp(corrPatternStr, correction_elements) != 0)
+      bombElegantVA("correct_lattice: correction_elements=\"%s\" on this command "
+                    "disagrees with the loaded matrix's CorrectionElements=\"%s\"; "
+                    "either omit correction_elements (to inherit) or rebuild the "
+                    "matrix with the desired family list",
+                    correction_elements, corrPatternStr);
+    LRC_freePatternList(&corrPatterns, &nCorrPatterns);
+    if (corrPatternStr) { free(corrPatternStr); corrPatternStr = NULL; }
+    LRC_freePatternList(&itemsList, &nItemsList);
+    cp_str(&corrPatternStr, correction_elements);
+    corrPatterns = addPatterns(&nCorrPatterns, corrPatternStr);
+    if (nCorrPatterns == 0)
+      bombElegant("correct_lattice: correction_elements parsed to zero patterns", NULL);
+    itemsList = tmalloc(sizeof(*itemsList) * nCorrPatterns);
+    nItemsList = nCorrPatterns;
+    if (items && *items) {
+      char *icopy;
+      cp_str(&icopy, items);
+      char *tok;
+      long ii = 0;
+      while ((tok = get_token(icopy)) && ii < nCorrPatterns) {
+        cp_str(&itemsList[ii], tok);
+        ii++;
+      }
+      free(icopy);
+      if (ii != nCorrPatterns)
+        bombElegantVA("correct_lattice: items has %ld entries but correction_elements has %ld",
+                      ii, nCorrPatterns);
+    } else {
+      long ii;
+      for (ii = 0; ii < nCorrPatterns; ii++)
+        cp_str(&itemsList[ii], "K1");
+    }
+  } else if (items && *items) {
+    if (!responseValid || nItemsList == 0)
+      bombElegant("correct_lattice: items supplied without correction_elements; "
+                  "requires a preloaded matrix that carries the family list", NULL);
+    char *icopy;
+    cp_str(&icopy, items);
+    char *tok;
+    long ii = 0;
+    while ((tok = get_token(icopy))) {
+      if (ii >= nItemsList || strcmp(tok, itemsList[ii]) != 0)
+        bombElegantVA("correct_lattice: items on this command disagrees with the "
+                      "loaded matrix's CorrectionItems (entry %ld: \"%s\" vs \"%s\")",
+                      ii, tok, ii < nItemsList ? itemsList[ii] : "(none)");
+      ii++;
+    }
+    if (ii != nItemsList)
+      bombElegantVA("correct_lattice: items has %ld entries but loaded matrix has %ld families",
+                    ii, nItemsList);
+    free(icopy);
+  } else if (!responseValid) {
+    bombElegant("correct_lattice: correction_elements must be supplied "
+                "(unless compute_lattice_response_matrix or "
+                "load_lattice_response_matrix has been issued)", NULL);
+  }
+
+  /* Bound lists and exclude apply regardless of whether the family list came
+   * from this namelist or from a preload. */
+  lowerList = parseDoubleList(lower_limits, &nLowerList, "lower_limits");
+  upperList = parseDoubleList(upper_limits, &nUpperList, "upper_limits");
+  if (lowerList && nLowerList != nCorrPatterns)
+    bombElegantVA("correct_lattice: lower_limits has %ld entries but correction_elements has %ld",
+                  nLowerList, nCorrPatterns);
+  if (upperList && nUpperList != nCorrPatterns)
+    bombElegantVA("correct_lattice: upper_limits has %ld entries but correction_elements has %ld",
+                  nUpperList, nCorrPatterns);
+  if (lowerList && upperList) {
+    long ii;
+    for (ii = 0; ii < nCorrPatterns; ii++)
+      if (lowerList[ii] > upperList[ii])
+        bombElegantVA("correct_lattice: lower_limits[%ld]=%le > upper_limits[%ld]=%le",
+                      ii, lowerList[ii], ii, upperList[ii]);
+  }
+  if (exclude && *exclude) {
+    char *ecopy;
+    cp_str(&ecopy, exclude);
+    excludePatterns = addPatterns(&nExcludePatterns, ecopy);
+    free(ecopy);
+  }
+
+  /* BPM patterns are needed only when we're going to build the inventory.
+   * When a preloaded matrix exists the BPM list is already populated. */
   if (!responseValid) {
-    LRC_freePatternList(&quadName, &nQuadName);
-    LRC_freePatternList(&quadType, &nQuadType);
-    LRC_freePatternList(&bpmName,  &nBpmName);
-    LRC_freePatternList(&bpmType,  &nBpmType);
-    if (quadItem) { free(quadItem); quadItem = NULL; }
-    quadName = addPatterns(&nQuadName, name_pattern);
-    quadType = addPatterns(&nQuadType, type_pattern);
-    bpmName  = addPatterns(&nBpmName,  bpm_name_pattern);
-    bpmType  = addPatterns(&nBpmType,  bpm_type_pattern);
-    cp_str(&quadItem, item);
+    LRC_freePatternList(&bpmName, &nBpmName);
+    LRC_freePatternList(&bpmType, &nBpmType);
+    bpmName = addPatterns(&nBpmName, bpm_name_pattern);
+    bpmType = addPatterns(&nBpmType, bpm_type_pattern);
   }
   /* bind_name_pattern: if explicitly supplied on this command, it overrides
    * whatever was set by a prior compute_/load_lattice_response_matrix.
@@ -644,6 +947,10 @@ long do_correct_lattice(RUN *run, LINE_LIST *beamline) {
     fflush(stdout);
   }
 
+  /* prevKnobBefore retains the knob values from the start of the previous
+   * iteration's apply so the adaptive_step block can roll back a step that
+   * made things worse, not just shrink the next step. */
+  double *prevKnobBefore = NULL;
   for (iter = 0; iter < n_iterations; iter++) {
     if (adaptive_step && prevRMS >= 0 && rms0 > prevRMS) {
       currentFraction *= 0.5;
@@ -651,6 +958,30 @@ long do_correct_lattice(RUN *run, LINE_LIST *beamline) {
         printf("  iteration %ld: RMS grew %le -> %le; halving correction_fraction to %le\n",
                iter, prevRMS, rms0, currentFraction);
         fflush(stdout);
+      }
+      if (prevKnobBefore && nKnob > 0) {
+        for (j = 0; j < nKnob; j++) {
+          *knobs[j].valuePtr = prevKnobBefore[j];
+          if (knobs[j].elem->matrix) {
+            free_matrices(knobs[j].elem->matrix);
+            free(knobs[j].elem->matrix);
+            knobs[j].elem->matrix = NULL;
+          }
+          compute_matrix(knobs[j].elem, run, NULL);
+          change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
+                                   knobs[j].elem->type, prevKnobBefore[j], NULL, LOAD_FLAG_ABSOLUTE);
+        }
+        pushWarningSuppression();
+        (void)LRC_retwiss_status(run, beamline, NULL, 0);
+        popWarningSuppression();
+        readBetaEtaAtBpms(bpms, nBpm, yMeas);
+        for (i = 0; i < nRows; i++) yResid[i] = yMeas[i] - yTarget[i];
+        rms0 = lccRmsValue(yResid, nRows);
+        if (verbosity > 0) {
+          printf("  iteration %ld: rolled back to previous-iteration values; weighted RMS residual now %le\n",
+                 iter, rms0);
+          fflush(stdout);
+        }
       }
     }
     prevRMS = rms0;
@@ -674,53 +1005,145 @@ long do_correct_lattice(RUN *run, LINE_LIST *beamline) {
     if (!responseValid)
       buildResponseMatrix(run, beamline, iter, response_perturbation);
 
+    /* Save the "before" knob values to enable rollback if the applied step
+     * destabilises the lattice. */
+    double *knobBefore = tmalloc(sizeof(*knobBefore) * nKnob);
+    for (j = 0; j < nKnob; j++) knobBefore[j] = *knobs[j].valuePtr;
+
+    /* SVD retry loop: solve, apply, check stability; bump the SV-cutoff
+     * threshold on instability when auto_sv_threshold is enabled.  The
+     * working threshold is local to this iteration. */
+    double workingSvdThreshold = svd_threshold;
+    double scale = 0;
+    int retryUnstable = 0;
+    long autoRetry;
+    const long maxAutoRetries = 20;
+    for (autoRetry = 0; autoRetry <= maxAutoRetries; autoRetry++) {
 #if USE_MPI
-    if (myid == 0) {
+      if (myid == 0) {
 #endif
-      /* Copy R into Rweighted and build residual; then apply per-channel
-       * weights and SVD-solve. */
-      for (i = 0; i < nRows; i++) {
-        yResid[i] = yMeas[i] - yTarget[i];
-        for (j = 0; j < nKnob; j++)
-          Rweighted[i][j] = R[i][j];
+        for (i = 0; i < nRows; i++) {
+          yResid[i] = yMeas[i] - yTarget[i];
+          for (j = 0; j < nKnob; j++)
+            Rweighted[i][j] = R[i][j];
+        }
+        applyWeights(Rweighted, nRows, nKnob, yResid);
+        long g;
+        for (i = 0; i < nRows; i++)
+          for (g = 0; g < nGroup; g++) Rgrouped[i][g] = 0;
+        for (i = 0; i < nRows; i++)
+          for (j = 0; j < nKnob; j++) Rgrouped[i][knobGroup[j]] += Rweighted[i][j];
+        LRC_svdSolve(Rgrouped, nRows, nGroup, yResid, dKgroup,
+                     workingSvdThreshold, n_singular_values,
+                     &minSV, &maxSV, &nUsedSV);
+        for (j = 0; j < nKnob; j++) dK[j] = dKgroup[knobGroup[j]];
+        if (verbosity > 1) {
+          printf("  iteration %ld: SVD used %ld of %ld singular values; SV range [%le, %le]; threshold %le\n",
+                 iter, nUsedSV, MIN(nGroup, nRows), minSV, maxSV, workingSvdThreshold);
+          fflush(stdout);
+        }
+#if USE_MPI
       }
-      applyWeights(Rweighted, nRows, nKnob, yResid);
+      MPI_Bcast(dK, nKnob, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+      MPI_Bcast(&nUsedSV, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+#endif
 
-      /* Collapse to per-group columns: Rgrouped[:, g] = sum_{j in group g} Rw[:, j].
-       * For an unbound knob (its own group), this is just a copy. */
-      long g;
-      for (i = 0; i < nRows; i++)
-        for (g = 0; g < nGroup; g++)
-          Rgrouped[i][g] = 0;
-      for (i = 0; i < nRows; i++)
-        for (j = 0; j < nKnob; j++)
-          Rgrouped[i][knobGroup[j]] += Rweighted[i][j];
+      if (currentFraction != 1.0)
+        for (j = 0; j < nKnob; j++) dK[j] *= currentFraction;
 
-      LRC_svdSolve(Rgrouped, nRows, nGroup, yResid, dKgroup,
-                   svd_threshold, n_singular_values,
-                   &minSV, &maxSV, &nUsedSV);
+      scale = LRC_clampStepToLimitArray(knobs, dK, nKnob, knobLower, knobUpper);
+      if (scale == 0 || nUsedSV == 0) {
+        /* No step possible; restore baseline state. */
+        for (j = 0; j < nKnob; j++) {
+          *knobs[j].valuePtr = knobBefore[j];
+          if (knobs[j].elem->matrix) {
+            free_matrices(knobs[j].elem->matrix);
+            free(knobs[j].elem->matrix);
+            knobs[j].elem->matrix = NULL;
+          }
+          compute_matrix(knobs[j].elem, run, NULL);
+          change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
+                                   knobs[j].elem->type, knobBefore[j], NULL, LOAD_FLAG_ABSOLUTE);
+        }
+        LRC_retwiss(run, beamline, NULL);
+        scale = 0;
+        break;
+      }
 
-      /* Broadcast per-group dK to every knob in the group. */
-      for (j = 0; j < nKnob; j++)
-        dK[j] = dKgroup[knobGroup[j]];
-      if (verbosity > 1) {
-        printf("  iteration %ld: SVD used %ld of %ld singular values; SV range [%le, %le]\n",
-               iter, nUsedSV, MIN(nGroup, nRows), minSV, maxSV);
+      /* Apply the step. */
+      for (j = 0; j < nKnob; j++) {
+        double after = knobBefore[j] + scale * dK[j];
+        *knobs[j].valuePtr = after;
+        if (knobs[j].elem->matrix) {
+          free_matrices(knobs[j].elem->matrix);
+          free(knobs[j].elem->matrix);
+          knobs[j].elem->matrix = NULL;
+        }
+        compute_matrix(knobs[j].elem, run, NULL);
+        change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
+                                 knobs[j].elem->type, after, NULL, LOAD_FLAG_ABSOLUTE);
+      }
+
+      short suppressWarn = auto_sv_threshold && (autoRetry < maxAutoRetries);
+      if (suppressWarn) pushWarningSuppression();
+      retryUnstable = LRC_retwiss_status(run, beamline, NULL, !suppressWarn);
+      if (suppressWarn) popWarningSuppression();
+
+      if (!retryUnstable) break;
+      if (!auto_sv_threshold) break;
+      if (autoRetry == maxAutoRetries) {
+        if (verbosity > 0) {
+          printf("  iteration %ld: auto_sv_threshold retries exhausted; "
+                 "rolling back step and skipping this iteration\n", iter);
+          fflush(stdout);
+        }
+        for (j = 0; j < nKnob; j++) {
+          *knobs[j].valuePtr = knobBefore[j];
+          if (knobs[j].elem->matrix) {
+            free_matrices(knobs[j].elem->matrix);
+            free(knobs[j].elem->matrix);
+            knobs[j].elem->matrix = NULL;
+          }
+          compute_matrix(knobs[j].elem, run, NULL);
+          change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
+                                   knobs[j].elem->type, knobBefore[j], NULL, LOAD_FLAG_ABSOLUTE);
+        }
+        pushWarningSuppression();
+        (void)LRC_retwiss_status(run, beamline, NULL, 0);
+        popWarningSuppression();
+        scale = 0;
+        break;
+      }
+
+      /* Roll back and bump threshold for next attempt. */
+      double newThreshold = workingSvdThreshold * auto_sv_threshold_factor;
+      if (verbosity > 0) {
+        printf("  iteration %ld: unstable twiss; rolling back, svd_threshold %le -> %le (retry %ld)\n",
+               iter, workingSvdThreshold, newThreshold, autoRetry + 1);
         fflush(stdout);
       }
-#if USE_MPI
+      workingSvdThreshold = newThreshold;
+      for (j = 0; j < nKnob; j++) {
+        *knobs[j].valuePtr = knobBefore[j];
+        if (knobs[j].elem->matrix) {
+          free_matrices(knobs[j].elem->matrix);
+          free(knobs[j].elem->matrix);
+          knobs[j].elem->matrix = NULL;
+        }
+        compute_matrix(knobs[j].elem, run, NULL);
+        change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
+                                 knobs[j].elem->type, knobBefore[j], NULL, LOAD_FLAG_ABSOLUTE);
+      }
+      pushWarningSuppression();
+      (void)LRC_retwiss_status(run, beamline, NULL, 0);
+      popWarningSuppression();
     }
-    MPI_Bcast(dK, nKnob, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-#endif
 
-    if (currentFraction != 1.0)
-      for (j = 0; j < nKnob; j++)
-        dK[j] *= currentFraction;
-
-    double scale = LRC_clampStepToLimit(knobs, dK, nKnob, strength_limit);
     if (scale == 0) {
       if (verbosity > 0)
-        printf("  iteration %ld: no correction applied (strength_limit reached)\n", iter);
+        printf("  iteration %ld: no correction applied (per-knob strength limit reached or all SVs dropped)\n",
+               iter);
+      free(knobBefore);
       if (strengthLogPageOpen) {
         if (!SDDS_SetParameters(&SDDSstrengthLog, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                                 "Stage", "corrected", NULL) ||
@@ -731,8 +1154,8 @@ long do_correct_lattice(RUN *run, LINE_LIST *beamline) {
       break;
     }
     if (scale < 1 && verbosity > 0) {
-      printf("  iteration %ld: step scaled by %le to respect strength_limit=%le\n",
-             iter, scale, strength_limit);
+      printf("  iteration %ld: step scaled by %le to respect per-knob strength limits\n",
+             iter, scale);
       fflush(stdout);
     }
 
@@ -750,34 +1173,31 @@ long do_correct_lattice(RUN *run, LINE_LIST *beamline) {
         SDDS_Bomb("correct_lattice: error writing strength_log page");
     }
     for (j = 0; j < nKnob; j++) {
-      double before = *knobs[j].valuePtr;
-      double step = scale * dK[j];
-      double after = before + step;
-      *knobs[j].valuePtr = after;
-      if (knobs[j].elem->matrix) {
-        free_matrices(knobs[j].elem->matrix);
-        free(knobs[j].elem->matrix);
-        knobs[j].elem->matrix = NULL;
-      }
-      compute_matrix(knobs[j].elem, run, NULL);
-      change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
-                               knobs[j].elem->type, after, NULL, LOAD_FLAG_ABSOLUTE);
+      double before = knobBefore[j];
+      double after  = *knobs[j].valuePtr;
+      double step   = after - before;
       if (SDDSstrengthLogInit) {
         if (!SDDS_SetRowValues(&SDDSstrengthLog, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, j,
                                "ElementName",            knobs[j].elem->name,
                                "ElementOccurence",       knobs[j].elem->occurence,
                                "s",                      knobs[j].elem->end_pos,
-                               "ElementParameter",       quadItem,
+                               "ElementParameter",       knobItem[j],
                                "PreviousParameterValue", before,
                                "DeltaParameterValue",    step,
                                "ParameterValue",         after, NULL))
           SDDS_Bomb("correct_lattice: error setting strength_log row");
       }
     }
+    /* Transfer this iteration's "before" snapshot to prevKnobBefore so the
+     * next iteration's adaptive_step block can roll back this iteration's
+     * apply if it ends up making the residual worse. */
+    if (prevKnobBefore) free(prevKnobBefore);
+    prevKnobBefore = knobBefore;
+    knobBefore = NULL;
     if (SDDSstrengthLogInit)
       strengthLogPageOpen = 1;
 
-    LRC_retwiss(run, beamline, NULL);
+    /* Final retwiss already done inside the retry loop. */
     readBetaEtaAtBpms(bpms, nBpm, yMeas);
     for (i = 0; i < nRows; i++) yResid[i] = yMeas[i] - yTarget[i];
     rms = lccRmsValue(yResid, nRows);
@@ -798,9 +1218,24 @@ long do_correct_lattice(RUN *run, LINE_LIST *beamline) {
     }
     rms0 = rms;
 
+    /* change_tolerance: stop if the relative improvement this iteration was
+     * positive but smaller than the requested floor.  Negative improvement
+     * (rms grew) is left to the adaptive_step block at the top of the next
+     * iteration so it can roll back rather than terminate prematurely. */
+    if (change_tolerance > 0 && prevRMS > 0 && rms <= prevRMS &&
+        (prevRMS - rms) < change_tolerance * prevRMS) {
+      if (verbosity > 0) {
+        printf("  iteration %ld: relative improvement %le below change_tolerance %le; stopping\n",
+               iter, (prevRMS - rms) / prevRMS, change_tolerance);
+        fflush(stdout);
+      }
+      break;
+    }
+
     if (use_perturbed_matrix > 1)
       responseValid = 0;
   }
+  if (prevKnobBefore) { free(prevKnobBefore); prevKnobBefore = NULL; }
 
   if (SDDSrmsLogInit) {
     if (!SDDS_WritePage(&SDDSrmsLog))
@@ -877,12 +1312,29 @@ static void saveResponseMatrixToFile(char *filename, double pert) {
       SDDS_DefineColumn(&out, "dEtaxDK1", NULL, "m$a2$n",
                         "Response: d eta_x(BPM) / d parameter(quad)",
                         NULL, SDDS_DOUBLE, 0) < 0 ||
+      SDDS_DefineColumn(&out, "KnobParameter", NULL, NULL,
+                        "Per-knob parameter name perturbed for this column "
+                        "(supersedes ElementParameter parameter for multi-item "
+                        "matrices)",
+                        NULL, SDDS_STRING, 0) < 0 ||
       SDDS_DefineParameter(&out, "ElementParameter", NULL, NULL,
-                           "Name of the element parameter that was perturbed (e.g. K1)",
+                           "Legacy single-item field; for matrices with mixed "
+                           "items the authoritative per-knob value lives in the "
+                           "KnobParameter column",
                            NULL, SDDS_STRING, NULL) < 0 ||
       SDDS_DefineParameter(&out, "BindNamePattern", NULL, NULL,
                            "Default bind_name_pattern carried by this matrix; "
                            "empty means no binding",
+                           NULL, SDDS_STRING, NULL) < 0 ||
+      SDDS_DefineParameter(&out, "CorrectionElements", NULL, NULL,
+                           "Verbatim correction_elements string used to build "
+                           "this matrix; consumed by load_lattice_response_matrix "
+                           "so a subsequent correct_lattice can inherit the family "
+                           "list and supply only lower_limits / upper_limits",
+                           NULL, SDDS_STRING, NULL) < 0 ||
+      SDDS_DefineParameter(&out, "CorrectionItems", NULL, NULL,
+                           "Whitespace-joined items list aligned with "
+                           "CorrectionElements; consumed by load_lattice_response_matrix",
                            NULL, SDDS_STRING, NULL) < 0 ||
       !SDDS_DefineSimpleParameter(&out, "ResponsePerturbation", NULL, SDDS_DOUBLE) ||
       !SDDS_DefineSimpleParameter(&out, "nKnobs", NULL, SDDS_LONG) ||
@@ -892,14 +1344,30 @@ static void saveResponseMatrixToFile(char *filename, double pert) {
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
     exitElegant(1);
   }
+  /* Build the joined items string aligned to itemsList[]. */
+  char *itemsJoined = NULL;
+  {
+    long total = 0, kk;
+    for (kk = 0; kk < nItemsList; kk++) total += strlen(itemsList[kk]) + 1;
+    if (total == 0) total = 1;
+    itemsJoined = tmalloc(total + 1);
+    itemsJoined[0] = '\0';
+    for (kk = 0; kk < nItemsList; kk++) {
+      if (kk > 0) strcat(itemsJoined, " ");
+      strcat(itemsJoined, itemsList[kk]);
+    }
+  }
   if (!SDDS_StartPage(&out, nBpm * nKnob) ||
       !SDDS_SetParameters(&out, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                           "ElementParameter",     quadItem,
                           "BindNamePattern",      bindNamePatternStr ? bindNamePatternStr : "",
+                          "CorrectionElements",   corrPatternStr ? corrPatternStr : "",
+                          "CorrectionItems",      itemsJoined,
                           "ResponsePerturbation", pert,
                           "nKnobs",               nKnob,
                           "nBPMs",                nBpm, NULL))
     SDDS_Bomb("compute_lattice_response_matrix: error writing parameters");
+  free(itemsJoined);
   row = 0;
   for (i = 0; i < nBpm; i++)
     for (j = 0; j < nKnob; j++) {
@@ -912,7 +1380,9 @@ static void saveResponseMatrixToFile(char *filename, double pert) {
                              "sQuad",         knobs[j].elem->end_pos,
                              "dBetaxDK1",     R[LCC_N_OBS*i+0][j],
                              "dBetayDK1",     R[LCC_N_OBS*i+1][j],
-                             "dEtaxDK1",      R[LCC_N_OBS*i+2][j], NULL))
+                             "dEtaxDK1",      R[LCC_N_OBS*i+2][j],
+                             "KnobParameter", knobItem ? knobItem[j] : quadItem,
+                             NULL))
         SDDS_Bomb("compute_lattice_response_matrix: error setting row");
       row++;
     }
@@ -931,12 +1401,9 @@ void setup_compute_lattice_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE
 
   if (compute_lattice_response_matrix_struct.filename == NULL)
     bombElegant("compute_lattice_response_matrix: filename is required", NULL);
-  if (compute_lattice_response_matrix_struct.name_pattern == NULL &&
-      compute_lattice_response_matrix_struct.type_pattern == NULL)
-    bombElegant("compute_lattice_response_matrix: at least one of name_pattern, type_pattern is required", NULL);
-  if (compute_lattice_response_matrix_struct.item == NULL ||
-      strlen(compute_lattice_response_matrix_struct.item) == 0)
-    bombElegant("compute_lattice_response_matrix: item cannot be empty", NULL);
+  if (compute_lattice_response_matrix_struct.correction_elements == NULL ||
+      *compute_lattice_response_matrix_struct.correction_elements == 0)
+    bombElegant("compute_lattice_response_matrix: correction_elements is required", NULL);
   if (compute_lattice_response_matrix_struct.response_perturbation <= 0)
     bombElegant("compute_lattice_response_matrix: response_perturbation must be > 0", NULL);
   if (compute_lattice_response_matrix_struct.measurement_noise < 0)
@@ -946,11 +1413,45 @@ void setup_compute_lattice_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE
     bombElegant("compute_lattice_response_matrix: measurement_noise_cutoff must be > 0 when noise is enabled", NULL);
 
   freeModuleState();
-  quadName = addPatterns(&nQuadName, compute_lattice_response_matrix_struct.name_pattern);
-  quadType = addPatterns(&nQuadType, compute_lattice_response_matrix_struct.type_pattern);
-  bpmName  = addPatterns(&nBpmName,  compute_lattice_response_matrix_struct.bpm_name_pattern);
-  bpmType  = addPatterns(&nBpmType,  compute_lattice_response_matrix_struct.bpm_type_pattern);
-  cp_str(&quadItem, compute_lattice_response_matrix_struct.item);
+  /* Parse the new family-list inventory params (same convention as
+   * &correct_lattice).  No lower/upper here -- limits are correct-time
+   * concerns and live on &correct_lattice. */
+  cp_str(&corrPatternStr, compute_lattice_response_matrix_struct.correction_elements);
+  corrPatterns = addPatterns(&nCorrPatterns, corrPatternStr);
+  if (nCorrPatterns == 0)
+    bombElegant("compute_lattice_response_matrix: correction_elements parsed to zero patterns", NULL);
+  itemsList = tmalloc(sizeof(*itemsList) * nCorrPatterns);
+  nItemsList = nCorrPatterns;
+  if (compute_lattice_response_matrix_struct.items &&
+      *compute_lattice_response_matrix_struct.items) {
+    char *icopy;
+    cp_str(&icopy, compute_lattice_response_matrix_struct.items);
+    char *tok;
+    long ii = 0;
+    while ((tok = get_token(icopy)) && ii < nCorrPatterns) {
+      cp_str(&itemsList[ii], tok);
+      ii++;
+    }
+    free(icopy);
+    if (ii != nCorrPatterns)
+      bombElegantVA("compute_lattice_response_matrix: items has %ld entries but correction_elements has %ld",
+                    ii, nCorrPatterns);
+  } else {
+    long ii;
+    for (ii = 0; ii < nCorrPatterns; ii++) cp_str(&itemsList[ii], "K1");
+  }
+  if (compute_lattice_response_matrix_struct.exclude &&
+      *compute_lattice_response_matrix_struct.exclude) {
+    char *ecopy;
+    cp_str(&ecopy, compute_lattice_response_matrix_struct.exclude);
+    excludePatterns = addPatterns(&nExcludePatterns, ecopy);
+    free(ecopy);
+  }
+  bpmName = addPatterns(&nBpmName, compute_lattice_response_matrix_struct.bpm_name_pattern);
+  bpmType = addPatterns(&nBpmType, compute_lattice_response_matrix_struct.bpm_type_pattern);
+  /* Legacy quadItem records the first family's item for the
+   * backward-compatibility ElementParameter parameter in the matrix file. */
+  cp_str(&quadItem, itemsList[0]);
   /* Stash the binding intent so it gets saved into the matrix file and is
    * also visible to a subsequent correct_lattice in this run. */
   setBindingFromString(compute_lattice_response_matrix_struct.bind_name_pattern);
@@ -1038,16 +1539,64 @@ void setup_load_lattice_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_LI
       !(dBy       = SDDS_GetColumnInDoubles(&in, "dBetayDK1")) ||
       !(dEx       = SDDS_GetColumnInDoubles(&in, "dEtaxDK1")))
     SDDS_Bomb("load_lattice_response_matrix: error reading columns");
+  /* Per-knob item column (KnobParameter) is the multi-item form; absent
+   * for matrices written by older compute_lattice_response_matrix.  When
+   * absent, every knob falls back to the legacy ElementParameter parameter. */
+  char **knobItemsF = NULL;
+  if (SDDS_CheckColumn(&in, "KnobParameter", NULL, SDDS_STRING, NULL) == SDDS_CHECK_OK)
+    knobItemsF = SDDS_GetColumn(&in, "KnobParameter");
+  /* Family-list metadata (CorrectionElements, CorrectionItems) written by
+   * recent compute_lattice_response_matrix.  Optional. */
+  char *corrElemsF = NULL, *corrItemsF = NULL;
+  if (SDDS_CheckParameter(&in, "CorrectionElements", NULL, SDDS_STRING, NULL) == SDDS_CHECK_OK)
+    SDDS_GetParameter(&in, "CorrectionElements", &corrElemsF);
+  if (SDDS_CheckParameter(&in, "CorrectionItems", NULL, SDDS_STRING, NULL) == SDDS_CHECK_OK)
+    SDDS_GetParameter(&in, "CorrectionItems", &corrItemsF);
   SDDS_Terminate(&in);
 
   freeModuleState();
   setBindingFromString(bindStr);
   if (bindStr) free(bindStr);
   cp_str(&quadItem, itemStr);
+  /* Populate the family-list module state from the loaded metadata so that a
+   * subsequent correct_lattice can inherit correction_elements/items and
+   * only supply lower_limits/upper_limits aligned with the loaded count. */
+  if (corrElemsF && *corrElemsF) {
+    cp_str(&corrPatternStr, corrElemsF);
+    corrPatterns = addPatterns(&nCorrPatterns, corrPatternStr);
+    if (corrItemsF && *corrItemsF) {
+      char *ic;
+      cp_str(&ic, corrItemsF);
+      char *tok;
+      long ii = 0;
+      itemsList = tmalloc(sizeof(*itemsList) * nCorrPatterns);
+      nItemsList = nCorrPatterns;
+      while ((tok = get_token(ic)) && ii < nCorrPatterns) {
+        cp_str(&itemsList[ii], tok);
+        ii++;
+      }
+      free(ic);
+    }
+    /* Seed the &correct_lattice namelist's correction_elements and items
+     * globals (and their _default companions) so the next print_namelist
+     * echoes the inherited values.  STICKY_NAMELIST_DEFAULTS in
+     * processNamelist re-copies the _default into the live variable before
+     * the user's entries are applied, so both must be updated to be
+     * effective. */
+    cp_str(&correction_elements, corrElemsF);
+    cp_str(&correction_elements_default, corrElemsF);
+    if (corrItemsF && *corrItemsF) {
+      cp_str(&items, corrItemsF);
+      cp_str(&items_default, corrItemsF);
+    }
+  }
+  if (corrElemsF) free(corrElemsF);
+  if (corrItemsF) free(corrItemsF);
   nKnob = nKnobsF;
   nBpm  = nBPMsF;
 
   knobs = SDDS_Realloc(NULL, sizeof(*knobs) * nKnob);
+  knobItem = tmalloc(sizeof(*knobItem) * nKnob);
   for (j = 0; j < nKnob; j++) {
     ELEMENT_LIST *eptr = LRC_findElementByNameOccurence(beamline, quadNames[j], quadOccs[j]);
     if (!eptr) {
@@ -1055,17 +1604,27 @@ void setup_load_lattice_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_LI
               quadNames[j], quadOccs[j]);
       exitElegant(1);
     }
+    /* knobItemsF stores one entry per (BPM, knob) row.  The first BPM's
+     * block holds row index j for knob j (i==0 in the outer i*nKnob+j
+     * formula used at save time). */
+    char *thisItem = knobItemsF ? knobItemsF[j] : quadItem;
+    cp_str(&knobItem[j], thisItem);
     knobs[j].elem = eptr;
-    knobs[j].paramIndex = confirm_parameter(quadItem, eptr->type);
+    knobs[j].paramIndex = confirm_parameter(thisItem, eptr->type);
     if (knobs[j].paramIndex < 0 ||
         entity_description[eptr->type].parameter[knobs[j].paramIndex].type != IS_DOUBLE) {
       fprintf(stderr, "load_lattice_response_matrix: element %s has no double parameter %s\n",
-              quadNames[j], quadItem);
+              quadNames[j], thisItem);
       exitElegant(1);
     }
     knobs[j].valuePtr = (double *)(eptr->p_elem +
         entity_description[eptr->type].parameter[knobs[j].paramIndex].offset);
     knobs[j].initialValue = *knobs[j].valuePtr;
+  }
+  if (knobItemsF) {
+    long jj;
+    for (jj = 0; jj < nRows; jj++) free(knobItemsF[jj]);
+    free(knobItemsF);
   }
   bpms = SDDS_Realloc(NULL, sizeof(*bpms) * nBpm);
   for (i = 0; i < nBpm; i++) {
@@ -1121,4 +1680,26 @@ void setup_load_lattice_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_LI
   free(bpmOccs);  free(quadOccs);
   free(dBx); free(dBy); free(dEx);
   free(itemStr);
+}
+
+/* ============================================================ */
+/* Per-step corrector reassertion hooks for vary_beamline().    */
+/* ============================================================ */
+
+void correct_lattice_save_correctors(RUN *run, LINE_LIST *beamline) {
+  long j;
+  (void)run; (void)beamline;
+  if (!initialized || knobs == NULL || nKnob == 0) return;
+  corstash_clear(&clStash);
+  for (j = 0; j < nKnob; j++)
+    corstash_add(&clStash, knobs[j].elem, knobs[j].paramIndex);
+  corstash_snapshot(&clStash);
+}
+
+long correct_lattice_reassert_correctors(RUN *run, LINE_LIST *beamline) {
+  return corstash_reassert(&clStash, run, beamline);
+}
+
+void correct_lattice_invalidate_correctors(void) {
+  corstash_clear(&clStash);
 }
