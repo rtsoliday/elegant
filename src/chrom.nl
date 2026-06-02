@@ -24,6 +24,7 @@
     long use_perturbed_matrix = 0;    
     long exit_on_failure = 0;
     long update_orbit = 0;
+    long reset_correctors_each_step = 1;
     long verbosity = 1;
     double dK2_weight = 1;
     STRING response_matrix_output = NULL;
