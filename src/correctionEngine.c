@@ -108,7 +108,12 @@ ELEMENT_LIST *LRC_findElementByNameOccurence(LINE_LIST *beamline,
 /****************************************************************************/
 
 void LRC_retwiss(RUN *run, LINE_LIST *beamline, ELEMENT_LIST *changed) {
-  unsigned long unstable;
+  (void)LRC_retwiss_status(run, beamline, changed, 1);
+}
+
+int LRC_retwiss_status(RUN *run, LINE_LIST *beamline, ELEMENT_LIST *changed,
+                       int warnOnUnstable) {
+  unsigned long unstable = 0;
   if (changed && changed->matrix) {
     free_matrices(changed->matrix);
     free(changed->matrix);
@@ -123,8 +128,9 @@ void LRC_retwiss(RUN *run, LINE_LIST *beamline, ELEMENT_LIST *changed) {
   beamline->flags &= ~BEAMLINE_RADINT_DONE;
   beamline->flags |= BEAMLINE_MATRICES_NEEDED;
   update_twiss_parameters(run, beamline, &unstable);
-  if (unstable)
+  if (unstable && warnOnUnstable)
     printWarning("correctionEngine: unstable twiss solution encountered", NULL);
+  return unstable ? 1 : 0;
 }
 
 /****************************************************************************/
@@ -288,6 +294,41 @@ double LRC_clampStepToLimit(LRC_Knob *knobs, double *dK, long n, double strength
   }
   if (scale < 1e-12) {
     printWarning("correctionEngine: a knob is already at strength_limit; no correction applied this iteration",
+                 NULL);
+    scale = 0;
+  }
+  return scale;
+}
+
+/* Asymmetric per-knob clamp.  Constraint:
+ *     lower[j] <= K[j] + s*dK[j] <= upper[j]
+ * Bounds are SIGNED values on K, not magnitudes.  Either array may be
+ * NULL (then that side of the bound is inactive for every knob); if
+ * both arrays are NULL no clamping is performed.  Returns the largest
+ * uniform s in [0,1] satisfying every active bound, or 0 with a
+ * warning when at least one active bound is already binding in the
+ * step direction. */
+double LRC_clampStepToLimitArray(LRC_Knob *knobs, double *dK, long n,
+                                 const double *lower, const double *upper) {
+  long j;
+  double scale = 1.0;
+  if (lower == NULL && upper == NULL) return 1.0;
+  for (j = 0; j < n; j++) {
+    if (dK[j] == 0) continue;
+    double K0 = *knobs[j].valuePtr;
+    double K1 = K0 + dK[j];
+    if (upper && dK[j] > 0 && K1 > upper[j]) {
+      double s_j = (upper[j] - K0) / dK[j];
+      if (s_j < 0) s_j = 0;
+      if (s_j < scale) scale = s_j;
+    } else if (lower && dK[j] < 0 && K1 < lower[j]) {
+      double s_j = (lower[j] - K0) / dK[j];
+      if (s_j < 0) s_j = 0;
+      if (s_j < scale) scale = s_j;
+    }
+  }
+  if (scale < 1e-12) {
+    printWarning("correctionEngine: a knob is already at its strength limit; no correction applied this iteration",
                  NULL);
     scale = 0;
   }
