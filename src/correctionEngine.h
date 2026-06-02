@@ -70,6 +70,13 @@ ELEMENT_LIST *LRC_findElementByNameOccurence(LINE_LIST *beamline,
  * may have changed). Calls update_twiss_parameters() and warns if unstable. */
 void LRC_retwiss(RUN *run, LINE_LIST *beamline, ELEMENT_LIST *changed);
 
+/* Variant of LRC_retwiss that reports whether the resulting twiss solution
+ * was unstable (returns 1) or stable (returns 0).  When warnOnUnstable is
+ * nonzero, also emits the standard warning; pass 0 to suppress (useful when
+ * the caller plans to retry with a different conditioning). */
+int LRC_retwiss_status(RUN *run, LINE_LIST *beamline, ELEMENT_LIST *changed,
+                       int warnOnUnstable);
+
 /* Build the nObs x nKnob response matrix R by one-sided finite difference:
  *     R[i][j] = (obs_pert[i] - obs_base[i]) / pert
  *
@@ -113,5 +120,13 @@ void LRC_svdSolve(double **R, long nRows, long nCols,
  * strengthLimit for every knob. Returns 1.0 when strengthLimit <= 0
  * (no limit). Returns 0 with a warning when no progress is possible. */
 double LRC_clampStepToLimit(LRC_Knob *knobs, double *dK, long n, double strengthLimit);
+
+/* Per-knob signed-bound variant.  Constraint:
+ *   lower[j] <= K[j] + s*dK[j] <= upper[j]
+ * Either array may be NULL to disable that side for every knob.  Returns
+ * the largest uniform s in [0,1] satisfying every active bound, or 0
+ * with a warning when an active bound is already binding. */
+double LRC_clampStepToLimitArray(LRC_Knob *knobs, double *dK, long n,
+                                 const double *lower, const double *upper);
 
 #endif /* CORRECTION_ENGINE_H */
