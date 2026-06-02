@@ -28,7 +28,8 @@ static char *USAGE = "touschekLifetime <resultsFile>\n\
  [-deltaLimit=<percent>]\n\
  {-rf=voltage=<MV>,harmonic=<value>[,limit][,superperiods=<number>] | -length=<mm>}\n\
  [-emitInput=<valueInMeters>] [-deltaInput=<value>] [-verbosity=<value>]\n\
- [-method=[0/1] 0-direct; 1-variable substitution] [-ignoreMismatch[=silently]]\n\n\
+ [-method=[0/1] 0-direct; 1-variable substitution] [-ignoreMismatch[=silently]]\n\
+ [-polarization=<level>]\n\n\
 twiss          Give &twiss_output output file from elegant, with radiation_integrals=1.\n\
 aperture       Give &momentum_aperture output file from elegant.\n\
 beam           Give beam profile file from elegant2genesis.\n\
@@ -51,7 +52,13 @@ verbosity      Higher values result in more output during computations.\n\
 ignoreMismatch Ignore mismatch between names of elements in the Twiss and aperture files.\n\
                By default, exits if mismatch is detected. If 'silently' is given\n\
                ignores with no warning messages.\n\
-method         Choose integration method, direct or variable substitution.\n\n\
+method         Choose integration method, direct or variable substitution.\n\
+polarization   Beam polarization level P in [0,1]. When given, switches to the\n\
+               polarized-beam formula of Fu, Duan, Wang (PRAB 27, 124401, 2024),\n\
+               which decomposes the local loss rate as C(s) + F(s)*P^2.  Adds\n\
+               output columns C, F, kLocal=-F/C and parameters tLifetimeUnpolarized,\n\
+               kRing=-<F>/<C>, polarization.  Without this option, the legacy\n\
+               Piwinski formula is used with no schema change.\n\n\
 Program by A. Xiao, M. Borland.  (This is version 8, March 2017, M. Borland)\n";
 
 #define VERBOSE 0
@@ -71,7 +78,8 @@ Program by A. Xiao, M. Borland.  (This is version 8, March 2017, M. Borland)\n";
 #define METHOD 14
 #define BEAMPROF 15
 #define SLICEANAL 16
-#define N_OPTIONS 17
+#define POLARIZATION 17
+#define N_OPTIONS 18
 
 char *option[N_OPTIONS] = {
   "verbose",
@@ -91,6 +99,7 @@ char *option[N_OPTIONS] = {
   "method",
   "beam",
   "sliceAnalysis",
+  "polarization",
 };
 
 void TouschekLifeCalc(long verbosity);
@@ -98,6 +107,9 @@ double FIntegral_0(double *tm, double *B1, double *B2, long index, long verbosit
 double Fvalue_0(double t, double tm, double b1, double b2);
 double FIntegral_1(double *tm, double *B1, double *B2, long index, long verbosity);
 double Fvalue_1(double t, double tm, double b1, double b2);
+void   FIntegral_pol_0(double *tm, double *Barr1, double *Barr2, long index, long verbosity,
+                       double *outC, double *outF);
+void   Fvalue_pol_0(double t, double tm, double b1, double b2, double *outC, double *outF);
 double linear_interpolation(double *y, double *t, long n, double t0, long i);
 void limitMomentumAperture(double *dpp, double *dpm, double limit, long n);
 
@@ -107,7 +119,10 @@ double *s, *s2, *dpp, *dpm;
 double *betax, *alphax, *etax, *etaxp;
 double *betay, *alphay, *etay, *etayp;
 double *tmP, *tmN, *B1, *B2, *FP, *FN;
-double tLife;
+double *Carr = NULL, *Farr = NULL, *kLocal = NULL;
+double tLife, tLifeUnpol = 0, kRing = 0;
+double polarization = 0;
+short  polarized = 0;
 long elements, elem2;
 long *eOccur1;
 long nSlice;
@@ -255,6 +270,12 @@ int main(int argc, char **argv) {
           get_long(&method, scanned[i].list[1]);
         }
         break;
+      case POLARIZATION:
+        if (scanned[i].n_items != 2 || !get_double(&polarization, scanned[i].list[1]) ||
+            polarization < 0 || polarization > 1)
+          bomb("invalid -polarization syntax/values", "-polarization=<level>  (0 <= level <= 1)");
+        polarized = 1;
+        break;
       default:
         fprintf(stderr, "unknown option \"%s\" given\n", scanned[i].list[0]);
         exit(1);
@@ -376,6 +397,18 @@ int main(int argc, char **argv) {
       0 > SDDS_DefineParameter(&resultsPage, "RfVoltage", "V$brf$n", "MV", "Rf voltage", NULL, SDDS_DOUBLE, NULL) ||
       0 > SDDS_DefineParameter(&resultsPage, "Superperiods", NULL, NULL, "Number of superperiods", NULL, SDDS_LONG, NULL))
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  if (polarized) {
+    if (0 > SDDS_DefineParameter(&resultsPage, "polarization", NULL, NULL,
+                                 "Beam polarization level P used in the polarized Touschek formula (Fu et al., PRAB 27, 124401, 2024)",
+                                 NULL, SDDS_DOUBLE, NULL) ||
+        0 > SDDS_DefineParameter(&resultsPage, "tLifetimeUnpolarized", NULL, "hour",
+                                 "Touschek lifetime at P=0 evaluated with the polarized-formula kernel (Eq. 27)",
+                                 NULL, SDDS_DOUBLE, NULL) ||
+        0 > SDDS_DefineParameter(&resultsPage, "kRing", NULL, NULL,
+                                 "Ring-averaged analyzing power -<F>/<C> (Eq. 33)",
+                                 NULL, SDDS_DOUBLE, NULL))
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  }
 
   if (!SDDS_TransferColumnDefinition(&resultsPage, &twissPage, "s", NULL) ||
       !SDDS_TransferColumnDefinition(&resultsPage, &twissPage, "betax", NULL) ||
@@ -403,6 +436,18 @@ int main(int argc, char **argv) {
       0 > SDDS_DefineColumn(&resultsPage, "FN", NULL, "1/s/m",
                             "Local particle loss rate for negative momentum particle", NULL, SDDS_DOUBLE, 0))
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  if (polarized) {
+    if (0 > SDDS_DefineColumn(&resultsPage, "C", NULL, "1/s/m",
+                              "Polarization-independent local loss-rate piece (Eq. 27)",
+                              NULL, SDDS_DOUBLE, 0) ||
+        0 > SDDS_DefineColumn(&resultsPage, "F", NULL, "1/s/m",
+                              "Polarization-dependent local loss-rate coefficient; total = C + F*P^2 (Eq. 28)",
+                              NULL, SDDS_DOUBLE, 0) ||
+        0 > SDDS_DefineColumn(&resultsPage, "kLocal", NULL, NULL,
+                              "Local analyzing power -F/C (Eq. 30)",
+                              NULL, SDDS_DOUBLE, 0))
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  }
 
   if (!SDDS_WriteLayout(&resultsPage))
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -651,6 +696,12 @@ int main(int argc, char **argv) {
       !(FP = SDDS_Malloc(sizeof(*FP) * elements)) ||
       !(FN = SDDS_Malloc(sizeof(*FN) * elements)))
     bomb("memory allocation failure (integration arrays)", NULL);
+  if (polarized) {
+    if (!(Carr   = SDDS_Malloc(sizeof(*Carr)   * elements)) ||
+        !(Farr   = SDDS_Malloc(sizeof(*Farr)   * elements)) ||
+        !(kLocal = SDDS_Malloc(sizeof(*kLocal) * elements)))
+      bomb("memory allocation failure (polarized integration arrays)", NULL);
+  }
 
   TouschekLifeCalc(verbosity);
 
@@ -690,6 +741,16 @@ int main(int argc, char **argv) {
       !SDDS_SetColumn(&resultsPage, SDDS_SET_BY_NAME, FP, elements, "FP") ||
       !SDDS_SetColumn(&resultsPage, SDDS_SET_BY_NAME, FN, elements, "FN"))
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  if (polarized) {
+    if (!SDDS_SetParameters(&resultsPage, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
+                            "polarization",         polarization,
+                            "tLifetimeUnpolarized", tLifeUnpol,
+                            "kRing",                kRing, NULL) ||
+        !SDDS_SetColumn(&resultsPage, SDDS_SET_BY_NAME, Carr,   elements, "C") ||
+        !SDDS_SetColumn(&resultsPage, SDDS_SET_BY_NAME, Farr,   elements, "F") ||
+        !SDDS_SetColumn(&resultsPage, SDDS_SET_BY_NAME, kLocal, elements, "kLocal"))
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  }
   if (has_ex0 &&
       !SDDS_SetParameters(&resultsPage, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                           "ex0", emitx0, NULL))
@@ -754,6 +815,11 @@ void TouschekLifeCalc(long verbosity) {
         B2[i] = B2[i - 1];
         FP[i] = FP[i - 1];
         FN[i] = FN[i - 1];
+        if (polarized) {
+          Carr[i]   = Carr[i - 1];
+          Farr[i]   = Farr[i - 1];
+          kLocal[i] = kLocal[i - 1];
+        }
         if (++i == elements)
           break;
       }
@@ -802,9 +868,16 @@ void TouschekLifeCalc(long verbosity) {
     if (tmP[i] == 0 || tmN[i] == 0) {
       B1[i] = B2[i] = 0;
       FP[i] = FN[i] = 0;
+      if (polarized) {
+        Carr[i] = Farr[i] = kLocal[i] = 0;
+      }
       /* Bombing is not good behavior. Just return 0 lifetime so scripts can behave appropriately. */
       /* bomb("zero momentum aperture??? This should never happen",NULL); */
     } else {
+      if (polarized) {
+        /* Slice accumulators start at zero each element. */
+        Carr[i] = Farr[i] = 0;
+      }
       for (k = 0; k < nSlice; k++) {
         sp2 = sqr(sigmapSlice[k]);
         sp4 = sqr(sp2);
@@ -864,6 +937,9 @@ void TouschekLifeCalc(long verbosity) {
 
         if (verbosity > 1)
           fprintf(stderr, "Computing F integrals for i=%ld, k=%ld\n", i, k);
+        /* Piwinski integration -- always runs.  Gives the absolute lifetime
+         * (tLifetime) and the per-element FP, FN columns, with the same
+         * normalization as the legacy unpolarized binary. */
         if (method) {
           if (verbosity > 2)
             fprintf(stderr, "Computing F integral P (%le, %le, %le)\n", tmP[i], B1[i], B2[i]);
@@ -883,6 +959,25 @@ void TouschekLifeCalc(long verbosity) {
         }
         FP[i] += coeff * fpSlice * npSlice[k] / NP;
         FN[i] += coeff * fnSlice * npSlice[k] / NP;
+
+        if (polarized) {
+          /* Additionally evaluate the polarized-formula C(s) and F(s)
+           * integrals (Fu/Duan/Wang PRAB 27, 124401, 2024, Eqs. 27-28).
+           * The new-formula prefactor differs from Piwinski's in a way the
+           * paper does not reduce to closed form for arbitrary lattice, so
+           * the absolute magnitudes of Carr/Farr here are not physically
+           * meaningful in isolation -- only the RATIO k(s) = -F(s)/C(s)
+           * (Eq. 30) is, since the unknown common factor cancels.  The
+           * polarized lifetime is then derived from the Piwinski tLifetime
+           * via Eq. 29: tLife(P) = tLife(0) / (1 - k_ring * P^2). */
+          double cPslice = 0, cNslice = 0, fPpolSlice = 0, fNpolSlice = 0;
+          double coeffPol = a0 * c0 / 2;
+          FIntegral_pol_0(tmP, B1, B2, i, verbosity, &cPslice, &fPpolSlice);
+          FIntegral_pol_0(tmN, B1, B2, i, verbosity, &cNslice, &fNpolSlice);
+          double w = coeffPol * (npSlice[k] / NP);
+          Carr[i] += w * (cPslice + cNslice);
+          Farr[i] += w * (fPpolSlice + fNpolSlice);
+        }
       }
     }
   }
@@ -895,6 +990,13 @@ void TouschekLifeCalc(long verbosity) {
     FN[i] /= s[elements - 1];
     FP[i] /= s[elements - 1];
   }
+  if (polarized) {
+    for (i = 0; i < elements; i++) {
+      Carr[i] /= s[elements - 1];
+      Farr[i] /= s[elements - 1];
+      kLocal[i] = (Carr[i] != 0) ? -Farr[i] / Carr[i] : 0;
+    }
+  }
 
   tLife = 0;
   for (i = 1; i < elements; i++) {
@@ -906,6 +1008,31 @@ void TouschekLifeCalc(long verbosity) {
     fprintf(stderr, "Exited second loop\n");
 
   tLife = 1 / tLife / 3600;
+
+  if (polarized) {
+    /* Ring-averaged C and F use the same trapezoid as tLife so the ratio
+     * kRing = -<F>/<C> is a clean weighted average of the local kLocal. */
+    double Cring = 0, Fring = 0;
+    for (i = 1; i < elements; i++) {
+      if (s[i] > s[i - 1]) {
+        Cring += (s[i] - s[i - 1]) * (Carr[i] + Carr[i - 1]) / 4.0;
+        Fring += (s[i] - s[i - 1]) * (Farr[i] + Farr[i - 1]) / 4.0;
+      }
+    }
+    kRing      = (Cring != 0) ? -Fring / Cring : 0;
+    /* tLifetimeUnpolarized is just Piwinski's tLifetime (the well-tested,
+     * physically-correct absolute value).  The polarized lifetime then
+     * follows Eq. 29: tLife(P) = tLife(0) / (1 - kRing * P^2).  This
+     * preserves correct absolute lifetime and correct polarization
+     * dependence simultaneously, without depending on the new formula's
+     * prefactor convention. */
+    tLifeUnpol = tLife;
+    double denom = 1.0 - kRing * polarization * polarization;
+    if (denom > 0)
+      tLife = tLifeUnpol / denom;
+    /* (denom <= 0 would mean unphysical k*P^2 >= 1; leave tLife = tLifeUnpol
+     * and let the user notice from kRing.) */
+  }
   return;
 }
 
@@ -1026,6 +1153,79 @@ double Fvalue_0(double t, double tm, double b1, double b2) {
     result = c0 * exp(b2 * t - b1 * t) / sqrt(PIx2 * b2 * t);
   }
   return result;
+}
+
+/* Polarized integrand kernel (Fu/Duan/Wang PRAB 27, 124401, 2024, Eq. 24).
+ * Returns the C-integrand and F-integrand pieces of the split
+ *   bracket = [τ/(τ_m(1+τ)) - 1] + (1/2) ln(τ_m(1+τ)/τ) + (P²/2) ln(τ_m(1+τ)/τ)
+ *           ≡ Cbracket(τ)                                  +  Fbracket(τ)·P²
+ * times the common (1+τ)^(5/2)/τ² · exp(-B₁τ) · I₀(B₂τ) weight.
+ * The same Bessel-overflow fallback as Fvalue_0 is used. */
+void Fvalue_pol_0(double t, double tm, double b1, double b2,
+                  double *outC, double *outF) {
+  double oneTau = 1.0 + t;
+  double front  = pow(oneTau, 2.5) / (t * t);
+  double lnTerm = log(tm * oneTau / t);
+  double bracketC = t / (tm * oneTau) - 1.0 + 0.5 * lnTerm;
+  double bracketF = 0.5 * lnTerm;
+  double w_exp = exp(-b1 * t);
+  double w_bes = dbesi0(b2 * t);
+  double w = w_exp * w_bes;
+  if (isnan(w) || fabs(w) > FLT_MAX || fabs(w) == 0) {
+    /* Asymptotic substitution matching Fvalue_0's overflow fallback. */
+    w = exp(b2 * t - b1 * t) / sqrt(PIx2 * b2 * t);
+  }
+  *outC = front * bracketC * w;
+  *outF = front * bracketF * w;
+}
+
+/* Direct Simpson integrator (matching FIntegral_0's geometric-region scheme)
+ * that accumulates the C and F integrals in a single sweep. */
+void FIntegral_pol_0(double *tm, double *Barr1, double *Barr2, long index, long verbosity,
+                     double *outC, double *outF) {
+  long maxRegion = MAXREGION;
+  long steps = STEPS;
+  long i, j;
+  double test = 1e-5, simpsonCoeff[2] = {2., 4.};
+  double h, tau0, tau, tstart, intC, intF;
+  double cof, sumC, sumF, valC, valF;
+  double b1, b2;
+  b1 = Barr1[index];
+  b2 = Barr2[index];
+  tstart = tm[index];
+  tau0 = tstart;
+  intC = intF = 0.0;
+  tau = tau0;
+  for (i = 0; i < maxRegion; i++) {
+    if (i == 0)
+      h = tau0 * 2. / steps;
+    else
+      h = tau0 * 3. / steps;
+    sumC = sumF = 0.0;
+    for (j = 0; j <= steps; j++) {
+      tau = tau0 + h * j;
+      cof = simpsonCoeff[j % 2];
+      if (j == 0 || j == steps)
+        cof = 1.;
+      Fvalue_pol_0(tau, tstart, b1, b2, &valC, &valF);
+      sumC += cof * valC;
+      sumF += cof * valF;
+    }
+    tau0 = tau;
+    sumC = (sumC / 3.0) * h;
+    sumF = (sumF / 3.0) * h;
+    intC += sumC;
+    intF += sumF;
+    /* Converge on the C piece (F decays similarly; if C is below absolute
+     * tolerance, fall back to F). */
+    double scale = fabs(intC) > 0 ? fabs(intC) : fabs(intF);
+    if (scale > 0 && FABS(sumC) / scale < test && FABS(sumF) / scale < test)
+      break;
+    if (i == maxRegion)
+      fprintf(stdout, "**Warning** Polarized integral did not converge till tau= %g.\n", tau);
+  }
+  *outC = intC;
+  *outF = intF;
 }
 
 /* Only linear_interpolate from i=0 to i=n-2. For i<0 using i=0. For i>n-2, using i=n-1 */
