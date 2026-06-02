@@ -15,12 +15,16 @@
 #include "mdb.h"
 #include "track.h"
 #include "tuneDefs.h"
+#include "correctorStash.h"
 
 static FILE *fp_sl = NULL;
 static long alter_defined_values;
 static FILE *fp_response = NULL;
 static FILE *fp_correction = NULL;
 static short fseUnits = 0;
+
+static CORRECTOR_STASH tuneStash = { NULL, NULL, NULL, NULL, 0, 0, 1, 0, "tune" };
+static TUNE_CORRECTION *tune_stash_corr = NULL;
 
 double *scanNumberList(char *list, long *nFound);
 
@@ -130,6 +134,8 @@ void setup_tune_correction(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline,
   tune->verbosity = verbosity;
   tune->update_orbit = update_orbit;
   alter_defined_values = change_defined_values;
+  tune_stash_corr = tune;
+  tuneStash.reassert = reset_correctors_each_step ? 1 : 0;
 
   tune->exclude = NULL;
   tune->n_exclude = 0;
@@ -755,4 +761,48 @@ double *scanNumberList(char *list, long *nFound) {
   }
   *nFound = nll;
   return dList;
+}
+
+/* ---------------------------------------------------------------- */
+/* Per-step corrector stash hooks (tune correction).  Walks each tune
+ * family pattern (tune_stash_corr->name[i]) over the beamline and
+ * records the parameter index named by tune_stash_corr->item[i]. */
+
+void correct_tunes_save_correctors(RUN *run, LINE_LIST *beamline) {
+  long i;
+  (void)run;
+  if (tune_stash_corr == NULL || tune_stash_corr->n_families <= 0) return;
+  corstash_clear(&tuneStash);
+  for (i = 0; i < tune_stash_corr->n_families; i++) {
+    ELEMENT_LIST *context = NULL;
+    long paramIndex = -1;
+    long lastType = -1;
+    while ((context = wfind_element(tune_stash_corr->name[i], &context, beamline->elem))) {
+      if (tune_stash_corr->n_exclude) {
+        long j, excluded;
+        for (j = excluded = 0; j < tune_stash_corr->n_exclude; j++)
+          if (wild_match(context->name, tune_stash_corr->exclude[j])) {
+            excluded = 1;
+            break;
+          }
+        if (excluded) continue;
+      }
+      if (context->type != lastType) {
+        paramIndex = confirm_parameter(tune_stash_corr->item[i], context->type);
+        lastType = context->type;
+      }
+      if (paramIndex < 0) continue;
+      corstash_add(&tuneStash, context, paramIndex);
+    }
+  }
+  corstash_snapshot(&tuneStash);
+}
+
+long correct_tunes_reassert_correctors(RUN *run, LINE_LIST *beamline) {
+  return corstash_reassert(&tuneStash, run, beamline);
+}
+
+void correct_tunes_invalidate_correctors(void) {
+  corstash_clear(&tuneStash);
+  tune_stash_corr = NULL;
 }
