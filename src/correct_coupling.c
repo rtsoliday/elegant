@@ -28,11 +28,20 @@
 #include "matrixOp.h"
 #include "track.h"
 #include "correctionEngine.h"
+#include "correctorStash.h"
 #include "correct_coupling.h"
 
-/* Module-level state retained between setup/do/finish */
+/* Per-step reassertion of skew-quadrupole values.  Populated lazily from the
+ * existing knobs[] inventory at first save/reassert; reassert flag tracks the
+ * namelist parameter reset_correctors_each_step. */
+static CORRECTOR_STASH ccStash = { NULL, NULL, NULL, NULL, 0, 0, 1, 0, "coupling" };
+
+/* Module-level state retained between setup/do/finish.  skewName/skewType/
+ * skewItem are populated only by &compute_coupling_response_matrix and
+ * &load_coupling_response_matrix; the &correct_coupling namelist uses the
+ * family-list state defined immediately below. */
 static long initialized = 0;
-static char **skewName = NULL;      /* parsed name_pattern list */
+static char **skewName = NULL;      /* parsed name_pattern from compute/load */
 static long nSkewName = 0;
 static char **skewType = NULL;
 static long nSkewType = 0;
@@ -40,7 +49,23 @@ static char **bpmName = NULL;
 static long nBpmName = 0;
 static char **bpmType = NULL;
 static long nBpmType = 0;
-static char *skewItem = NULL;
+static char *skewItem = NULL;       /* item used by compute_/load_ */
+
+/* Family-list state from the &correct_coupling namelist.  Mirrors the
+ * correct_lattice convention: parallel space-separated tokens for items,
+ * lower/upper bounds, and a separate exclude list. */
+static char **corrPatterns = NULL;       static long nCorrPatterns = 0;
+static char *corrPatternStr = NULL;
+static char **itemsList = NULL;          static long nItemsList = 0;
+static double *lowerList = NULL;         static long nLowerList = 0;
+static double *upperList = NULL;         static long nUpperList = 0;
+static char **excludePatterns = NULL;    static long nExcludePatterns = 0;
+
+/* Per-knob arrays sized nSkew. */
+static char **knobItem = NULL;
+static double *knobLower = NULL;
+static double *knobUpper = NULL;
+static long *knobFamily = NULL;
 
 /* The knob/observable struct types live in correctionEngine.h as LRC_Knob and
  * LRC_Bpm. */
@@ -397,10 +422,18 @@ static void setupCrossPlaneState(LINE_LIST *beamline) {
   freeCrossPlaneState();
   /* Probe corrector lists.  At least one of (h, v) must be non-empty when the
    * cross channel is enabled; we let the caller decide what to do with that. */
-  if (crossHSpec)
+  if (crossHSpec) {
     nHCorr = collectSteeringKnobs(beamline, crossHSpec, &hCorrs);
-  if (crossVSpec)
+    if (nHCorr == 0)
+      bombElegantVA("correct_coupling: cross_h_steering=\"%s\" matched zero correctors "
+                    "in the beamline", crossHSpec);
+  }
+  if (crossVSpec) {
     nVCorr = collectSteeringKnobs(beamline, crossVSpec, &vCorrs);
+    if (nVCorr == 0)
+      bombElegantVA("correct_coupling: cross_v_steering=\"%s\" matched zero correctors "
+                    "in the beamline", crossVSpec);
+  }
   /* Cross-plane BPMs.  Vertical-reading BPMs for the H->y block; horizontal-
    * reading BPMs for the V->x block. */
   nCrossYBpm = LRC_collectBpms(beamline, crossYBpmNamePat, nCrossYBpmNamePat,
@@ -438,18 +471,166 @@ static void setupCrossPlaneState(LINE_LIST *beamline) {
   nRowsCrossVx = nVCorr * nCrossXBpm;
 }
 
+/* Parse a whitespace-separated list of floating-point values; mirror of the
+ * helper in correct_lattice.c. */
+static double *parseDoubleList(const char *input0, long *nOut, const char *ctx) {
+  *nOut = 0;
+  if (input0 == NULL) return NULL;
+  char *input;
+  cp_str(&input, (char *)input0);
+  char *ptr;
+  double *vals = NULL;
+  long n = 0;
+  while ((ptr = get_token(input))) {
+    double v;
+    if (sscanf(ptr, "%le", &v) != 1)
+      bombElegantVA("correct_coupling: %s contains non-numeric token \"%s\"", ctx, ptr);
+    vals = SDDS_Realloc(vals, sizeof(*vals) * (n + 1));
+    vals[n++] = v;
+  }
+  free(input);
+  *nOut = n;
+  return vals;
+}
+
+static int matchesExclude(const char *name) {
+  long k;
+  for (k = 0; k < nExcludePatterns; k++)
+    if (wild_match((char *)name, excludePatterns[k])) return 1;
+  return 0;
+}
+
+/* Walk the beamline; for each element not in the exclude list, find the first
+ * family pattern matching its name and (if the element exposes the family's
+ * item parameter as a double) record it as a skew knob.  Allocates knobs[]
+ * and knobFamily[].  Returns the count. */
+static long collectKnobsFromFamilies(LINE_LIST *beamline) {
+  ELEMENT_LIST *eptr = beamline->elem;
+  long cap = 0;
+  nSkew = 0;
+  if (knobs)      { free(knobs);      knobs = NULL; }
+  if (knobFamily) { free(knobFamily); knobFamily = NULL; }
+  while (eptr) {
+    long fam;
+    for (fam = 0; fam < nCorrPatterns; fam++) {
+      if (!wild_match(eptr->name, corrPatterns[fam])) continue;
+      if (matchesExclude(eptr->name)) break;
+      long paramIndex = confirm_parameter(itemsList[fam], eptr->type);
+      if (paramIndex < 0 ||
+          entity_description[eptr->type].parameter[paramIndex].type != IS_DOUBLE)
+        break;
+      if (nSkew == cap) {
+        cap = cap ? 2 * cap : 32;
+        knobs      = SDDS_Realloc(knobs,      sizeof(*knobs)      * cap);
+        knobFamily = SDDS_Realloc(knobFamily, sizeof(*knobFamily) * cap);
+      }
+      knobs[nSkew].elem        = eptr;
+      knobs[nSkew].paramIndex  = paramIndex;
+      knobs[nSkew].valuePtr    = (double *)(eptr->p_elem +
+          entity_description[eptr->type].parameter[paramIndex].offset);
+      knobs[nSkew].initialValue = *knobs[nSkew].valuePtr;
+      knobFamily[nSkew] = fam;
+      nSkew++;
+      break;
+    }
+    eptr = eptr->succ;
+  }
+  return nSkew;
+}
+
+/* Free the per-knob owned strings in knobItem[] and the array itself. */
+static void freeKnobItem(void) {
+  if (!knobItem) return;
+  long j;
+  for (j = 0; j < nSkew; j++)
+    if (knobItem[j]) free(knobItem[j]);
+  free(knobItem);
+  knobItem = NULL;
+}
+
+/* Build per-knob (item, lower, upper) arrays from knobFamily + family lists.
+ * knobItem[] owns its strings (cp_str'd) so per-knob items survive across
+ * setup calls.  When no family list is supplied but knobItem[] is already
+ * populated by load_coupling_response_matrix, it is preserved as-is. */
+static void buildPerKnobItemAndBounds(void) {
+  long j;
+  if (knobLower) { free(knobLower); knobLower = NULL; }
+  if (knobUpper) { free(knobUpper); knobUpper = NULL; }
+  if (nSkew == 0) { freeKnobItem(); return; }
+  if (nCorrPatterns > 0 && knobFamily) {
+    freeKnobItem();
+    knobItem = tmalloc(sizeof(*knobItem) * nSkew);
+    for (j = 0; j < nSkew; j++) cp_str(&knobItem[j], itemsList[knobFamily[j]]);
+    if (lowerList) {
+      knobLower = tmalloc(sizeof(*knobLower) * nSkew);
+      for (j = 0; j < nSkew; j++) knobLower[j] = lowerList[knobFamily[j]];
+    }
+    if (upperList) {
+      knobUpper = tmalloc(sizeof(*knobUpper) * nSkew);
+      for (j = 0; j < nSkew; j++) knobUpper[j] = upperList[knobFamily[j]];
+    }
+  } else if (knobItem == NULL) {
+    knobItem = tmalloc(sizeof(*knobItem) * nSkew);
+    for (j = 0; j < nSkew; j++) cp_str(&knobItem[j], skewItem ? skewItem : "K1");
+  }
+  /* else: preloaded per-knob knobItem[] preserved as-is */
+}
+
+/* When a preloaded inventory exists AND the user supplied a family list,
+ * assign each preloaded knob to its first matching family; bomb on
+ * item disagreements (the response-matrix columns are bound to skewItem). */
+static void assignFamiliesToPreloadedKnobs(void) {
+  long j, k;
+  if (knobFamily) { free(knobFamily); knobFamily = NULL; }
+  if (nSkew == 0 || nCorrPatterns == 0) return;
+  knobFamily = tmalloc(sizeof(*knobFamily) * nSkew);
+  for (j = 0; j < nSkew; j++) {
+    knobFamily[j] = -1;
+    for (k = 0; k < nCorrPatterns; k++) {
+      if (!wild_match(knobs[j].elem->name, corrPatterns[k])) continue;
+      if (matchesExclude(knobs[j].elem->name))
+        bombElegantVA("correct_coupling: preloaded knob %s is matched by exclude pattern "
+                      "but cannot be removed once the response matrix is built; "
+                      "rebuild the matrix without this element",
+                      knobs[j].elem->name);
+      if (skewItem && itemsList && strcmp(skewItem, itemsList[k]) != 0)
+        bombElegantVA("correct_coupling: preloaded knob %s would be assigned to family "
+                      "\"%s\" whose item \"%s\" disagrees with the preloaded item \"%s\"",
+                      knobs[j].elem->name, corrPatterns[k], itemsList[k], skewItem);
+      knobFamily[j] = k;
+      break;
+    }
+  }
+}
+
 /* Collect knob/BPM lists from the beamline and allocate the response-matrix
  * working buffers. Idempotent: subsequent calls are no-ops once knobs/bpms have
  * been collected.  Returns 1 on success; bombs if no matching knobs/BPMs. */
 static long collectAndAllocate(LINE_LIST *beamline) {
   if (knobs == NULL) {
-    nSkew = LRC_collectKnobs(beamline, skewName, nSkewName, skewType, nSkewType,
-                             skewItem, &knobs);
-    nBpm  = LRC_collectBpms (beamline, bpmName,  nBpmName,  bpmType,  nBpmType,  &bpms);
+    if (nCorrPatterns == 0)
+      bombElegant("correct_coupling: correction_elements must be supplied "
+                  "(unless compute_coupling_response_matrix or "
+                  "load_coupling_response_matrix has been issued)", NULL);
+    collectKnobsFromFamilies(beamline);
+    nBpm = LRC_collectBpms(beamline, bpmName, nBpmName, bpmType, nBpmType, &bpms);
     if (nSkew == 0)
-      bombElegant("correct_coupling: no skew quadrupole knobs matched name_pattern/type_pattern", NULL);
+      bombElegant("correct_coupling: no knobs matched correction_elements", NULL);
     if (nBpm == 0)
       bombElegant("correct_coupling: no BPMs matched bpm_name_pattern/bpm_type_pattern", NULL);
+    buildPerKnobItemAndBounds();
+  } else {
+    assignFamiliesToPreloadedKnobs();
+    buildPerKnobItemAndBounds();
+    if (nCorrPatterns > 0 && (knobLower || knobUpper)) {
+      long j;
+      if (knobLower)
+        for (j = 0; j < nSkew; j++)
+          if (knobFamily[j] < 0) knobLower[j] = -DBL_MAX;
+      if (knobUpper)
+        for (j = 0; j < nSkew; j++)
+          if (knobFamily[j] < 0) knobUpper[j] = DBL_MAX;
+    }
   }
   /* Cross-plane setup runs alongside the skew setup so the flat buffers have
    * the right size.  Only run it when the channel is enabled, otherwise the
@@ -460,16 +641,23 @@ static long collectAndAllocate(LINE_LIST *beamline) {
   nRowsEtay   = nBpm;
   nRowsTotal  = nRowsEtay + nRowsCrossHy + nRowsCrossVx;
 
-  if (etay == NULL) {
-    etay        = tmalloc(sizeof(*etay)     * nBpm);
-    etayPert    = tmalloc(sizeof(*etayPert) * nBpm);
-    dK          = tmalloc(sizeof(*dK)       * nSkew);
-    yResidFlat  = tmalloc(sizeof(*yResidFlat) * nRowsTotal);
-    yPertFlat   = tmalloc(sizeof(*yPertFlat)  * nRowsTotal);
-    rowWeight   = tmalloc(sizeof(*rowWeight)  * nRowsTotal);
+  /* Allocate any working buffer that's still NULL (load_coupling_response_matrix
+   * may have populated some but not all -- e.g. it sets etay/etayPert/dK and R
+   * but not yResidFlat/yPertFlat/rowWeight).  Each buffer is checked
+   * individually so the union of "populated by load_ or by collectKnobs"
+   * is fully provisioned before do_correct_coupling reads from any of them. */
+  if (etay        == NULL) etay       = tmalloc(sizeof(*etay)       * nBpm);
+  if (etayPert    == NULL) etayPert   = tmalloc(sizeof(*etayPert)   * nBpm);
+  if (dK          == NULL) dK         = tmalloc(sizeof(*dK)         * nSkew);
+  if (yResidFlat  == NULL) yResidFlat = tmalloc(sizeof(*yResidFlat) * nRowsTotal);
+  if (yPertFlat   == NULL) yPertFlat  = tmalloc(sizeof(*yPertFlat)  * nRowsTotal);
+  if (rowWeight   == NULL) {
+    rowWeight = tmalloc(sizeof(*rowWeight) * nRowsTotal);
     long i;
     for (i = 0; i < nRowsEtay; i++) rowWeight[i] = etayChannelWeight;
     for (i = nRowsEtay; i < nRowsTotal; i++) rowWeight[i] = crossChannelWeight;
+  }
+  if (R == NULL) {
 #if USE_MPI
     if (myid == 0)
       R = (double **)czarray_2d(sizeof(**R), nRowsTotal, nSkew);
@@ -509,6 +697,10 @@ static void buildResponseMatrix(RUN *run, LINE_LIST *beamline, long iterTag, dou
    * the flag avoids it without affecting any pure-analytic element. */
   long parTrackSave = parallelTrackingBasedMatrices;
   parallelTrackingBasedMatrices = 0;
+  if (verbosity>2) {
+    printf("   building coupling response matrix\n");
+    fflush(stdout);
+  }
   LRC_buildResponseMatrix(run, beamline, knobs, nSkew, nRowsTotal,
                           etayReader, &ctx, perturbation, R);
   parallelTrackingBasedMatrices = parTrackSave;
@@ -553,27 +745,18 @@ void setup_correct_coupling(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline
   if (echoNamelists)
     print_namelist(stdout, &correct_coupling);
 
-  /* If the response matrix was already populated by compute_coupling_response_matrix
-   * or load_coupling_response_matrix, the knob/BPM patterns and item live in the
-   * preloaded module state, so the namelist patterns become optional. */
-  if (!responseValid && name_pattern == NULL && type_pattern == NULL)
-    bombElegant("correct_coupling: at least one of name_pattern, type_pattern must be supplied "
-                "(unless compute_coupling_response_matrix or load_coupling_response_matrix has been issued)",
-                NULL);
-  if (!responseValid && (item == NULL || strlen(item) == 0))
-    bombElegant("correct_coupling: item cannot be empty", NULL);
   if (n_iterations < 0)
     bombElegant("correct_coupling: n_iterations must be >= 0", NULL);
   if (correction_fraction <= 0 || correction_fraction > 1)
     bombElegant("correct_coupling: correction_fraction must be in (0, 1]", NULL);
+  if (change_tolerance < 0 || change_tolerance >= 1)
+    bombElegant("correct_coupling: change_tolerance must be in [0, 1)", NULL);
   if (response_perturbation <= 0)
     bombElegant("correct_coupling: response_perturbation must be > 0", NULL);
   if (svd_threshold < 0)
     bombElegant("correct_coupling: svd_threshold must be >= 0", NULL);
   if (n_singular_values < 0)
     bombElegant("correct_coupling: n_singular_values must be >= 0", NULL);
-  if (strength_limit < 0)
-    bombElegant("correct_coupling: strength_limit must be >= 0", NULL);
   if (measurement_noise < 0)
     bombElegant("correct_coupling: measurement_noise must be >= 0", NULL);
   if (measurement_noise > 0 && measurement_noise_cutoff <= 0)
@@ -587,27 +770,124 @@ void setup_correct_coupling(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline
   if (cross_measurement_noise < 0)
     bombElegant("correct_coupling: cross_measurement_noise must be >= 0", NULL);
 
-  /* Only overwrite patterns/item if a preloaded matrix hasn't already set them.
-   * This lets a prior compute_/load_coupling_response_matrix command provide
-   * both the matrix and the implied knob/BPM/item lists. */
-  if (!responseValid) {
-    LRC_freePatternList(&skewName, &nSkewName);
-    LRC_freePatternList(&skewType, &nSkewType);
-    LRC_freePatternList(&bpmName,  &nBpmName);
-    LRC_freePatternList(&bpmType,  &nBpmType);
-    if (skewItem) { free(skewItem); skewItem = NULL; }
+  /* Family-list parsing (same convention as &correct_lattice and &correct_tunes).
+   *
+   * When a matrix was preloaded by load_/compute_coupling_response_matrix and
+   * carried CorrectionElements/CorrectionItems metadata, corrPatterns/itemsList
+   * are already populated.  Preserve them when the user didn't supply
+   * correction_elements/items; when the user did supply, validate against the
+   * preloaded values and bomb on disagreement (so the user can't accidentally
+   * specify lower_limits aligned to a different family count than the matrix
+   * was built with). */
+  LRC_freePatternList(&excludePatterns,  &nExcludePatterns);
+  if (lowerList) { free(lowerList); lowerList = NULL; }
+  if (upperList) { free(upperList); upperList = NULL; }
+  nLowerList = nUpperList = 0;
 
-    skewName = addPatterns(&nSkewName, name_pattern);
-    skewType = addPatterns(&nSkewType, type_pattern);
-    bpmName  = addPatterns(&nBpmName,  bpm_name_pattern);
-    bpmType  = addPatterns(&nBpmType,  bpm_type_pattern);
-    cp_str(&skewItem, item);
+  if (correction_elements && *correction_elements) {
+    /* User supplied correction_elements on this command. */
+    if (responseValid && corrPatternStr && strcmp(corrPatternStr, correction_elements) != 0)
+      bombElegantVA("correct_coupling: correction_elements=\"%s\" on this command "
+                    "disagrees with the loaded matrix's CorrectionElements=\"%s\"; "
+                    "either omit correction_elements (to inherit) or rebuild the "
+                    "matrix with the desired family list",
+                    correction_elements, corrPatternStr);
+    /* Free and re-populate (idempotent when string matches preloaded). */
+    LRC_freePatternList(&corrPatterns, &nCorrPatterns);
+    if (corrPatternStr) { free(corrPatternStr); corrPatternStr = NULL; }
+    LRC_freePatternList(&itemsList, &nItemsList);
+    cp_str(&corrPatternStr, correction_elements);
+    corrPatterns = addPatterns(&nCorrPatterns, corrPatternStr);
+    if (nCorrPatterns == 0)
+      bombElegant("correct_coupling: correction_elements parsed to zero patterns", NULL);
+    itemsList = tmalloc(sizeof(*itemsList) * nCorrPatterns);
+    nItemsList = nCorrPatterns;
+    if (items && *items) {
+      char *icopy;
+      cp_str(&icopy, items);
+      char *tok;
+      long ii = 0;
+      while ((tok = get_token(icopy)) && ii < nCorrPatterns) {
+        cp_str(&itemsList[ii], tok);
+        ii++;
+      }
+      free(icopy);
+      if (ii != nCorrPatterns)
+        bombElegantVA("correct_coupling: items has %ld entries but correction_elements has %ld",
+                      ii, nCorrPatterns);
+    } else {
+      long ii;
+      for (ii = 0; ii < nCorrPatterns; ii++)
+        cp_str(&itemsList[ii], "K1");
+    }
+  } else if (items && *items) {
+    /* User supplied items but not correction_elements.  Allowed only when
+     * a preloaded family list exists; validate the count and contents. */
+    if (!responseValid || nItemsList == 0)
+      bombElegant("correct_coupling: items supplied without correction_elements; "
+                  "requires a preloaded matrix that carries the family list", NULL);
+    char *icopy;
+    cp_str(&icopy, items);
+    char *tok;
+    long ii = 0;
+    while ((tok = get_token(icopy))) {
+      if (ii >= nItemsList || strcmp(tok, itemsList[ii]) != 0) {
+        bombElegantVA("correct_coupling: items on this command disagrees with the "
+                      "loaded matrix's CorrectionItems (entry %ld: \"%s\" vs \"%s\")",
+                      ii, tok, ii < nItemsList ? itemsList[ii] : "(none)");
+      }
+      ii++;
+    }
+    if (ii != nItemsList)
+      bombElegantVA("correct_coupling: items has %ld entries but loaded matrix has %ld families",
+                    ii, nItemsList);
+    free(icopy);
+  } else if (!responseValid) {
+    bombElegant("correct_coupling: correction_elements must be supplied "
+                "(unless compute_coupling_response_matrix or "
+                "load_coupling_response_matrix has been issued)", NULL);
+  }
+
+  /* Parse lower_limits/upper_limits and exclude regardless of whether the
+   * family list came from this namelist or from a preload.  Length validation
+   * uses nCorrPatterns (the effective family count). */
+  lowerList = parseDoubleList(lower_limits, &nLowerList, "lower_limits");
+  upperList = parseDoubleList(upper_limits, &nUpperList, "upper_limits");
+  if (lowerList && nLowerList != nCorrPatterns)
+    bombElegantVA("correct_coupling: lower_limits has %ld entries but correction_elements has %ld",
+                  nLowerList, nCorrPatterns);
+  if (upperList && nUpperList != nCorrPatterns)
+    bombElegantVA("correct_coupling: upper_limits has %ld entries but correction_elements has %ld",
+                  nUpperList, nCorrPatterns);
+  if (lowerList && upperList) {
+    long ii;
+    for (ii = 0; ii < nCorrPatterns; ii++)
+      if (lowerList[ii] > upperList[ii])
+        bombElegantVA("correct_coupling: lower_limits[%ld]=%le > upper_limits[%ld]=%le",
+                      ii, lowerList[ii], ii, upperList[ii]);
+  }
+  if (exclude && *exclude) {
+    char *ecopy;
+    cp_str(&ecopy, exclude);
+    excludePatterns = addPatterns(&nExcludePatterns, ecopy);
+    free(ecopy);
+  }
+
+  /* BPM patterns only needed when we're going to build the inventory ourselves. */
+  if (!responseValid) {
+    LRC_freePatternList(&bpmName, &nBpmName);
+    LRC_freePatternList(&bpmType, &nBpmType);
+    bpmName = addPatterns(&nBpmName, bpm_name_pattern);
+    bpmType = addPatterns(&nBpmType, bpm_type_pattern);
   }
 
   /* Cross-plane channel weights are always taken from this namelist (they
    * default to off, so silent enable is impossible). */
   etayChannelWeight  = etay_weight;
   crossChannelWeight = cross_response_weight;
+  /* Honor the per-correction reassert flag so vary_beamline()'s per-step
+   * restoration knows what to do for coupling. */
+  ccStash.reassert   = reset_correctors_each_step ? 1 : 0;
   /* Probe-kick and noise: override if the user gave a value (cross_steering_kick
    * always has a positive default, so it's always set; crossMeasNoise too). */
   crossKickMag       = cross_steering_kick;
@@ -649,6 +929,16 @@ void setup_correct_coupling(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline
     crossYBpmTypePat = addPatterns(&nCrossYBpmTypePat, cross_y_bpm_type_pattern);
     specChanged = 1;
   }
+  /* For the cross-plane BPM TYPE patterns specifically: namelist defaults are
+   * NULL (so that omitting them doesn't trip specChanged and clobber a
+   * preloaded matrix), but the historical defaults "MONI HMON" / "MONI VMON"
+   * are still what we want when the user is building the cross channel
+   * directly here (i.e., no preload at all) and didn't supply patterns. */
+  if (crossXBpmTypePat == NULL && nCrossXBpmTypePat == 0 && cross_response_weight > 0)
+    crossXBpmTypePat = addPatterns(&nCrossXBpmTypePat, (char *)"MONI HMON");
+  if (crossYBpmTypePat == NULL && nCrossYBpmTypePat == 0 && cross_response_weight > 0)
+    crossYBpmTypePat = addPatterns(&nCrossYBpmTypePat, (char *)"MONI VMON");
+
   /* Validate that the cross-plane channel has something to work with: either
    * the user supplied (or a prior namelist set) spec strings here, or a
    * prior compute_/load_coupling_response_matrix populated the corrector
@@ -808,13 +1098,22 @@ void setup_correct_coupling(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline
   }
 #endif
 
-  /* If the user has selected use_perturbed_matrix=0 (the default) and no matrix
-   * has already been preloaded by compute_/load_coupling_response_matrix,
-   * build the response matrix once now, using the lattice state as-of namelist
-   * parse time. With use_perturbed_matrix>0, the matrix is (re)built inside
-   * do_correct_coupling instead -- following the pattern of chrom.c. */
-  if (!responseValid && use_perturbed_matrix == 0) {
+  /* Populate the knob/BPM inventory at setup time regardless of the
+   * use_perturbed_matrix setting, so that the per-step corrector-reassertion
+   * machinery (correct_coupling_save_correctors) can snapshot the SQ values
+   * on the very first vary_beamline() tick.  Without this, use_perturbed_matrix>0
+   * leaves knobs[] == NULL until do_correct_coupling first runs (i.e. inside
+   * step 1), the save hook becomes a no-op, and step 2 ends up inheriting
+   * step 1's converged SQ values instead of restoring the baseline. */
+  if (!responseValid)
     collectAndAllocate(beamline);
+
+  /* If use_perturbed_matrix=0 (default) and no matrix has been preloaded by
+   * compute_/load_coupling_response_matrix, build the response matrix once
+   * now using the lattice state as-of namelist parse time.  With
+   * use_perturbed_matrix>0, the matrix is (re)built inside do_correct_coupling
+   * -- following the pattern of chrom.c. */
+  if (!responseValid && use_perturbed_matrix == 0) {
     /* Ensure twiss is current before perturbing knobs. */
     LRC_retwiss(run, beamline, NULL);
     buildResponseMatrix(run, beamline, -1, response_perturbation);
@@ -873,7 +1172,7 @@ long do_correct_coupling(RUN *run, LINE_LIST *beamline) {
     printf("  skew knobs:\n");
     for (j = 0; j < nSkew; j++)
       printf("    %s#%ld  s=%le  %s=%le\n", knobs[j].elem->name, knobs[j].elem->occurence,
-             knobs[j].elem->end_pos, skewItem, *knobs[j].valuePtr);
+             knobs[j].elem->end_pos, knobItem ? knobItem[j] : skewItem, *knobs[j].valuePtr);
     printf("  BPMs:\n");
     for (i = 0; i < nBpm; i++)
       printf("    %s#%ld  s=%le\n", bpms[i].elem->name, bpms[i].elem->occurence,
@@ -938,15 +1237,58 @@ long do_correct_coupling(RUN *run, LINE_LIST *beamline) {
     fflush(stdout);
   }
 
+  /* Start with the svd threshold equal to the nominal value */
+  double workingSvdThreshold = svd_threshold;
+  /* prevKnobBefore retains the knob values from the start of the previous
+   * iteration's apply so the adaptive_step block can roll back a step that
+   * made things worse, not just shrink the next step.  NULL until the first
+   * iteration completes. */
+  double *prevKnobBefore = NULL;
   for (iter = 0; iter < n_iterations; iter++) {
+    if (iter!=0 && workingSvdThreshold>svd_threshold) {
+      /* Back off somewhat from adjusted (increased) SVD threshold so we don't slow things
+       * too much */
+      workingSvdThreshold = workingSvdThreshold/sqrt(auto_sv_threshold_factor);
+      if (workingSvdThreshold<svd_threshold)
+	workingSvdThreshold = svd_threshold;
+    }
     /* Adaptive backoff: if the previous iteration made RMS worse, halve the
-     * correction fraction (chrom.c does the same thing for chromaticity). */
+     * correction fraction AND roll the knobs back to the state at the start
+     * of that previous iteration, so this iteration tries a smaller step from
+     * a known-better operating point rather than compounding the bad step. */
     if (adaptive_step && prevRMS >= 0 && rms0 > prevRMS) {
       currentFraction *= 0.5;
       if (verbosity > 0) {
         printf("  iteration %ld: RMS grew %le -> %le; halving correction_fraction to %le\n",
                iter, prevRMS, rms0, currentFraction);
         fflush(stdout);
+      }
+      if (prevKnobBefore && nSkew > 0) {
+        for (j = 0; j < nSkew; j++) {
+          *knobs[j].valuePtr = prevKnobBefore[j];
+          if (knobs[j].elem->matrix) {
+            free_matrices(knobs[j].elem->matrix);
+            free(knobs[j].elem->matrix);
+            knobs[j].elem->matrix = NULL;
+          }
+          compute_matrix(knobs[j].elem, run, NULL);
+          change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
+                                   knobs[j].elem->type, prevKnobBefore[j], NULL, LOAD_FLAG_ABSOLUTE);
+        }
+        pushWarningSuppression();
+        (void)LRC_retwiss_status(run, beamline, NULL, 0);
+        popWarningSuppression();
+        etayReader(nRowsTotal, yResidFlat, &readerCtx);
+        for (i = 0; i < nBpm; i++) etay[i] = yResidFlat[i];
+        rmsEtay  = ccRmsValue(yResidFlat, nRowsEtay);
+        rmsCross = (nRowsTotal > nRowsEtay)
+                   ? ccRmsValue(yResidFlat + nRowsEtay, nRowsTotal - nRowsEtay) : 0;
+        rms0 = ccWeightedRms(yResidFlat, rowWeight, nRowsTotal);
+        if (verbosity > 0) {
+          printf("  iteration %ld: rolled back to previous-iteration values; RMS now %le\n",
+                 iter, rms0);
+          fflush(stdout);
+        }
       }
     }
     prevRMS = rms0;
@@ -1004,53 +1346,164 @@ long do_correct_coupling(RUN *run, LINE_LIST *beamline) {
      * use_perturbed_matrix>1 it is rebuilt before each iteration. */
     if (!responseValid)
       buildResponseMatrix(run, beamline, iter, response_perturbation);
-    
-#if USE_MPI
-    if (myid==0) {
-      /* only the master has the full response matrix */
-#endif
-      /* SVD-pseudo-invert and solve.  Build weighted copies of R and the
-       * residual so the per-row weights take effect without mutating R
-       * (which may be reused across iterations and steps). */
-      if (verbosity>3) {
-	printf("  Solving for skew strengths using SVD\n");
-	fflush(stdout);
-      }
-      double **Rweighted = (double **)czarray_2d(sizeof(double), nRowsTotal, nSkew);
-      double *yWeighted  = tmalloc(sizeof(*yWeighted) * nRowsTotal);
-      for (i = 0; i < nRowsTotal; i++) {
-        double wi = rowWeight[i];
-        yWeighted[i] = wi * yResidFlat[i];
-        for (j = 0; j < nSkew; j++) Rweighted[i][j] = wi * R[i][j];
-      }
-      LRC_svdSolve(Rweighted, nRowsTotal, nSkew, yWeighted, dK,
-	       svd_threshold, n_singular_values,
-	       &minSV, &maxSV, &nUsedSV);
-      free(yWeighted);
-      free_czarray_2d((void **)Rweighted, nRowsTotal, nSkew);
-      if (verbosity > 1) {
-	printf("  iteration %ld: SVD used %ld of %ld singular values; SV range [%le, %le]\n",
-	       iter, nUsedSV, MIN(nSkew, nRowsTotal), minSV, maxSV);
-	fflush(stdout);
-      }
-#if USE_MPI
-    }
-    /* master shares dK with slaves */
-    MPI_Bcast(dK, nSkew, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-#endif
-    
-    /* Bake correction_fraction into dK; subsequent strength_limit clamping
-     * tightens further if necessary. */
-    if (currentFraction != 1.0)
-      for (j = 0; j < nSkew; j++)
-        dK[j] *= currentFraction;
 
-    /* Apply, with strength-limit scaling. */
-    double scale = LRC_clampStepToLimit(knobs, dK, nSkew, strength_limit);
+    /* Save the "before" knob values so we can roll back if applying the step
+     * leaves the lattice unstable.  Allocated once per iteration. */
+    double *knobBefore = tmalloc(sizeof(*knobBefore) * nSkew);
+    for (j = 0; j < nSkew; j++) knobBefore[j] = *knobs[j].valuePtr;
+
+    /* SVD retry loop: solve, apply, check stability.  On instability with
+     * auto_sv_threshold enabled, restore baseline, bump workingSvdThreshold,
+     * and re-solve.  Bail out either when stable or when retries exhausted
+     * (or when the bumped threshold drops every singular value, in which
+     * case no correction is applied and the lattice is trivially stable).
+     * The working threshold is local to this iteration so each iter starts
+     * with the user-requested namelist value. */
+    double scale = 0;
+    int retryUnstable = 0;
+    short emitWarning = 1;  /* whether to print the unstable warning on final retwiss */
+    long autoRetry;
+    const long maxAutoRetries = 20;
+    for (autoRetry = 0; autoRetry <= maxAutoRetries; autoRetry++) {
+#if USE_MPI
+      if (myid==0) {
+#endif
+        if (verbosity>3) {
+          printf("  Solving for skew strengths using SVD\n");
+          fflush(stdout);
+        }
+        double **Rweighted = (double **)czarray_2d(sizeof(double), nRowsTotal, nSkew);
+        double *yWeighted  = tmalloc(sizeof(*yWeighted) * nRowsTotal);
+        for (i = 0; i < nRowsTotal; i++) {
+          double wi = rowWeight[i];
+          yWeighted[i] = wi * yResidFlat[i];
+          for (j = 0; j < nSkew; j++) Rweighted[i][j] = wi * R[i][j];
+        }
+        LRC_svdSolve(Rweighted, nRowsTotal, nSkew, yWeighted, dK,
+                     workingSvdThreshold, n_singular_values,
+                     &minSV, &maxSV, &nUsedSV);
+        free(yWeighted);
+        free_czarray_2d((void **)Rweighted, nRowsTotal, nSkew);
+        if (verbosity > 1) {
+          printf("  iteration %ld: SVD used %ld of %ld singular values; SV range [%le, %le]; threshold %le\n",
+                 iter, nUsedSV, MIN(nSkew, nRowsTotal), minSV, maxSV, workingSvdThreshold);
+          fflush(stdout);
+        }
+#if USE_MPI
+      }
+      MPI_Bcast(dK, nSkew, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+      MPI_Bcast(&nUsedSV, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+#endif
+
+      if (currentFraction != 1.0)
+        for (j = 0; j < nSkew; j++) dK[j] *= currentFraction;
+
+      scale = LRC_clampStepToLimitArray(knobs, dK, nSkew, knobLower, knobUpper);
+      if (scale == 0 || nUsedSV == 0) {
+        /* No step possible (limit binding or threshold dropped all SVs).
+         * Restore to before-state and break out. */
+        for (j = 0; j < nSkew; j++) {
+          *knobs[j].valuePtr = knobBefore[j];
+          if (knobs[j].elem->matrix) {
+            free_matrices(knobs[j].elem->matrix);
+            free(knobs[j].elem->matrix);
+            knobs[j].elem->matrix = NULL;
+          }
+          compute_matrix(knobs[j].elem, run, NULL);
+          change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
+                                   knobs[j].elem->type, knobBefore[j], NULL, LOAD_FLAG_ABSOLUTE);
+        }
+        LRC_retwiss(run, beamline, NULL);
+        scale = 0;
+        break;
+      }
+
+      /* Apply the step. */
+      for (j = 0; j < nSkew; j++) {
+        double after = knobBefore[j] + scale * dK[j];
+        *knobs[j].valuePtr = after;
+        if (knobs[j].elem->matrix) {
+          free_matrices(knobs[j].elem->matrix);
+          free(knobs[j].elem->matrix);
+          knobs[j].elem->matrix = NULL;
+        }
+        compute_matrix(knobs[j].elem, run, NULL);
+        change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
+                                 knobs[j].elem->type, after, NULL, LOAD_FLAG_ABSOLUTE);
+      }
+
+      /* Check stability.  Suppress the engine's "unstable twiss" warning AND
+       * the twiss-routine's underlying "beamline unstable" warning while we
+       * still have retries; only emit them on the last attempt. */
+      short suppressWarn = auto_sv_threshold && (autoRetry < maxAutoRetries);
+      if (suppressWarn) pushWarningSuppression();
+      retryUnstable = LRC_retwiss_status(run, beamline, NULL, !suppressWarn);
+      if (suppressWarn) popWarningSuppression();
+
+      if (!retryUnstable) {
+        emitWarning = 0;
+        break;  /* stable -- accept this step */
+      }
+      if (!auto_sv_threshold) break;
+      if (autoRetry == maxAutoRetries) {
+        /* Retries exhausted and lattice still unstable.  Roll the knobs back
+         * to the start-of-iteration values and abandon this iteration so the
+         * outer adaptive_step logic can react. */
+        if (verbosity > 0) {
+          printf("  iteration %ld: auto_sv_threshold retries exhausted; "
+                 "rolling back step and skipping this iteration\n", iter);
+          fflush(stdout);
+        }
+        for (j = 0; j < nSkew; j++) {
+          *knobs[j].valuePtr = knobBefore[j];
+          if (knobs[j].elem->matrix) {
+            free_matrices(knobs[j].elem->matrix);
+            free(knobs[j].elem->matrix);
+            knobs[j].elem->matrix = NULL;
+          }
+          compute_matrix(knobs[j].elem, run, NULL);
+          change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
+                                   knobs[j].elem->type, knobBefore[j], NULL, LOAD_FLAG_ABSOLUTE);
+        }
+        pushWarningSuppression();
+        (void)LRC_retwiss_status(run, beamline, NULL, 0);
+        popWarningSuppression();
+        scale = 0;  /* signal no-step-applied path */
+        break;
+      }
+
+      /* Roll back and try again with a larger SV-cutoff threshold. */
+      double newThreshold = workingSvdThreshold * auto_sv_threshold_factor;
+      if (verbosity > 0) {
+        printf("  iteration %ld: unstable twiss; rolling back, svd_threshold %le -> %le (retry %ld)\n",
+               iter, workingSvdThreshold, newThreshold, autoRetry + 1);
+        fflush(stdout);
+      }
+      workingSvdThreshold = newThreshold;
+      for (j = 0; j < nSkew; j++) {
+        *knobs[j].valuePtr = knobBefore[j];
+        if (knobs[j].elem->matrix) {
+          free_matrices(knobs[j].elem->matrix);
+          free(knobs[j].elem->matrix);
+          knobs[j].elem->matrix = NULL;
+        }
+        compute_matrix(knobs[j].elem, run, NULL);
+        change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
+                                 knobs[j].elem->type, knobBefore[j], NULL, LOAD_FLAG_ABSOLUTE);
+      }
+      /* Retwiss to restore the baseline twiss before next attempt; suppress
+       * warning since this is purely a restore-to-known-good. */
+      pushWarningSuppression();
+      (void)LRC_retwiss_status(run, beamline, NULL, 0);
+      popWarningSuppression();
+    }
+    (void)emitWarning;  /* used only as a flag for whether to log */
+
     if (scale == 0) {
       if (verbosity > 0)
-        printf("  iteration %ld: no correction applied (strength_limit reached)\n", iter);
-      /* No further changes; previous iteration's page was actually-final. */
+        printf("  iteration %ld: no correction applied (per-knob strength limit reached or all SVs dropped)\n",
+               iter);
+      free(knobBefore);
       if (strengthLogPageOpen) {
         if (!SDDS_SetParameters(&SDDSstrengthLog, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                                 "Stage", "corrected", NULL) ||
@@ -1061,12 +1514,12 @@ long do_correct_coupling(RUN *run, LINE_LIST *beamline) {
       break;
     }
     if (scale < 1 && verbosity > 0) {
-      printf("  iteration %ld: step scaled by %le to respect strength_limit=%le\n",
-             iter, scale, strength_limit);
+      printf("  iteration %ld: step scaled by %le to respect per-knob strength limits\n",
+             iter, scale);
       fflush(stdout);
     }
 
-    /* About to apply this iteration's changes -- flush any previous still-open
+    /* About to log this iteration's changes -- flush any previous still-open
      * page as Stage="uncorrected" (we now know the previous iter was NOT the
      * last one to apply changes). */
     if (strengthLogPageOpen) {
@@ -1084,39 +1537,35 @@ long do_correct_coupling(RUN *run, LINE_LIST *beamline) {
         SDDS_Bomb("correct_coupling: error writing strength_log page");
     }
     for (j = 0; j < nSkew; j++) {
-      double before = *knobs[j].valuePtr;
-      double step = scale * dK[j];
-      double after = before + step;
-      *knobs[j].valuePtr = after;
-      /* Recompute this element's matrix; persist the change into the lattice definition. */
-      if (knobs[j].elem->matrix) {
-        free_matrices(knobs[j].elem->matrix);
-        free(knobs[j].elem->matrix);
-        knobs[j].elem->matrix = NULL;
-      }
-      compute_matrix(knobs[j].elem, run, NULL);
-      change_defined_parameter(knobs[j].elem->name, knobs[j].paramIndex,
-                               knobs[j].elem->type, after, NULL, LOAD_FLAG_ABSOLUTE);
+      double before = knobBefore[j];
+      double after  = *knobs[j].valuePtr;
+      double step   = after - before;
       if (SDDSstrengthLogInit) {
         if (!SDDS_SetRowValues(&SDDSstrengthLog, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, j,
                                "ElementName",            knobs[j].elem->name,
                                "ElementOccurence",       knobs[j].elem->occurence,
                                "s",                      knobs[j].elem->end_pos,
-                               "ElementParameter",       skewItem,
+                               "ElementParameter",       knobItem[j],
                                "PreviousParameterValue", before,
                                "DeltaParameterValue",    step,
                                "ParameterValue",         after, NULL))
           SDDS_Bomb("correct_coupling: error setting strength_log row");
       }
     }
+    /* Transfer this iteration's "before" snapshot to prevKnobBefore so the
+     * next iteration's adaptive_step block can roll back this iteration's
+     * apply if it ends up making the residual worse. */
+    if (prevKnobBefore) free(prevKnobBefore);
+    prevKnobBefore = knobBefore;
+    knobBefore = NULL;
     /* Don't write the page yet -- defer until the next iteration starts (when
      * we'll tag it "uncorrected") or until the loop exits (when we'll tag it
      * "corrected"). */
     if (SDDSstrengthLogInit)
       strengthLogPageOpen = 1;
 
-    /* Retwiss with all corrections in place, then re-read both channels. */
-    LRC_retwiss(run, beamline, NULL);
+    /* Final retwiss already done inside the retry loop; the state in memory
+     * matches whatever we accepted.  Re-read both channels. */
     etayReader(nRowsTotal, yResidFlat, &readerCtx);
     for (i = 0; i < nBpm; i++) etay[i] = yResidFlat[i];
     rmsEtay  = ccRmsValue(yResidFlat, nRowsEtay);
@@ -1142,11 +1591,26 @@ long do_correct_coupling(RUN *run, LINE_LIST *beamline) {
     }
     rms0 = rms;
 
+    /* change_tolerance: stop if the relative improvement this iteration was
+     * positive but smaller than the requested floor.  Negative improvement
+     * (rms grew) is left to the adaptive_step block at the top of the next
+     * iteration so it can roll back rather than terminate prematurely. */
+    if (change_tolerance > 0 && prevRMS > 0 && rms <= prevRMS &&
+        (prevRMS - rms) < change_tolerance * prevRMS) {
+      if (verbosity > 0) {
+        printf("  iteration %ld: relative improvement %le below change_tolerance %le; stopping\n",
+               iter, (prevRMS - rms) / prevRMS, change_tolerance);
+        fflush(stdout);
+      }
+      break;
+    }
+
     /* For use_perturbed_matrix>1, force a fresh response build before the next
      * iteration; for 0 or 1, leave the matrix in place. */
     if (use_perturbed_matrix > 1)
       responseValid = 0;
   }
+  if (prevKnobBefore) { free(prevKnobBefore); prevKnobBefore = NULL; }
 
   /* Loop completed normally (n_iterations exhausted). Any still-open page is
    * therefore from the actually-final iteration -- tag it "corrected". */
@@ -1210,6 +1674,17 @@ void finish_correct_coupling(void) {
   if (bpms)  { free(bpms);  bpms = NULL; }
   freeCrossPlaneState();
   nRowsTotal = nRowsEtay = 0;
+  LRC_freePatternList(&corrPatterns, &nCorrPatterns);
+  if (corrPatternStr) { free(corrPatternStr); corrPatternStr = NULL; }
+  LRC_freePatternList(&itemsList, &nItemsList);
+  LRC_freePatternList(&excludePatterns, &nExcludePatterns);
+  if (lowerList) { free(lowerList); lowerList = NULL; }
+  if (upperList) { free(upperList); upperList = NULL; }
+  nLowerList = nUpperList = 0;
+  freeKnobItem();
+  if (knobLower) { free(knobLower); knobLower = NULL; }
+  if (knobUpper) { free(knobUpper); knobUpper = NULL; }
+  if (knobFamily){ free(knobFamily);knobFamily = NULL; }
   nSkew = nBpm = 0;
   responseValid = 0;
   initialized = 0;
@@ -1239,6 +1714,17 @@ static void freeModuleState(void) {
   LRC_freePatternList(&bpmName,  &nBpmName);
   LRC_freePatternList(&bpmType,  &nBpmType);
   if (skewItem) { free(skewItem); skewItem = NULL; }
+  LRC_freePatternList(&corrPatterns, &nCorrPatterns);
+  if (corrPatternStr) { free(corrPatternStr); corrPatternStr = NULL; }
+  LRC_freePatternList(&itemsList, &nItemsList);
+  LRC_freePatternList(&excludePatterns, &nExcludePatterns);
+  if (lowerList) { free(lowerList); lowerList = NULL; }
+  if (upperList) { free(upperList); upperList = NULL; }
+  nLowerList = nUpperList = 0;
+  freeKnobItem();
+  if (knobLower) { free(knobLower); knobLower = NULL; }
+  if (knobUpper) { free(knobUpper); knobUpper = NULL; }
+  if (knobFamily){ free(knobFamily);knobFamily = NULL; }
   nSkew = nBpm = 0;
   responseValid = 0;
 }
@@ -1275,8 +1761,25 @@ static void saveResponseMatrixToFile(char *filename, double pert) {
       SDDS_DefineColumn(&out, "Coefficient", NULL, NULL,
                         "Response matrix entry: d eta_y(BPM)/d parameter(skew)",
                         NULL, SDDS_DOUBLE, 0) < 0 ||
+      SDDS_DefineColumn(&out, "KnobParameter", NULL, NULL,
+                        "Per-knob parameter name perturbed for this column "
+                        "(supersedes ElementParameter parameter for multi-item "
+                        "matrices)",
+                        NULL, SDDS_STRING, 0) < 0 ||
       SDDS_DefineParameter(&out, "ElementParameter", NULL, NULL,
-                           "Name of the element parameter that was perturbed (e.g. K1)",
+                           "Legacy single-item field; for matrices with mixed "
+                           "items the authoritative per-knob value lives in the "
+                           "KnobParameter column",
+                           NULL, SDDS_STRING, NULL) < 0 ||
+      SDDS_DefineParameter(&out, "CorrectionElements", NULL, NULL,
+                           "Verbatim correction_elements string used to build "
+                           "this matrix; consumed by load_coupling_response_matrix "
+                           "so a subsequent correct_coupling can inherit the family "
+                           "list and supply only lower_limits / upper_limits",
+                           NULL, SDDS_STRING, NULL) < 0 ||
+      SDDS_DefineParameter(&out, "CorrectionItems", NULL, NULL,
+                           "Whitespace-joined items list aligned with "
+                           "CorrectionElements; consumed by load_coupling_response_matrix",
                            NULL, SDDS_STRING, NULL) < 0 ||
       !SDDS_DefineSimpleParameter(&out, "ResponsePerturbation", NULL, SDDS_DOUBLE) ||
       !SDDS_DefineSimpleParameter(&out, "nKnobs", NULL, SDDS_LONG) ||
@@ -1286,13 +1789,29 @@ static void saveResponseMatrixToFile(char *filename, double pert) {
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
     exitElegant(1);
   }
+  /* Build the joined items string from itemsList[] (one slot per family). */
+  char *itemsJoined = NULL;
+  {
+    long total = 0, kk;
+    for (kk = 0; kk < nItemsList; kk++) total += strlen(itemsList[kk]) + 1;
+    if (total == 0) total = 1;
+    itemsJoined = tmalloc(total + 1);
+    itemsJoined[0] = '\0';
+    for (kk = 0; kk < nItemsList; kk++) {
+      if (kk > 0) strcat(itemsJoined, " ");
+      strcat(itemsJoined, itemsList[kk]);
+    }
+  }
   if (!SDDS_StartPage(&out, nBpm * nSkew) ||
       !SDDS_SetParameters(&out, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                           "ElementParameter",     skewItem,
+                          "CorrectionElements",   corrPatternStr ? corrPatternStr : "",
+                          "CorrectionItems",      itemsJoined,
                           "ResponsePerturbation", pert,
                           "nKnobs",               nSkew,
                           "nBPMs",                nBpm, NULL))
     SDDS_Bomb("compute_coupling_response_matrix: error writing parameters");
+  free(itemsJoined);
   row = 0;
   for (i = 0; i < nBpm; i++)
     for (j = 0; j < nSkew; j++) {
@@ -1303,7 +1822,9 @@ static void saveResponseMatrixToFile(char *filename, double pert) {
                              "SkewName",      knobs[j].elem->name,
                              "SkewOccurence", knobs[j].elem->occurence,
                              "sSkew",         knobs[j].elem->end_pos,
-                             "Coefficient",   R[i][j], NULL))
+                             "Coefficient",   R[i][j],
+                             "KnobParameter", knobItem ? knobItem[j] : skewItem,
+                             NULL))
         SDDS_Bomb("compute_coupling_response_matrix: error setting row");
       row++;
     }
@@ -1469,13 +1990,9 @@ void setup_compute_coupling_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LIN
 
   if (compute_coupling_response_matrix_struct.filename == NULL)
     bombElegant("compute_coupling_response_matrix: filename is required", NULL);
-  if (compute_coupling_response_matrix_struct.name_pattern == NULL &&
-      compute_coupling_response_matrix_struct.type_pattern == NULL)
-    bombElegant("compute_coupling_response_matrix: at least one of name_pattern, type_pattern is required",
-                NULL);
-  if (compute_coupling_response_matrix_struct.item == NULL ||
-      strlen(compute_coupling_response_matrix_struct.item) == 0)
-    bombElegant("compute_coupling_response_matrix: item cannot be empty", NULL);
+  if (compute_coupling_response_matrix_struct.correction_elements == NULL ||
+      *compute_coupling_response_matrix_struct.correction_elements == 0)
+    bombElegant("compute_coupling_response_matrix: correction_elements is required", NULL);
   if (compute_coupling_response_matrix_struct.response_perturbation <= 0)
     bombElegant("compute_coupling_response_matrix: response_perturbation must be > 0", NULL);
   if (compute_coupling_response_matrix_struct.measurement_noise < 0)
@@ -1486,11 +2003,45 @@ void setup_compute_coupling_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LIN
                 NULL);
 
   freeModuleState();
-  skewName = addPatterns(&nSkewName, compute_coupling_response_matrix_struct.name_pattern);
-  skewType = addPatterns(&nSkewType, compute_coupling_response_matrix_struct.type_pattern);
-  bpmName  = addPatterns(&nBpmName,  compute_coupling_response_matrix_struct.bpm_name_pattern);
-  bpmType  = addPatterns(&nBpmType,  compute_coupling_response_matrix_struct.bpm_type_pattern);
-  cp_str(&skewItem, compute_coupling_response_matrix_struct.item);
+  /* Parse the new family-list inventory params (same convention as
+   * &correct_coupling).  No lower/upper here -- limits are correct-time
+   * concerns and live on &correct_coupling. */
+  cp_str(&corrPatternStr, compute_coupling_response_matrix_struct.correction_elements);
+  corrPatterns = addPatterns(&nCorrPatterns, corrPatternStr);
+  if (nCorrPatterns == 0)
+    bombElegant("compute_coupling_response_matrix: correction_elements parsed to zero patterns", NULL);
+  itemsList = tmalloc(sizeof(*itemsList) * nCorrPatterns);
+  nItemsList = nCorrPatterns;
+  if (compute_coupling_response_matrix_struct.items &&
+      *compute_coupling_response_matrix_struct.items) {
+    char *icopy;
+    cp_str(&icopy, compute_coupling_response_matrix_struct.items);
+    char *tok;
+    long ii = 0;
+    while ((tok = get_token(icopy)) && ii < nCorrPatterns) {
+      cp_str(&itemsList[ii], tok);
+      ii++;
+    }
+    free(icopy);
+    if (ii != nCorrPatterns)
+      bombElegantVA("compute_coupling_response_matrix: items has %ld entries but correction_elements has %ld",
+                    ii, nCorrPatterns);
+  } else {
+    long ii;
+    for (ii = 0; ii < nCorrPatterns; ii++) cp_str(&itemsList[ii], "K1");
+  }
+  if (compute_coupling_response_matrix_struct.exclude &&
+      *compute_coupling_response_matrix_struct.exclude) {
+    char *ecopy;
+    cp_str(&ecopy, compute_coupling_response_matrix_struct.exclude);
+    excludePatterns = addPatterns(&nExcludePatterns, ecopy);
+    free(ecopy);
+  }
+  bpmName = addPatterns(&nBpmName, compute_coupling_response_matrix_struct.bpm_name_pattern);
+  bpmType = addPatterns(&nBpmType, compute_coupling_response_matrix_struct.bpm_type_pattern);
+  /* Legacy skewItem records the first family's item for the
+   * backward-compatibility ElementParameter parameter in the matrix file. */
+  cp_str(&skewItem, itemsList[0]);
 
   /* Make verbosity available to the helpers (uses correct_coupling's global). */
   verbosity = compute_coupling_response_matrix_struct.verbosity;
@@ -1617,6 +2168,20 @@ void setup_load_coupling_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_L
       !(skewOccs  = SDDS_GetColumnInLong(&in, "SkewOccurence")) ||
       !(coef      = SDDS_GetColumnInDoubles(&in, "Coefficient")))
     SDDS_Bomb("load_coupling_response_matrix: error reading columns");
+  /* Per-knob item column (KnobParameter) is the multi-item form; absent for
+   * matrices written by older compute_coupling_response_matrix. */
+  char **knobItemsF = NULL;
+  if (SDDS_CheckColumn(&in, "KnobParameter", NULL, SDDS_STRING, NULL) == SDDS_CHECK_OK)
+    knobItemsF = SDDS_GetColumn(&in, "KnobParameter");
+  /* Family-list metadata (CorrectionElements, CorrectionItems) written by
+   * recent compute_coupling_response_matrix.  Optional: if absent, the
+   * subsequent correct_coupling must either supply correction_elements
+   * itself or run with no per-family bounds. */
+  char *corrElemsF = NULL, *corrItemsF = NULL;
+  if (SDDS_CheckParameter(&in, "CorrectionElements", NULL, SDDS_STRING, NULL) == SDDS_CHECK_OK)
+    SDDS_GetParameter(&in, "CorrectionElements", &corrElemsF);
+  if (SDDS_CheckParameter(&in, "CorrectionItems", NULL, SDDS_STRING, NULL) == SDDS_CHECK_OK)
+    SDDS_GetParameter(&in, "CorrectionItems", &corrItemsF);
   SDDS_Terminate(&in);
 
   /* The file was written row-major with i (BPM) outer, j (skew) inner.
@@ -1625,10 +2190,45 @@ void setup_load_coupling_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_L
    * current beamline. */
   freeModuleState();
   cp_str(&skewItem, itemStr);
+  /* Populate the family-list module state from the loaded metadata so that a
+   * subsequent correct_coupling can inherit correction_elements/items and
+   * only supply lower_limits/upper_limits aligned with the loaded count. */
+  if (corrElemsF && *corrElemsF) {
+    cp_str(&corrPatternStr, corrElemsF);
+    corrPatterns = addPatterns(&nCorrPatterns, corrPatternStr);
+    if (corrItemsF && *corrItemsF) {
+      char *ic;
+      cp_str(&ic, corrItemsF);
+      char *tok;
+      long ii = 0;
+      itemsList = tmalloc(sizeof(*itemsList) * nCorrPatterns);
+      nItemsList = nCorrPatterns;
+      while ((tok = get_token(ic)) && ii < nCorrPatterns) {
+        cp_str(&itemsList[ii], tok);
+        ii++;
+      }
+      free(ic);
+    }
+    /* Seed the &correct_coupling namelist's correction_elements and items
+     * globals (and their _default companions) so the next print_namelist
+     * echoes the inherited values.  STICKY_NAMELIST_DEFAULTS in
+     * processNamelist re-copies the _default into the live variable before
+     * the user's entries are applied, so both must be updated to be
+     * effective. */
+    cp_str(&correction_elements, corrElemsF);
+    cp_str(&correction_elements_default, corrElemsF);
+    if (corrItemsF && *corrItemsF) {
+      cp_str(&items, corrItemsF);
+      cp_str(&items_default, corrItemsF);
+    }
+  }
+  if (corrElemsF) free(corrElemsF);
+  if (corrItemsF) free(corrItemsF);
   nSkew = nKnobs;
   nBpm  = nBPMs;
 
   knobs = SDDS_Realloc(NULL, sizeof(*knobs) * nSkew);
+  knobItem = tmalloc(sizeof(*knobItem) * nSkew);
   for (j = 0; j < nSkew; j++) {
     ELEMENT_LIST *eptr = LRC_findElementByNameOccurence(beamline, skewNames[j], skewOccs[j]);
     if (!eptr) {
@@ -1636,17 +2236,24 @@ void setup_load_coupling_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_L
               skewNames[j], skewOccs[j]);
       exitElegant(1);
     }
+    char *thisItem = knobItemsF ? knobItemsF[j] : skewItem;
+    cp_str(&knobItem[j], thisItem);
     knobs[j].elem = eptr;
-    knobs[j].paramIndex = confirm_parameter(skewItem, eptr->type);
+    knobs[j].paramIndex = confirm_parameter(thisItem, eptr->type);
     if (knobs[j].paramIndex < 0 ||
         entity_description[eptr->type].parameter[knobs[j].paramIndex].type != IS_DOUBLE) {
       fprintf(stderr, "load_coupling_response_matrix: element %s has no double parameter %s\n",
-              skewNames[j], skewItem);
+              skewNames[j], thisItem);
       exitElegant(1);
     }
     knobs[j].valuePtr = (double *)(eptr->p_elem +
         entity_description[eptr->type].parameter[knobs[j].paramIndex].offset);
     knobs[j].initialValue = *knobs[j].valuePtr;
+  }
+  if (knobItemsF) {
+    long jj;
+    for (jj = 0; jj < nRows; jj++) free(knobItemsF[jj]);
+    free(knobItemsF);
   }
   bpms = SDDS_Realloc(NULL, sizeof(*bpms) * nBpm);
   for (i = 0; i < nBpm; i++) {
@@ -1897,4 +2504,29 @@ void setup_load_coupling_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE_L
   free(bpmOccs);  free(skewOccs);
   free(coef);
   free(itemStr);
+}
+
+/* ============================================================ */
+/* Per-step corrector reassertion hooks for vary_beamline().    */
+/* See correctorStash.h for the cross-module contract.          */
+/* ============================================================ */
+
+/* Populate ccStash from the current knobs[] inventory and snapshot the
+ * current skew K values.  No-op if no &correct_coupling has been issued. */
+void correct_coupling_save_correctors(RUN *run, LINE_LIST *beamline) {
+  long j;
+  (void)run; (void)beamline;
+  if (!initialized || knobs == NULL || nSkew == 0) return;
+  corstash_clear(&ccStash);
+  for (j = 0; j < nSkew; j++)
+    corstash_add(&ccStash, knobs[j].elem, knobs[j].paramIndex);
+  corstash_snapshot(&ccStash);
+}
+
+long correct_coupling_reassert_correctors(RUN *run, LINE_LIST *beamline) {
+  return corstash_reassert(&ccStash, run, beamline);
+}
+
+void correct_coupling_invalidate_correctors(void) {
+  corstash_clear(&ccStash);
 }
