@@ -417,6 +417,13 @@ typedef struct {
   double Jx, Jy, Jdelta;
   double taux, tauy, taudelta;
   double ex0, sigmadelta, Uo, Pref;
+  /* Sokolov-Ternov self-polarization (planar-ring sign-correct DK).
+   * I3pos / I3neg split RI[2] (= I3) by sign of bend angle so anti-parallel
+   * dipoles and wigglers suppress Peq.  tauP is the polarization time
+   * (s); Peq the equilibrium polarization; PstLimit = 8/(5*sqrt(3)) the
+   * ideal Sokolov-Ternov limit for a single-direction planar ring. */
+  double I3pos, I3neg;
+  double tauP, Peq, PstLimit;
 } RADIATION_INTEGRALS;
 
 typedef struct {
@@ -5231,6 +5238,10 @@ extern void printWarningForTracking(char *text, char *detail);
 extern void printWarningWithContext(char *context1, char  *context2, char *text,  char *detail);
 extern void setWarningFilePointer(FILE *fp);
 extern void summarizeWarnings();
+/* Push/pop nestable suppression of printWarning output (used by correction
+ * routines during speculative steps that may destabilise the lattice). */
+extern void pushWarningSuppression(void);
+extern void popWarningSuppression(void);
 
 extern void setObstructionsMode(long state) ;
 extern void resetObstructionData(OBSTRUCTION_DATASETS *obsData);
