@@ -61,6 +61,9 @@ typedef struct GPU_BASE {
   long gpuMagnetCount;
   long gpuWakeCount;
   long gpuLscCount;
+  long gpuStandaloneLscCount;
+  long gpuRfcwLscKickOnlyCount;
+  long gpuRfcwLscFullCount;
   long gpuCsrCount;
   long gpuScmultCount;
   long gpuPassiveElementCount;

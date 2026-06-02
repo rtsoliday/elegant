@@ -14,6 +14,10 @@ long gpu_trackRfCavityWithWakes(long np, RFCA *rfca, double **accepted,
                                 RUN *run, CHARGE *charge, WAKE *wake,
                                 TRWAKE *trwake, LSCKICK *LSCKick,
                                 long wakesAtEnd);
+long gpu_track_rfcw_lsc_kick_only(double **part, long np, LSCKICK *lsc,
+                                  double Po, CHARGE *charge,
+                                  double lengthScale,
+                                  double dgammaOverGamma);
 long gpu_track_through_rfcw(long np, RFCW *rfcw, double **accepted,
                             double *P_central, double zEnd,
                             RUN *run, long iPass, CHARGE *charge);

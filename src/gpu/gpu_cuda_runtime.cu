@@ -3046,6 +3046,44 @@ __global__ void gpuCenteredBeamSumsKernel(double *coord, long nParticles,
   }
 }
 
+__global__ void gpuLscCpuOrderTransverseSumsKernel(double *coord,
+                                                   long nParticles,
+                                                   int stride,
+                                                   GPU_BEAM_SUM_DATA *result) {
+  double xCentroid = 0;
+  double yCentroid = 0;
+  double S11 = 0;
+  double S33 = 0;
+  long ip;
+
+  if (blockIdx.x || threadIdx.x)
+    return;
+  if (nParticles <= 0)
+    return;
+
+  for (ip = 0; ip < nParticles; ip++) {
+    double *part = coord + ip * stride;
+    xCentroid += part[0];
+    yCentroid += part[2];
+  }
+  xCentroid /= nParticles;
+  yCentroid /= nParticles;
+
+  for (ip = 0; ip < nParticles; ip++) {
+    double *part = coord + ip * stride;
+    double x = part[0] - xCentroid;
+    double y = part[2] - yCentroid;
+    S11 += x * x;
+    S33 += y * y;
+  }
+
+  result->count = nParticles;
+  result->centroidSum[0] = xCentroid * nParticles;
+  result->centroidSum[2] = yCentroid * nParticles;
+  result->productSum[gpuUpperTriangularIndex(0, 0)] = S11;
+  result->productSum[gpuUpperTriangularIndex(2, 2)] = S33;
+}
+
 __global__ void gpuLongMinMaxKernel(double *coord, long nParticles, int stride,
                                     int coordinateIndex,
                                     GPU_LONG_MIN_MAX_DATA *result) {
@@ -6212,6 +6250,46 @@ extern "C" int gpuCudaCenteredBeamSums(void *coord, long nParticles,
   cudaStatus = cudaMemcpy(result, deviceResult, sizeof(*result),
                           cudaMemcpyDeviceToHost);
   cudaFree(deviceCentroid);
+  cudaFree(deviceResult);
+  return static_cast<int>(cudaStatus);
+}
+
+extern "C" int gpuCudaLscCpuOrderTransverseSums(void *coord, long nParticles,
+                                                int stride,
+                                                GPU_BEAM_SUM_DATA *result,
+                                                float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  GPU_BEAM_SUM_DATA *deviceResult = NULL;
+  int status;
+
+  if (!coord || !result || nParticles <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  std::memset(result, 0, sizeof(*result));
+
+  cudaStatus = cudaMalloc(&deviceResult, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMemset(deviceResult, 0, sizeof(*deviceResult));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceResult);
+    return static_cast<int>(cudaStatus);
+  }
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  gpuLscCpuOrderTransverseSumsKernel<<<1, 1>>>(
+    static_cast<double *>(coord), nParticles, stride, deviceResult);
+  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceResult);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(result, deviceResult, sizeof(*result),
+                          cudaMemcpyDeviceToHost);
   cudaFree(deviceResult);
   return static_cast<int>(cudaStatus);
 }

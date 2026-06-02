@@ -309,6 +309,18 @@ long simple_rf_cavity(
                                 NULL, NULL, NULL, NULL, NULL, 0);
 }
 
+static void trackRfCavityAddLSCKick(double **part, long np,
+                                    LSCKICK *LSCKick, double Po,
+                                    CHARGE *charge, double length,
+                                    double dgammaOverGammaAve) {
+#ifdef HAVE_GPU
+  if (gpu_track_rfcw_lsc_kick_only(part, np, LSCKick, Po, charge,
+                                   length, dgammaOverGammaAve))
+    return;
+#endif
+  addLSCKick(part, np, LSCKick, Po, charge, length, dgammaOverGammaAve);
+}
+
 long trackRfCavityWithWakes(
   double **part, long np,
   RFCA *rfca,
@@ -672,7 +684,8 @@ long trackRfCavityWithWakes(
               dgammaOverGammaAve /= dgammaOverGammaNp;
 
 #endif
-            addLSCKick(part, np, LSCKick, *P_central, charge, length, dgammaOverGammaAve);
+            trackRfCavityAddLSCKick(part, np, LSCKick, *P_central, charge,
+                                    length, dgammaOverGammaAve);
           }
         }
         if (length) {
@@ -713,7 +726,8 @@ long trackRfCavityWithWakes(
                 dgammaOverGammaAve /= dgammaOverGammaNp;
             }
 #endif
-            addLSCKick(part, np, LSCKick, *P_central, charge, length, dgammaOverGammaAve);
+            trackRfCavityAddLSCKick(part, np, LSCKick, *P_central, charge,
+                                    length, dgammaOverGammaAve);
           }
         }
       }
@@ -790,7 +804,8 @@ long trackRfCavityWithWakes(
             dgammaOverGammaAve /= dgammaOverGammaNp;
 
 #endif
-          addLSCKick(part, np, LSCKick, *P_central, charge, length, dgammaOverGammaAve);
+          trackRfCavityAddLSCKick(part, np, LSCKick, *P_central, charge,
+                                  length, dgammaOverGammaAve);
         }
         if (trwake)
           track_through_trwake(part, np, trwake, *P_central, run, iPass, charge);
@@ -864,7 +879,8 @@ long trackRfCavityWithWakes(
               dgammaOverGammaAve /= dgammaOverGammaNp;
             }
 #endif
-          addLSCKick(part, np, LSCKick, *P_central, charge, length, dgammaOverGammaAve);
+          trackRfCavityAddLSCKick(part, np, LSCKick, *P_central, charge,
+                                  length, dgammaOverGammaAve);
         }
       }
 
@@ -977,7 +993,8 @@ long trackRfCavityWithWakes(
               dgammaOverGammaAve /= dgammaOverGammaNp;
             }
 #endif
-          addLSCKick(part, np, LSCKick, *P_central, charge, length, dgammaOverGammaAve);
+          trackRfCavityAddLSCKick(part, np, LSCKick, *P_central, charge,
+                                  length, dgammaOverGammaAve);
         }
       }
     }
