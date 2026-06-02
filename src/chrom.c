@@ -15,6 +15,10 @@
 #include "mdb.h"
 #include "track.h"
 #include "chromDefs.h"
+#include "correctorStash.h"
+
+static CORRECTOR_STASH chromStash = { NULL, NULL, NULL, NULL, 0, 0, 1, 0, "chrom" };
+static CHROM_CORRECTION *chrom_stash_corr = NULL;
 
 double computeChromaticityValue(double dR11, double dR12, double dR22, double R11, double R12, double R22,
                                 double beta0, double beta1, double alpha0, double alpha1,
@@ -143,6 +147,8 @@ void setup_chromaticity_correction(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *b
   chrom->correction_fraction = correction_fraction;
   chrom->min_correction_fraction = min_correction_fraction;
   alter_defined_values = change_defined_values;
+  chrom_stash_corr = chrom;
+  chromStash.reassert = reset_correctors_each_step ? 1 : 0;
   chrom->strengthLimit = strength_limit;
   chrom->use_perturbed_matrix = use_perturbed_matrix;
   chrom->sextupole_tweek = sextupole_tweek;
@@ -1192,4 +1198,46 @@ double computeChromaticAlphaValue(double dR11, double dR12, double dR22,
       -((-(sqrt(beta0 * beta1) * dR12 * cos(phi1)) + sqr(beta0) * sqrt(beta1 / beta0) * dR11 * sin(phi1) - alpha0 * sqrt(beta0 * beta1) * dR12 * sin(phi1)) /
         (beta0 * beta1));
   }
+}
+
+/* ---------------------------------------------------------------- */
+/* Per-step corrector stash hooks (chromaticity correction). */
+
+void correct_chromaticity_save_correctors(RUN *run, LINE_LIST *beamline) {
+  long i;
+  (void)run;
+  if (chrom_stash_corr == NULL || chrom_stash_corr->n_families <= 0) return;
+  corstash_clear(&chromStash);
+  for (i = 0; i < chrom_stash_corr->n_families; i++) {
+    ELEMENT_LIST *context = NULL;
+    long paramIndex = -1;
+    long lastType = -1;
+    while ((context = wfind_element(chrom_stash_corr->name[i], &context, beamline->elem))) {
+      if (chrom_stash_corr->n_exclude) {
+        long j, excluded;
+        for (j = excluded = 0; j < chrom_stash_corr->n_exclude; j++)
+          if (wild_match(context->name, chrom_stash_corr->exclude[j])) {
+            excluded = 1;
+            break;
+          }
+        if (excluded) continue;
+      }
+      if (context->type != lastType) {
+        paramIndex = confirm_parameter(chrom_stash_corr->item[i], context->type);
+        lastType = context->type;
+      }
+      if (paramIndex < 0) continue;
+      corstash_add(&chromStash, context, paramIndex);
+    }
+  }
+  corstash_snapshot(&chromStash);
+}
+
+long correct_chromaticity_reassert_correctors(RUN *run, LINE_LIST *beamline) {
+  return corstash_reassert(&chromStash, run, beamline);
+}
+
+void correct_chromaticity_invalidate_correctors(void) {
+  corstash_clear(&chromStash);
+  chrom_stash_corr = NULL;
 }
