@@ -492,7 +492,7 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
             n_iter = clorb_iter;
             break;
           }
-          printf("reduced iteration fraction to %e\n", change_fraction);
+          printf("reduced closed orbit iteration fraction to %e\n", change_fraction);
           fflush(stdout);
         } else {
           goodCount++;
