@@ -42,6 +42,7 @@ elegant_SRC = alpha_data.c \
 	correct_coupling.c \
 	correct_lattice.c \
 	correctionEngine.c \
+	correctorStash.c \
 	csbend.c \
 	divideElements.c \
 	do_tracking.c \
