@@ -56,11 +56,23 @@ long LRC_collectKnobs(LINE_LIST *beamline,
                       char *item, LRC_Knob **knobs);
 
 /* Walk the beamline; pick every element whose name/type matches the lists.
- * Returns the count; allocates *bpms. */
+ * Returns the count; allocates *bpms.  This is the Cartesian-product form:
+ * an element matches if its name matches ANY namePattern AND its type
+ * matches ANY typePattern. */
 long LRC_collectBpms(LINE_LIST *beamline,
                      char **namePatterns, long nNamePatterns,
                      char **typePatterns, long nTypePatterns,
                      LRC_Bpm **bpms);
+
+/* Parallel-list form: locPatterns[] and typePatterns[] must be the same
+ * length (nPatterns).  An element matches if there exists some i such
+ * that its name matches locPatterns[i] AND its type matches
+ * typePatterns[i].  This lets the caller mix measurement locations
+ * (e.g., quadrupoles measured by LOCO at non-BPM positions) with BPMs
+ * in a single selection. */
+long LRC_collectBpmsParallel(LINE_LIST *beamline,
+                             char **locPatterns, char **typePatterns,
+                             long nPatterns, LRC_Bpm **bpms);
 
 /* Linear scan for an element with the given name+occurrence. NULL if absent. */
 ELEMENT_LIST *LRC_findElementByNameOccurence(LINE_LIST *beamline,
