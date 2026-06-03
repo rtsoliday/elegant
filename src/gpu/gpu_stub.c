@@ -939,9 +939,9 @@ void gpuDescribeUsageSettings(char *buffer, unsigned long bufferSize) {
 
 static const char *gpuExactDriftStatus(void) {
   if (gpuEnableExactDrift)
-    return "; exact drift explicitly enabled";
-  return gpuExactDriftExplicit ? "; exact drift explicitly disabled" :
-                                 "; exact drift disabled by default";
+    return gpuExactDriftExplicit ? "; exact tracking explicitly enabled" :
+                                   "; exact tracking enabled by default";
+  return "; exact tracking explicitly disabled";
 }
 
 static const char *gpuMatrixTrackingStatus(void) {
@@ -3488,7 +3488,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
                      gpuBase.minParticles);
   gpuHelperMinParticlesExplicit = gpuEnvSet("ELEGANT_GPU_MIN_HELPER_PARTICLES");
   gpuBase.helperMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_HELPER_PARTICLES", gpuBase.minParticles);
-  gpuBase.exactDriftMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_EXACT_DRIFT_PARTICLES", gpuBase.minParticles);
+  gpuBase.exactDriftMinParticles = gpuEnvLong("ELEGANT_GPU_MIN_EXACT_PARTICLES", gpuBase.minParticles);
   gpuOutputDriftReductionMinParticlesExplicit =
     gpuEnvSetEither("ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES",
                     "ELEGANT_GPU_MIN_REDUCTION_PARTICLES");
@@ -3510,9 +3510,9 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuBase.hostCurrent = 1;
   gpuBase.hostCoordBase = coord ? (void *)coord[0] : NULL;
   gpuVerbose = gpuEnvFlag("ELEGANT_GPU_VERBOSE");
-  gpuExactDriftExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_EXACT_DRIFT");
-  gpuEnableExactDrift = gpuExactDriftExplicit &&
-                        gpuEnvFlag("ELEGANT_GPU_ENABLE_EXACT_DRIFT");
+  gpuExactDriftExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_EXACT");
+  gpuEnableExactDrift = !gpuExactDriftExplicit ||
+                        gpuEnvFlag("ELEGANT_GPU_ENABLE_EXACT");
   gpuApertureParallelCompactionExplicit =
     gpuEnvSet("ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION");
   gpuApertureParallelCompactionVerifyDisabled = 0;
@@ -4432,7 +4432,7 @@ static long gpuRectangularCollimatorStableCompact(RCOL *rcol, long np,
     return np;
   if (rcol->length > 0 && !gpuExactDriftParticleCountAllowed(np))
     return gpuRectangularCollimatorOnCpu(rcol, np, accepted, z, Po, eptr,
-                                         "rectangular_collimator stable length drift below CUDA exactDrift gate");
+                                         "rectangular_collimator stable length drift below CUDA exact gate");
   gpuCopyHostToDevice(np);
   gpuEnsureApertureScratch(np);
   status = gpuCudaRectangularCollimatorStableCompact(
@@ -4500,7 +4500,7 @@ long gpu_rectangular_collimator(void *rcol0, long np, double **accepted,
   if (rcol->length > 0) {
     if (!gpuExactDriftParticleCountAllowed(np))
       return gpuRectangularCollimatorOnCpu(rcol, np, accepted, z, Po, (ELEMENT_LIST *)eptr,
-                                           "rectangular_collimator length drift below CUDA exactDrift gate");
+                                           "rectangular_collimator length drift below CUDA exact gate");
     gpu_exactDrift(np, rcol->length);
   }
   gpuRecordWallSeconds();
@@ -4746,7 +4746,7 @@ static long gpuEllipticalCollimatorStableCompact(ECOL *ecol, long np,
     return np;
   if (ecol->length > 0 && !gpuExactDriftParticleCountAllowed(np))
     return gpuEllipticalCollimatorOnCpu(ecol, np, accepted, z, Po, eptr,
-                                        "elliptical_collimator stable length drift below CUDA exactDrift gate");
+                                        "elliptical_collimator stable length drift below CUDA exact gate");
   gpuCopyHostToDevice(np);
   gpuEnsureApertureScratch(np);
   status = gpuCudaEllipticalCollimatorStableCompact(
@@ -4818,7 +4818,7 @@ long gpu_elliptical_collimator(void *ecol0, long np, double **accepted,
   if (ecol->length > 0) {
     if (!gpuExactDriftParticleCountAllowed(np))
       return gpuEllipticalCollimatorOnCpu(ecol, np, accepted, z, Po, (ELEMENT_LIST *)eptr,
-                                          "elliptical_collimator length drift below CUDA exactDrift gate");
+                                          "elliptical_collimator length drift below CUDA exact gate");
     gpu_exactDrift(np, ecol->length);
   }
   gpuRecordWallSeconds();
@@ -4992,7 +4992,7 @@ static long gpuScraperStableCompact(SCRAPER *scraper, long np,
     return np;
   if (scraper->length > 0 && !gpuExactDriftParticleCountAllowed(np))
     return gpuBeamScraperOnCpu(scraper, np, accepted, z, Po, eptr,
-                               "beam_scraper stable length drift below CUDA exactDrift gate");
+                               "beam_scraper stable length drift below CUDA exact gate");
   gpuCopyHostToDevice(np);
   gpuEnsureApertureScratch(np);
   status = gpuCudaScraperStableCompact(
@@ -5046,7 +5046,7 @@ long gpu_beam_scraper(void *scraper0, long np, double **accepted,
     if (scraper->length) {
       if (!gpuExactDriftParticleCountAllowed(np))
         return gpuBeamScraperOnCpu(scraper, np, accepted, z, Po, (ELEMENT_LIST *)eptr,
-                                   "beam_scraper length drift below CUDA exactDrift gate");
+                                   "beam_scraper length drift below CUDA exact gate");
       gpu_exactDrift(np, scraper->length);
     }
     gpuRecordWallSeconds();
@@ -5098,7 +5098,7 @@ long gpu_beam_scraper(void *scraper0, long np, double **accepted,
   if (scraper->length > 0) {
     if (!gpuExactDriftParticleCountAllowed(np))
       return gpuBeamScraperOnCpu(scraper, np, accepted, z, Po, (ELEMENT_LIST *)eptr,
-                                 "beam_scraper length drift below CUDA exactDrift gate");
+                                 "beam_scraper length drift below CUDA exact gate");
     gpu_exactDrift(np, scraper->length);
   }
   gpuRecordWallSeconds();
