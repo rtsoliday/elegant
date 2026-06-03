@@ -21,6 +21,12 @@
    "chromaticity"
    "closed_orbit"
    "correct"
+   "correct_coupling"
+   "compute_coupling_response_matrix"
+   "load_coupling_response_matrix"
+   "correct_lattice"
+   "compute_lattice_response_matrix"
+   "load_lattice_response_matrix"
    "coupled_twiss_output"
    "divide_elements"
    "elastic_scattering"
@@ -310,6 +316,7 @@
           "use_perturbed_matrix"
           "exit_on_failure"
           "update_orbit"
+          "reset_correctors_each_step"
           "verbosity"
           "dK2_weight"
           "response_matrix_output"
@@ -371,6 +378,7 @@
           "force_alternation"
           "n_iterations"
           "prezero_correctors"
+          "reset_correctors_each_step"
           "track_before_and_after"
           "start_from_centroid"
           "use_actual_beam"
@@ -385,6 +393,126 @@
           "use_response_from_computed_orbits"
           "rpn_store_response_matrix"
           ))
+   (cons "correct_coupling"
+         (list
+          "correction_elements"
+          "items"
+          "lower_limits"
+          "upper_limits"
+          "exclude"
+          "bpm_name_pattern"
+          "bpm_type_pattern"
+          "n_iterations"
+          "convergence"
+          "change_tolerance"
+          "correction_fraction"
+          "use_perturbed_matrix"
+          "adaptive_step"
+          "response_perturbation"
+          "svd_threshold"
+          "n_singular_values"
+          "auto_sv_threshold"
+          "auto_sv_threshold_factor"
+          "measurement_noise"
+          "measurement_noise_cutoff"
+          "etay_weight"
+          "cross_h_steering"
+          "cross_v_steering"
+          "cross_x_bpm_name_pattern"
+          "cross_x_bpm_type_pattern"
+          "cross_y_bpm_name_pattern"
+          "cross_y_bpm_type_pattern"
+          "cross_response_weight"
+          "cross_steering_kick"
+          "cross_measurement_noise"
+          "strength_log"
+          "etay_file"
+          "response_file"
+          "rms_log"
+          "reset_correctors_each_step"
+          "verbosity"
+          ))
+   (cons "compute_coupling_response_matrix"
+         (list
+          "filename"
+          "cross_filename"
+          "correction_elements"
+          "items"
+          "exclude"
+          "bpm_name_pattern"
+          "bpm_type_pattern"
+          "cross_h_steering"
+          "cross_v_steering"
+          "cross_x_bpm_name_pattern"
+          "cross_x_bpm_type_pattern"
+          "cross_y_bpm_name_pattern"
+          "cross_y_bpm_type_pattern"
+          "cross_steering_kick"
+          "response_perturbation"
+          "measurement_noise"
+          "cross_measurement_noise"
+          "measurement_noise_cutoff"
+          "verbosity"
+          ))
+   (cons "load_coupling_response_matrix"
+         (list
+          "filename"
+          "cross_filename"
+          "verbosity"
+          ))
+   (cons "correct_lattice"
+         (list
+          "correction_elements"
+          "items"
+          "lower_limits"
+          "upper_limits"
+          "exclude"
+          "bind_name_pattern"
+          "bpm_name_pattern"
+          "bpm_type_pattern"
+          "n_iterations"
+          "convergence"
+          "change_tolerance"
+          "correction_fraction"
+          "use_perturbed_matrix"
+          "adaptive_step"
+          "response_perturbation"
+          "svd_threshold"
+          "n_singular_values"
+          "auto_sv_threshold"
+          "auto_sv_threshold_factor"
+          "beta_measurement_noise"
+          "eta_measurement_noise"
+          "measurement_noise_cutoff"
+          "reference_file"
+          "betax_weight"
+          "betay_weight"
+          "etax_weight"
+          "strength_log"
+          "response_file"
+          "rms_log"
+          "reset_correctors_each_step"
+          "verbosity"
+          ))
+   (cons "compute_lattice_response_matrix"
+         (list
+          "filename"
+          "correction_elements"
+          "items"
+          "exclude"
+          "bind_name_pattern"
+          "bpm_name_pattern"
+          "bpm_type_pattern"
+          "response_perturbation"
+          "measurement_noise"
+          "measurement_noise_cutoff"
+          "verbosity"
+          ))
+   (cons "load_lattice_response_matrix"
+         (list
+          "filename"
+          "verbosity"
+          ))
    (cons "coupled_twiss_output"
          (list
           "filename"
@@ -397,6 +525,35 @@
           "verbosity"
           "concat_order"
           "output_sigma_matrix"
+          "matched"
+          "beta_x1"
+          "beta_x2"
+          "beta_y1"
+          "beta_y2"
+          "alpha_x1"
+          "alpha_x2"
+          "alpha_y1"
+          "alpha_y2"
+          "eta_x"
+          "etap_x"
+          "eta_y"
+          "etap_y"
+          "gamma_x1"
+          "gamma_x2"
+          "gamma_y1"
+          "gamma_y2"
+          "A_xy_1"
+          "A_xpy_1"
+          "A_xyp_1"
+          "A_xpyp_1"
+          "A_xy_2"
+          "A_xpy_2"
+          "A_xyp_2"
+          "A_xpyp_2"
+          "reference_file"
+          "reference_element"
+          "reference_element_occurrence"
+          "reflect_reference_values"
           ))
    (cons "divide_elements"
          (list
@@ -872,6 +1029,7 @@
           "verbosity"
           "matched"
           "equilibrium"
+          "force_e1_gt_e2"
           "radiation"
           "ibs_iterations"
           "ibs_output_iterations"
@@ -1249,6 +1407,7 @@
           "use_perturbed_matrix"
           "dK1_weight"
           "update_orbit"
+          "reset_correctors_each_step"
           "verbosity"
           "response_matrix_output"
           "correction_matrix_output"
@@ -1643,6 +1802,7 @@
           (cons "use_perturbed_matrix" "long")
           (cons "exit_on_failure" "long")
           (cons "update_orbit" "long")
+          (cons "reset_correctors_each_step" "long")
           (cons "verbosity" "long")
           (cons "dK2_weight" "double")
           (cons "response_matrix_output" "STRING")
@@ -1704,6 +1864,7 @@
           (cons "force_alternation" "long")
           (cons "n_iterations" "long")
           (cons "prezero_correctors" "long")
+          (cons "reset_correctors_each_step" "long")
           (cons "track_before_and_after" "long")
           (cons "start_from_centroid" "long")
           (cons "use_actual_beam" "long")
@@ -1718,6 +1879,126 @@
           (cons "use_response_from_computed_orbits" "long")
           (cons "rpn_store_response_matrix" "long")
           ))
+   (cons "correct_coupling"
+         (list
+          (cons "correction_elements" "STRING")
+          (cons "items" "STRING")
+          (cons "lower_limits" "STRING")
+          (cons "upper_limits" "STRING")
+          (cons "exclude" "STRING")
+          (cons "bpm_name_pattern" "STRING")
+          (cons "bpm_type_pattern" "STRING")
+          (cons "n_iterations" "long")
+          (cons "convergence" "double")
+          (cons "change_tolerance" "double")
+          (cons "correction_fraction" "double")
+          (cons "use_perturbed_matrix" "long")
+          (cons "adaptive_step" "long")
+          (cons "response_perturbation" "double")
+          (cons "svd_threshold" "double")
+          (cons "n_singular_values" "long")
+          (cons "auto_sv_threshold" "long")
+          (cons "auto_sv_threshold_factor" "double")
+          (cons "measurement_noise" "double")
+          (cons "measurement_noise_cutoff" "double")
+          (cons "etay_weight" "double")
+          (cons "cross_h_steering" "STRING")
+          (cons "cross_v_steering" "STRING")
+          (cons "cross_x_bpm_name_pattern" "STRING")
+          (cons "cross_x_bpm_type_pattern" "STRING")
+          (cons "cross_y_bpm_name_pattern" "STRING")
+          (cons "cross_y_bpm_type_pattern" "STRING")
+          (cons "cross_response_weight" "double")
+          (cons "cross_steering_kick" "double")
+          (cons "cross_measurement_noise" "double")
+          (cons "strength_log" "STRING")
+          (cons "etay_file" "STRING")
+          (cons "response_file" "STRING")
+          (cons "rms_log" "STRING")
+          (cons "reset_correctors_each_step" "long")
+          (cons "verbosity" "long")
+          ))
+   (cons "compute_coupling_response_matrix"
+         (list
+          (cons "filename" "STRING")
+          (cons "cross_filename" "STRING")
+          (cons "correction_elements" "STRING")
+          (cons "items" "STRING")
+          (cons "exclude" "STRING")
+          (cons "bpm_name_pattern" "STRING")
+          (cons "bpm_type_pattern" "STRING")
+          (cons "cross_h_steering" "STRING")
+          (cons "cross_v_steering" "STRING")
+          (cons "cross_x_bpm_name_pattern" "STRING")
+          (cons "cross_x_bpm_type_pattern" "STRING")
+          (cons "cross_y_bpm_name_pattern" "STRING")
+          (cons "cross_y_bpm_type_pattern" "STRING")
+          (cons "cross_steering_kick" "double")
+          (cons "response_perturbation" "double")
+          (cons "measurement_noise" "double")
+          (cons "cross_measurement_noise" "double")
+          (cons "measurement_noise_cutoff" "double")
+          (cons "verbosity" "long")
+          ))
+   (cons "load_coupling_response_matrix"
+         (list
+          (cons "filename" "STRING")
+          (cons "cross_filename" "STRING")
+          (cons "verbosity" "long")
+          ))
+   (cons "correct_lattice"
+         (list
+          (cons "correction_elements" "STRING")
+          (cons "items" "STRING")
+          (cons "lower_limits" "STRING")
+          (cons "upper_limits" "STRING")
+          (cons "exclude" "STRING")
+          (cons "bind_name_pattern" "STRING")
+          (cons "bpm_name_pattern" "STRING")
+          (cons "bpm_type_pattern" "STRING")
+          (cons "n_iterations" "long")
+          (cons "convergence" "double")
+          (cons "change_tolerance" "double")
+          (cons "correction_fraction" "double")
+          (cons "use_perturbed_matrix" "long")
+          (cons "adaptive_step" "long")
+          (cons "response_perturbation" "double")
+          (cons "svd_threshold" "double")
+          (cons "n_singular_values" "long")
+          (cons "auto_sv_threshold" "long")
+          (cons "auto_sv_threshold_factor" "double")
+          (cons "beta_measurement_noise" "double")
+          (cons "eta_measurement_noise" "double")
+          (cons "measurement_noise_cutoff" "double")
+          (cons "reference_file" "STRING")
+          (cons "betax_weight" "double")
+          (cons "betay_weight" "double")
+          (cons "etax_weight" "double")
+          (cons "strength_log" "STRING")
+          (cons "response_file" "STRING")
+          (cons "rms_log" "STRING")
+          (cons "reset_correctors_each_step" "long")
+          (cons "verbosity" "long")
+          ))
+   (cons "compute_lattice_response_matrix"
+         (list
+          (cons "filename" "STRING")
+          (cons "correction_elements" "STRING")
+          (cons "items" "STRING")
+          (cons "exclude" "STRING")
+          (cons "bind_name_pattern" "STRING")
+          (cons "bpm_name_pattern" "STRING")
+          (cons "bpm_type_pattern" "STRING")
+          (cons "response_perturbation" "double")
+          (cons "measurement_noise" "double")
+          (cons "measurement_noise_cutoff" "double")
+          (cons "verbosity" "long")
+          ))
+   (cons "load_lattice_response_matrix"
+         (list
+          (cons "filename" "STRING")
+          (cons "verbosity" "long")
+          ))
    (cons "coupled_twiss_output"
          (list
           (cons "filename" "STRING")
@@ -1730,6 +2011,35 @@
           (cons "verbosity" "long")
           (cons "concat_order" "long")
           (cons "output_sigma_matrix" "long")
+          (cons "matched" "long")
+          (cons "beta_x1" "double")
+          (cons "beta_x2" "double")
+          (cons "beta_y1" "double")
+          (cons "beta_y2" "double")
+          (cons "alpha_x1" "double")
+          (cons "alpha_x2" "double")
+          (cons "alpha_y1" "double")
+          (cons "alpha_y2" "double")
+          (cons "eta_x" "double")
+          (cons "etap_x" "double")
+          (cons "eta_y" "double")
+          (cons "etap_y" "double")
+          (cons "gamma_x1" "double")
+          (cons "gamma_x2" "double")
+          (cons "gamma_y1" "double")
+          (cons "gamma_y2" "double")
+          (cons "A_xy_1" "double")
+          (cons "A_xpy_1" "double")
+          (cons "A_xyp_1" "double")
+          (cons "A_xpyp_1" "double")
+          (cons "A_xy_2" "double")
+          (cons "A_xpy_2" "double")
+          (cons "A_xyp_2" "double")
+          (cons "A_xpyp_2" "double")
+          (cons "reference_file" "STRING")
+          (cons "reference_element" "STRING")
+          (cons "reference_element_occurrence" "long")
+          (cons "reflect_reference_values" "long")
           ))
    (cons "divide_elements"
          (list
@@ -1869,7 +2179,7 @@
           (cons "no_errors_for_first_step" "long")
           (cons "error_factor" "double")
           ))
-   (cons "error"
+   (cons "error_element"
          (list
           (cons "name" "STRING")
           (cons "exclude" "STRING")
@@ -2205,6 +2515,7 @@
           (cons "verbosity" "long")
           (cons "matched" "long")
           (cons "equilibrium" "long")
+          (cons "force_e1_gt_e2" "long")
           (cons "radiation" "long")
           (cons "ibs_iterations" "long")
           (cons "ibs_output_iterations" "long")
@@ -2582,6 +2893,7 @@
           (cons "use_perturbed_matrix" "long")
           (cons "dK1_weight" "double")
           (cons "update_orbit" "long")
+          (cons "reset_correctors_each_step" "long")
           (cons "verbosity" "long")
           (cons "response_matrix_output" "STRING")
           (cons "correction_matrix_output" "STRING")
