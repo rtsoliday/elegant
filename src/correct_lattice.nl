@@ -10,8 +10,8 @@
     STRING upper_limits = NULL;
     STRING exclude = NULL;
     STRING bind_name_pattern = NULL;
-    STRING bpm_name_pattern = NULL;
-    STRING bpm_type_pattern = "MONI";
+    STRING measurement_elements = "* * *";
+    STRING measurement_types = "MONI HMON VMON";
     long n_iterations = 3;
     double convergence = 1e-9;
     double change_tolerance = 0.1;
@@ -43,8 +43,8 @@
     STRING items = NULL;
     STRING exclude = NULL;
     STRING bind_name_pattern = NULL;
-    STRING bpm_name_pattern = NULL;
-    STRING bpm_type_pattern = "MONI";
+    STRING measurement_elements = "*";
+    STRING measurement_types = "MONI";
     double response_perturbation = 1e-6;
     double measurement_noise = 0.0;
     double measurement_noise_cutoff = 3.0;
