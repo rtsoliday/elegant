@@ -2127,8 +2127,8 @@ This parameter was added in version 2026.3 and changed the default behavior for 
 
 \begin{itemize}
 \item type: setup command.
-\item function: compute and save the response matrix
-  $R_{ij} = \partial\eta_y(\mathrm{BPM}_i)/\partial K_{1,j}$ used by
+\item function: compute and save the response matrix (derivatives of $\eta_y$ and/or
+  cross-plane steering response with respect to correction parameters), for use with
   \verb|correct_coupling|, so that subsequent runs can reuse the same matrix
   via \verb|load_coupling_response_matrix| without rebuilding it.
 \item sequence: must follow \verb|run_setup| and \verb|twiss_output|
@@ -2168,7 +2168,7 @@ This parameter was added in version 2026.3 and changed the default behavior for 
   $\eta_y$ response matrix is written.  The format includes the BPM/skew element names
   and occurrences plus the matrix entries, so \verb|load_coupling_response_matrix|
   can reconstruct the entire knob/BPM inventory from this single file.
-  Suggested value: ``\%s.qsmat''.
+  Suggested value: ``\%s.ccrm''.
 \item \verb|cross_filename| --- The (incomplete) name of a {\em second} SDDS
   file to which the cross-plane response matrix is written.  When supplied,
   the cross-plane channel is built alongside $\eta_y$ during this command,
@@ -2177,9 +2177,7 @@ This parameter was added in version 2026.3 and changed the default behavior for 
   probe-corrector inventory (name, occurrence, item), the cross-plane BPM
   inventory, the response coefficients, and the spec strings themselves as
   parameters so \verb|load_coupling_response_matrix| can reconstruct
-  everything without the user re-supplying it.  Default \verb|NULL| means
-  no cross-plane matrix is built or saved -- existing $\eta_y$-only files
-  are produced byte-identical to earlier versions.
+  everything without the user re-supplying it.  Suggested value: ``\%s.cprm''.
 \item \verb|correction_elements| --- Whitespace/comma-separated list of
   wildcard patterns (one per family) selecting the elements that act as
   correction knobs in the matrix.  Required.  First-match-wins on element
@@ -2195,8 +2193,9 @@ This parameter was added in version 2026.3 and changed the default behavior for 
   element names to drop from the knob inventory even if they match one of the
   \verb|correction_elements| entries.
 \item \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists
-  selecting the BPM observation points.  Default
-  \verb|bpm_type_pattern="MONI"| picks all monitor elements.
+  selecting the beam position monitor (observation) points.  Default
+  \verb|bpm_type_pattern="MONI"| picks all two-plane monitor elements.
+  Note that the locations don't have to be BPMs, but that makes the most sense.
 \item \verb|response_perturbation| --- Finite-difference step in \verb|item|
   used to build each column of $R$ (one-sided difference).  Must be small
   enough to be in the linear regime of the dependence of $\eta_y$ on the
@@ -2234,6 +2233,9 @@ matrix file, or the run is aborted with an explicit diagnostic.  The
 \verb|exclude|, \verb|bpm_name_pattern|, and \verb|bpm_type_pattern|
 values are recorded implicitly through the resolved BPM and knob
 inventories.
+A previously-built response matrix can be downsized using the program
+\verb|sddsprocess| to reduce the number of correction elements or
+observation locations.
 
 %\begin{latexonly}
 \newpage
@@ -2244,9 +2246,9 @@ inventories.
 \begin{itemize}
 \item type: setup command.
 \item function: compute and save the response matrix
-  $R_{ij,k} = \partial o_k(\mathrm{BPM}_i)/\partial K_{1,j}$ used by
-  \verb|correct_lattice|, where $o_k \in \{\beta_x, \beta_y, \eta_x\}$
-  enumerates the three observables tracked per BPM.  The saved matrix
+  $R_{ij,k} = \partial o_{i,k})/\partial K_{1,j}$ used by
+  \verb|correct_lattice|, where $o_{i,k} \in \{\beta_{i,x}, \beta_{i,y}, \eta_{i,x}\}$
+  enumerates the three observables at measurement location $i$.   The saved matrix
   can be reused via \verb|load_lattice_response_matrix| without
   rebuilding it.
 \item sequence: must follow \verb|run_setup| and \verb|twiss_output|
@@ -2264,8 +2266,8 @@ inventories.
     STRING items = NULL;
     STRING exclude = NULL;
     STRING bind_name_pattern = NULL;
-    STRING bpm_name_pattern = NULL;
-    STRING bpm_type_pattern = "MONI";
+    STRING measurement_elements = "*";
+    STRING measurement_types = "MONI";
     double response_perturbation = 1e-6;
     double measurement_noise = 0.0;
     double measurement_noise_cutoff = 3.0;
@@ -2275,11 +2277,11 @@ inventories.
 
 \begin{itemize}
 \item \verb|filename| --- The (incomplete) name of the SDDS file to which the
-  response matrix is written.  The format includes the BPM/knob element names
+  response matrix is written.  The format includes the measuremetn location and knob element names
   and occurrences, the element parameter that was perturbed, plus all three
   response columns (\verb|dBetaxDK1|, \verb|dBetayDK1|, \verb|dEtaxDK1|),
   so \verb|load_lattice_response_matrix| can reconstruct the entire
-  knob/BPM inventory from this single file.  Suggested value: ``\%s.lrm''.
+  location/knob inventory from this single file.  Suggested value: ``\%s.lrm''.
 \item \verb|correction_elements| --- Whitespace/comma-separated list of
   wildcard patterns (one per family) selecting the elements that act as
   correction knobs in the matrix.  Required.  Same semantics as on
@@ -2303,9 +2305,18 @@ inventories.
   without restating the patterns.  A \verb|correct_lattice| that does
   set its own \verb|bind_name_pattern| overrides what the matrix file
   carries.
-\item \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists
-  selecting the BPM observation points.  Default
-  \verb|bpm_type_pattern="MONI"| picks all monitor elements.
+\item \verb|measurement_elements|, \verb|measurement_types| --- Parallel
+  whitespace/comma-separated wildcard lists specifying the elements at
+  which the linear lattice functions are measured.  Both lists must
+  have the same token count; an element is selected if for some index
+  $i$ its name matches \verb|measurement_elements[i]| {\em and} its
+  type matches \verb|measurement_types[i]|.  
+  measured via LOCO).  For example, the default values are
+  \verb|measurement_elements="* * *"|,
+  \verb|measurement_types="MONI HMON VMON"|, which selects all monitor
+  elements of any of the three types; whereas
+  \verb|measurement_elements="*"|, \verb|measurement_types="*QUAD*"|
+  selects every quadrupole element.
 \item \verb|response_perturbation| --- Finite-difference step in \verb|item|
   used to build each column of $R$ (one-sided difference).  Must be small
   enough to be in the linear regime of the dependence of $\beta_x$, $\beta_y$,
@@ -2333,9 +2344,9 @@ can therefore omit \verb|correction_elements| / \verb|items| entirely
 and inherit them from the file.  If they {\em are} supplied on
 \verb|correct_lattice| they must agree with the values recorded in the
 matrix file, or the run is aborted with an explicit diagnostic.  The
-\verb|exclude|, \verb|bpm_name_pattern|, and \verb|bpm_type_pattern|
-values are recorded implicitly through the resolved BPM and knob
-inventories.
+\verb|exclude|, \verb|measurement_elements|, and
+\verb|measurement_types| values are recorded implicitly through the
+resolved measurement-point and knob inventories.
 
 %\begin{latexonly}
 \newpage
@@ -2348,9 +2359,8 @@ inventories.
   loop (like \verb|chromaticity| and \verb|correct_tunes|), where the
   correction is performed once per simulation step between orbit correction
   and tune correction.
-\item function: minimize the vertical dispersion $\eta_y$ at the selected
-  BPMs by adjusting selected skew-quadrupole knobs.  This emulates the
-  LOCO-style \cite{Safranek-LOCO} vertical-dispersion channel of real-machine coupling correction.
+\item function: minimize the vertical dispersion $\eta_y$ and/or cross-plane response matrix
+  at the selected BPMs by adjusting selected skew-quadrupole (or equivalent) knobs.  
 \item sequence: must follow \verb|run_setup| and \verb|twiss_output|.  A
   \verb|track| command (or another action command that triggers the steps
   loop) must follow in order for the correction to actually run.
@@ -2434,7 +2444,8 @@ inventories.
 \item \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists for
   the observation BPMs; same semantics as in
   \verb|compute_coupling_response_matrix|.  Ignored when a preloaded matrix
-  carries its own BPM list.
+  carries its own BPM list. Note that locations other than BPMs may be specified,
+  though this may not make physical sense.
 \item \verb|n_iterations| --- Maximum number of correction iterations.
 \item \verb|convergence| --- Iteration stops early when the RMS $\eta_y$
   at the BPMs falls below this value (in meters).
@@ -2523,9 +2534,7 @@ inventories.
   the original $\eta_y$-only behavior.  Set to 0 to disable the $\eta_y$
   channel entirely (useful when combined with the cross-plane channel).
 \item \verb|cross_response_weight| --- Weight applied to every cross-plane
-  row of the residual vector.  Default 0.0 disables the channel; any
-  positive value enables it and turns on the cross-plane steering machinery
-  described below.  When both \verb|etay_weight| and
+  row of the residual vector.   When both \verb|etay_weight| and
   \verb|cross_response_weight| are positive the two channels are combined
   in a single SVD solve, scaled by their respective weights.
 \item \verb|cross_h_steering|, \verb|cross_v_steering| --- Comma-separated
@@ -2575,39 +2584,6 @@ inventories.
 \item \verb|verbosity| --- Higher values print more diagnostic information.
 \end{itemize}
 
-\paragraph{Cross-plane channel.}  When \verb|cross_response_weight > 0|,
-the SVD residual gains an additional block of rows: the change in the
-cross-plane closed-orbit centroid at each selected BPM per unit kick
-applied to each selected steering corrector.  Specifically, for each H
-probe corrector, the vertical centroid at every \verb|cross_y_bpm_*|
-monitor enters one row; for each V probe corrector, the horizontal
-centroid at every \verb|cross_x_bpm_*| monitor enters one row.  These
-rows are zero in an uncoupled lattice, and grow with coupling, so
-driving them toward zero through skew-quad knobs minimizes the
-machine's coupling.  The cross-plane reader works by perturbing each
-probe corrector by \verb|cross_steering_kick|, finding the closed orbit
-of the perturbed lattice, subtracting the unperturbed orbit, and
-dividing by the kick; the implementation is completely independent of
-the orbit-correction setup (\verb|&correct|, \verb|&steering_element|).
-The cost is one closed-orbit calculation per probe corrector per skew-knob
-perturbation, so users should pick a modest subset of correctors.
-
-For a typical correction workflow the user issues a
-\verb|twiss_output|, then \verb|correct_coupling|, then a
-\verb|twiss_output| with \verb|output_at_each_step=1| (to capture the
-post-correction state), then a \verb|bunched_beam|/\verb|track| pair to
-trigger the steps loop.  When a precomputed matrix is to be reused across
-many runs, the matrix can be produced once by
-\verb|compute_coupling_response_matrix| (perhaps in an upstream design
-run) and loaded by \verb|load_coupling_response_matrix| in each
-correction run.  In that case \verb|correction_elements| and \verb|items|
-need not be repeated on \verb|correct_coupling| -- they are inherited
-from the matrix file's \verb|CorrectionElements| and \verb|CorrectionItems|
-parameters.  This lets the user specify only \verb|lower_limits| and
-\verb|upper_limits| aligned with the inherited family count without
-having to restate the patterns; if patterns or items {\em are} restated
-they must agree with those recorded in the matrix file, otherwise the
-run aborts with a clear diagnostic.
 
 %\begin{latexonly}
 \newpage
@@ -2621,7 +2597,7 @@ run aborts with a clear diagnostic.
   correction is performed once per simulation step between coupling
   correction and tune correction.
 \item function: drive the linear lattice functions $\beta_x$, $\beta_y$,
-  and $\eta_x$ at the selected BPMs toward design values loaded from a
+  and $\eta_x$ at the measurement locations toward design values loaded from a
   user-supplied reference twiss file by adjusting selected normal-quadrupole
   knobs.  This emulates the LOCO-style \cite{Safranek-LOCO} $\beta$-beat and dispersion channels
   of real-machine optics correction, except that the LOCO lattice measurement is not simulated.
@@ -2647,8 +2623,8 @@ run aborts with a clear diagnostic.
     STRING upper_limits = NULL;
     STRING exclude = NULL;
     STRING bind_name_pattern = NULL;
-    STRING bpm_name_pattern = NULL;
-    STRING bpm_type_pattern = "MONI";
+    STRING measurement_elements = "*";
+    STRING measurement_types = "MONI";
     long n_iterations = 3;
     double convergence = 1e-9;
     double change_tolerance = 0.1;
@@ -2700,10 +2676,13 @@ run aborts with a clear diagnostic.
 \item \verb|exclude| --- Optional whitespace-separated list of patterns of
   element names to drop from the knob inventory even if they match one of
   the \verb|correction_elements| entries.
-\item \verb|bpm_name_pattern|, \verb|bpm_type_pattern| --- Pattern lists for
-  the observation BPMs; same semantics as in
-  \verb|compute_lattice_response_matrix|.  Ignored when a preloaded matrix
-  carries its own BPM list.
+\item \verb|measurement_elements|, \verb|measurement_types| --- Parallel
+  wildcard lists selecting the elements at which the linear lattice
+  functions are measured; same semantics as in
+  \verb|compute_lattice_response_matrix| (see that command's
+  documentation for the parallel-list selection rule and examples).
+  Ignored when a preloaded matrix carries its own measurement-point
+  list.
 \item \verb|bind_name_pattern| --- Optional comma- or space-separated
   list of patterns (with \verb|*|/\verb|?| wildcards) defining families
   of knobs whose correction strengths should be {\bf bound} together.
@@ -2834,26 +2813,6 @@ run aborts with a clear diagnostic.
   under \verb|&correct| for the wider behavior.
 \item \verb|verbosity| --- Higher values print more diagnostic information.
 \end{itemize}
-
-For a typical correction workflow the user produces a reference twiss
-file from the design lattice (a \verb|run_setup|/\verb|twiss_output|
-pair, with no errors loaded), then in the correction run issues
-\verb|twiss_output|, \verb|correct_lattice| (pointing
-\verb|reference_file| at the design twiss), a \verb|twiss_output| with
-\verb|output_at_each_step=1| (to capture the post-correction state), and
-finally a \verb|bunched_beam|/\verb|track| pair to trigger the steps
-loop.  When a precomputed matrix is to be reused across many runs, the
-matrix can be produced once by \verb|compute_lattice_response_matrix|
-(perhaps in an upstream design run) and loaded by
-\verb|load_lattice_response_matrix| in each correction run.  In that case
-\verb|correction_elements| and \verb|items| need not be repeated on
-\verb|correct_lattice| -- they are inherited from the matrix file's
-\verb|CorrectionElements| and \verb|CorrectionItems| parameters.  This
-lets the user specify only \verb|lower_limits| and \verb|upper_limits|
-aligned with the inherited family count without having to restate the
-patterns; if patterns or items {\em are} restated they must agree with
-those recorded in the matrix file, otherwise the run aborts with a clear
-diagnostic.
 
 %\begin{latexonly}
 \newpage
