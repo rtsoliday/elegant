@@ -51,8 +51,15 @@ static CORRECTOR_STASH clStash = { NULL, NULL, NULL, NULL, 0, 0, 1, 0, "lattice"
 static long initialized = 0;
 static char **quadName = NULL;       long nQuadName = 0;
 static char **quadType = NULL;       long nQuadType = 0;
-static char **bpmName = NULL;        long nBpmName = 0;
-static char **bpmType = NULL;        long nBpmType = 0;
+/* Parallel measurement-location/type lists.  Both arrays are nMeasPat
+ * long; an element matches if some i satisfies wild_match(name,
+ * measLoc[i]) && wild_match(type, measType[i]).  This generalizes the
+ * old (bpm_name_pattern, bpm_type_pattern) Cartesian-product scheme
+ * and lets the caller mix BPMs with non-BPM measurement points
+ * (e.g. quadrupoles measured via LOCO). */
+static char **measLoc  = NULL;
+static char **measType = NULL;
+static long   nMeasPat = 0;
 static char *quadItem = NULL;        /* item used by compute_/load_ */
 
 /* Family-list state populated from &correct_lattice's correction_elements/
@@ -371,11 +378,11 @@ static long collectAndAllocate(LINE_LIST *beamline) {
                   "(unless compute_lattice_response_matrix or "
                   "load_lattice_response_matrix has been issued)", NULL);
     collectKnobsFromFamilies(beamline);
-    nBpm = LRC_collectBpms(beamline, bpmName, nBpmName, bpmType, nBpmType, &bpms);
+    nBpm = LRC_collectBpmsParallel(beamline, measLoc, measType, nMeasPat, &bpms);
     if (nKnob == 0)
       bombElegant("correct_lattice: no knobs matched correction_elements", NULL);
     if (nBpm == 0)
-      bombElegant("correct_lattice: no BPMs matched bpm_name_pattern/bpm_type_pattern", NULL);
+      bombElegant("correct_lattice: no elements matched measurement_elements/measurement_types", NULL);
     buildPerKnobItemAndBounds();
   } else {
     /* Preloaded inventory; assign families (and per-knob bounds) if the user
@@ -432,8 +439,14 @@ static void freeModuleState(void) {
   if (bpms)  { free(bpms);  bpms  = NULL; }
   LRC_freePatternList(&quadName,    &nQuadName);
   LRC_freePatternList(&quadType,    &nQuadType);
-  LRC_freePatternList(&bpmName,     &nBpmName);
-  LRC_freePatternList(&bpmType,     &nBpmType);
+  LRC_freePatternList(&measLoc,     &nMeasPat);
+  /* measType is parallel to measLoc and shares the same count; free
+   * separately but reset nMeasPat only once. */
+  {
+    long dummy = nMeasPat;
+    LRC_freePatternList(&measType, &dummy);
+    nMeasPat = 0;
+  }
   LRC_freePatternList(&bindPatterns, &nBindPatterns);
   if (bindNamePatternStr) { free(bindNamePatternStr); bindNamePatternStr = NULL; }
   if (knobGroup) { free(knobGroup); knobGroup = NULL; }
@@ -711,13 +724,27 @@ void setup_correct_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline)
     free(ecopy);
   }
 
-  /* BPM patterns are needed only when we're going to build the inventory.
-   * When a preloaded matrix exists the BPM list is already populated. */
+  /* Measurement-location/type patterns: parsed only when we're going
+   * to build the inventory.  When a preloaded matrix exists the BPM
+   * list is already populated and we leave the patterns alone. */
   if (!responseValid) {
-    LRC_freePatternList(&bpmName, &nBpmName);
-    LRC_freePatternList(&bpmType, &nBpmType);
-    bpmName = addPatterns(&nBpmName, bpm_name_pattern);
-    bpmType = addPatterns(&nBpmType, bpm_type_pattern);
+    long nLoc = 0, nType = 0;
+    LRC_freePatternList(&measLoc, &nMeasPat);
+    {
+      long dummy = nMeasPat;
+      LRC_freePatternList(&measType, &dummy);
+      nMeasPat = 0;
+    }
+    measLoc  = addPatterns(&nLoc,  measurement_elements);
+    measType = addPatterns(&nType, measurement_types);
+    if (nLoc != nType)
+      bombElegantVA("correct_lattice: measurement_elements has %ld pattern(s) "
+                    "but measurement_types has %ld; the two lists must be "
+                    "parallel (same token count)", nLoc, nType);
+    if (nLoc == 0)
+      bombElegant("correct_lattice: measurement_elements / measurement_types "
+                  "must be supplied (no measurement points selected)", NULL);
+    nMeasPat = nLoc;
   }
   /* bind_name_pattern: if explicitly supplied on this command, it overrides
    * whatever was set by a prior compute_/load_lattice_response_matrix.
@@ -1447,8 +1474,28 @@ void setup_compute_lattice_response_matrix(NAMELIST_TEXT *nltext, RUN *run, LINE
     excludePatterns = addPatterns(&nExcludePatterns, ecopy);
     free(ecopy);
   }
-  bpmName = addPatterns(&nBpmName, compute_lattice_response_matrix_struct.bpm_name_pattern);
-  bpmType = addPatterns(&nBpmType, compute_lattice_response_matrix_struct.bpm_type_pattern);
+  {
+    long nLoc = 0, nType = 0;
+    LRC_freePatternList(&measLoc, &nMeasPat);
+    {
+      long dummy = nMeasPat;
+      LRC_freePatternList(&measType, &dummy);
+      nMeasPat = 0;
+    }
+    measLoc  = addPatterns(&nLoc,
+                           compute_lattice_response_matrix_struct.measurement_elements);
+    measType = addPatterns(&nType,
+                           compute_lattice_response_matrix_struct.measurement_types);
+    if (nLoc != nType)
+      bombElegantVA("compute_lattice_response_matrix: measurement_elements "
+                    "has %ld pattern(s) but measurement_types has %ld; the "
+                    "two lists must be parallel (same token count)",
+                    nLoc, nType);
+    if (nLoc == 0)
+      bombElegant("compute_lattice_response_matrix: measurement_elements / "
+                  "measurement_types must be supplied", NULL);
+    nMeasPat = nLoc;
+  }
   /* Legacy quadItem records the first family's item for the
    * backward-compatibility ElementParameter parameter in the matrix file. */
   cp_str(&quadItem, itemsList[0]);
