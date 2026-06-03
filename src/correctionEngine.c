@@ -94,6 +94,39 @@ long LRC_collectBpms(LINE_LIST *beamline,
 
 /****************************************************************************/
 
+long LRC_collectBpmsParallel(LINE_LIST *beamline,
+                             char **locPatterns, char **typePatterns,
+                             long nPatterns, LRC_Bpm **bpms) {
+  ELEMENT_LIST *eptr;
+  long n = 0, cap = 0, i;
+  *bpms = NULL;
+  if (nPatterns <= 0)
+    return 0;
+  eptr = beamline->elem;
+  while (eptr) {
+    int matched = 0;
+    for (i = 0; i < nPatterns; i++) {
+      if (wild_match(eptr->name, locPatterns[i]) &&
+          wild_match(entity_name[eptr->type], typePatterns[i])) {
+        matched = 1;
+        break;
+      }
+    }
+    if (matched) {
+      if (n == cap) {
+        cap = cap ? 2 * cap : 64;
+        *bpms = SDDS_Realloc(*bpms, sizeof(**bpms) * cap);
+      }
+      (*bpms)[n].elem = eptr;
+      n++;
+    }
+    eptr = eptr->succ;
+  }
+  return n;
+}
+
+/****************************************************************************/
+
 ELEMENT_LIST *LRC_findElementByNameOccurence(LINE_LIST *beamline,
                                              char *name, long occurence) {
   ELEMENT_LIST *eptr = beamline->elem;
