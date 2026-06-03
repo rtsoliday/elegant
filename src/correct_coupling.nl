@@ -31,7 +31,7 @@
     STRING cross_x_bpm_type_pattern = NULL;
     STRING cross_y_bpm_name_pattern = NULL;
     STRING cross_y_bpm_type_pattern = NULL;
-    double cross_response_weight = 0.0;
+    double cross_response_weight = 1.0;
     double cross_steering_kick = 1e-5;
     double cross_measurement_noise = 0.0;
     STRING strength_log = NULL;
