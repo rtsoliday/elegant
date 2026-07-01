@@ -38,4 +38,18 @@ This file contains a short tactical summary based on repository evidence. `../ll
 <!-- END MACHINE:summary -->
 
 ## Human notes
-Add durable repo-specific instructions here.
+
+### GPU parity requirement
+- elegant has CPU and CUDA/GPU implementations that must remain behaviorally in sync.
+- Before completing any change that affects tracking, beam state, element behavior, particle loss, RF, wakefields, CSR, LSC, space charge, matrix/magnet/collimator behavior, build flags, or element metadata, check whether the GPU implementation also needs updates.
+- Review these areas as applicable:
+  - `src/gpu/`, especially `gpu_cuda_runtime.cu`, `gpu_stub.c`, and `gpu_*.h`
+  - `#ifdef HAVE_GPU` and `#ifdef GPU_VERIFY` call sites in changed CPU files
+  - `src/track_data.c` element flags, especially `GPU_SUPPORT`
+  - CPU/GPU particle transfer and synchronization assumptions
+  - CUDA-disabled stub behavior so non-CUDA builds still compile
+- Do not finish a task until the final response includes one of:
+  - `GPU parity: not applicable` with the concrete reason
+  - `GPU parity: checked` with the GPU files or call sites reviewed
+  - `GPU parity: updated` with the CPU and GPU files changed
+- If a CPU behavior change affects a GPU-supported element, update the GPU path in the same change or explicitly call out the required GPU follow-up and why it was not completed.
