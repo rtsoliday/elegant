@@ -45,7 +45,7 @@ long ramped_rf_cavity(
     return (np);
   }
 #else
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (isMaster)
       np_tmp = 0;
     else
@@ -64,7 +64,7 @@ long ramped_rf_cavity(
   length = ramprf->length;
 
   if (ramprf->volt == 0) {
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (ramprf->length) {
         for (ip = 0; ip < np; ip++) {
           coord = part[ip];
@@ -155,7 +155,7 @@ long ramped_rf_cavity(
       SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
   }
 #endif
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     for (ip = 0; ip < np; ip++) {
       coord = part[ip];
       /* apply initial drift */
