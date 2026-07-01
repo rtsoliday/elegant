@@ -273,7 +273,7 @@ long doMomentumApertureSearch(
 #endif
 #if USE_MPI
   long jobCounter;
-  notSinglePart = 0;
+  distributedBeam = 0;
 #endif
 
   /* determine how many elements will be tracked */
