@@ -114,7 +114,7 @@ void set_up_shrfdf(SHRFDF *rf_param, double **initial, long n_particles, double 
 #endif
 
   if (!rf_param->fiducial_seen) {
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       for (ip = rf_param->t_first_particle = 0; ip < n_particles; ip++) {
         pc = pc_central * (1 + initial[ip][5]);
         beta = pc / sqrt(1 + sqr(pc));
@@ -126,7 +126,7 @@ void set_up_shrfdf(SHRFDF *rf_param, double **initial, long n_particles, double 
       }
     }
 #if USE_MPI
-    if (USE_MPI && notSinglePart) {
+    if (USE_MPI && distributedBeam) {
       long n_total;
 #  ifndef USE_KAHAN
       double tmp;
