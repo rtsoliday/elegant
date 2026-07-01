@@ -40,7 +40,7 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
 
   /* this element does nothing in single particle mode (e.g., trajectory, orbit, ..) */
 #if USE_MPI
-  if (notSinglePart == 0)
+  if (distributedBeam == 0)
     return;
 #endif
 
@@ -50,7 +50,7 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
   if (tfbp->initialized == 0)
     initializeTransverseFeedbackPickup(tfbp);
 
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     index_bunch_assignments(part0, np0, tfbp->bunchedBeamMode ? idSlotsPerBunch : 0, Po, &time0, &ibParticle, &ipBucket, &npBucket, &nBuckets, -1);
 
 #if USE_MPI
@@ -65,7 +65,7 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
 #endif
 
   if (tfbp->updateInterval > 1 && pass % tfbp->updateInterval != 0) {
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
     return;
   }
@@ -93,7 +93,7 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
     MPI_Barrier(MPI_COMM_WORLD);
 #endif
     sum = position = np = 0;
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBuckets == 1) {
         np = np0;
         for (i = 0; i < np0; i++)
@@ -172,7 +172,7 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
     }
   }
 
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 }
 
@@ -248,7 +248,7 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
 #endif
 
 #if USE_MPI
-  if (notSinglePart == 0)
+  if (distributedBeam == 0)
     /* this element does nothing in single particle mode (e.g., trajectory, orbit, ..) */
     return;
 #endif
@@ -256,7 +256,7 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
   if ((tfbd->startPass > 0 && pass < tfbd->startPass) || (tfbd->endPass > 0 && pass > tfbd->endPass))
     return;
 
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     index_bunch_assignments(part0, np0, tfbd->bunchedBeamMode ? idSlotsPerBunch : 0, Po, &time0, &ibParticle, &ipBucket, &npBucket, &nBuckets, -1);
 
 #if USE_MPI
@@ -292,7 +292,7 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
   if ((updateInterval = tfbd->pickup->updateInterval * tfbd->updateInterval) <= 0)
     bombElegantVA((char *)"TFBDRIVER and TFBPICKUP with ID=%s have UPDATE_INTERVAL product of %d", tfbd->ID, updateInterval);
   if (pass % updateInterval != 0) {
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
     return;
   }
@@ -382,7 +382,7 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
     } else {
       kick *= tfbd->gainFactor0;
     }
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       tAve = 0;
       rfFactor = 1;
 
@@ -585,7 +585,7 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
   MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 
 #if defined(DEBUG) || MPI_DEBUG
