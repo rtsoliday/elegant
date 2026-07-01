@@ -1460,6 +1460,9 @@ void change_defined_parameter_values(char **elem_name, long *param_number, long 
     eptr = NULL;
     if ((elem_type = type[i_elem]) == T_FREEVAR)
       continue;
+    if (elem_type == T_KNOB)
+      continue; /* knob slots: no defined-parameter update; the cumulative
+                 * effect lives in p_elem of the linked targets. */
     param = param_number[i_elem];
     data_type = entity_description[elem_type].parameter[param].type;
     while (find_element(elem_name[i_elem], &eptr, elem)) {
