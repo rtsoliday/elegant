@@ -81,7 +81,7 @@ long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central,
     return (np);
   }
 #else
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (isMaster)
       np_tmp = 0;
     else
@@ -101,7 +101,7 @@ long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central,
 
   if (modrf->volt == 0) {
     if (length) {
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         for (ip = 0; ip < np; ip++) {
           coord = part[ip];
           coord[0] += coord[1] * length;
@@ -144,7 +144,7 @@ long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central,
   }
 
   t0 = -modrf->phase_fiducial / omega0;
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     for (ip = tAve = 0; ip < np; ip++) {
 #ifndef USE_KAHAN
       tAve += part[ip][4] / (c_mks * beta_from_delta(P_central, part[ip][5]));
@@ -157,7 +157,7 @@ long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central,
 #if (!USE_MPI)
   tAve /= np;
 #else
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (USE_MPI) {
       double tAve_total = 0.0;
 #  ifndef USE_KAHAN
@@ -239,7 +239,7 @@ long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central,
   if ((tau = modrf->Q / omega0))
     volt *= sqrt(1 - exp(-dt / tau));
   
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     for (ip = 0; ip < np; ip++) {
       coord = part[ip];
       /* apply initial drift */
