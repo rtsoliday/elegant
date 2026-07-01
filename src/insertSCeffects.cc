@@ -155,7 +155,7 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 #endif
 
 #ifdef HAVE_GPU
-  if ((isSlave || !notSinglePart) && charge && eptr && eptr->twiss &&
+  if ((isSlave || !distributedBeam) && charge && eptr && eptr->twiss &&
       sc.bunchData && sc.nBunches == 1 &&
       gpu_scmult_single_bunch_supported(np0, charge->idSlotsPerBunch,
                                         sc.nonlinear, sc.sliceDuration,
@@ -199,7 +199,7 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
     part0 = forceParticlesToCpu("trackThroughSCMULT fallback");
 #endif
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     index_bunch_assignments(part0, np0, charge->idSlotsPerBunch, Po, &time0, &ibParticle, &ipBucket, &npBucket, &nBuckets, -1);
 
 #ifdef DEBUG
@@ -254,7 +254,7 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 #endif
 #if USE_MPI
       totalCharge = 0;
-      if (isSlave && notSinglePart) {
+      if (isSlave && distributedBeam) {
 	long np_total;
 	find_global_min_max(&tmin, &tmax, np, workers);
 	MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
@@ -346,7 +346,7 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 		  binTransverseTimeDistribution(xyCentroidTime, NULL, pbin, tmin, sc.sliceDuration, nSlices, time, part, Po, np, 0.0, 0.0, 1, 1);
 		  binTransverseTimeDistribution(xySizeTime, NULL, pbin, tmin, sc.sliceDuration, nSlices, time, part, Po, np, 0.0, 0.0, 2, 2);
 #if USE_MPI
-	if (isSlave && notSinglePart) {
+	if (isSlave && distributedBeam) {
 	  /* Sum charge distribution across all processors */
 	  double *buffer;
 	  buffer = (double*)malloc(sizeof(double) * nSlices);
@@ -454,7 +454,7 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
     free(time);
   if (part && part!=part0)
     free(part);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 
 #ifdef DEBUG
@@ -581,7 +581,7 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part0, long np0, double Po, l
 #endif
 
 #ifdef HAVE_GPU
-  if ((isSlave || !notSinglePart) &&
+  if ((isSlave || !distributedBeam) &&
       (sc.nBunches == 0 || sc.nBunches == 1) &&
       gpu_scmult_can_initialize_on_gpu(np0)) {
     long gpuBuckets = 0;
@@ -608,7 +608,7 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part0, long np0, double Po, l
     part0 = forceParticlesToCpu("initializeSCMULT fallback");
 #endif
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
 #ifdef DEBUG
     printf("indexing bucket assignments\n");
     fflush(stdout);
@@ -680,7 +680,7 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part0, long np0, double Po, l
     free(time);
   if (part && part!=part0)
     free(part);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
   
 #ifdef DEBUG
@@ -721,7 +721,7 @@ void accumulateSCMULT(double **part0, long np0, double Po, ELEMENT_LIST *eptr, l
 #endif
 
 #ifdef HAVE_GPU
-  if ((isSlave || !notSinglePart) && sc.nBunches == 1 && sc.bunchData &&
+  if ((isSlave || !distributedBeam) && sc.nBunches == 1 && sc.bunchData &&
       eptr && eptr->twiss && eptr->pred && eptr->pred->twiss &&
       gpu_scmult_can_skip_cpu(np0, idSlotsPerBunch)) {
     temp = sc.bunchData[0].sigma[0] + sc.bunchData[0].sigma[1];
@@ -744,7 +744,7 @@ void accumulateSCMULT(double **part0, long np0, double Po, ELEMENT_LIST *eptr, l
     part0 = forceParticlesToCpu("accumulateSCMULT fallback");
 #endif
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
 #ifdef DEBUG
     printf("indexing bucket assignments\n");
     fflush(stdout);
@@ -821,7 +821,7 @@ void accumulateSCMULT(double **part0, long np0, double Po, ELEMENT_LIST *eptr, l
     free(time);
   if (part && part!=part0)
     free(part);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 }
 
@@ -835,7 +835,7 @@ double computeRmsCoordinate(double **coord, long i1, long np, double *meanReturn
   long np_total;
 #endif
 
-  if (!USE_MPI || !notSinglePart) {
+  if (!USE_MPI || !distributedBeam) {
     if (!np)
       return (0.0);
   }
@@ -854,7 +854,7 @@ double computeRmsCoordinate(double **coord, long i1, long np, double *meanReturn
     xc += coord[i][i1];
   }
   /* Compute the sum of xc across all the processors */
-  if (!USE_MPI || !notSinglePart)
+  if (!USE_MPI || !distributedBeam)
     xc /= np;
 #if USE_MPI
   else {
@@ -865,7 +865,7 @@ double computeRmsCoordinate(double **coord, long i1, long np, double *meanReturn
   for (i = vrms = 0; i < np; i++) {
     vrms += sqr(coord[i][i1] - xc);
   }
-  if (!USE_MPI || !notSinglePart)
+  if (!USE_MPI || !distributedBeam)
     vrms /= np;
 #if USE_MPI
   else {
