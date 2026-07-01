@@ -332,8 +332,8 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
                                       multiplier_interval, deviation, n_turns);
   
 #if SDDS_MPI_IO
-  long notSinglePart_orig = notSinglePart; /* We need save the original value to switch it back */
-  notSinglePart = 0;                       /* run as single particle mode, i.e., all processors will do the same thing */
+  long distributedBeam_orig = distributedBeam; /* We need save the original value to switch it back */
+  distributedBeam = 0;                       /* run as single particle mode, i.e., all processors will do the same thing */
 #endif
 
 #ifdef DEBUG
@@ -562,7 +562,7 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
         fflush(stdout);
         if (isnan(error) || isinf(error)) {
 #if SDDS_MPI_IO
-          notSinglePart = notSinglePart_orig;
+          distributedBeam = distributedBeam_orig;
 #endif
           return 0;
         }
@@ -637,7 +637,7 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
   clorb[0].centroid[5] = dp;
 
 #if SDDS_MPI_IO
-  notSinglePart = notSinglePart_orig; /* Switch back to original parallel tracking mode */
+  distributedBeam = distributedBeam_orig; /* Switch back to original parallel tracking mode */
 #endif
 
   log_exit("find_closed_orbit");
