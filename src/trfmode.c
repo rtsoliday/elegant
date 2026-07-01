@@ -88,7 +88,7 @@ void track_through_trfmode(
     if (np0)
       trfmode->mp_charge = trfmode->charge / np0;
 #else
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (np_total)
         trfmode->mp_charge = trfmode->charge / np_total;
     } else {
@@ -164,7 +164,7 @@ void track_through_trfmode(
     count[ib] = 0;
   }
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
 #ifdef DEBUG
     printf("TRFMODE: Determining bucket assignments IDSlotsPerBunch = %ld\n",
             (charge && trfmode->bunchedBeamMode) ? charge->idSlotsPerBunch : 0);
@@ -203,7 +203,7 @@ void track_through_trfmode(
 
 #if USE_MPI
     /* Master needs to know if this bucket has particles */
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBuckets == 1)
         np = np0;
       else
@@ -220,7 +220,7 @@ void track_through_trfmode(
       continue;
 #endif
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBuckets == 1) {
         time = time0;
         part = part0;
@@ -543,7 +543,7 @@ void track_through_trfmode(
     free(time);
   if (pbin)
     free(pbin);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 }
 
