@@ -30,7 +30,7 @@ static long iPart0;
 
 void switchLgbendPlane(double **particle, long n_part, double dx, double alpha, double po, long exitPlane);
 void lgbendFringe(double **particle, long n_part, double alpha, double invRhoPlus, double K1plus, double invRhoMinus, double K1minus,
-                  LGBEND_SEGMENT *segment, short angleSign, short isExit, short edgeOrder);
+                  LGBEND_SEGMENT *segment, short angleSign, short isExit, short edgeOrder, double Po);
 static double lgBendTrajErrorFromOptim[2];
 double lgbend_trajectory_error(double *value, long *invalid);
 
@@ -339,10 +339,13 @@ long track_through_lgbend(
 #endif
 
     if (iSegment == 0 && iPart <= 0) {
-      /* First full segment or first step of first segment, so do entrance transformations */
+      /* First full segment or first step of first segment, so do entrance transformations.
+       * rotateBeamCoordinatesForMisalignment also rotates the spin when spinCoordOffset > 0. */
       if (tilt)
         rotateBeamCoordinatesForMisalignment(particle, n_part, tilt);
       switchLgbendPlane(particle, n_part, entryPosition, entryAngle, Po, 0);
+      if (spinCoordOffset)
+        rotateSpinsAboutYAxis(particle, n_part, entryAngle);
 #ifdef DEBUG
       if (lgbend->optimized != -1 && iPart >= 0)
         fprintf(fpDeb, "%ld %ld %21.15le %21.15le %21.15le %21.15le %21.15le %21.15le switch-lgbend-plane\n",
@@ -373,7 +376,7 @@ long track_through_lgbend(
       }
       if (lgbend->segment[iSegment].has1) {
         lgbendFringe(particle, n_part, entryAngle, 1.0 / rho0, KnL[1] / length, invRhoMinus, K1minus,
-                     lgbend->segment + iSegment, angleSign, 0, lgbend->edgeOrder);
+                     lgbend->segment + iSegment, angleSign, 0, lgbend->edgeOrder, Po);
 #ifdef DEBUG
         if (lgbend->optimized != -1 && iPart >= 0)
           fprintf(fpDeb, "%ld %ld %21.15le %21.15le %21.15le %21.15le %21.15le %21.15le fringe1\n",
@@ -438,7 +441,7 @@ long track_through_lgbend(
       }
       if (lgbend->segment[iSegment].has2) {
         lgbendFringe(particle, i_top + 1, -exitAngle, invRhoPlus, K1plus, 1.0 / rho0, KnL[1] / length,
-                     lgbend->segment + iSegment, angleSign, 1, lgbend->edgeOrder);
+                     lgbend->segment + iSegment, angleSign, 1, lgbend->edgeOrder, Po);
 #ifdef DEBUG
         if (lgbend->optimized != -1 && iPart >= 0)
           fprintf(fpDeb, "%ld %ld %21.15le %21.15le %21.15le %21.15le %21.15le %21.15le fringe2\n",
@@ -460,6 +463,8 @@ long track_through_lgbend(
                                     epitch, eyaw, etilt,
                                     0.0, 0.0, lgbend->segment[lgbend->nSegments - 1].zAccumulated, 2);
         switchLgbendPlane(particle, i_top + 1, -exitPosition, -exitAngle, Po, 1);
+        if (spinCoordOffset)
+          rotateSpinsAboutYAxis(particle, i_top + 1, -exitAngle);
 #ifdef DEBUG
         if (lgbend->optimized != -1 && iPart >= 0)
           fprintf(fpDeb, "%ld %ld %21.15le %21.15le %21.15le %21.15le %21.15le %21.15le switch-lgbend-plane\n",
@@ -476,7 +481,8 @@ long track_through_lgbend(
                   particle[n_part - 1][2], particle[n_part - 1][3]);
 #endif
         if (tilt)
-          /* use n_part here so lost particles get rotated back */
+          /* use n_part here so lost particles get rotated back.
+           * rotateBeamCoordinatesForMisalignment handles the spin rotation too. */
           rotateBeamCoordinatesForMisalignment(particle, n_part, -tilt);
         /*
           if (lgbend->optimized) {
@@ -493,7 +499,8 @@ long track_through_lgbend(
       }
     } else if (iFinalSlice > 0) {
       if (tilt)
-        /* use n_part here so lost particles get rotated back */
+        /* use n_part here so lost particles get rotated back.
+         * rotateBeamCoordinatesForMisalignment handles the spin rotation too. */
         rotateBeamCoordinatesForMisalignment(particle, n_part, -tilt);
     }
 
@@ -585,10 +592,10 @@ VMATRIX *determinePartialLgbendLinearMatrix(LGBEND *lgbend, double *startingCoor
   double angle0[2];
 
 #if USE_MPI
-  long notSinglePart_saved = notSinglePart;
+  long distributedBeam_saved = distributedBeam;
 
   /* All the particles should do the same thing for this routine. */
-  notSinglePart = 0;
+  distributedBeam = 0;
 #endif
 
   coord = (double **)czarray_2d(sizeof(**coord), 1 + 6 * 4, totalPropertiesPerParticle);
@@ -683,7 +690,7 @@ VMATRIX *determinePartialLgbendLinearMatrix(LGBEND *lgbend, double *startingCoor
   free_czarray_2d((void **)coord, 1 + 4 * 6, totalPropertiesPerParticle);
 
 #if USE_MPI
-  notSinglePart = notSinglePart_saved;
+  distributedBeam = distributedBeam_saved;
 #endif
   return M;
 }
@@ -798,9 +805,29 @@ void lgbendFringe(
   LGBEND_SEGMENT *segment,
   short angleSign, // -1 or 1
   short isExit,
-  short edgeOrder) {
+  short edgeOrder,
+  double Po) {     // reference momentum (for spin tracking only)
   double x1, px1, y1, py1, tau1, delta;
   double x2, px2, y2, py2, tau2;
+
+  /* Pre-fringe slope buffers reused across calls.  See verticalRbendFringe
+   * in ccbend.c for the same pattern: save (xp, yp) per particle before
+   * the orbit kick, then read them back after to compute the matching
+   * spin rotation via applyFringeSpinKick(). */
+  static double *xp0buf = NULL, *yp0buf = NULL;
+  static long xp0bufMax = 0;
+  long isf;
+  if (spinCoordOffset) {
+    if (n_part > xp0bufMax) {
+      xp0buf = trealloc(xp0buf, sizeof(*xp0buf) * n_part);
+      yp0buf = trealloc(yp0buf, sizeof(*yp0buf) * n_part);
+      xp0bufMax = n_part;
+    }
+    for (isf = 0; isf < n_part; isf++) {
+      xp0buf[isf] = particle[isf][1];
+      yp0buf[isf] = particle[isf][3];
+    }
+  }
 
   double intK0, intK2, intK4, intK5, intK6, intK7, intI0, intI1;
   double tant, sect, sect3, sint, temp;
@@ -897,6 +924,24 @@ void lgbendFringe(
     particle[i][1] = px2 / temp;
     particle[i][3] = py2 / temp;
     particle[i][4] = -tau2 + sint * x2;
+  }
+
+  /* Spin precession from the integrated fringe field.  The body-bend
+   * leakage term uses the current segment's rho (1/invRhoPlus for an
+   * entrance fringe, 1/invRhoMinus for an exit fringe); whichever is
+   * zero corresponds to "no body on that side" and contributes zero to
+   * the spin rotation. */
+  if (spinCoordOffset) {
+    double body_invRho = isExit ? invRhoMinus : invRhoPlus;
+    double body_rho_signed = (body_invRho != 0) ? (angleSign / body_invRho) : 0.0;
+    for (isf = 0; isf < n_part; isf++) {
+      double p_i = Po * (1 + particle[isf][5]);
+      applyFringeSpinKick(particle[isf] + spinCoordOffset,
+                          particle[isf][1], xp0buf[isf],
+                          particle[isf][3], yp0buf[isf],
+                          particle[isf][2],
+                          body_rho_signed, p_i, particleAnomalousMagneticMoment);
+    }
   }
 }
 
