@@ -413,6 +413,13 @@ ifeq ($(OS), Windows)
 
 endif
 
+# MSVC deprecates /Og, and the Windows -Ox setting already includes it.
+ifeq ($(OS), Windows)
+  OG_OPT_FLAG =
+else
+  OG_OPT_FLAG = -Og
+endif
+
 ifeq ($(OS),Windows)
 OUTPUT = /Fo$@
 OUTPUTEXE = -out:$@
