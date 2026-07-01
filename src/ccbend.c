@@ -32,8 +32,38 @@ static FILE *fpHam = NULL;
 
 void switchRbendPlane(double **particle, long n_part, double alpha, double Po);
 void verticalRbendFringe(double **particle, long n_part, double alpha, double rho0, double K1, double K2, double gK,
-                         double *fringeIntKn, short angleSign, short isExit, short fringeModel, short order);
+                         double *fringeIntKn, short angleSign, short isExit, short fringeModel, short order,
+                         double Po);
 double ccbend_trajectory_error(double *value, long *invalid);
+
+/* ----- spin-tracking helpers, shared with lgbend.c ---------------------- */
+
+/* Apply the spin rotation that corresponds to the orbit kick a fringe
+ * routine just produced.  Pattern from CSBEND (csbend.c:1288).  The
+ * integrated fringe field is read off the change in slope (xp - xp0,
+ * yp - yp0), and the spin precesses by Omega = -(1+a*gamma) * dxp ... etc.
+ * The y/rho term carries the residual body-bend contribution that the
+ * fringe absorbs. */
+void applyFringeSpinKick(double *spin, double xp, double xp0, double yp, double yp0,
+                         double y, double rho, double p, double a) {
+  double gamma = sqrt(p * p + 1);
+  performQuaternionRotation(spin,
+                            -(1 + a * gamma) * (yp - yp0),
+                            +(1 + a * gamma) * (xp - xp0),
+                            (rho != 0) ? -(1 + a) * y / rho : 0.0);
+}
+
+/* Rotate every particle's spin about the lab y-axis by `angle`.  Mirrors
+ * the orbit transformation performed by switchRbendPlane(particle, n,
+ * angle, Po) — both put particles into a frame whose z-axis is rotated
+ * by -angle from the old z-axis about y. */
+void rotateSpinsAboutYAxis(double **particle, long np, double angle) {
+  long i;
+  if (!spinCoordOffset || !angle)
+    return;
+  for (i = 0; i < np; i++)
+    performQuaternionRotation(particle[i] + spinCoordOffset, 0.0, angle, 0.0);
+}
 
 long track_through_ccbend(
                           double **particle, /* initial/final phase-space coordinates */
@@ -453,13 +483,16 @@ long track_through_ccbend(
       particle[0][0], particle[0][1], particle[0][2],
       particle[0][3], particle[0][4], particle[0][5]);
     */
-    /* We perform the tilt first and separately for CCBEND because of the R-bend plane switch */
+    /* We perform the tilt first and separately for CCBEND because of the R-bend plane switch.
+     * rotateBeamCoordinatesForMisalignment also rotates the spin when spinCoordOffset > 0. */
     if (tilt)
       rotateBeamCoordinatesForMisalignment(particle, n_part, tilt);
     /* save initial x, x' value of the possible reference particle for optimization of FSE and DX */
     xInitial = particle[0][0];
     xpInitial = particle[0][1];
     switchRbendPlane(particle, n_part, angle / 2 - yaw, Po);
+    if (spinCoordOffset)
+      rotateSpinsAboutYAxis(particle, n_part, angle / 2 - yaw);
     if (dx || dy || dz || eyaw || epitch)
       offsetParticlesForMisalignment(ccbend->malignMethod, particle, n_part,
                                      dx, dy, dz,
@@ -467,7 +500,7 @@ long track_through_ccbend(
     if (ccbend->optimized)
       offsetBeamCoordinatesForMisalignment(particle, n_part, ccbend->dxOffset, 0, 0);
     verticalRbendFringe(particle, n_part, angle / 2 - yaw, rho0, KnL[1] / length, KnL[2] / length, gK[0],
-                        &(fringeInt1[0]), angleSign, 0, ccbend->fringeModel, ccbend->edgeOrder);
+                        &(fringeInt1[0]), angleSign, 0, ccbend->fringeModel, ccbend->edgeOrder, Po);
     /*
       printf("input after adjustments: %16.10le %16.10le %16.10le %16.10le %16.10le %16.10le\n",
       particle[0][0], particle[0][1], particle[0][2],
@@ -529,7 +562,7 @@ long track_through_ccbend(
       particle[0][3], particle[0][4], particle[0][5]);
     */
     verticalRbendFringe(particle, i_top + 1, angle / 2 + yaw, rho0, KnL[1] / length, KnL[2] / length, gK[1],
-                        &(fringeInt2[0]), angleSign, 1, ccbend->fringeModel, ccbend->edgeOrder);
+                        &(fringeInt2[0]), angleSign, 1, ccbend->fringeModel, ccbend->edgeOrder, Po);
     if (ccbend->optimized)
       offsetBeamCoordinatesForMisalignment(particle, i_top + 1, ccbend->xAdjust, 0, 0);
     if (dx || dy || dz || etilt || eyaw || epitch)
@@ -537,6 +570,8 @@ long track_through_ccbend(
                                      dx, dy, dz,
                                      epitch, eyaw, etilt, 0, 0, length, 2);
     switchRbendPlane(particle, i_top + 1, angle / 2 + yaw, Po);
+    if (spinCoordOffset)
+      rotateSpinsAboutYAxis(particle, i_top + 1, angle / 2 + yaw);
     if (ccbend->fringeModel) {
       /* If fringes are (possibly) extended, we use the difference between the initial and final
        * x coordinates including the fringe effects as the figure of merit */
@@ -552,7 +587,8 @@ long track_through_ccbend(
     */
     xpError = xpInitial + particle[0][1];
     if (tilt)
-      /* use n_part here so lost particles get rotated back */
+      /* use n_part here so lost particles get rotated back.
+       * rotateBeamCoordinatesForMisalignment handles the spin rotation too. */
       rotateBeamCoordinatesForMisalignment(particle, n_part, -tilt);
     if (ccbend->optimized == 1 && ccbend->referenceCorrection) {
       if (ccbend->referenceCorrection & 2) {
@@ -573,7 +609,8 @@ long track_through_ccbend(
     */
   } else if (iFinalSlice > 0) {
     if (tilt)
-      /* use n_part here so lost particles get rotated back */
+      /* use n_part here so lost particles get rotated back.
+       * rotateBeamCoordinatesForMisalignment handles the spin rotation too. */
       rotateBeamCoordinatesForMisalignment(particle, n_part, -tilt);
   }
   
@@ -954,34 +991,32 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
 
       FILLXY(x, xpow, y, ypow, maxOrderSteps);
       delta_qx = delta_qy = 0;
+      /* DO_MKICKS_RET accumulates into both qx,qy (the running canonical
+       * momenta) and delta_qx,delta_qy (the per-substep kick total).
+       * delta_qx,delta_qy collect contributions from every field source
+       * in this substep -- main multipoles, spurious multData (below) --
+       * and are read downstream by the radiation block and the spin
+       * update to reconstruct the local field. */
       for (int i = 0; i < kidx; i++) {
-        double tx = 0;
-        double ty = 0;
-        DO_MKICKS_NORET(&tx, &ty, xpow, ypow,
-                        KnLIdx[i], KnLActive[i] * kickFrac[step], 0);
-        qx += tx;
-        qy += ty;
-        // if (step == nSubsteps - 2) {
-        delta_qx += tx;
-        delta_qy += ty;
-        //}
+        DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
+                      KnLIdx[i], KnLActive[i] * kickFrac[step], 0);
       }
 
-
       if (multData) {
-        /* do kicks for spurious multipoles */
+        /* do kicks for spurious multipoles; feed them into delta_qx,delta_qy
+         * as well so the radiation and spin calculations see the full field */
         for (iMult = 0; iMult < multData->orders; iMult++) {
           if (multData->KnL && multData->KnL[iMult]) {
-            DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
-                            multData->order[iMult],
-                            multData->KnL[iMult] * kickFrac[step] / n_parts,
-                            0);
+            DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
+                          multData->order[iMult],
+                          multData->KnL[iMult] * kickFrac[step] / n_parts,
+                          0);
           }
           if (multData->JnL && multData->JnL[iMult]) {
-            DO_MKICKS_NORET(&qx, &qy, xpow, ypow,
-                            multData->order[iMult],
-                            multData->JnL[iMult] * kickFrac[step] / n_parts,
-                            1);
+            DO_MKICKS_RET(&qx, &qy, &delta_qx, &delta_qy, xpow, ypow,
+                          multData->order[iMult],
+                          multData->JnL[iMult] * kickFrac[step] / n_parts,
+                          1);
           }
         }
       }
@@ -1013,6 +1048,40 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
       xp = qx / denom;
       yp = qy / denom;
 #endif
+
+      /* Spin precession through the body of this substep.  Cartesian
+       * body integration => pass h=0 to the spin updater (no curvilinear
+       * frame-rotation subtraction).
+       *
+       * The local field is read off the integrated kick already applied
+       * by the multipole loops above: DO_MKICKS_RET accumulated
+       *
+       *   delta_qx = -ds_substep * By/B_rho
+       *   delta_qy = +ds_substep * Bx/B_rho
+       *
+       * over this substep -- including the dipole term (via KnL[0]'s
+       * polynomial constant) and the spurious multData contributions.
+       * So B = (delta_qy, -delta_qx, 0) * B_rho / ds_substep.  The
+       * cumulative FS-frame rotation across the magnet is absorbed into
+       * the switchRbendPlane-matched entry/exit spin rotations. */
+      if (spinCoordOffset) {
+        double *spin = coord + spinCoordOffset;
+        double ds_substep = (drift / n_parts) * kickFrac[step];
+        if (ds_substep != 0) {
+          double brho_signed = -particleMass * c_mks * Po / particleCharge;
+          double scale = brho_signed / ds_substep;
+          double Bx_T = +delta_qy * scale;
+          double By_T = -delta_qx * scale;
+          double p_particle = Po * (1 + dp);
+          updateSpinQuaternionLocalFS(spin, Bx_T, By_T, 0.0,
+                                      x, y, xp, yp,
+                                      ds_substep,
+                                      0.0,
+                                      p_particle,
+                                      -particleCharge * particleRelSign,
+                                      particleMass, particleAnomalousMagneticMoment);
+        }
+      }
 
       /* these three quantities are needed for radiation integrals */
       if (step == nSubsteps - 2) {
@@ -1228,17 +1297,38 @@ void verticalRbendFringe(
                          short angleSign,     // -1 or 1
                          short isExit,
                          short fringeModel,
-                         short order) {
+                         short order,
+                         double Po) {         // reference momentum (for spin tracking only)
+
+  /* Per-particle pre-fringe slope buffers reused across calls.  Filled
+   * before the orbit fringe runs and read after, to compute the
+   * matching spin rotation via applyFringeSpinKick().  Only allocated
+   * and used when spin tracking is enabled. */
+  static double *xp0buf = NULL, *yp0buf = NULL;
+  static long xp0bufMax = 0;
+  long isf;
 
   if (fringeModel == -1)
     return;
+  if (fringeModel == 0 && order < 1)
+    return;
+
+  if (spinCoordOffset) {
+    if (n_part > xp0bufMax) {
+      xp0buf = trealloc(xp0buf, sizeof(*xp0buf) * n_part);
+      yp0buf = trealloc(yp0buf, sizeof(*yp0buf) * n_part);
+      xp0bufMax = n_part;
+    }
+    for (isf = 0; isf < n_part; isf++) {
+      xp0buf[isf] = particle[isf][1];
+      yp0buf[isf] = particle[isf][3];
+    }
+  }
 
   if (fringeModel == 0) {
     // old method
     long i;
     double c, d, e;
-    if (order < 1)
-      return;
     c = d = e = 0;
     if (gK != 0)
       alpha -= gK / fabs(rho0) / cos(alpha) * (1 + sqr(sin(alpha)));
@@ -1364,6 +1454,21 @@ void verticalRbendFringe(
       particle[i][4] = -tau2 + sint * x2;
     }
   }
+
+  /* Spin precession from the integrated fringe field, inferred from
+   * the slope kicks (xp - xp0, yp - yp0) the orbit code just produced.
+   * Same construction as CSBEND (csbend.c:1288).  rho0*angleSign carries
+   * the bend sign for the body-bend leakage term. */
+  if (spinCoordOffset) {
+    for (isf = 0; isf < n_part; isf++) {
+      double p_i = Po * (1 + particle[isf][5]);
+      applyFringeSpinKick(particle[isf] + spinCoordOffset,
+                          particle[isf][1], xp0buf[isf],
+                          particle[isf][3], yp0buf[isf],
+                          particle[isf][2],
+                          rho0 * angleSign, p_i, particleAnomalousMagneticMoment);
+    }
+  }
 }
 
 double ccbend_trajectory_error(double *value, long *invalid) {
@@ -1416,10 +1521,10 @@ VMATRIX *determinePartialCcbendLinearMatrix(CCBEND *ccbend, double *startingCoor
   double angle0[2];
 
 #if USE_MPI
-  long notSinglePart_saved = notSinglePart;
+  long distributedBeam_saved = distributedBeam;
 
   /* All the particles should do the same thing for this routine. */
-  notSinglePart = 0;
+  distributedBeam = 0;
 #endif
 
   coord = (double **)czarray_2d(sizeof(**coord), 1 + 6 * 4, totalPropertiesPerParticle);
@@ -1514,7 +1619,7 @@ VMATRIX *determinePartialCcbendLinearMatrix(CCBEND *ccbend, double *startingCoor
   free_czarray_2d((void **)coord, 1 + 4 * 6, totalPropertiesPerParticle);
 
 #if USE_MPI
-  notSinglePart = notSinglePart_saved;
+  distributedBeam = distributedBeam_saved;
 #endif
   return M;
 }
