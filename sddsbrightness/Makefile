@@ -9,12 +9,12 @@ SCRIPTS = brightnessEnvelope
 
 PROD = sddsws sddsbs sddsecon sddscompton sddsxrf xrltool xrltest sddssyncflux
 
-sddsbrightness_SRC = sddsbrightness.c usbC.c brighteC.c huntC.c lindbergBrightness.c
+sddsbrightness_SRC = sddsbrightness.c usbC.c brighteC.c huntC.c
 sddsurgent_SRC = sddsurgent.c
 sddsfluxcurve_SRC = sddsfluxcurve.c
 sddsfresnel_SRC = sddsfresnel.c fresnel.c
 
-CFLAGS += -DUSE_GSL -I$(SDDS_REPO)/include -I../physics -I../xraylib -I$(OBJ_DIR)
+CFLAGS += -DUSE_GSL -I../physics -I$(SDDS_REPO)/include -I../xraylib -I$(OBJ_DIR)
 
 ifeq ($(OS), Linux)
   PROD += sddsbrightness sddsurgent sddsfluxcurve sddsxra sddsfresnel
