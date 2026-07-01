@@ -124,7 +124,7 @@ static double savedFinalCentroid[6];
 static SDDS_DATASET SDDSmatrix;
 static short matrixOutputInitialized = 0;
 void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eNatural);
-
+void updateGasScatteringMatrices(LINE_LIST *beamline, RUN *run);
 
 void setUpMomentsMatrixOutput(RUN *run, char *outputFilename) {
   char buffer[1024], t[1024];
@@ -414,7 +414,10 @@ void setupMomentsOutput(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline, lo
     if (beta_x <= 0 || beta_y <= 0 || beta_z <= 0 || emit_x < 0 || emit_y < 0 || emit_z < 0)
       bombElegant("invalid initial beta-functions given in moments_output namelist", NULL);
   }
-
+  if (pressure_data)
+    readGasPressureData(pressure_data, &(run->pressureData), pressure_factor, 1);
+  else
+    run->pressureData.nGasses = 0;
   if (filename) {
     SDDS_ElegantOutputSetup(&SDDSMoments, filename, SDDS_BINARY, 1, "Beam moments",
                             run->runfile, run->lattice,
@@ -492,6 +495,9 @@ long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long
     fflush(stdout);
   }
 
+  if (run->pressureData.nGasses)
+    updateGasScatteringMatrices(beamline, run);
+  
   for (int iteration=0; (ibs_iterations==0 && iteration==0) || (ibs_iterations>0 && iteration<ibs_iterations); iteration++) {
     if (verbosity>1 && ibs_iterations)
       report_stats(stdout, "Performing ibs iteration: ");
@@ -1647,5 +1653,56 @@ void updateIbsScatteringMatrices(LINE_LIST *beamline, double charge, double *eGe
     eptr->coulombLog = coulombLog;
     eptr = eptr->succ;
   }
+}
+
+void updateGasScatteringMatrices(LINE_LIST *beamline, RUN *run)
+{
+  ELEMENT_LIST *eptr;
+  long igas, interpCode, icomp;
+  double deltaSigmaTheta2, P, n, logC, length, deltaSigmaTheta2Total;
+  double beta, beta4gamma2;
+  eptr = beamline->elem_twiss;
+
+  deltaSigmaTheta2Total = 0;
+  while (eptr) {
+    if (!eptr->Dgas)
+      eptr->Dgas = malloc(sizeof(*eptr->Dgas)*21);
+    memset(eptr->Dgas, 0, 21*sizeof(*eptr->Dgas));
+    deltaSigmaTheta2 = 0;
+    beta = eptr->Pref_output/sqrt(sqr(eptr->Pref_output)+1);
+    beta4gamma2 = sqr(beta*eptr->Pref_output);
+    if (entity_description[eptr->type].flags&HAS_LENGTH && (length=((DRIFT*)(eptr->p_elem))->length) > 0) {
+      for (igas=0; igas<run->pressureData.nGasses; igas++) {
+	/* interpolate partial pressure and convert to Pascals */
+	P = interp(run->pressureData.pressure[igas], run->pressureData.s, run->pressureData.nLocations, eptr->end_pos,
+		   0, 1, &interpCode)*133.322368421;
+	if (interpCode)
+          /* compute number density */
+	  n = P/(k_boltzmann_mks*run->pressureData.temperature);
+	else
+	  continue;
+	/* printf("Pressure is %le, n = %le at %s\n", P, n, eptr->name); */
+	/* compute and sum the diffusion contribution for each component */
+	for (icomp=0; icomp<run->pressureData.gasData[igas].nConstituents; icomp++) {
+	  logC = log(184.15/pow(run->pressureData.gasData[igas].Z[icomp], 1./3.));
+	  /* printf("comp %ld, logC=%le, Z=%le, re=%le, P=%le\n",
+		 icomp, logC, run->pressureData.gasData[igas].Z[icomp], particleRadius, eptr->Pref_output);
+	  */
+	  /* Summing up the anglar contribution in each plane, not in polar angle coordinate */
+	  deltaSigmaTheta2 += 4*PI*length*n*run->pressureData.gasData[igas].nAtoms[icomp]*logC*
+	    run->pressureData.gasData[igas].Z[icomp]*(run->pressureData.gasData[igas].Z[icomp]+1)*
+	    sqr(particleRadius)/beta4gamma2;
+	  /*
+	  printf("deltaSigmaTheta2 -> %le\n", deltaSigmaTheta2);
+	  */
+	}
+      }
+      /* assign diffusion contribution to x' and y' */
+      eptr->Dgas[sigmaIndex3[1][1]] = eptr->Dgas[sigmaIndex3[3][3]] = deltaSigmaTheta2;
+    }
+    deltaSigmaTheta2Total += deltaSigmaTheta2;
+    eptr = eptr->succ;
+  }
+  printf("deltaSigmaTheta2Total = %le\n", deltaSigmaTheta2Total);
 }
 
