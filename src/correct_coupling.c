@@ -124,6 +124,15 @@ static double *yResidFlat = NULL;
 static double *yPertFlat  = NULL;
 
 /****************************************************************************/
+static char *ccStrtok(char *str, const char *delim, char **context) {
+#if defined(_WIN32) && !defined(_MINGW)
+  return strtok_s(str, delim, context);
+#else
+  return strtok_r(str, delim, context);
+#endif
+}
+
+/****************************************************************************/
 /* Parse a steering specification of the form
  *     "TYPE1/ITEM1[/NAMEPATTERN1], TYPE2/ITEM2[/NAMEPATTERN2], ..."
  * and collect every beamline element matching some entry.  NAMEPATTERN
@@ -145,7 +154,7 @@ static long collectSteeringKnobs(LINE_LIST *beamline, const char *spec,
   if (!spec || !*spec) return 0;
   cp_str(&buf, (char *)spec);
   /* Split entries on ',' (allow surrounding spaces). */
-  for (tok = strtok_r(buf, ",", &save1); tok; tok = strtok_r(NULL, ",", &save1)) {
+  for (tok = ccStrtok(buf, ",", &save1); tok; tok = ccStrtok(NULL, ",", &save1)) {
     while (isspace((unsigned char)*tok)) tok++;
     char *end = tok + strlen(tok);
     while (end > tok && isspace((unsigned char)end[-1])) --end;
