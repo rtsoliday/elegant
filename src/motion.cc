@@ -399,8 +399,12 @@ long motion(
 
 #ifdef DEBUG
   printf("change_p0=%ld, n_part=%ld\n", change_p0, n_part);
-#endif  
-  if (change_p0 && n_part) {
+#endif
+  long nTotal = n_part;
+#if USE_MPI
+  MPI_Allreduce(&n_part, &nTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+#endif
+  if (change_p0 && nTotal!=0) {
 #ifdef DEBUG
     printf("Running do_match_energy with p0=%le\n", *pCentral);
 #endif  
@@ -1499,7 +1503,7 @@ double *select_fiducial(double **part, long n_part, char *var_mode_in) {
     return (part[0]);
   }
 #else
-  if (notSinglePart)
+  if (distributedBeam)
     MPI_Allreduce(&n_part, &n_part_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 #endif
 
@@ -1538,7 +1542,7 @@ double *select_fiducial(double **part, long n_part, char *var_mode_in) {
     deltaAve /= n_part;
     tAve /= n_part;
 #else
-    if (notSinglePart) {
+    if (distributedBeam) {
       double deltaAve_total, tAve_total;
 
       MPI_Allreduce(&deltaAve, &deltaAve_total, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -1576,7 +1580,7 @@ double *select_fiducial(double **part, long n_part, char *var_mode_in) {
         }
       }
 #if USE_MPI
-      if (notSinglePart) {
+      if (distributedBeam) {
         struct {
           double val;
           int rank;
@@ -1603,7 +1607,7 @@ double *select_fiducial(double **part, long n_part, char *var_mode_in) {
         }
       }
 #if USE_MPI
-      if (notSinglePart) {
+      if (distributedBeam) {
         struct {
           double val;
           int rank;
@@ -1626,7 +1630,7 @@ double *select_fiducial(double **part, long n_part, char *var_mode_in) {
 #if !USE_MPI
       sum /= n_part;
 #else
-      if (notSinglePart) {
+      if (distributedBeam) {
         double sum_total;
 
         MPI_Allreduce(&sum, &sum_total, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -1642,7 +1646,7 @@ double *select_fiducial(double **part, long n_part, char *var_mode_in) {
         }
       }
 #if USE_MPI
-      if (notSinglePart) {
+      if (distributedBeam) {
         struct {
           double val;
           int rank;
@@ -1663,7 +1667,7 @@ double *select_fiducial(double **part, long n_part, char *var_mode_in) {
 #if !USE_MPI
       i_best = 0;
 #else
-      if (notSinglePart) {
+      if (distributedBeam) {
         if (myid == 1)
           memcpy(best_particle, part[0], sizeof(*best_particle) * totalPropertiesPerParticle);
         MPI_Bcast(best_particle, totalPropertiesPerParticle, MPI_DOUBLE, 1, MPI_COMM_WORLD);
