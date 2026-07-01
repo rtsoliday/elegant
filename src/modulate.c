@@ -234,7 +234,7 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
 
 #if USE_MPI
   long np_total = 0;
-  if (notSinglePart) {
+  if (distributedBeam) {
     MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     if (np_total == 0)
       return 0;
@@ -254,7 +254,7 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
 #ifdef HAVE_GPU
   if (getGpuBase()->elementOnGpu) {
 #  if USE_MPI
-    if (notSinglePart) {
+    if (distributedBeam) {
       coord = forceParticlesToCpu("findFiducialTime MPI fallback");
       tBeam = findFiducialTime(coord, np, 0, 0, pCentral, FID_MODE_TMEAN | FID_MODE_FULLBEAM);
     } else
