@@ -305,7 +305,7 @@ void setup_aperture_search(
     output = NULL;
 
   if (optimization_mode) {
-    notSinglePart = 0; /* All the processors will track independently */
+    distributedBeam = 0; /* All the processors will track independently */
     lessPartAllowed = 1;
   }
 #endif
