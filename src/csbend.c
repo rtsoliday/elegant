@@ -2534,7 +2534,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   gamma3 = pow(gamma2, 3. / 2);
 
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     n_partMoreThanOne = 1; /* This is necessary to solve synchronization issue in parallel version*/
   else if (n_part > 1)
     n_partMoreThanOne = 1;
@@ -2548,7 +2548,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 
   csrWake.valid = 0;
   refTrajectoryMode = 0;
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     reset_driftCSR();
 
   getTrackingContext(&tContext);
@@ -2565,7 +2565,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
       exactDrift(part, n_part, csbend->length);
     else {
       long i;
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         for (i = 0; i < n_part; i++) {
           part[i][0] += csbend->length * part[i][1];
           part[i][2] += csbend->length * part[i][3];
@@ -2601,7 +2601,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   if (csbend->SGDerivOrder <= 0)
     csbend->SGDerivOrder = 1;
 
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     if (n_part > maxParticles &&
         (!(beta0 = SDDS_Realloc(beta0, sizeof(*beta0) * (maxParticles = n_part)))))
       bombElegant("Memory allocation failure (track_through_csbendCSR)", NULL);
@@ -2843,9 +2843,9 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 #endif
 
 #if defined(HAVE_GPU) && !USE_MPI
-  if (!gpuCsrResidentDeviceEntryDone && (isSlave || !notSinglePart)) {
+  if (!gpuCsrResidentDeviceEntryDone && (isSlave || !distributedBeam)) {
 #else
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
 #endif
     /* check particle data, transform coordinates, and handle edge effects */
     for (i_part = 0; i_part < n_part; i_part++) {
@@ -2959,7 +2959,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   for (kick = 0; kick < (csbend->nSlices + 1); kick++) {
     if (!csbend->backtrack && kick == csbend->nSlices)
       break;
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (!csbend->backtrack || kick != 0) {
 #if defined(HAVE_GPU) && !USE_MPI
         long gpuCsrResidentBodyDone = 0;
@@ -3064,7 +3064,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
         rms_emittance(part, 4, 5, n_part, &Sz, NULL, NULL, NULL, NULL);
         rms_emittance(part, 0, 1, n_part, &Sx, NULL, NULL, NULL, NULL);
 #else
-        if (notSinglePart) {
+        if (distributedBeam) {
           /* The master will get the result from the rms_emittance routine */
           rms_emittance_p(part, 4, 5, n_part, &Sz, NULL, NULL, NULL, NULL, NULL);
           rms_emittance_p(part, 0, 1, n_part, &Sx, NULL, NULL, NULL, NULL, NULL);
@@ -3097,7 +3097,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 #if (!USE_MPI)
     if (n_partMoreThanOne && !csrInhibit) {
 #else
-    if (!csrInhibit && (notSinglePart || (!notSinglePart && n_partMoreThanOne))) { /* n_part could be 0 for some processors, which could cause synchronization problem */
+    if (!csrInhibit && (distributedBeam || (!distributedBeam && n_partMoreThanOne))) { /* n_part could be 0 for some processors, which could cause synchronization problem */
 #endif
 #if defined(HAVE_GPU) && !USE_MPI
       long useGpuCsrResidentKick = 0;
@@ -3180,11 +3180,11 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
           fflush(stdout);
         }
 #else
-        if (notSinglePart) {
+        if (distributedBeam) {
           if (USE_MPI) {
             long all_binned, result = 1, nBinned_total;
 
-            if (isSlave || !notSinglePart) {
+            if (isSlave || !distributedBeam) {
               result = ((nBinned == n_part) ? 1 : 0);
             }
             MPI_Allreduce(&result, &all_binned, 1, MPI_LONG, MPI_LAND, MPI_COMM_WORLD);
@@ -3395,7 +3395,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
           applyFilterTable(dGamma, nBins, dct / c_mks, csbend->wffValues, csbend->wffFreqValue,
                            csbend->wffRealFactor, csbend->wffImagFactor);
       }
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         if (CSRConstant) {
 #if defined(HAVE_GPU) && !USE_MPI
           if (useGpuCsrResidentKick &&
@@ -3593,10 +3593,10 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
       fflush(stdout);
     }
 #else
-    if (USE_MPI && notSinglePart) {
+    if (USE_MPI && distributedBeam) {
       long all_binned, result = 1, nBinned_total;
 
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         result = ((nBinned == n_part) ? 1 : 0);
       } else
         nBinned = 0;
@@ -3611,7 +3611,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
                ctLower, ctUpper, dct, nBins, maxBins);
         fflush(stdout);
       }
-      if (notSinglePart) { /* Master needs to know the information to write the result */
+      if (distributedBeam) { /* Master needs to know the information to write the result */
         buffer = malloc(sizeof(double) * nBins);
         MPI_Allreduce(ctHist, buffer, nBins, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         memcpy(ctHist, buffer, sizeof(double) * nBins);
@@ -3627,7 +3627,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   }
 
   i_top = n_part - 1;
-  if ((isSlave || !notSinglePart)
+  if ((isSlave || !distributedBeam)
 #if defined(HAVE_GPU) && !USE_MPI
       && !gpuCsrResidentFinalDone
 #endif
@@ -3739,7 +3739,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
     rms_emittance(part, 0, 1, i_top + 1, &csrWake.S11, &csrWake.S12, &csrWake.S22, NULL, NULL);
     rms_emittance(part, 4, 5, i_top + 1, &S55, NULL, NULL, NULL, NULL);
 #else
-    if (notSinglePart) {
+    if (distributedBeam) {
       rms_emittance_p(part, 0, 1, i_top + 1, &csrWake.S11, &csrWake.S12, &csrWake.S22, NULL, NULL, NULL);
       rms_emittance_p(part, 4, 5, i_top + 1, &S55, NULL, NULL, NULL, NULL, NULL);
     } else {
@@ -3877,7 +3877,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 #if (!USE_MPI)
   return (i_top + 1);
 #else
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     return (i_top + 1);
   else
     return n_part; /* i_top is not defined for master */
@@ -3906,7 +3906,7 @@ static long prepareParticleCoordinateHistogram(double **hist, long *maxBins,
 
   /* if (*lower==*upper)  This condition will be removed */
   count = 0;
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     /* find range of points */
     *upper = -(*lower = DBL_MAX);
     for (iParticle = 0; iParticle < nParticles; iParticle++) {
@@ -3926,7 +3926,7 @@ static long prepareParticleCoordinateHistogram(double **hist, long *maxBins,
   
 #if USE_MPI
   /* find the global maximum and minimum */
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (isMaster)
       nParticles = 0;
     find_global_min_max(lower, upper, nParticles, MPI_COMM_WORLD);
@@ -3978,7 +3978,7 @@ long binParticleCoordinate(double **hist, long *maxBins,
                                                   coordinateIndex)) < 0)
     return status;
   nBinned = 0;
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     for (iParticle = nBinned = 0; iParticle < nParticles; iParticle++) {
       /* the coordinate of the bin center is (iBin+0.5)*(*binSize) + *lower */
       iBin = (particleCoord[iParticle][coordinateIndex] - *lower) / (*binSize);
@@ -4095,7 +4095,7 @@ long track_through_driftCSR(double **part, long np, CSRDRIFT *csrDrift,
 #if (!USE_MPI)
   if (np <= 1 || !csrWake.valid || !(csrDrift->csr || csrDrift->LSCBins)) {
 #else
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (isMaster)
       np_tmp = 0;
     MPI_Allreduce(&np_tmp, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -4103,7 +4103,7 @@ long track_through_driftCSR(double **part, long np, CSRDRIFT *csrDrift,
     np_total = np;
 
   if (np_total <= 1 || !csrWake.valid || !(csrDrift->csr || csrDrift->LSCBins)) {
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
 #endif
     if (csrDrift->linearOptics) {
       long i;
@@ -4249,7 +4249,7 @@ for (iKick = 0; iKick < nKicks; iKick++) {
   ctmax = -DBL_MAX;
 
   /* propagate particles forward, converting s to c*t=s/beta */
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     for (iPart = 0; iPart < np; iPart++) {
       coord = part[iPart];
       coord[0] += coord[1] * dz;
@@ -4337,7 +4337,7 @@ for (iKick = 0; iKick < nKicks; iKick++) {
   dzFirst = 0;
 
   /* apply kick to each particle and convert back to normal coordinates */
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     for (iPart = binned = 0; iPart < np; iPart++) {
       coord = part[iPart];
       if (csrWake.dGamma) {
@@ -4355,7 +4355,7 @@ for (iKick = 0; iKick < nKicks; iKick++) {
     }
   }
 #if USE_MPI
-  if (isSlave && notSinglePart) {
+  if (isSlave && distributedBeam) {
     MPI_Allreduce(&binned, &binned_total, 1, MPI_LONG, MPI_SUM, workers);
   }
   if ((myid == 1) && (csrWake.dGamma && np_total != binned_total)) {
@@ -4386,7 +4386,7 @@ for (iKick = 0; iKick < nKicks; iKick++) {
 }
 /* do final drift of dz0/2 */
 dz = dz0 / 2;
-if (isSlave || !notSinglePart) {
+if (isSlave || !distributedBeam) {
   for (iPart = 0; iPart < np; iPart++) {
     coord = part[iPart];
     coord[0] += coord[1] * dz;
@@ -4713,7 +4713,7 @@ long track_through_driftCSR_Stupakov(double **part, long np, CSRDRIFT *csrDrift,
     length += (dzFirst = zStart - csrWake.zLast);
     /* propagate beam back so we can tranverse the missing length including CSR
      */
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       for (iPart = 0; iPart < np; iPart++) {
         coord = part[iPart];
         coord[0] -= dzFirst * coord[1];
@@ -4764,7 +4764,7 @@ long track_through_driftCSR_Stupakov(double **part, long np, CSRDRIFT *csrDrift,
     x = zTravel / csrWake.rho;
     dsMax = csrWake.rho / 24 * pow(csrWake.bendingAngle, 3) * (csrWake.bendingAngle + 4 * x) / (csrWake.bendingAngle + x);
     /* propagate particles forward, converting s to c*t=s/beta */
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       for (iPart = 0; iPart < np; iPart++) {
         coord = part[iPart];
         coord[0] += coord[1] * dz;
@@ -4784,13 +4784,13 @@ long track_through_driftCSR_Stupakov(double **part, long np, CSRDRIFT *csrDrift,
                                     csrWake.binRangeFactor < 1.1 ? 1.1 : csrWake.binRangeFactor,
                                     part, np, 4);
 #if USE_MPI
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (isSlave)
         MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
       MPI_Allreduce(&nBinned, &binned_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     }
 
-    if (notSinglePart) { /* Master needs to know the information to write the result */
+    if (distributedBeam) { /* Master needs to know the information to write the result */
       buffer = malloc(sizeof(double) * nBins);
       MPI_Allreduce(ctHist, buffer, nBins, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
       memcpy(ctHist, buffer, sizeof(double) * nBins);
@@ -4846,7 +4846,7 @@ long track_through_driftCSR_Stupakov(double **part, long np, CSRDRIFT *csrDrift,
 #if (!USE_MPI)
       correctDistribution(ctHist, nBins, 1.0 * nBinned);
 #else
-        if (notSinglePart)
+        if (distributedBeam)
           correctDistribution(ctHist, nBins, 1.0 * binned_total);
         else
           correctDistribution(ctHist, nBins, 1.0 * nBinned);
@@ -4951,7 +4951,7 @@ long track_through_driftCSR_Stupakov(double **part, long np, CSRDRIFT *csrDrift,
     }
 
     /* apply kick to each particle and convert back to normal coordinates */
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       for (iPart = binned = 0; iPart < np; iPart++) {
         double f;
         coord = part[iPart];
@@ -4987,7 +4987,7 @@ long track_through_driftCSR_Stupakov(double **part, long np, CSRDRIFT *csrDrift,
                                  zOutput, 0);
     }
 #if USE_MPI
-    if (isSlave && notSinglePart) {
+    if (isSlave && distributedBeam) {
       MPI_Allreduce(&binned, &binned_total, 1, MPI_LONG, MPI_SUM, workers);
     }
     if ((myid == 1) && (np_total != binned_total)) {
@@ -5022,7 +5022,7 @@ long track_through_driftCSR_Stupakov(double **part, long np, CSRDRIFT *csrDrift,
 
   /* do final drift of dz0/2 */
   dz = dz0 / 2;
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     for (iPart = 0; iPart < np; iPart++) {
       coord = part[iPart];
       coord[0] += coord[1] * dz;
