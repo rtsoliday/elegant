@@ -117,7 +117,7 @@ void track_through_ftrfmode(
   if (!(xsum && ysum && count))
     bomb("Memory allocation failure in track_through_ftrfmod", NULL);
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
 #ifdef DEBUG
     printf("FTRFMODE: Determining bucket assignments\n");
     fflush(stdout);
@@ -157,7 +157,7 @@ void track_through_ftrfmode(
     np = -1;
 #if USE_MPI
     /* Master needs to know if this bucket has particles */
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBuckets == 1)
         np = np0;
       else if (npBucket)
@@ -182,7 +182,7 @@ void track_through_ftrfmode(
     lastBin = 0;
     firstBin = trfmode->n_bins;
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBuckets == 1) {
         time = time0;
         part = part0;
@@ -214,7 +214,7 @@ void track_through_ftrfmode(
         }
       }
 #if USE_MPI
-      if (notSinglePart) {
+      if (distributedBeam) {
         long np_total = np;
         if (isSlave) {
           double t_total;
@@ -316,7 +316,7 @@ void track_through_ftrfmode(
     printf("global: firstBin = %ld, lastBin = %ld\n", firstBin, lastBin);
     fflush(stdout);
 #  endif
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       double *dbuffer;
       unsigned long *lbuffer;
 
@@ -549,7 +549,7 @@ void track_through_ftrfmode(
     free(time);
   if (pbin)
     free(pbin);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 }
 
