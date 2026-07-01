@@ -69,7 +69,7 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
 #endif /* HAVE_GPU */
 
   if (LSC->lsc == 0) {
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       exactDrift(part, np, LSC->length);
     return;
   }
@@ -99,14 +99,14 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
     Vtime = trealloc(Vtime, 2 * sizeof(*Vtime) * (max_n_bins + 1));
   }
 
-  if (!USE_MPI || !notSinglePart) {
+  if (!USE_MPI || !distributedBeam) {
     if (np > max_np) {
       pbin = trealloc(pbin, sizeof(*pbin) * (max_np = np));
       time = trealloc(time, sizeof(*time) * max_np);
     }
   }
 #if USE_MPI
-  else if (USE_MPI && notSinglePart) {
+  else if (USE_MPI && distributedBeam) {
     long np_total;
     if (isSlave) {
       MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
@@ -129,11 +129,11 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
     fflush(stdout);
 #endif
     /* compute time coordinates and make histogram */
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       computeTimeCoordinatesOnly(time, Po, part, np);
     find_min_max(&tmin, &tmax, time, np);
 #if USE_MPI
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (isMaster) {
         tmin = DBL_MAX;
         tmax = -DBL_MAX;
@@ -147,10 +147,10 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
            tmin, tmax, dt);
     fflush(stdout);
 #endif
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       n_binned = binTimeDistribution(Itime, pbin, tmin, dt, nb, time, part, Po, np);
 
-    if (!USE_MPI || !notSinglePart) {
+    if (!USE_MPI || !distributedBeam) {
       if (n_binned != np) {
         char warningText[1024];
         snprintf(warningText, 1024,
@@ -174,14 +174,14 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
       }
     }
 #  endif
-    if (isSlave && notSinglePart) {
+    if (isSlave && distributedBeam) {
       buffer = malloc(sizeof(double) * nb);
       MPI_Allreduce(Itime, buffer, nb, MPI_DOUBLE, MPI_SUM, workers);
       memcpy(Itime, buffer, sizeof(double) * nb);
       free(buffer);
     }
 #endif
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (LSC->smoothing) {
         SavitzyGolaySmooth(Itime, nb, LSC->SGOrder, LSC->SGHalfWidth, LSC->SGHalfWidth, 0);
 #if DEBUG
@@ -195,7 +195,7 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
     /* - find maximum current */
     find_min_max(&Imin, &Imax, Itime, nb);
 #if USE_MPI
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (isMaster) {
         Imin = DBL_MAX;
         Imax = -DBL_MAX;
@@ -213,7 +213,7 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
 #if !USE_MPI
     rms_emittance(part, 0, 2, np, &S11, NULL, &S33, NULL, NULL);
 #else
-    if (notSinglePart)
+    if (distributedBeam)
       rms_emittance_p(part, 0, 2, np, &S11, NULL, &S33, NULL, NULL, NULL);
     else
       rms_emittance(part, 0, 2, np, &S11, NULL, &S33, NULL, NULL);
@@ -332,7 +332,7 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
       fprintf(fpd, "\n");
 #endif
     Zmax = 0;
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       for (ib = 1; ib < nfreq - 1; ib++) {
         k = ib * dk;
         a1 = k * beamRadius / Po;
@@ -359,7 +359,7 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
 
     /* put zero voltage in Vtime[nb] for use in interpolation */
     Vtime[nb] = 0;
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       applyLongitudinalWakeKicks(part, time, pbin, np, Po, Vtime,
                                  nb, tmin, dt, LSC->interpolate);
       if (!kickMode) {
@@ -439,7 +439,7 @@ void addLSCKick(double **part, long np, LSCKICK *LSC, double Po, CHARGE *charge,
   computeTimeCoordinatesOnly(time, Po, part, np);
   find_min_max(&tmin, &tmax, time, np);
 #if USE_MPI
-  if (isSlave && notSinglePart)
+  if (isSlave && distributedBeam)
     find_global_min_max(&tmin, &tmax, nb, workers);
 #endif
   dt = (tmax - tmin) / (nb - 3);
@@ -468,7 +468,7 @@ void addLSCKick(double **part, long np, LSCKICK *LSC, double Po, CHARGE *charge,
   /* - find maximum current */
   find_min_max(&Imin, &Imax, Itime, nb);
 #if USE_MPI
-  if (isSlave && notSinglePart) {
+  if (isSlave && distributedBeam) {
     double *buffer;
     find_global_min_max(&tmin, &tmax, np, workers);
     buffer = malloc(sizeof(double) * nb);
@@ -488,7 +488,7 @@ void addLSCKick(double **part, long np, LSCKICK *LSC, double Po, CHARGE *charge,
 #if !USE_MPI
   rms_emittance(part, 0, 2, np, &S11, NULL, &S33, NULL, NULL);
 #else
-  if (notSinglePart)
+  if (distributedBeam)
     rms_emittance_p(part, 0, 2, np, &S11, NULL, &S33, NULL, NULL, NULL);
   else
     rms_emittance(part, 0, 2, np, &S11, NULL, &S33, NULL, NULL);
@@ -509,7 +509,7 @@ void addLSCKick(double **part, long np, LSCKICK *LSC, double Po, CHARGE *charge,
   fflush(stdout);
 #endif
   length = 1 / kSC;
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     if (dgammaOverGamma) {
       double length2;
       length2 = fabs(lengthScale / dgammaOverGamma);
