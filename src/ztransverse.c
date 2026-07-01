@@ -92,7 +92,7 @@ void track_through_ztransverse(double **part0, long np0, ZTRANSVERSE *ztransvers
 
   //not_first_call += 1;
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     index_bunch_assignments(part0, np0, (charge && ztransverse->bunchedBeamMode) ? charge->idSlotsPerBunch : 0, Po, &time0, &ibParticle, &ipBucket, &npBucket, &nBuckets, -1);
 #if USE_MPI
     if (mpiAbort)
@@ -335,7 +335,7 @@ void track_through_ztransverse(double **part0, long np0, ZTRANSVERSE *ztransvers
           /* wake potential output */
           factor = ztransverse->macroParticleCharge * particleRelSign / dt;
           if ((ztransverse->wake_interval <= 0 || ((i_pass0 - ztransverse->wake_start) % ztransverse->wake_interval) == 0) &&
-              i_pass0 >= ztransverse->wake_start && i_pass0 <= ztransverse->wake_end) {
+              i_pass0 >= ztransverse->wake_start && (ztransverse->wake_end<0 || i_pass0 <= ztransverse->wake_end)) {
             if (first && !SDDS_StartTable(ztransverse->SDDS_wake, nb)) {
               SDDS_SetError("Problem starting SDDS table for wake output (track_through_ztransverse)");
               SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -417,7 +417,7 @@ void track_through_ztransverse(double **part0, long np0, ZTRANSVERSE *ztransvers
     free_czarray_2d((void **)part, max_np, totalPropertiesPerParticle);
   if (time && time != time0)
     free(time);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
   if (pbin)
     free(pbin);
