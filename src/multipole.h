@@ -38,7 +38,7 @@ static inline double dblfactorial(long n) {
 #define UNUSED __attribute__((unused))
 #endif
 
-static inline void UNUSED fillPowerArray(const double x, double *xpow, const long order) {
+static inline void fillPowerArray(const double x, double *xpow, const long order) {
   xpow[0] = 1;
   for (long i = 1; i <= order; i++) {
     xpow[i] = xpow[i - 1] * x;
@@ -52,7 +52,7 @@ static void UNUSED fillPowerArrayReverse(const double x, double *xpow, const lon
   }
 }
 
-static inline void UNUSED fillPowerArrays(const double x, double *restrict xpow,
+static inline void fillPowerArrays(const double x, double *restrict xpow,
                                                     const double y, double *restrict ypow,
                                                     const long order) {
   xpow[0] = ypow[0] = 1;
@@ -183,7 +183,7 @@ static void apply_all_kicks_noret(double *restrict qx,
 }
 
 
-static void UNUSED apply_canonical_multipole_kicks_ret(double *restrict qx, double *restrict qy,
+static inline void apply_canonical_multipole_kicks_ret(double *restrict qx, double *restrict qy,
                                             double *restrict delta_qx_return, double *restrict delta_qy_return,
                                             double *restrict xpow, double *restrict ypow,
                                             const long order, const double KnL, const long skew) {
@@ -208,7 +208,7 @@ static void UNUSED apply_canonical_multipole_kicks_ret(double *restrict qx, doub
   *delta_qy_return += KnL * sum_Fx;
 }
 
-static void UNUSED apply_canonical_multipole_kicks_noret(double *restrict qx, double *restrict qy,
+static inline void apply_canonical_multipole_kicks_noret(double *restrict qx, double *restrict qy,
                                             double *restrict xpow, double *restrict ypow,
                                             const int order, const double KnL, const int skew) {
   double *coef = expansion_coefficients(order);
