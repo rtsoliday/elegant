@@ -217,7 +217,7 @@ long trackThroughExactCorrector(double **part, long n_part, ELEMENT_LIST *eptr, 
     *sigmaDelta2 = 0;
 
   i_top = -1;
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     i_top = n_part - 1;
 
     if (dx || dy || dz)
