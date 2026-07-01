@@ -147,7 +147,7 @@ double findFiducialTime(double **part, long np, double s0, double sOffset,
     best = -DBL_MAX;
 #endif
     ibest = -1;
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       for (i = 0; i < np; i++) {
         if (((startPID < 0 && endPID < 0) || (part[i][6] >= startPID && part[i][6] <= endPID)) && best < part[i][5]) {
           best = part[i][5];
@@ -160,7 +160,7 @@ double findFiducialTime(double **part, long np, double s0, double sOffset,
     else
       bombElegant("No available particle for RF cavity fiducialization", NULL);
 #else
-    if (notSinglePart) {
+    if (distributedBeam) {
       double sBest;
       struct {
         double val;
@@ -198,11 +198,11 @@ double findFiducialTime(double **part, long np, double s0, double sOffset,
     double error = 0.0;
 #endif
 #if USE_MPI && MPI_DEBUG
-    printf("fiducializing using TMEAN, isSlave=%d, notSinglePart=%d\n", isSlave, notSinglePart);
+    printf("fiducializing using TMEAN, isSlave=%d, distributedBeam=%d\n", isSlave, distributedBeam);
     fflush(stdout);
 #endif
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
 #if USE_MPI && MPI_DEBUG
       printf("doing fiducilization sum for %ld particles\n", np);
       fflush(stdout);
@@ -228,7 +228,7 @@ double findFiducialTime(double **part, long np, double s0, double sOffset,
     printf("tsum = %le, nsum = %ld\n", tsum, nsum);
     fflush(stdout);
 #  endif
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (USE_MPI) {
         double tsum_total;
         long nsum_total;
@@ -367,7 +367,7 @@ long trackRfCavityWithWakes(
     if (!part)
       bombElegant("NULL particle data pointer (trackRfCavityWithWakes)", NULL);
   }
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     for (ip = 0; ip < np; ip++)
       if (!part[ip]) {
         fprintf(stderr, "NULL pointer for particle %ld (trackRfCavityWithWakes)\n", ip);
@@ -387,7 +387,7 @@ long trackRfCavityWithWakes(
     return (np);
   }
 #else
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (isMaster)
       np_tmp = 0;
     else
@@ -409,7 +409,7 @@ long trackRfCavityWithWakes(
 
   if (rfca->volt == 0 && !wake && !trwake && !LSCKick) {
     if (rfca->length) {
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         for (ip = 0; ip < np; ip++) {
           coord = part[ip];
           coord[0] += coord[1] * length;
@@ -515,7 +515,7 @@ long trackRfCavityWithWakes(
   }
 
   timeOffset = 0;
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     if (omega && rfca->change_t && np != 0) {
       coord = part[0];
       P = *P_central * (1 + coord[5]);
@@ -534,7 +534,7 @@ long trackRfCavityWithWakes(
     if (nKicks != 1)
       bombElegant("Must use n_kicks=1 for linearized rf cavity", NULL);
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       for (ip = 0; ip < np; ip++) {
         coord = part[ip];
         P = *P_central * (1 + coord[5]);
@@ -550,7 +550,7 @@ long trackRfCavityWithWakes(
 #if (!USE_MPI)
     tAve /= np;
 #else
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (USE_MPI) {
         double tAve_total = 0.0;
 #  ifndef USE_KAHAN
@@ -582,7 +582,7 @@ long trackRfCavityWithWakes(
     } else
       dgammaAve = volt * sin(omega * (tAve - timeOffset) + phase);
   }
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     for (ip = 0; ip < np; ip++) {
       coord = part[ip];
       coord[0] -= rfca->dx;
@@ -597,7 +597,7 @@ long trackRfCavityWithWakes(
     if (!rfca->backtrack) {
       for (ik = 0; ik < nKicks; ik++) {
         dgammaOverGammaAve = dgammaOverGammaNp = 0;
-        if (isSlave || !notSinglePart) {
+        if (isSlave || !distributedBeam) {
           for (ip = 0; ip < np; ip++) {
             dpr = 0;
             coord = part[ip];
@@ -673,7 +673,7 @@ long trackRfCavityWithWakes(
             if (dgammaOverGammaNp)
               dgammaOverGammaAve /= dgammaOverGammaNp;
 #else
-            if (notSinglePart) {
+            if (distributedBeam) {
               double t1 = dgammaOverGammaAve;
               long t2 = dgammaOverGammaNp;
               MPI_Allreduce(&t1, &dgammaOverGammaAve, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -689,7 +689,7 @@ long trackRfCavityWithWakes(
           }
         }
         if (length) {
-          if (isSlave || !notSinglePart) {
+          if (isSlave || !distributedBeam) {
             /* apply final drift and focus kick if needed */
             for (ip = 0; ip < np; ip++) {
               coord = part[ip];
@@ -716,7 +716,7 @@ long trackRfCavityWithWakes(
               dgammaOverGammaAve /= dgammaOverGammaNp;
 #else
             if (dgammaOverGammaNp) {
-              if (notSinglePart) {
+              if (distributedBeam) {
                 double t1 = dgammaOverGammaAve;
                 long t2 = dgammaOverGammaNp;
                 MPI_Allreduce(&t1, &dgammaOverGammaAve, 1, MPI_DOUBLE, MPI_SUM, workers);
@@ -738,7 +738,7 @@ long trackRfCavityWithWakes(
       double *dgammaSave = NULL, *tSave = NULL;
       for (ik = 0; ik < nKicks; ik++) {
         dgammaOverGammaAve = dgammaOverGammaNp = 0;
-        if (isSlave || !notSinglePart) {
+        if (isSlave || !distributedBeam) {
           dgammaSave = tmalloc(sizeof(*dgammaSave) * np);
           tSave = tmalloc(sizeof(*tSave) * np);
           for (ip = 0; ip < np; ip++) {
@@ -793,7 +793,7 @@ long trackRfCavityWithWakes(
           if (dgammaOverGammaNp)
             dgammaOverGammaAve /= dgammaOverGammaNp;
 #else
-          if (notSinglePart) {
+          if (distributedBeam) {
             double t1 = dgammaOverGammaAve;
             long t2 = dgammaOverGammaNp;
             MPI_Allreduce(&t1, &dgammaOverGammaAve, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -812,7 +812,7 @@ long trackRfCavityWithWakes(
         if (wake)
           track_through_wake(part, np, wake, P_central, run, iPass, charge);
 
-        if (isSlave || !notSinglePart) {
+        if (isSlave || !distributedBeam) {
           /* apply final drift and focus kick if needed */
           for (ip = 0; ip < np; ip++) {
             coord = part[ip];
@@ -884,7 +884,7 @@ long trackRfCavityWithWakes(
         }
       }
 
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         for (ip = 0; ip < np; ip++) {
           coord = part[ip];
 
@@ -1000,7 +1000,7 @@ long trackRfCavityWithWakes(
     }
   }
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     for (ip = 0; ip < np; ip++) {
       coord = part[ip];
       coord[0] += rfca->dx;
