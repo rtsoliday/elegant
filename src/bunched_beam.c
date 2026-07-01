@@ -123,11 +123,11 @@ void finish_bunched_beam_setup(
     bombElegant("n_particles_per_bunch is invalid", NULL);
 #if SDDS_MPI_IO
   beam->n_original_total = beam->n_to_track_total = n_particles_per_bunch; /* record the total number of particles being tracked */
-  if (!runInSinglePartMode) {
+  if (!independentRunPerRank) {
     if (n_particles_per_bunch == 1) /* a special case for single particle tracking */
-      notSinglePart = 0;
+      distributedBeam = 0;
     else {
-      notSinglePart = 1;
+      distributedBeam = 1;
       if (isSlave) {
         long work_processors = n_processors - 1;
         long my_nToTrack = n_particles_per_bunch / work_processors;
@@ -246,7 +246,7 @@ void finish_bunched_beam_setup(
     one_random_bunch = 1;
   if (!one_random_bunch)
     save_initial_coordinates = save_original;
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     beam->particle = (double **)czarray_2d(sizeof(double), n_particles_per_bunch, totalPropertiesPerParticle);
   }
 #if SDDS_MPI_IO
@@ -450,11 +450,11 @@ long new_bunched_beam(
   double save_emit_x = 0, save_emit_y = 0,
          save_sigma_dp = 0, save_sigma_s = 0; /* initialize these to prevent spurious compiler warning */
 
-  if ((firstIsFiducial && beamCounter == 0) || do_find_aperture || runInSinglePartMode || (beam->n_original_total == 1)) {
-    notSinglePart = 0;
+  if ((firstIsFiducial && beamCounter == 0) || do_find_aperture || independentRunPerRank || (beam->n_original_total == 1)) {
+    distributedBeam = 0;
     lessPartAllowed = 1;
   } else {
-    notSinglePart = 1;
+    distributedBeam = 1;
     partOnMaster = 0;
     lessPartAllowed = 0;
   }
@@ -484,7 +484,7 @@ long new_bunched_beam(
     beam->n_original = beam->n_to_track = beam->n_particle = n_particles_per_bunch;
 #if USE_MPI
     if (isMaster) {
-      if (notSinglePart) {
+      if (distributedBeam) {
         beam->particle = beam->original = beam->accepted = NULL;
         beam->n_original = beam->n_to_track = beam->n_particle = 0;
       } else {
@@ -506,7 +506,7 @@ long new_bunched_beam(
   p_central = beam->p0_original = run->p_central;
 
 #if USE_MPI
-  if (!notSinglePart || isSlave) /* Master has NULL pointer for both beam->original and beam->particle */
+  if (!distributedBeam || isSlave) /* Master has NULL pointer for both beam->original and beam->particle */
 #endif
     if (flags & TRACK_PREVIOUS_BUNCH && beam->original == beam->particle)
       bombElegant("programming error: original beam coordinates needed but not saved", NULL);
@@ -517,7 +517,7 @@ long new_bunched_beam(
       /* means we don't have to store the original coordinates */
 #if SDDS_MPI_IO
       /* There will be no same sequence for different processors */
-      if (notSinglePart)
+      if (distributedBeam)
         random_4(-(beamRepeatSeed + 2 * (myid - 1)));
       else
         random_4(-beamRepeatSeed);
@@ -542,7 +542,7 @@ long new_bunched_beam(
     /* This part will take effect for regression test */
 #if SDDS_MPI_IO
     else if (control->n_steps == 1) {
-      if (notSinglePart)
+      if (distributedBeam)
         random_4(-(beamRepeatSeed + 2 * (myid - 1)));
       else
         random_4(-beamRepeatSeed);
@@ -677,7 +677,7 @@ long new_bunched_beam(
 
   beam->n_to_track = n_actual_particles;
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     MPI_Allreduce(&beam->n_to_track, &beam->n_to_track_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 #endif
 
@@ -753,8 +753,8 @@ long track_beam(
 #ifdef DEBUG
   flags &= !SILENT_RUNNING;
 #  if USE_MPI
-  printf("parallelStatus = %d, partOnMaster = %d, notSinglePart = %ld, runInSinglePartMode = %ld\n",
-         parallelStatus, partOnMaster, notSinglePart, runInSinglePartMode);
+  printf("parallelStatus = %d, partOnMaster = %d, distributedBeam = %ld, independentRunPerRank = %ld\n",
+         parallelStatus, partOnMaster, distributedBeam, independentRunPerRank);
 #  endif
 #endif
 
@@ -777,19 +777,19 @@ long track_beam(
     printWarning("The number of particles shouldn't be less than the number of processors", NULL);
   else {                /* do tracking in parallel */
     if (partOnMaster) { /* all processors will excute the same code */
-      notSinglePart = 0;
+      distributedBeam = 0;
     } else {
-      notSinglePart = 1;
+      distributedBeam = 1;
     }
   }
 
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
 #endif
 
 #ifdef DEBUG
 #  if USE_MPI
-    printf("About to track: parallelStatus = %d, partOnMaster = %d, notSinglePart = %ld, runInSinglePartMode = %ld\n",
-           parallelStatus, partOnMaster, notSinglePart, runInSinglePartMode);
+    printf("About to track: parallelStatus = %d, partOnMaster = %d, distributedBeam = %ld, independentRunPerRank = %ld\n",
+           parallelStatus, partOnMaster, distributedBeam, independentRunPerRank);
 #  endif
   printMessageAndTime(stdout, "Calling do_tracking\n");
 #endif
@@ -830,7 +830,7 @@ long track_beam(
     if (SDDS_MPI_IO) {
       long total_effort, total_multipoleKicksDone, total_left;
       
-      if (notSinglePart) {
+      if (distributedBeam) {
 	if (isMaster) 
 	  multipoleKicksDone = effort = n_left = 0;
 	MPI_Reduce (&n_left, &total_left, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -857,10 +857,10 @@ long track_beam(
   */
 
 #if USE_MPI
-  /*  if (!runInSinglePartMode) */
+  /*  if (!independentRunPerRank) */
   /* Disable the beam output when all the processors track independently, especially for
-       genetic optimization.  Using runInSinglePartMode flag instead of notSinglePart as 
-       we do need output when first is fiducial beam and it does not satisfy notSinglePart */
+       genetic optimization.  Using independentRunPerRank flag instead of distributedBeam as 
+       we do need output when first is fiducial beam and it does not satisfy distributedBeam */
 #endif
   if (!delayOutput)
     do_track_beam_output(run, control, errcon, optim,
@@ -928,7 +928,7 @@ void do_track_beam_output(RUN *run, VARY *control,
 #if SDDS_MPI_IO
       if (SDDS_MPI_IO) {
         long total_lost, n_lost;
-        if (notSinglePart) {
+        if (distributedBeam) {
           if (isMaster)
             n_lost = 0;
           else
@@ -1036,7 +1036,7 @@ void do_track_beam_output(RUN *run, VARY *control,
     printf("Preparing to dump final properties data.\n");
     fflush(stdout);
 #endif
-    if (notSinglePart)
+    if (distributedBeam)
       MPI_Reduce(&(beam->n_to_track), &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
 #if MPI_DEBUG
     printf("Dumping final properties data.\n");
@@ -1092,7 +1092,7 @@ void setup_output(
   OPTIM_VARIABLES *optim,
   LINE_LIST *beamline) {
 #if USE_MPI
-  if (runInSinglePartMode && (!enableOutput)) {
+  if (independentRunPerRank && (!enableOutput)) {
     if (run->acceptance || run->centroid || run->sigma || run->final || run->output || run->losses) {
       printf("\nN.B.: Tracking will be done independently on each processor for this simulation\n");
       printf("Pelegant does not provide intermediate output for optimization now.\n\n");
@@ -1247,7 +1247,7 @@ void finish_output(
                           0, beam->particle, beam->n_to_track, beam->p0, M = full_matrix(beamline->elem, run, 1),
                           finalCharge);
 #else
-    if (notSinglePart)
+    if (distributedBeam)
       MPI_Reduce(&(beam->n_to_track), &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
     dump_final_properties(&output->SDDS_final, output->sums_vs_z + output->n_z_points,
                           control->varied_quan_value, control->varied_quan_name ? *control->varied_quan_name : NULL,
@@ -1412,7 +1412,7 @@ long generateBunchForMoments(double **particle, long np, long symmetrize,
 
 #if USE_MPI
   long sum = 0, tmp, my_offset = 0, *offset = tmalloc(n_processors * sizeof(*offset)), total_particles = 0;
-  if (isSlave && notSinglePart) {
+  if (isSlave && distributedBeam) {
     MPI_Allgather(&np, 1, MPI_LONG, offset, 1, MPI_LONG, workers);
     tmp = offset[0];
     for (i = 1; i < n_processors; i++) {
