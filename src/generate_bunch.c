@@ -88,7 +88,7 @@ long generate_bunch(
   total_n_particles += n_particles;
 #else
   long sum = 0, tmp, my_offset = 0, *offset = tmalloc(n_processors * sizeof(*offset)), total_particles = 0;
-  if (isSlave && notSinglePart) {
+  if (isSlave && distributedBeam) {
     MPI_Allgather(&n_particles, 1, MPI_LONG, offset, 1, MPI_LONG, workers);
     tmp = offset[0];
     for (i = 1; i < n_processors; i++) {
@@ -585,7 +585,7 @@ void gaussian_distribution(
        generate all particles, but only n/m particles will be used for each of the processors */
     long i, start_particle = 0, end_particle = n_particles, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
 
-    if (notSinglePart) {
+    if (distributedBeam) {
       MPI_Allgather(&n_particles, 1, MPI_LONG, particle_array, 1, MPI_LONG, MPI_COMM_WORLD);
       for (i = 1; i < n_processors; i++) {
         particle_array[i] += particle_array[i - 1];
@@ -686,7 +686,7 @@ void uniform_distribution(
   range2 = 2 * max2 * cutoff;
 
 #if SDDS_MPI_IO
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (haltonID[offset] && haltonID[offset + 1]) {
       /* To generate n particles with Halton sequence on m processors, each processor will 
 	 generate all particles, but only n/m particles will be used for each of the processors */
@@ -745,7 +745,7 @@ void uniform_distribution(
       particle[i_particle][1 + offset] = -x2;
     }
 #else
-    if (notSinglePart) {
+    if (distributedBeam) {
       if ((i_particle >= start_particle) && (i_particle < end_particle)) {
         x1 = range1 * rnd1;
         x2 = range2 * rnd2;
@@ -819,7 +819,7 @@ void shell_distribution(
     dangle = PIx2 / n_particles;
   angle = -dangle;
 #else
-  if (notSinglePart) {
+  if (distributedBeam) {
     long i, start_particle, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
     long n_particles_total;
 
@@ -878,7 +878,7 @@ void hard_edge_distribution(
   range2 = 2 * max2 * cutoff;
 
 #if SDDS_MPI_IO
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (haltonID[offset] && haltonID[offset + 1]) {
       /* To generate n particles with Halton sequence on m processors, each processor will 
 	 generate all particles, but only n/m particles will be used for each of the processors */
@@ -985,7 +985,7 @@ void line_distribution(
   } else
     x1 = x2 = dx1 = dx2 = 0;
 #else
-  if (notSinglePart) {
+  if (distributedBeam) {
     long i, start_particle, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
     long n_particles_total;
 
@@ -1087,7 +1087,7 @@ void zero_centroid(double **particle, long n_particles, long coord) {
 #if !SDDS_MPI_IO
   sum /= n_particles;
 #else
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (isSlave) {
       double total_sum;
       long total_particles;
@@ -1361,7 +1361,7 @@ void polarizeBeam(double **part, long np, POLAR *polar) {
   double kappa, exp_kappa, u;
   if (spinCoordOffset>0) {
     long ip, i;
-    double *coord, cut, psign, e[3], emag, p;
+    double *coord, pUp, e[3], emag, p;
     if ((p=polar->polarization)<0) {
       printWarningForTracking("POLAR element has POLARIZATION<0.", "Polarization set to 0");
       p = 0;
@@ -1377,21 +1377,62 @@ void polarizeBeam(double **part, long np, POLAR *polar) {
   	e[i] /= emag;
     }
     int code = match_string(polar->mode, polarizationModeOption, 4, 0);
+    long npTotal, *npPerRank, *offsetPerRank;
     if (p==0 || p==1)
       code = 0;
     switch (code) {
     case 0:
-      /* two state */
-      cut = (p+1)/2;
-      for (ip=0; ip<np; ip++) {
-        coord = part[ip];
-        if (random_4(1)<cut)
-  	  psign = 1;
-        else
-  	  psign = -1;
-        for (i=0; i<3; i++)
-      	  coord[spinCoordOffset+i] = e[i]*psign;
+      /* Two-state: deterministic up/down counts, randomly assigned. */
+#if USE_MPI
+      npPerRank = calloc(n_processors, sizeof(*npPerRank));
+      offsetPerRank = calloc(n_processors, sizeof(*offsetPerRank));
+      npPerRank[myid] = np;
+      MPI_Allreduce(MPI_IN_PLACE, npPerRank, n_processors, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+      MPI_Allreduce(&np, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+      offsetPerRank[0] = 0;
+      for (ip=1; ip<n_processors; ip++)
+	offsetPerRank[ip] = offsetPerRank[ip-1]+npPerRank[ip-1];
+#else
+      npTotal = np;
+      npPerRank = calloc(1, sizeof(*npPerRank));
+      offsetPerRank = calloc(1, sizeof(*offsetPerRank));
+      npPerRank[0] = np;
+      offsetPerRank[0] = 0;
+      int myid = 0;
+#endif      
+      long nUp = (long)(npTotal * (p + 1.0) / 2.0 + 0.5);  /* round-half-up */
+      if (nUp < 0) nUp = 0;
+      if (nUp > npTotal) nUp = np;
+      char *pUpArr = calloc(npTotal, sizeof(*pUpArr));
+#if USE_MPI
+      if (myid==0) {
+#endif	
+        for (ip = 0; ip < npTotal; ip++)
+          pUpArr[ip] = (ip < nUp) ? 1 : 0;
+        /* Fisher-Yates shuffle.  random_4 returns [0, 1) so
+         * floor(random_4 * (i+1)) is uniform on {0,...,i}; clamp to
+         * be safe against an edge-case 1.0. */
+        for (ip = npTotal - 1; ip > 0; ip--) {
+          long j = (long)(random_4(1) * (ip + 1));
+          if (j > ip) j = ip;
+          char tmp = pUpArr[ip];
+          pUpArr[ip] = pUpArr[j];
+          pUpArr[j] = tmp;
+        }
+#if USE_MPI
       }
+      MPI_Bcast(pUpArr, npTotal, MPI_CHAR, 0, MPI_COMM_WORLD);
+#endif
+      /* Use of np here is correct */
+      for (ip = 0; ip < np; ip++) {
+        coord = part[ip];
+        pUp = pUpArr[ip+offsetPerRank[myid]];
+        for (i = 0; i < 3; i++)
+          coord[spinCoordOffset+i] = e[i] * (pUp?1:-1);
+      }
+      free(pUpArr);
+      free(npPerRank);
+      free(offsetPerRank);
       break;
     case 1:
       /* narrow cone */
