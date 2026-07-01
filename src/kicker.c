@@ -70,7 +70,7 @@ void track_through_kicker(
 #if (!USE_MPI)
       t0 /= np;
 #else
-      if (notSinglePart) {
+      if (distributedBeam) {
         double t0_sum;
         long np_total;
 
@@ -378,7 +378,7 @@ void track_through_mkicker(
 #if (!USE_MPI)
       t0 /= np;
 #else
-      if (notSinglePart) {
+      if (distributedBeam) {
         double t0_sum;
         long np_total;
 
