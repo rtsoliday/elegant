@@ -17,6 +17,8 @@
  * Michael Borland, 1987
  */
 
+#include "pressureData.h"
+
 /* Define USE_MPI to be 1 in the Makefile for compiling parallel elegant. */
 
 #ifndef USE_MPI
@@ -112,6 +114,12 @@ extern long exactNormalizedEmittance;
 extern long shareTrackingBasedMatrices;
 extern long trackingBasedMatricesStoreLimit;
 extern long trackingBasedDiffusionMatrixParticles;
+/* If 1, the per-element tracking-based matrix computation (used for twiss
+ * output, optimization, etc.) is parallelized across ranks.  Set to 0
+ * (forced) by do_parallel_optimization_setup, because rank-parallel
+ * optimization already uses every rank for its own beam and adding
+ * parallelism inside matrix-determination tracking would either deadlock
+ * or do nothing useful. */
 extern long parallelTrackingBasedMatrices;
 extern double trackingMatrixStepFactor;
 extern long trackingMatrixPoints, trackingMatrixMaxFitOrder;
@@ -121,32 +129,143 @@ extern short misalignmentMethod, trackingMatrixCleanUp;
 extern double slopeLimit, coordLimit, sStart;
 extern char *searchPath;
 
-/* flag used to identify which processor is allowed to write to a file */
+/*------------------------------------------------------------------------------
+ * Pelegant parallelism model -- a reference for the flags below.
+ *
+ * Pelegant uses a master-slave layout: rank 0 is the "master" and ranks
+ * 1..N-1 are "slaves" (a.k.a. workers).  The master normally handles
+ * namelist parsing, controls flow, and writes output files; slaves do
+ * the heavy tracking arithmetic in parallel.
+ *
+ * Two orthogonal "beam-distribution mode" choices exist.  These describe
+ * *how the user's beam is partitioned across MPI ranks*.  Both modes are
+ * decided at beam-setup time (sdds_beam / bunched_beam) and held for the
+ * duration of a tracking run:
+ *
+ *   distributedBeam -- the beam-partition flavour.
+ *     1: "true parallel" -- the particles of one beam are *distributed*
+ *        across the slave ranks (each slave holds a subset of the
+ *        particles; master holds none for tracking).  This is the
+ *        standard Pelegant mode when you have many particles and want
+ *        them split N ways across the slaves.
+ *     0: "replicated-beam" -- every rank holds a complete copy of the
+ *        beam.  Used both when the same beam is intentionally tracked
+ *        redundantly on every rank (closed-orbit search,
+ *        orbit/tune/chromaticity correction, fiducial beam) AND when
+ *        each rank holds its OWN beam (rank-parallel optimization and
+ *        dynamic-aperture search; see independentRunPerRank below).
+ *     Note: distributedBeam=0 does NOT mean the beam has one particle.
+ *     It means the beam is NOT split across ranks -- each rank holds a
+ *     full beam (which itself may have many particles).
+ *
+ *   independentRunPerRank -- distinguishes the two distributedBeam=0 cases.
+ *     1: each rank holds its OWN beam and tracks INDEPENDENTLY with
+ *        different parameter settings (parallel optimization,
+ *        rank-parallel dynamic-aperture search).  No inter-rank
+ *        particle data flow during tracking.
+ *     0: every rank tracks the SAME beam redundantly (closed-orbit
+ *        search, orbit correction) OR true-parallel (distributedBeam=1).
+ *     Set in do_parallel_optimization_setup for any optimization method
+ *     other than simplex.  Used by track_through_X routines to decide
+ *     whether cross-rank MPI collectives over MPI_COMM_WORLD / workers
+ *     would deadlock (when 1, they would, because ranks are diverging).
+ *
+ * Two runtime "particle-location" state variables track WHERE the
+ * particle arrays are AT THIS MOMENT during a tracking pass.  They are
+ * meaningful only when distributedBeam=1; otherwise particles are
+ * replicated on every rank and the concept doesn't apply.  Their values
+ * can change multiple times during a single tracking call as elements
+ * scatter to slaves (parallel elements) and gather to master
+ * (UNIPROCESSOR elements):
+ *
+ *   parallelStatus -- the current scatter/gather state.
+ *     trueParallel: particles are CURRENTLY distributed across the
+ *       slaves (each slave has its subset; master has none).  The
+ *       previous tracking element finished with scattered particles
+ *       and the next element can run in parallel directly.
+ *     notParallel: particles are CURRENTLY gathered onto the master
+ *       (or in the process of having been gathered).  A subsequent
+ *       parallel element will need to scatter them again.  Entered
+ *       when a UNIPROCESSOR element runs.
+ *     initialMode: transitional initial state before the first
+ *       scatter has happened (rarely seen in practice; the initial
+ *       value is trueParallel).
+ *
+ *   partOnMaster -- does the master rank currently hold particle data?
+ *     1: yes (either we just gathered for a UNIPROCESSOR element, or
+ *        we are in distributedBeam=0 / independentRunPerRank mode where the
+ *        master also holds a beam).
+ *     0: no (particles are on slaves only; this is the typical
+ *        distributedBeam=1 + parallelStatus=trueParallel state).
+ *
+ *   The two are closely related but not redundant: parallelStatus
+ *   describes whether a SCATTER is needed before the next parallel
+ *   element runs, while partOnMaster describes whether the master's
+ *   particle buffer is currently meaningful.
+ *
+ * Truth table (decided at beam setup, then held):
+ *
+ *   distributedBeam  independentRunPerRank   typical use
+ *   -------------  -------------------   -----------
+ *        1                 0             standard Pelegant: particles
+ *                                        split across slaves; master
+ *                                        does NOT track
+ *        0                 0             closed-orbit, orbit/tune/chrom
+ *                                        correction, fiducial beam:
+ *                                        every rank tracks the same
+ *                                        replicated beam redundantly
+ *        0                 1             rank-parallel optimization
+ *                                        (sample, randomsample, swarm,
+ *                                        genetic, hybsimplex) and
+ *                                        rank-parallel aperture search:
+ *                                        every rank tracks its OWN
+ *                                        independent beam with its OWN
+ *                                        parameter point
+ *        1                 1             not used in practice
+ *
+ *----------------------------------------------------------------------------*/
+
+/* Permission to write to output files (only on the rank elected to write). */
 extern long writePermitted;
-/* flag used to identify if it is the master processor */
+/* Per-rank role flags.  isMaster <=> (myid==0); isSlave <=> (myid!=0).  Set
+ * once at MPI startup. */
 extern long isMaster;
-/* flag used to identify if it is a slave processor */
 extern long isSlave;
-/* flag used to indicate if the same particle will be tracked on all the processors, or all the processor will track independently (e.g., in dynamic aperture optimization) */
-/* 0 value, for example, during tracking for the closed orbit, when all processors track the same particle */
-extern long notSinglePart;     
-extern long runInSinglePartMode;
+/* Beam-partition mode and rank-parallel-optimization mode.  See the
+ * truth table above. */
+extern long distributedBeam;
+extern long independentRunPerRank;
 /* A hash table for loading parameters effectively */
 extern htab *load_hash;
 /* A factor used for distibuting memory on slave processors */
 extern double memDistFactor;
-/* Indicate that we are doing single-particle trajectory or orbit tracking */
+/* Set when do_tracking() is called with TEST_PARTICLES flag (closed-orbit
+ * search, single-particle trajectory probes).  Some elements use this to
+ * skip collective bookkeeping that isn't meaningful for a probe particle. */
 extern long trajectoryTracking;
 
 #if USE_MPI
-/* pMode will be used to specify where the information is stored, i.e., on Master or Slave. */
+/* parallelStatus values: see the comment block above for full semantics.
+ *   notParallel  -- particles are gathered on master right now
+ *   initialMode  -- transitional pre-first-scatter
+ *   trueParallel -- particles are scattered across slaves right now
+ */
 typedef enum pMode {notParallel, initialMode, trueParallel} parallelMode;
-extern parallelMode parallelStatus; 
+extern parallelMode parallelStatus;
+/* MPI rank-count and this rank's id. */
 extern int n_processors;
 extern int myid;
-extern int partOnMaster; /* indicate if the particle information is available on master */
+/* Does the master hold a meaningful particle buffer right now?  See
+ * comment block above. */
+extern int partOnMaster;
+/* If 1, the n_particles >= n_processors-1 requirement is relaxed.  Set
+ * for fiducial-beam tracking, rank-parallel runs (each rank has its own
+ * small beam), and aperture search (each rank probes one test particle). */
 extern long lessPartAllowed;
-extern MPI_Comm workers; /* The communicator will contain the slave processors only */
+/* Sub-communicator containing slave ranks ONLY (rank 0 excluded).  Used
+ * by collective-effect tracking routines for inter-slave reductions that
+ * shouldn't include the master in true-parallel mode. */
+extern MPI_Comm workers;
 extern int fdStdout; /* save the duplicated file descriptor stdout to use it latter */
 extern int dumpAcceptance; /* A flag to indicate if the initial coordinates of transmitted particles will be dumped */
 extern long do_find_aperture; /* A flag to set singlePart tracking in dynamic aperture optimization for Pelegant */
@@ -355,11 +474,13 @@ typedef struct element_list {
     char *part_of;     /* name of lowest-level line that this element is part of */
     struct element_list *pred, *succ;
     short ignore, firstOfDivGroup;
-    double *D;            /* 21-element radiation diffusion matrix for this element */
+    double *Drad;         /* 21-element radiation diffusion matrix for this element */
     double *DIbs;         /* 21-element IBS diffusion matrix for this element */
     double coulombLog;
-    double *accumD;       /* accumulated radiation+IBS diffusion matrix up to end of this element */
-    long divisions;    /* if element was subdivided, how many times */
+    double *Dgas;         /* 21-element elastic gas-scattering diffusion matrix for this element */
+    double *D;            /* Sum of radiation, IBS, and gas diffusion matrix for this element */
+    double *accumD;       /* accumulated radiation+IBS+gas diffusion matrix up to end of this element */
+    long divisions;       /* if element was subdivided, how many times */
     size_t namelen;
     } ELEMENT_LIST;
 
@@ -872,6 +993,7 @@ typedef struct {
     char *runfile, *lattice, *acceptance, *centroid, *bpmCentroid, *sigma, 
       *final, *output, *rootname, *losses, *tuneFile;
     APERTURE_DATA apertureData;
+    PRESSURE_DATA pressureData; /* Used by moments_output */
     MODULATION_DATA modulationData;
     RAMP_DATA rampData;
     OUTPUT_FILES outputFiles;
@@ -912,8 +1034,9 @@ extern char *final_quan[N_FINAL_QUANTITIES];
 extern char *final_unit[N_FINAL_QUANTITIES];
 
 /* entity type codes */
-#define T_ECOPY -32767 
+#define T_ECOPY -32767
 #define T_FREEVAR -32766
+#define T_KNOB    -32765 /* slot refers to a knob (see knobs.h); param_number holds the knob index */
 #define T_RENAME -5
 #define T_RETURN -4
 #define T_TITLE -3
@@ -1080,7 +1203,9 @@ extern char *final_unit[N_FINAL_QUANTITIES];
 #define T_BEDGE 135
 #define T_DQCOR 136
 #define T_POLAR 137
-#define N_TYPES 138
+#define T_IMPEDANCE 138
+#define T_CWAKE 139
+#define N_TYPES 140
 
 extern char *entity_name[N_TYPES];
 extern char *madcom_name[N_MADCOMS];
@@ -1141,14 +1266,16 @@ extern char *entity_text[N_TYPES];
 #define N_NISEPT_PARAMS 9
 #define N_STRAY_PARAMS 7
 #define N_CSBEND_PARAMS 84+14
-#define N_MATTER_PARAMS 21
+#define N_MATTER_PARAMS 22
 #define N_RFMODE_PARAMS 57
 #define N_TRFMODE_PARAMS 25
 #define N_TWMTA_PARAMS 17
-#define N_ZLONGIT_PARAMS 30
+#define N_ZLONGIT_PARAMS 31
 #define N_MODRF_PARAMS 20
 #define N_SREFFECTS_PARAMS 15
 #define N_ZTRANSVERSE_PARAMS 39
+#define N_IMPEDANCE_PARAMS 41
+#define N_CWAKE_PARAMS 32
 #define N_IBSCATTER_PARAMS 13
 #define N_FMULT_PARAMS 13
 #define N_BMAPXY_PARAMS 7
@@ -1311,6 +1438,16 @@ typedef struct {
   /* Indicates that a matrix is used, but also something else */
 #define HYBRID_TRACKING  0x00040000UL
 #define SPIN_TRACKING    0x00080000UL
+  /* Element's tracking routine contains MPI collective calls
+   * (MPI_Allreduce / MPI_Bcast over MPI_COMM_WORLD or workers) that
+   * coordinate state across ranks within a single tracking pass --
+   * e.g. wake-field histograms, beam-driven cavity modes, IBS, ion
+   * effects, transverse feedback.  These elements are incompatible
+   * with rank-parallel optimization methods (randomsample, randomwalk,
+   * swarm, hybsimplex, genetic) because each rank tracks its own beam
+   * independently and the collectives deadlock as soon as ranks
+   * diverge.  Detected at parallel_optimization_setup time. */
+#define COLLECTIVE_EFFECTS 0x00100000UL
   
 typedef struct {
     long n_params;
@@ -2664,6 +2801,7 @@ typedef struct {
     double width, spacing, tilt, center;
     long nSlots;
     long startPass, endPass;
+    short forceMCS;
     } MATTER;
 
 /* names and storage structure for RF mode physical parameters */
@@ -2924,6 +3062,9 @@ typedef struct {
     double highFrequencyCutoff0, highFrequencyCutoff1;  /* start and stop frequency for smoothing filter */
     long bunchedBeamMode, startBunch, endBunch;
     long allowLongBeam;       /* If nonozero, then long bunches don't cause abort */
+    long bin_centered;        /* If nonzero, use ZTRANSVERSE/IMPEDANCE-style bin placement (bunch at left
+                                 edge of grid, bin centers at tmin+ib*dt).  Default (0) uses the legacy
+                                 ZLONGIT convention (bunch centered in grid, bin left-edges at tmin+ib*dt). */
     /* for internal use: */
     long initialized;          /* indicates that files are loaded */
     double *Z;                 /* n_Z (Re Z, Im Z) pairs */
@@ -2970,6 +3111,65 @@ typedef struct {
     SDDS_TABLE *SDDS_wake;
     long SDDS_wake_initialized;
     } ZTRANSVERSE;
+
+/* names and storage structure for combined-impedance physical parameters */
+extern PARAMETER impedance_param[N_IMPEDANCE_PARAMS];
+
+#define IMPEDANCE_N_WAKES 5
+#define IMPEDANCE_ZL  0
+#define IMPEDANCE_ZXD 1
+#define IMPEDANCE_ZYD 2
+#define IMPEDANCE_ZXQ 3
+#define IMPEDANCE_ZYQ 4
+
+typedef struct {
+    char *inputFile;
+    char *freqColumn;
+    /* per-wake column-name pairs (NULL => wake disabled) */
+    char *ZL_real,  *ZL_imag;
+    char *ZxD_real, *ZxD_imag;
+    char *ZyD_real, *ZyD_imag;
+    char *ZxQ_real, *ZxQ_imag;
+    char *ZyQ_real, *ZyQ_imag;
+    /* binning */
+    double bin_size;
+    long interpolate;
+    long n_bins;
+    long max_n_bins;
+    long smoothing;
+    long SGOrder, SGHalfWidth;
+    double dx, dy;
+    /* scale factors (LRWAKE convention) */
+    double factor;
+    double xFactor;       /* x dipole */
+    double yFactor;       /* y dipole */
+    double zFactor;       /* longitudinal */
+    double qxFactor;      /* x quadrupole */
+    double qyFactor;      /* y quadrupole */
+    /* wake diagnostic output */
+    char *wakes;
+    long wake_interval;
+    long wake_start, wake_end;
+    /* pass-based controls */
+    long startOnPass;
+    long rampPasses;
+    /* smoothing filter cutoffs */
+    double highFrequencyCutoff0, highFrequencyCutoff1;
+    /* bunched-beam controls */
+    long bunchedBeamMode, startBunch, endBunch;
+    long allowLongBeam;
+    /* longitudinal-only options */
+    long area_weight;
+    long reverseTimeOrder;
+    /* for internal use */
+    long initialized;
+    long enabled[IMPEDANCE_N_WAKES]; /* whether each wake type is active */
+    double *Z[IMPEDANCE_N_WAKES];    /* per-wake impedance arrays */
+    double macroParticleCharge;
+    SDDS_TABLE *SDDS_wake;
+    long SDDS_wake_initialized;
+    long n_freq;            /* number of frequency points in the spectrum */
+    } IMPEDANCE;
 
 /* names and storage structure for longitudinal wake physical parameters */
 extern PARAMETER wake_param[N_WAKE_PARAMS];
@@ -3048,6 +3248,50 @@ typedef struct {
     long wakePoints, isCopy, i0;
     double *W[2], *t, macroParticleCharge, dt;
   } TRWAKE;
+
+/* names and storage structure for the combined-wake element (CWAKE):
+ * one element loads up to seven wake channels (longitudinal monopole,
+ * x/y dipole, x/y quadrupole, x/y constant) from one SDDS file and
+ * shares the bin-assignment and bucket-iteration overhead across
+ * every enabled channel.  Modelled on WAKE + TRWAKE; channel naming
+ * follows the LRWAKE / IMPEDANCE convention.
+ */
+extern PARAMETER cwake_param[N_CWAKE_PARAMS];
+
+#define CWAKE_N_WAKES 7
+#define CWAKE_WZ 0
+#define CWAKE_WX 1
+#define CWAKE_WY 2
+#define CWAKE_QX 3
+#define CWAKE_QY 4
+#define CWAKE_CX 5
+#define CWAKE_CY 6
+
+typedef struct {
+    char  *inputFile, *tColumn;
+    char  *WzColumn, *WxColumn, *WyColumn;
+    char  *QxColumn, *QyColumn;
+    char  *CxColumn, *CyColumn;
+    double factor;
+    double zFactor, xFactor, yFactor;
+    double qxFactor, qyFactor;
+    double cxFactor, cyFactor;
+    long   n_bins;
+    long   interpolate;
+    long   smoothing, SGHalfWidth, SGOrder;
+    double dx, dy, tilt;
+    long   change_p0, allowLongBeam, acausalAllowed;
+    long   rampPasses;
+    long   bunchedBeamMode, startBunch, endBunch;
+    /* internal use */
+    long   initialized;
+    long   enabled[CWAKE_N_WAKES];
+    long   wakePoints, i0;
+    double dt;
+    double *t;
+    double *W[CWAKE_N_WAKES];
+    double macroParticleCharge;
+} CWAKE;
 
 /* names and storage structure for RF cavity with wake physical parameters */
 extern PARAMETER rfcw_param[N_RFCW_PARAMS] ;
@@ -4810,9 +5054,11 @@ void track_through_zlongit(double **part, long np, ZLONGIT *zlongit, double Po, 
 void applyLowPassFilterToImpedance(double *Z, long nfreq, double cutoff0, double cutoff1);
 void track_through_lscdrift(double **part, long np, LSCDRIFT *lscdrift, double Po, CHARGE *charge);
 long checkPointSpacing(double *x, long n, double tolerance);
-void track_through_ztransverse(double **part, long np, ZTRANSVERSE *ztransverse, 
+void track_through_ztransverse(double **part, long np, ZTRANSVERSE *ztransverse,
                                double Po, RUN *run, long i_pass,
                                CHARGE *charge);
+void track_through_impedance(double **part0, long np0, IMPEDANCE *imp,
+                             double Po, RUN *run, long i_pass, CHARGE *charge);
 void optimizeBinSettingsForImpedance(double timeSpan, double freq, double Q,
                                      double *binSize, long *nBins, long maxBins);
 void convolveArrays(double *output, long outputs, 
@@ -4831,6 +5077,8 @@ void track_through_corgpipe(double **part, long np, CORGPIPE *corgpipe, double *
                             RUN *run, long i_pass, CHARGE *charge);
 void track_through_corgplates(double **part, long np, CORGPLATES *corgplates, double *Pcentral, 
                             RUN *run, long i_pass, CHARGE *charge);
+void track_through_cwake(double **part0, long np0, CWAKE *cw,
+                         double *PoInput, RUN *run, long i_pass, CHARGE *charge);
 void track_through_trwake(double **part, long np, TRWAKE *wakeData, double Po,
                           RUN *run, long i_pass, CHARGE *charge);
 void track_through_lrwake(double **part, long np, LRWAKE *wakeData, double *Po,
@@ -4886,6 +5134,11 @@ void performQuaternionRotation(double S[3], double rx, double ry, double rz);
 void rotateSpinCoordinateSystem(double *S, double cos_t, double sin_t);
 void rotateSpinsCoordinateSystem(double **particle, long np, double t);
 void updateSpinForSolenoid(double **coord, long np, double Po, SOLE *sole);
+
+/* Spin helpers shared between CCBEND and LGBEND.  See ccbend.c for definitions. */
+void applyFringeSpinKick(double *spin, double xp, double xp0, double yp, double yp0,
+                         double y, double rho, double p, double a);
+void rotateSpinsAboutYAxis(double **particle, long np, double angle);
   
 long track_through_ccbend(double **particle, long n_part, ELEMENT_LIST *eptr, CCBEND *ccbend, double Po,
                           double **accepted, double z_start, double *sigmaDelta2, char *rootname,
@@ -5169,8 +5422,9 @@ void propagateBeamMoments(RUN *run, LINE_LIST *beamline, double *traj);
 void setupMomentsOutput(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline, long *doMomentsOutput,
                         long default_order);
 void finishMomentsOutput(void);
-long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long tune_corrected, 
+long runMomentsOutput(RUN *run, LINE_LIST *beamline, double *startingCoord, long tune_corrected,
                       long writeToFile);
+void computeAllUndulatorBrightnesses(LINE_LIST *beamline);
 void fillSigmaPropagationMatrix(double **Ms, double **R);
 long getMoments(double M[6][6], double C[6], long matched0, long equilibrium0, long radiation0);
 
