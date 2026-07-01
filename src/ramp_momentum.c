@@ -60,7 +60,7 @@ void ramp_momentum(
 #if !USE_MPI
   t0 /= np;
 #else
-  if (notSinglePart) {
+  if (distributedBeam) {
     long np_total;
     double t0_total;
 
