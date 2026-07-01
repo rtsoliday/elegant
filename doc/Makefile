@@ -1,14 +1,16 @@
 
-all:: elegant.ps elegant.pdf overview.ps overview.pdf Pelegant.ps Pelegant.pdf html
+all:: elegant.ps elegant.pdf overview.ps overview.pdf Pelegant.ps Pelegant.pdf elegantOverview.pdf html
 
 elegant.ps:
 	rm -f elegant.aux elegant.dvi elegant.log elegant.toc dictionary.tex
 	elegant print_dict.ele
 	examples/collectDescriptions 
 	latex elegant
+	bibtex elegant
+	latex elegant
 	latex elegant
 	dvips elegant -o elegant.ps
-	rm -f dictionary.tex elegant.dvi elegant.log dictionary.aux elegant.aux elegant.out dictionary.sdds
+	rm -f dictionary.tex elegant.dvi elegant.log dictionary.aux elegant.aux elegant.out dictionary.sdds elegant.bbl elegant.blg
 
 elegant.pdf: elegant.ps
 	ps2pdf13 elegant.ps elegant.pdf
@@ -33,11 +35,21 @@ Pelegant.ps: Pelegant.tex
 Pelegant.pdf: Pelegant.ps
 	ps2pdf13 Pelegant.ps Pelegant.pdf
 
+elegantOverview.pdf: elegantOverview.tex references.bib
+	rm -f elegantOverview.aux elegantOverview.bbl elegantOverview.blg elegantOverview.log elegantOverview.out elegantOverview.toc
+	pdflatex elegantOverview
+	bibtex elegantOverview
+	pdflatex elegantOverview
+	pdflatex elegantOverview
+	rm -f elegantOverview.aux elegantOverview.bbl elegantOverview.blg elegantOverview.log elegantOverview.out elegantOverview.toc
+
 html:
 	mkdir -p elegant
 	elegant print_dict.ele
 	htlatex elegant "html,3" "" "-delegant/"
-	rm -f *.html *.png *.css *.4ct *.tmp *.dvi *.idv *.4tc *.lg *.xref *.log *.aux dictionary.tex 
+	bibtex elegant
+	htlatex elegant "html,3" "" "-delegant/"
+	rm -f *.html *.png *.css *.4ct *.tmp *.dvi *.idv *.4tc *.lg *.xref *.log *.aux dictionary.tex elegant.bbl elegant.blg
 	mkdir -p Pelegant
 	htlatex Pelegant "html,3" "" "-dPelegant/"
 	rm -f *.html *.png *.css *.4ct *.tmp *.dvi *.idv *.4tc *.lg *.xref *.log *.aux
@@ -49,4 +61,5 @@ clean::
 	rm -f overview.aux overview.dvi overview.log overview.toc overview.ps overview.pdf
 	rm -rf overview
 	rm -f Pelegant.aux Pelegant.dvi Pelegant.log Pelegant.toc Pelegant.ps Pelegant.pdf
+	rm -f elegantOverview.aux elegantOverview.bbl elegantOverview.blg elegantOverview.log elegantOverview.out elegantOverview.toc elegantOverview.pdf
 	rm -rf Pelegant
