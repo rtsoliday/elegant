@@ -34,7 +34,7 @@ void track_SReffects(double **coord, long np, SREFFECTS *SReffects0, double Po,
 #endif
 
 #if USE_MPI
-  if (isMaster && notSinglePart)
+  if (isMaster && distributedBeam)
     /* This is a parallel element, the master will not track unless it is a single particle simulation */
     active = 0;
 #endif
