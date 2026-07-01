@@ -933,7 +933,7 @@ long do_correction(CORRECTION *correct, RUN *run, LINE_LIST *beamline, double *s
   ELEMENT_LIST *newly_pegged;
 #if USE_MPI
   /* do_correction may need differnt tracking mode, but it should not change the tracking mode */
-  long notSinglePart_orig = notSinglePart;
+  long distributedBeam_orig = distributedBeam;
   long partOnMaster_orig = partOnMaster;
 #endif
 
@@ -957,7 +957,7 @@ long do_correction(CORRECTION *correct, RUN *run, LINE_LIST *beamline, double *s
 #if SDDS_MPI_IO
   /* We need choose different modes depending on different beams */
   if (!correct->use_actual_beam) {
-    notSinglePart = 0;
+    distributedBeam = 0;
     partOnMaster = 1;
   }
 #endif
@@ -1401,7 +1401,7 @@ long do_correction(CORRECTION *correct, RUN *run, LINE_LIST *beamline, double *s
   beamline->closed_orbit = correct->traj[final_traj];
 
 #if USE_MPI
-  notSinglePart = notSinglePart_orig;
+  distributedBeam = distributedBeam_orig;
   partOnMaster = partOnMaster_orig;
 #endif
 
