@@ -293,17 +293,22 @@ VMATRIX *append_full_matrix(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long orde
   return accumulate_matrices(elem, run, M0, order, 1);
 }
 
-VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long order, long radiation, long nSlices, long sliceEtilted,
-                                     short ibsUpdate) {
+/* The name of this routine is out of date. In addition to radiation damping and diffusion matrices, it
+   also accumulates diffusion matrices for IBS and elastic gas scattering
+ */
+VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, long order, long radiation,
+				     long nSlices, long sliceEtilted,
+                                     short ibsUpdate)
+{
   VMATRIX *M1, *M2, *Ml1, *Ml2, *tmp;
   ELEMENT_LIST *member;
   double Pref_input;
   long i, j, k;
   MATRIX *Ms;
 #if USE_MPI
-  long notSinglePart_saved;
-  notSinglePart_saved = notSinglePart;
-  notSinglePart = 0;
+  long distributedBeam_saved;
+  distributedBeam_saved = distributedBeam;
+  distributedBeam = 0;
 #endif
 
   if (!elem) {
@@ -352,10 +357,14 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
     }
     if (!(member->D))
       member->D = tmalloc(21 * sizeof(*(member->D)));
+    if (!(member->Drad))
+      member->Drad = tmalloc(21 * sizeof(*(member->Drad)));
     if (!ibsUpdate)
-      memset(member->D, 0, 21 * sizeof(*(member->D)));
+      /* Don't zero-out radiation matrix as it won't be recalculated */
+      memset(member->Drad, 0, 21 * sizeof(*(member->Drad)));
     if (!(member->accumD))
       member->accumD = tmalloc(21 * sizeof(*(member->accumD)));
+    memset(member->D, 0, 21 * sizeof(*(member->D)));
     memset(member->accumD, 0, 21 * sizeof(*(member->accumD)));
     if (member->matrix) {
       /* The matrix variables are as follows:
@@ -376,11 +385,12 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
         }
         if (!ibsUpdate) {
           /* Must include radiation, so do tracking */
-          determineRadiationMatrix(Ml2, run, member, M1->C, member->D, nSlices, sliceEtilted, order);
+          determineRadiationMatrix(Ml2, run, member, M1->C, member->Drad, nSlices, sliceEtilted, order);
           copy_matrices(member->Mld0, Ml2);
         } else
           copy_matrices(Ml2, member->Mld0);
-        memcpy(member->accumD, member->D, 21 * sizeof(*(member->D)));
+        memcpy(member->accumD, member->Drad, 21 * sizeof(*(member->accumD)));
+	memcpy(member->D, member->Drad, 21 * sizeof(*(member->D)));
       } else if (member->type == T_SREFFECTS) {
         /* Must not use the matrix for these elements, as it may double-count radiation losses */
         for (i = 0; i < 6; i++) {
@@ -396,6 +406,12 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
         memcpy(Ml1->C, M1->C, 6 * sizeof(*(Ml1->C)));
         concat_matrices(Ml2, member->matrix, Ml1,
                         entity_description[member->type].flags & HAS_RF_MATRIX ? CONCAT_EXCLUDE_S0 : 0);
+      }
+      if (member->Dgas) {
+	for (i=0; i<21; i++) {
+	  member->accumD[i] += member->Dgas[i];
+	  member->D[i] += member->Dgas[i];
+	}
       }
       if (member->DIbs) {
 	/* Add the IBS contribution to the diffusion matrix */
@@ -416,8 +432,10 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
 	  printf("\n");
 	}
 #endif
-	for (i=0; i<21; i++)
+	for (i=0; i<21; i++) {
 	  member->accumD[i] += member->DIbs[i];
+	  member->D[i] += member->DIbs[i];
+	}
 #ifdef DEBUG
 	printf("Element %s diffusion matrix with IBS:\n", member->name);
 	for (i=0; i<6; i++) {
@@ -515,7 +533,7 @@ VMATRIX *accumulateRadiationMatrices(ELEMENT_LIST *elem, RUN *run, VMATRIX *M0, 
   }
   m_free(&Ms);
 #if USE_MPI
-  notSinglePart = notSinglePart_saved;
+  distributedBeam = distributedBeam_saved;
 #endif
   return M1;
 }
