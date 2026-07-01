@@ -229,12 +229,12 @@ void setupElasticScattering(
 
   if (output) {
     long nsp;
-    nsp = notSinglePart;
-    notSinglePart = 1; /* trick SDDS_PhaseSpaceSetup() into opening file in parallel mode (slaves write) */
+    nsp = distributedBeam;
+    distributedBeam = 1; /* trick SDDS_PhaseSpaceSetup() into opening file in parallel mode (slaves write) */
     output = compose_filename(output, run->rootname);
     SDDS_PhaseSpaceSetup(&SDDSout, output, SDDS_BINARY, 1, "output phase space", run->runfile, run->lattice,
                          "setupElasticScattering");
-    notSinglePart = nsp;
+    distributedBeam = nsp;
   }
 
 #endif
@@ -497,10 +497,10 @@ long runElasticScattering(
 
   if (output) {
     long nsp;
-    nsp = notSinglePart;
-    notSinglePart = 1; /* trick dump_phase_space into working in paralle io mode */
+    nsp = distributedBeam;
+    distributedBeam = 1; /* trick dump_phase_space into working in paralle io mode */
     dump_phase_space(&SDDSout, coord, nLeft, control->i_step, run->p_central, 0.0, 0);
-    notSinglePart = nsp;
+    distributedBeam = nsp;
   }
 
   gatherLostParticles(&lostParticles, &nLost, coord, nLeft, n_processors, myid);
