@@ -496,7 +496,7 @@ void setupIonEffects(NAMELIST_TEXT *nltext, VARY *control, RUN *run) {
                     ion_bin_divisor[iPlane], iPlane ? "y" : "x");
   }
 
-  readGasPressureData(pressure_profile, &pressureData, pressure_factor);
+  readGasPressureData(pressure_profile, &pressureData, pressure_factor, 1);
 
   readIonProperties(ion_properties);
 
@@ -783,7 +783,7 @@ void trackWithIonEffects(
     fflush(stdout);
   }
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     /* Determine which bunch each particle is in */
     index_bunch_assignments(part0, np0, charge ? charge->idSlotsPerBunch : 0, Po, &time0, &ibParticle, &ipBunch, &npBunch, &nBunches, -1);
 #if USE_MPI
@@ -818,7 +818,7 @@ void trackWithIonEffects(
     }
 
     /* set up data copy/pointers for this bunch */
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBunches == 1) {
         time = time0;
         part = part0;
@@ -881,7 +881,7 @@ void trackWithIonEffects(
       applyIonKicksToElectronBunch(ionEffects, part, np, Po, iBunch, iPass, qBunch, bunchCentroid, bunchSigma,
                                    qIon, nIonsTotal, ionCentroid, ionSigma, dpSum);
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBunches != 1) {
         /*** Copy bunch coordinates back to original array */
         for (ip = 0; ip < np; ip++)
@@ -928,7 +928,7 @@ void trackWithIonEffects(
 
   if (time && time != time0)
     free(time);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBunch, npBunch, nBunches);
   if (speciesCentroid)
     free_zarray_2d((void **)speciesCentroid, ionProperties.nSpecies, 2);
@@ -2431,7 +2431,7 @@ void advanceIonPositions(IONEFFECTS *ionEffects, long iPass, double tNow) {
     fflush(stdout);
   }
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     /*** Advance the ion positions */
     if (iPass >= freeze_ions_until_pass) {
       for (iSpecies = 0; iSpecies < ionProperties.nSpecies; iSpecies++) {
@@ -2451,7 +2451,7 @@ void eliminateIonsOutsideSpan(IONEFFECTS *ionEffects) {
     printf("Eliminating outside ions\n");
     fflush(stdout);
   }
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     if (ionEffects->span[0] || ionEffects->span[1]) {
       long ionCount0, ionCount1;
       /*** Eliminate ions that are outside the simulation region */
@@ -2492,7 +2492,7 @@ void generateIons(IONEFFECTS *ionEffects, long iPass, long iBunch, long nBunches
     fflush(stdout);
   }
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     if (((iPass - ionEffects->startPass) * nBunches + iBunch) % ionEffects->generationInterval == 0) {
       /*** Generate ions */
       for (iSpecies = 0; iSpecies < ionProperties.nSpecies; iSpecies++) {
@@ -2597,7 +2597,7 @@ void applyElectronBunchKicksToIons(IONEFFECTS *ionEffects, long iPass, double qB
 
   memset(&dpSum[0], 0, sizeof(dpSum[0]) * 3);
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     if (iPass >= freeze_ions_until_pass) {
       /*** Determine and apply kicks from beam to ions */
       // localCount = 0;
@@ -2715,7 +2715,7 @@ void computeIonOverallParameters(
   qIon = *qIonReturn = 0;
   nTot = 0; /* counts the total number of ions */
   mTot = 0; /* counts the core number of ions */
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     for (iSpecies = 0; iSpecies < ionProperties.nSpecies; iSpecies++) {
       /* Relevant quantities:
        * ionProperties.chargeState[iSpecies] --- Charge state of the ion (integer)
@@ -2846,7 +2846,7 @@ void computeIonOverallParameters(
 
   /* Compute charge-weighted rms size */
   ionSigma[0] = ionSigma[1] = 0;
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     for (iSpecies = 0; iSpecies < ionProperties.nSpecies; iSpecies++) {
       /* Relevant quantities:
        * ionProperties.chargeState[iSpecies] --- Charge state of the ion (integer)
@@ -3209,7 +3209,7 @@ void applyIonKicksToElectronBunch(
     for (int i = 0; i < 9; i++)
       circuitBreaker[i] = 0;
     dpSumBunch[0] = dpSumBunch[1] = 0;
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       /*** Determine and apply kicks to beam from the total ion field */
 #if MPI_DEBUG
       printf("Applying kicks to electron beam\n");
@@ -3304,7 +3304,7 @@ void applyIonKicksToElectronBunch(
       MPI_Allreduce(dpSumBunch, dpSumBunchGlobal, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
       memcpy(&dpSumBunch[0], &dpSumBunchGlobal[0], sizeof(dpSumBunch[0]) * 2);
 #endif
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         // Slope corrections to force momentum conservation
         slopeChange[0] = -(dpSumBunch[0] + dpSum[0]) / (qBunch / e_mks) / (me_mks * c_mks * Po);
         slopeChange[1] = -(dpSumBunch[1] + dpSum[1]) / (qBunch / e_mks) / (me_mks * c_mks * Po);
