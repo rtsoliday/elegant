@@ -189,7 +189,7 @@ int main(int argc, char **argv) {
   }
   find_min_max(NULL, &LTotal, sTwiss, twissRows);
 
-  readGasPressureData(pressureFile, &pressureData);
+  readGasPressureData(pressureFile, &pressureData, 1.0, 0);
 
   if (!SDDS_InitializeInput(&SDDSin, inputFile)) {
     SDDS_SetError("Problem initializing input from scattering file.");
