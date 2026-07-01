@@ -94,7 +94,7 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
     fflush(stdout);
   }
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     eta[0] = IBS->etax[IBS->elements - 1];
     eta[1] = IBS->etaxp[IBS->elements - 1];
     eta[2] = IBS->etay[IBS->elements - 1];
@@ -145,7 +145,7 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
       fflush(stdout);
     }
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBuckets == 1) {
         time = time0;
         part = part0;
@@ -204,7 +204,7 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
     if (!IBS->charge)
       continue;
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       index = (long *)malloc(sizeof(long) * np);
       count = (long *)malloc(sizeof(long) * IBS->nslice);
       slicebeam(part, np, time, Po, IBS->nslice, index, count, &tLength);
@@ -225,7 +225,7 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
         long countTemp;
         MPI_Barrier(MPI_COMM_WORLD);
 	if (IBS->verbose>3) {
-	  printf("myid=%d, isSlave=%ld, notSinglePart=%ld\n", myid, isSlave, notSinglePart);
+	  printf("myid=%d, isSlave=%ld, distributedBeam=%ld\n", myid, isSlave, distributedBeam);
 	  fflush(stdout);
 	}
         if (myid == 0)
@@ -272,7 +272,7 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
       }
 #endif
 
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         computeSliceParameters(aveCoord, S, part, index, istart, iend, Po);
       }
       if (IBS->verbose > 1) {
@@ -304,7 +304,7 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
       }
 #endif
 
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
 	if (IBS->verbose > 3) {
 	  printf("Computing growth rate for slice %ld\n", islice);
 	  fflush(stdout);
@@ -457,7 +457,7 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
         if (IBS->zGrowthRate[islice] < 0)
           bombElegant("IBSCATTER with SMOOTH=0 failed because longitudinal growth rate is negative", NULL);
       }
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         istart = iend;
         iend += count[islice];
 
@@ -538,7 +538,7 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
 #endif
     }
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (index) {
         free(index);
         index = NULL;
@@ -630,7 +630,7 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
 
   if (time && time != time0)
     free(time);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 
   if (IBS->verbose) {
@@ -965,7 +965,7 @@ void slicebeam(double **coord, long np, double *time, double Po, long nslice, lo
     /* find limits of bunch longitudinal coordinates */
     find_min_max(&tMinAll, &tMaxAll, time, np);
 #if USE_MPI
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       find_global_min_max(&tMinAll, &tMaxAll, np, workers);
       /* printf("tMinAll=%le, tMaxAll=%le\n", tMinAll, tMaxAll); */
 #endif
