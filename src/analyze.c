@@ -186,7 +186,7 @@ void do_transport_analysis(
   long *nToTrackCounts, my_nTrack, my_offset, n_leftTotal, nItems;
   MPI_Status status;
   long nWorking;
-  notSinglePart = 0;
+  distributedBeam = 0;
 #endif
 
   if (center_on_orbit && !orbit)
@@ -674,10 +674,10 @@ VMATRIX *determineMatrix(RUN *run, ELEMENT_LIST *eptr, double *startingCoord, do
   setTrackingContext(eptr->name, eptr->occurence, eptr->type, run->rootname, eptr, -1);
 
 #if USE_MPI
-  long notSinglePart_saved = notSinglePart;
+  long distributedBeam_saved = distributedBeam;
 
   /* All the particles should do the same thing for this routine. */
-  notSinglePart = 0;
+  distributedBeam = 0;
 #endif
 
   coord = (double **)czarray_2d(sizeof(**coord), 1 + 6 * 4, totalPropertiesPerParticle);
@@ -963,7 +963,7 @@ VMATRIX *determineMatrix(RUN *run, ELEMENT_LIST *eptr, double *startingCoord, do
   */
 
 #if USE_MPI
-  notSinglePart = notSinglePart_saved;
+  distributedBeam = distributedBeam_saved;
 #endif
   return M;
 }
