@@ -1,0 +1,89 @@
+The {\tt IMPEDANCE} element combines the physics of a co-located {\tt
+ZLONGIT} (longitudinal monopole impedance) and one or more {\tt
+ZTRANSVERSE} elements (transverse dipole or quadrupole
+impedances) into a single element.  In a case where all these components
+are modeled, using a single \verb|IMPEDANCE| element reduces computational
+effort by about 40\% compared to three separate elements (single \verb|ZLONGIT|
+plus two \verb|ZTRANSVERSE| elements for dipole and quadrupole).
+
+\subsection*{Channels}
+
+Five wake channels are available; each is controlled by a pair of
+column-name parameters that select the (real, imaginary) columns of
+the SDDS impedance file ({\tt INPUTFILE}, with the frequency column
+named by {\tt FREQCOLUMN}):
+\begin{center}
+\begin{tabular}{lll}
+\hline
+parameter pair               & physical meaning & impedance units \\\hline
+{\tt ZL\_REAL,  ZL\_IMAG}   & longitudinal monopole, $\Delta E \propto Z_L \cdot I$  & $\Omega$         \\
+{\tt ZXD\_REAL, ZXD\_IMAG} & transverse $x$ dipole, $\Delta x' \propto Z_{xD}\cdot \langle x \rangle I$ & $\Omega/{\rm m}$ \\
+{\tt ZYD\_REAL, ZYD\_IMAG} & transverse $y$ dipole, $\Delta y' \propto Z_{yD}\cdot \langle y \rangle I$ & $\Omega/{\rm m}$ \\
+{\tt ZXQ\_REAL, ZXQ\_IMAG} & transverse $x$ quadrupole, $\Delta x' \propto x\cdot Z_{xQ}\cdot I$    & $\Omega/{\rm m}^2$ \\
+{\tt ZYQ\_REAL, ZYQ\_IMAG} & transverse $y$ quadrupole, $\Delta y' \propto y\cdot Z_{yQ}\cdot I$    & $\Omega/{\rm m}^2$ \\
+\hline
+\end{tabular}
+\end{center}
+Any column-name parameter left at its default ({\tt NULL}) disables
+that wake; at least one wake must be enabled.  A single SDDS file
+typically holds all five channels.  The sign and Fourier conventions
+match those of {\tt ZLONGIT} and {\tt ZTRANSVERSE} (see also
+\verb|wake2impedance| and \verb|trwake2impedance| in the elegant
+distribution).
+
+\subsection*{Scale factors}
+
+Following the {\tt LRWAKE} convention, every channel has its own
+scale parameter:
+\begin{itemize}
+\item {\tt FACTOR} multiplies every channel.
+\item {\tt ZFACTOR} multiplies the longitudinal channel only.
+\item {\tt XFACTOR} ({\tt YFACTOR}) multiplies the $x$ ($y$) dipole
+  channel only.
+\item {\tt QXFACTOR} ({\tt QYFACTOR}) multiplies the $x$ ($y$)
+  quadrupole channel only.
+\end{itemize}
+The effective scale of each channel is {\tt FACTOR} $\times$ the
+channel factor $\times$ pass-ramp factor.
+
+\subsection*{Binning}
+
+The impedance file determines both the number of bins and the bin
+width: with $N_f$ points spaced by $\Delta f$, the element uses $N_b =
+2(N_f-1)$ bins of width $1/(N_b\,\Delta f)$.  The {\tt N\_BINS} and
+{\tt BIN\_SIZE} parameters from {\tt ZLONGIT}/{\tt ZTRANSVERSE} are
+present for compatibility but are overridden by the file.  Bins are
+centered as in {\tt ZTRANSVERSE} (bin centers at
+$t_{\rm min}+i\,dt$); the {\tt AREA\_WEIGHT} option is honored on the
+longitudinal current histogram only.
+
+\subsection*{Notes}
+
+\begin{enumerate}
+\item The beam charge must be specified via a {\tt CHARGE} element
+  somewhere upstream in the beamline.  Unlike {\tt ZLONGIT} and {\tt
+  ZTRANSVERSE}, {\tt IMPEDANCE} has no deprecated charge parameter;
+  omitting the {\tt CHARGE} element is an error.
+\item Only file-based impedances are accepted; the broad-band
+  resonator inputs of {\tt ZLONGIT} and {\tt ZTRANSVERSE} are not
+  implemented.  A resonator can be pre-tabulated onto a fine
+  frequency grid (with one of {\tt elegant}'s helper scripts) and
+  loaded through {\tt INPUTFILE}.
+\item Output of the per-channel wake potentials to the file named by
+  {\tt WAKES} is available only in the serial version, as for {\tt
+  ZLONGIT} and {\tt ZTRANSVERSE}.  When written, one $V_t$ column is
+  emitted per enabled channel ({\tt VtZL}, {\tt VtZxD}, {\tt VtZyD},
+  {\tt VtZxQ}, {\tt VtZyQ}).
+\item The original {\tt ZLONGIT} and {\tt ZTRANSVERSE} elements are
+  unchanged and remain available.
+\item Bunched-mode application is available via {\tt
+  BUNCHED\_BEAM\_MODE=1}; see
+  Section~\ref{sect:bunchedBeams}.
+\item Numerical equivalence with stacked {\tt ZLONGIT} + {\tt
+  ZTRANSVERSE} is exact to round-off for the transverse channels.
+  For the longitudinal channel, {\tt IMPEDANCE} uses the bin-center
+  convention of {\tt ZTRANSVERSE} rather than the left-edge convention
+  of {\tt ZLONGIT}; this yields physically equivalent results that
+  differ at the half-bin sampling level (typically $\sim 10^{-6}$
+  relative).
+\end{enumerate}
