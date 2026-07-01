@@ -20,6 +20,7 @@
 #include "chromDefs.h"
 #include "tuneDefs.h"
 #include "correctDefs.h"
+#include "knobs.h"
 
 #define COMPARE_PARTICLE_SUM_ABSDEV 0x0001UL
 #define COMPARE_PARTICLE_MAX_ABSDEV 0x0002UL
@@ -195,7 +196,7 @@ void do_parallel_optimization_setup(OPTIMIZATION_DATA *optimization_data, NAMELI
   parallelTrackingBasedMatrices = 0;
 
   if (optimization_data->method != OPTIM_METHOD_SIMPLEX)
-    runInSinglePartMode = 1; /* All the processors will track the same particles with different parameters */
+    independentRunPerRank = 1; /* All the processors will track the same particles with different parameters */
 
   if (optimization_data->method == OPTIM_METHOD_SWARM || optimization_data->method == OPTIM_METHOD_GENETIC) {
     if (population_size < n_processors) {
@@ -302,8 +303,26 @@ void add_optimization_variable(OPTIMIZATION_DATA *optimization_data, NAMELIST_TE
   if (name == NULL)
     bombElegant("element name missing in optimization_variable namelist", NULL);
   str_toupper(name);
-  str_toupper(item);
-  if (!no_element) {
+  if (item)
+    str_toupper(item);
+  {
+    long knobIndex = no_element ? -1 : find_knob(name);
+    if (knobIndex >= 0) {
+      /* Knob slot.  Encoded with varied_type=T_KNOB and varied_param=knobIndex
+       * so that assert_parameter_values() branches to set_knob_value(). */
+      if (item && strlen(item))
+        printWarning("optimization_variable: item= is ignored when name= matches a knob.", name);
+      variables->varied_type[n_variables] = T_KNOB;
+      variables->varied_param[n_variables] = knobIndex;
+      cp_str(&variables->element[n_variables], name);
+      cp_str(&variables->item[n_variables], "value");
+      cp_str(&variables->varied_quan_unit[n_variables], "");
+      variables->varied_quan_value[n_variables] = get_knob_value(knobIndex);
+      if (differential_limits) {
+        lower_limit += variables->varied_quan_value[n_variables];
+        upper_limit += variables->varied_quan_value[n_variables];
+      }
+    } else if (!no_element) {
     context = NULL;
     if (!find_element(name, &context, beamline->elem)) {
       printf("error: cannot vary element %s--not in beamline\n", name);
@@ -342,6 +361,7 @@ void add_optimization_variable(OPTIMIZATION_DATA *optimization_data, NAMELIST_TE
     cp_str(&variables->varied_quan_unit[n_variables], "");
     variables->varied_quan_value[n_variables] = initial_value;
   }
+  }
 
   if (lower_limit >= upper_limit)
     bombElegant("lower_limit >= upper_limit", NULL);
@@ -378,16 +398,26 @@ void add_optimization_variable(OPTIMIZATION_DATA *optimization_data, NAMELIST_TE
     variables->orig_step[n_variables] = step_size;
   else
     variables->orig_step[n_variables] = (upper_limit - lower_limit)*fractional_step_size;
-  variables->varied_quan_name[n_variables] = tmalloc(sizeof(char) * (strlen(name) + strlen(item) + 3));
-  sprintf(variables->varied_quan_name[n_variables], "%s.%s", name, item);
+  if (variables->varied_type[n_variables] == T_KNOB) {
+    variables->varied_quan_name[n_variables] = tmalloc(sizeof(char) * (strlen(name) + 7));
+    sprintf(variables->varied_quan_name[n_variables], "%s.value", name);
+  } else {
+    variables->varied_quan_name[n_variables] = tmalloc(sizeof(char) * (strlen(name) + strlen(item) + 3));
+    sprintf(variables->varied_quan_name[n_variables], "%s.%s", name, item);
+  }
   variables->lower_limit[n_variables] = lower_limit;
   variables->upper_limit[n_variables] = upper_limit;
   rpn_store(variables->initial_value[n_variables], NULL,
             variables->memory_number[n_variables] =
               rpn_create_mem(variables->varied_quan_name[n_variables], 0));
 
-  ptr = tmalloc(sizeof(char) * (strlen(name) + strlen(item) + 4));
-  sprintf(ptr, "%s.%s0", name, item);
+  if (variables->varied_type[n_variables] == T_KNOB) {
+    ptr = tmalloc(sizeof(char) * (strlen(name) + 8));
+    sprintf(ptr, "%s.value0", name);
+  } else {
+    ptr = tmalloc(sizeof(char) * (strlen(name) + strlen(item) + 4));
+    sprintf(ptr, "%s.%s0", name, item);
+  }
   rpn_store(variables->initial_value[n_variables], NULL, rpn_create_mem(ptr, 0));
   free(ptr);
 
@@ -744,10 +774,10 @@ void summarize_optimization_setup(OPTIMIZATION_DATA *optimization_data) {
             optimize_method[optimization_data->method], optimize_mode[optimization_data->mode], optimization_data->tolerance);
 #if USE_MPI
 #  if MPI_DEBUG
-    fprintf(optimization_data->fp_log, "Mode settings for optimization: parallelTrackingBasedMatrices = %ld, partOnMaster=%d, parallelStatus=%d, lessPartAllowed=%ld, isSlave=%ld, isMaster=%ld, notSinglePart=%ld, runInSinglePartMode=%ld, trajectoryTracking=%ld\n",
-            parallelTrackingBasedMatrices, partOnMaster, parallelStatus, lessPartAllowed, isSlave, isMaster, notSinglePart, runInSinglePartMode, trajectoryTracking);
+    fprintf(optimization_data->fp_log, "Mode settings for optimization: parallelTrackingBasedMatrices = %ld, partOnMaster=%d, parallelStatus=%d, lessPartAllowed=%ld, isSlave=%ld, isMaster=%ld, distributedBeam=%ld, independentRunPerRank=%ld, trajectoryTracking=%ld\n",
+            parallelTrackingBasedMatrices, partOnMaster, parallelStatus, lessPartAllowed, isSlave, isMaster, distributedBeam, independentRunPerRank, trajectoryTracking);
 #  endif
-    if (runInSinglePartMode) /* For genetic optimization */
+    if (independentRunPerRank) /* For genetic optimization */
       fprintf(optimization_data->fp_log, "    As many as %ld generations will be performed on each of %ld passes.\n",
               optimization_data->n_iterations, optimization_data->n_passes);
     else
@@ -973,6 +1003,46 @@ void do_optimize(NAMELIST_TEXT *nltext, RUN *run1, VARY *control1, ERRORVAL *err
   if (variables->n_variables == 0)
     bombElegant("no variables specified for optimization", NULL);
 
+#if USE_MPI
+  /* Rank-parallel optimization methods (anything other than SIMPLEX/POWELL)
+   * have each rank track its own beam independently, then synchronize once
+   * per pass via the per-method post-loop reduction.  Collective-effect
+   * elements (wakes, impedances, beam-driven cavity modes, LSC, etc.) have
+   * MPI collective calls embedded in their tracking routines, requiring
+   * all ranks to participate.  When one rank exits the optimization loop
+   * early (e.g. randomSampleMin's result<target break) the others' embedded
+   * collectives deadlock.  Catch this at startup with a clear error.
+   * Elements that carry COLLECTIVE_EFFECTS in entity_description[].flags
+   * are the ones with such embedded collectives. */
+  if (independentRunPerRank && beamline) {
+    ELEMENT_LIST *eptr = beamline->elem;
+    char *firstName = NULL, *firstType = NULL;
+    long nFound = 0;
+    while (eptr) {
+      if (entity_description[eptr->type].flags & COLLECTIVE_EFFECTS) {
+        if (!firstName) {
+          firstName = eptr->name;
+          firstType = entity_name[eptr->type];
+        }
+        nFound++;
+      }
+      eptr = eptr->succ;
+    }
+    if (nFound) {
+      char errBuffer[1024];
+      snprintf(errBuffer, sizeof(errBuffer),
+               "Parallel optimization with method '%s' is incompatible with collective-effect "
+               "elements in the beamline (each rank tracks its own beam independently, but "
+               "collective-effect elements use MPI collectives that deadlock when ranks "
+               "diverge).  Found %ld such element(s); first is '%s' (type %s).  "
+               "Either remove the collective elements from the lattice or switch to a "
+               "non-rank-parallel method (simplex, powell).",
+               optimize_method[optimization_data->method], nFound, firstName, firstType);
+      bombElegant(errBuffer, NULL);
+    }
+  }
+#endif
+
   for (i = 0; i < MAX_OPTIM_RECORDS; i++)
     optimRecord[i].variableValue = tmalloc(sizeof(*optimRecord[i].variableValue) *
                                            variables->n_variables);
@@ -1035,7 +1105,10 @@ void do_optimize(NAMELIST_TEXT *nltext, RUN *run1, VARY *control1, ERRORVAL *err
 #endif
 
   for (i = 0; i < variables->n_variables; i++) {
-    if (variables->varied_type[i] != T_FREEVAR) {
+    if (variables->varied_type[i] == T_KNOB) {
+      variables->varied_quan_value[i] = get_knob_value(variables->varied_param[i]);
+      variables->initial_value[i] = variables->varied_quan_value[i];
+    } else if (variables->varied_type[i] != T_FREEVAR) {
       if (!get_parameter_value(variables->varied_quan_value + i,
                                variables->element[i],
                                variables->varied_param[i],
@@ -1377,16 +1450,24 @@ void do_optimize(NAMELIST_TEXT *nltext, RUN *run1, VARY *control1, ERRORVAL *err
         stopOptimization = 1;
       break;
     case OPTIM_METHOD_RANSAMPLE:
+#if USE_MPI
+      MPI_Barrier(MPI_COMM_WORLD);
+#endif
       fputs("Starting random-sampled optimization.", stdout);
       if (!randomSampleMin(&result, variables->varied_quan_value, variables->lower_limit,
                            variables->upper_limit, variables->n_variables,
                            optimization_data->target, optimization_function,
-                           optimization_data->n_evaluations, random_1_elegant)) {
+                           optimization_data->n_evaluations, random_2)) {
         if (!optimization_data->soft_failure)
           bombElegant("optimization unsuccessful--aborting", NULL);
         else
           printWarning("optimize: random-sample optimization unsuccessful.", "Continuing.");
       }
+#if USE_MPI
+      MPI_Barrier(MPI_COMM_WORLD);
+      find_global_min_index(&result, &min_location, MPI_COMM_WORLD);
+      MPI_Bcast(variables->varied_quan_value, variables->n_variables, MPI_DOUBLE, min_location, MPI_COMM_WORLD);
+#endif
       if (optimAbort(0))
         stopOptimization = 1;
       break;
@@ -1520,7 +1601,7 @@ void do_optimize(NAMELIST_TEXT *nltext, RUN *run1, VARY *control1, ERRORVAL *err
         }
       }
 #  if MPI_DEBUG
-      if ((isSlave || !notSinglePart) && (optimization_data->verbose > 1)) {
+      if ((isSlave || !distributedBeam) && (optimization_data->verbose > 1)) {
         fprintf(stdout, "Minimal value is %.15g after %ld iterations.\n", result, optimization_data->n_restarts + 1 - startsLeft);
         printf("\nNew variable values for iteration %ld\n", optimization_data->n_restarts + 1 - startsLeft);
         fflush(stdout);
@@ -2122,7 +2203,7 @@ double optimization_function(double *value, long *invalid) {
 
   if ((iRec = checkForOptimRecord(value, variables->n_variables, &recordUsedAgain)) >= 0) {
 #if USE_MPI
-    if (!runInSinglePartMode) { /* For parallel genetic optimization, all the individuals for the first iteration are same */
+    if (!independentRunPerRank) { /* For parallel genetic optimization, all the individuals for the first iteration are same */
 #endif
       if (recordUsedAgain > 20) {
         printf("record used too many times---stopping optimization\n");
@@ -2146,8 +2227,8 @@ double optimization_function(double *value, long *invalid) {
   fflush(stdout);
 #endif
 #if USE_MPI && MPI_DEBUG
-  printf("Mode before compute_changed_matrices: parallelTrackingBasedMatrices = %ld, partOnMaster=%d, parallelStatus=%d, lessPartAllowed=%ld, isSlave=%ld, isMaster=%ld, notSinglePart=%ld, runInSinglePartMode=%ld, trajectoryTracking=%ld\n",
-         parallelTrackingBasedMatrices, partOnMaster, parallelStatus, lessPartAllowed, isSlave, isMaster, notSinglePart, runInSinglePartMode, trajectoryTracking);
+  printf("Mode before compute_changed_matrices: parallelTrackingBasedMatrices = %ld, partOnMaster=%d, parallelStatus=%d, lessPartAllowed=%ld, isSlave=%ld, isMaster=%ld, distributedBeam=%ld, independentRunPerRank=%ld, trajectoryTracking=%ld\n",
+         parallelTrackingBasedMatrices, partOnMaster, parallelStatus, lessPartAllowed, isSlave, isMaster, distributedBeam, independentRunPerRank, trajectoryTracking);
   fflush(stdout);
 #endif
 
@@ -2157,8 +2238,8 @@ double optimization_function(double *value, long *invalid) {
   if (optimization_data->matrix_order>0)
     i += compute_changed_matrices(beamline, run);
 #if USE_MPI && MPI_DEBUG
-  printf("Mode after compute_changed_matrices: parallelTrackingBasedMatrices = %ld, partOnMaster=%d, parallelStatus=%d, lessPartAllowed=%ld, isSlave=%ld, isMaster=%ld, notSinglePart=%ld, runInSinglePartMode=%ld, trajectoryTracking=%ld\n",
-         parallelTrackingBasedMatrices, partOnMaster, parallelStatus, lessPartAllowed, isSlave, isMaster, notSinglePart, runInSinglePartMode, trajectoryTracking);
+  printf("Mode after compute_changed_matrices: parallelTrackingBasedMatrices = %ld, partOnMaster=%d, parallelStatus=%d, lessPartAllowed=%ld, isSlave=%ld, isMaster=%ld, distributedBeam=%ld, independentRunPerRank=%ld, trajectoryTracking=%ld\n",
+         parallelTrackingBasedMatrices, partOnMaster, parallelStatus, lessPartAllowed, isSlave, isMaster, distributedBeam, independentRunPerRank, trajectoryTracking);
   fflush(stdout);
 #endif
 #if DEBUG
@@ -2456,6 +2537,8 @@ double optimization_function(double *value, long *invalid) {
     }
   }
 
+  computeAllUndulatorBrightnesses(beamline);
+
 #if DEBUG
   printf("Starting moments_output if requested\n");
   fflush(stdout);
@@ -2545,7 +2628,7 @@ double optimization_function(double *value, long *invalid) {
 #endif
 
 #if SDDS_MPI_IO
-    if (isMaster && notSinglePart)
+    if (isMaster && distributedBeam)
       if (beam->n_to_track_total < (n_processors - 1)) {
         printf("*************************************************************************************************\n");
         printf("* Warning! The number of particles (%ld) shouldn't be less than the number of processors (%d)! *\n", beam->n_to_track, n_processors - 1);
@@ -2562,8 +2645,8 @@ double optimization_function(double *value, long *invalid) {
         fflush(optimization_data->fp_log);
       }
 #if USE_MPI && MPI_DEBUG
-      printf("About to track beam. parallelStatus = %d, partOnMaster = %d, notSinglePart = %ld, runInSinglePartMode = %ld\n",
-             parallelStatus, partOnMaster, notSinglePart, runInSinglePartMode);
+      printf("About to track beam. parallelStatus = %d, partOnMaster = %d, distributedBeam = %ld, independentRunPerRank = %ld\n",
+             parallelStatus, partOnMaster, distributedBeam, independentRunPerRank);
       fflush(stdout);
 #endif
 #if DEBUG
@@ -2583,15 +2666,16 @@ double optimization_function(double *value, long *invalid) {
       printf("Done tracking beam.\n");
       fflush(stdout);
 #endif
-      /* Store number of lost particles in memory for use in optimization expressions */
+      /* Store number of lost particles in memory for use in optimization expressions.
+       * Skip the cross-rank Allreduce for rank-parallel optimization methods: each
+       * rank tracks its own beam independently, so summing n_lost across ranks is
+       * meaningless and would deadlock when ranks diverge (e.g. randomSampleMin's
+       * result<target early-exit). */
 #if USE_MPI
-      if (optimization_data->method != OPTIM_METHOD_HYBSIMPLEX && optimization_data->method != OPTIM_METHOD_SWARM &&
+      if (!independentRunPerRank &&
+          optimization_data->method != OPTIM_METHOD_HYBSIMPLEX && optimization_data->method != OPTIM_METHOD_SWARM &&
           optimization_data->method != OPTIM_METHOD_GENETIC) {
         MPI_Allreduce(&beam->n_lost, &nLostTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-        /*
-          printf("nLostTotal = %ld\n", nLostTotal);
-          fflush(stdout);
-        */
         rpn_store(nLostTotal, NULL, nLostMemory);
       } else
         rpn_store(beam->n_lost, NULL, nLostMemory);
@@ -2634,7 +2718,7 @@ double optimization_function(double *value, long *invalid) {
       fflush(stdout);
 #endif
 
-    if (notSinglePart)
+    if (distributedBeam)
       beamNoToTrack = beam->n_to_track_total;
     else
       beamNoToTrack = beam->n_to_track;
@@ -2675,7 +2759,7 @@ double optimization_function(double *value, long *invalid) {
 #endif
       }
 
-    if (isMaster || !notSinglePart) { /* Only the master will execute the block */
+    if (isMaster || !distributedBeam) { /* Only the master will execute the block */
       rpn_store_final_properties(final_property_value, final_property_values);
       if (spinCoordOffset) {
 	int im;
@@ -2880,7 +2964,7 @@ double optimization_function(double *value, long *invalid) {
       optimization_data->mode == OPTIM_MODE_MAXIMUM ? -1 * bestResult : bestResult;
 
 #if USE_MPI
-    if (notSinglePart || enableOutput) /* Disable the beam output (except for simplex) when all the processors track independently */
+    if (distributedBeam || enableOutput) /* Disable the beam output (except for simplex) when all the processors track independently */
 #endif
       if (!*invalid && (force_output || (control->i_step - 2) % output_sparsing_factor == 0)) {
         if (center_on_orbit)
@@ -2895,7 +2979,7 @@ double optimization_function(double *value, long *invalid) {
   }
 
 #if USE_MPI
-  if (notSinglePart) {
+  if (distributedBeam) {
     MPI_Bcast(invalid, 1, MPI_LONG, 0, MPI_COMM_WORLD);
     MPI_Bcast(&result, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
   }
@@ -3106,7 +3190,7 @@ void optimization_report(double result, double *value, long pass, long n_evals, 
 
 void rpnStoreHigherMatrixElements(VMATRIX *M, long **TijkMem, long **UijklMem, long maxOrder) {
   long order, i, j, k, l, count;
-  char buffer[10];
+  char buffer[1024];
 
   if (!*TijkMem && maxOrder >= 2) {
     for (i = count = 0; i < 6; i++)
@@ -3118,7 +3202,7 @@ void rpnStoreHigherMatrixElements(VMATRIX *M, long **TijkMem, long **UijklMem, l
     for (i = count = 0; i < 6; i++)
       for (j = 0; j < 6; j++)
         for (k = 0; k <= j; k++, count++) {
-          sprintf(buffer, "T%ld%ld%ld", i + 1, j + 1, k + 1);
+          snprintf(buffer, 1024, "T%ld%ld%ld", i + 1, j + 1, k + 1);
           (*TijkMem)[count] = rpn_create_mem(buffer, 0);
         }
   }
@@ -3134,7 +3218,7 @@ void rpnStoreHigherMatrixElements(VMATRIX *M, long **TijkMem, long **UijklMem, l
       for (j = 0; j < 6; j++)
         for (k = 0; k <= j; k++)
           for (l = 0; l <= k; l++, count++) {
-            sprintf(buffer, "U%ld%ld%ld%ld", i + 1, j + 1, k + 1, l + 1);
+            snprintf(buffer, 1024, "U%ld%ld%ld%ld", i + 1, j + 1, k + 1, l + 1);
             (*UijklMem)[count] = rpn_create_mem(buffer, 0);
           }
   }
