@@ -898,7 +898,7 @@ void gpuDescribeUsageSettings(char *buffer, unsigned long bufferSize) {
         activeDevice = 0;
 #if USE_MPI
         if (n_processors > 1) {
-          if (isSlave && notSinglePart)
+          if (isSlave && distributedBeam)
             activeDevice = (myid - 1) % deviceCount;
           else
             activeDevice = myid % deviceCount;
@@ -1208,7 +1208,7 @@ static long gpuRfcwRfOnlyElementSupported(ELEMENT_LIST *eptr) {
   double phase = 0;
 
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     return 0;
 #endif
   if (gpuReferenceOutputUsesCpuHelpers())
@@ -1256,7 +1256,7 @@ static long gpuRfcwRfOnlyKickElementSupported(ELEMENT_LIST *eptr) {
   double phase = 0;
 
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     return 0;
 #endif
   if (gpuReferenceOutputUsesCpuHelpers())
@@ -1363,7 +1363,7 @@ static long gpuRfcwMatrixWakeElementSupported(ELEMENT_LIST *eptr) {
   long hasWake = 0, hasTrwake = 0;
 
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     return 0;
 #endif
   if (!eptr || eptr->type != T_RFCW || !eptr->p_elem)
@@ -1414,7 +1414,7 @@ static long gpuRfcwKickWakeElementSupported(ELEMENT_LIST *eptr) {
   long hasWake = 0, hasTrwake = 0;
 
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     return 0;
 #endif
   if (!eptr || eptr->type != T_RFCW || !eptr->p_elem)
@@ -1504,7 +1504,7 @@ static long gpuRfcaRfOnlyMatrixElementSupported(ELEMENT_LIST *eptr) {
   RFCA *rfca;
 
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     return 0;
 #endif
   if (gpuReferenceOutputUsesCpuHelpers())
@@ -1536,7 +1536,7 @@ static long gpuRfcaRfOnlyKickElementSupported(ELEMENT_LIST *eptr) {
   RFCA *rfca;
 
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     return 0;
 #endif
   if (gpuReferenceOutputUsesCpuHelpers())
@@ -1566,7 +1566,7 @@ static long gpuRfcaRfOnlyKickElementSupported(ELEMENT_LIST *eptr) {
 
 static long gpuKickMapElementSupported(ELEMENT_LIST *eptr) {
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     return 0;
 #endif
   if (gpuBase.backtrack)
@@ -3436,7 +3436,7 @@ long gpu_reductions_enabled(long nParticles) {
   if (!gpuBase.initialized || gpuBase.activeDevice < 0 || nParticles <= 0)
     return 0;
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     return 0;
 #endif
   if (gpuBase.reductionOutputNeeded && !gpuOutputDriftReductionMinParticlesExplicit)
@@ -3604,7 +3604,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   }
 
 #if USE_MPI
-  if (isMaster && notSinglePart && !partOnMaster) {
+  if (isMaster && distributedBeam && !partOnMaster) {
     if (gpuVerbose)
       fprintf(stderr,
               "elegant CUDA: MPI master rank %d has no local tracking particles; using CPU staging only.\n",
@@ -3620,7 +3620,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     activeDevice = 0;
 #if USE_MPI
     if (n_processors > 1) {
-      if (isSlave && notSinglePart)
+      if (isSlave && distributedBeam)
         activeDevice = (myid - 1) % deviceCount;
       else
         activeDevice = myid % deviceCount;
@@ -4175,7 +4175,7 @@ void gpu_offset_beam(long nToTrack, MALIGN *offset, double P_central) {
 
 static long gpuMatchEnergyParticlesRemain(long np) {
 #if USE_MPI
-  if (notSinglePart && parallelStatus == trueParallel) {
+  if (distributedBeam && parallelStatus == trueParallel) {
     long npLocal = isMaster ? 0 : np;
     long npTotal = 0;
     MPI_Allreduce(&npLocal, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -4203,7 +4203,7 @@ void gpu_do_match_energy(long np, double *P_central, long change_beam) {
   }
 
 #if USE_MPI
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (!do_match_energy)
       gpuRequiredFailure("CPU match-energy routine is unavailable");
     coord = forceParticlesToCpu("match energy CPU reference");
@@ -8253,7 +8253,7 @@ static long gpuBunchedWakePlan(long np, long bunchedBeamMode,
     return GPU_BUNCHED_WAKE_TRACK;
   }
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     return GPU_BUNCHED_WAKE_UNSUPPORTED;
 #endif
   if (!charge || charge->idSlotsPerBunch <= 0) {
@@ -9583,7 +9583,7 @@ static long gpuRfcwLscKickOnlyAllowed(double **part, long np,
   if (gpuBase.backtrack)
     return 0;
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     return 0;
 #endif
 #ifdef GPU_VERIFY
