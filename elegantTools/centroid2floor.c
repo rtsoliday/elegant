@@ -161,7 +161,7 @@ static void interpolate_floor(double sValue, long *iFloor, long nFloor,
 int main(int argc, char **argv) {
   SDDS_DATASET SDDSfloor, SDDScen, SDDSout;
   char *floorFile, *centroidFile, *outputFile;
-  long nFloor, rows, page;
+  long nFloor, rows;
   long i, i_arg, iFloor, tmpFileUsed;
   SCANNED_ARG *s_arg;
   unsigned long pipeFlags;
@@ -293,9 +293,7 @@ int main(int argc, char **argv) {
   if (!SDDS_WriteLayout(&SDDSout))
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
 
-  page = 0;
   while (SDDS_ReadPage(&SDDScen) > 0) {
-    page++;
     if ((rows = SDDS_CountRowsOfInterest(&SDDScen)) <= 0)
       continue;
 

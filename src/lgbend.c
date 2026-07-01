@@ -518,7 +518,6 @@ long track_through_lgbend(
   
   if (lgbend->centroidsRequested && !disableSums) {
     long iRow = 0, iSDDSRow = 0;
-    double z0 = dZOffset0;
     /* printf("entryX = %le, entryAngle = %le, dzOffset0 = %le, predrift = %le\n",
        lgbend->segment[0].entryX, lgbend->segment[0].entryAngle, dZOffset0, lgbend->predrift);
     */
@@ -563,7 +562,6 @@ long track_through_lgbend(
 	}
 	iSDDSRow++;
       }
-      z0 += lgbend->segment[iSegment].length;
     }
     if (lgbend->SDDScen && !SDDS_WritePage(lgbend->SDDScen)) {
       SDDS_SetError("Problem writing page for centroid output file for LGBEND");
@@ -1105,4 +1103,3 @@ void readLGBendApertureData(LGBEND *lgbend)
     free(filename);
   }
 }
-
