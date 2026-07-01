@@ -53,6 +53,7 @@
 #include "scan.h"
 #include "SDDS.h"
 #include "sddsbrightness.h"
+#include "oagphy.h"
 
 #define SET_PIPE 0
 #define SET_HARMONICS 1
@@ -162,10 +163,8 @@ long GetBeamParameters(ELECTRON_BEAM_PARAM *eBeam, SDDS_DATASET *SDDSin);
 void CheckInputParameters(long method, UNDULATOR_PARAM undulator_param, ELECTRON_BEAM_PARAM electron_param, 
                             PINHOLE_PARAM pinhole_param, long harmonics);
 void InitializeInputFile(SDDS_DATASET *SDDSin, char *inputfile);
-int Gauss_Convolve(double *E, double *spec, long *ns, double sigmaE) ;
+/* FindPeak and Gauss_Convolve are provided by liboagphy (physics/oagphy.h). */
 
-/*following functions are needed for calculating flux using Dejus's method */
-void FindPeak(double *E,double *spec,double *ep,double *sp,long n);
 void CalculateFlux(ELECTRON_BEAM_PARAM eBeam,
                    UNDULATOR_PARAM undulator,
                    PINHOLE_PARAM pinhole,
@@ -724,20 +723,6 @@ void InitializeInputFile(SDDS_DATASET *SDDSin, char *inputfile)
 }
 
 
-void FindPeak(double *E,double *spec,double *ep,double *sp,long n)
-{
-  long i;
-  
-  *sp=spec[0];
-  *ep=E[0];
-  for (i=1; i<n; i++) {
-    if (*sp<spec[i]) {
-      *sp=spec[i];
-      *ep=E[i];
-    }
-  }
-}
-
 void CalculateFlux(ELECTRON_BEAM_PARAM eBeam,
                    UNDULATOR_PARAM undulator,
                    PINHOLE_PARAM pinhole,
@@ -909,7 +894,7 @@ void CalculateFlux(ELECTRON_BEAM_PARAM eBeam,
         EE /* photon energy */
         );
     /*find the peak */
-    FindPeak(EE, spec1, &ep, &sp, nE);
+    FindPeak(EE, spec1, &ep, &sp, NULL, nE);
 #ifdef DEBUG
     fprintf(stderr, "found peak at energy=%e, value=%e\n", ep, sp);
 #endif
@@ -1008,7 +993,7 @@ void CalculateFlux(ELECTRON_BEAM_PARAM eBeam,
       fprintf(stderr, "Warning, Harmonic intensity %e too small, for harmonic number %ld\n", smax, i);
       break;
     }
-    FindPeak(EE, spec1, &ep, &sp, nE);
+    FindPeak(EE, spec1, &ep, &sp, NULL, nE);
 #ifdef DEBUG
     fprintf(stderr, "Peak located at %e\n", ep);
 #endif
@@ -1098,14 +1083,14 @@ void CalculateFlux(ELECTRON_BEAM_PARAM eBeam,
           );
       if (sigmaE>0) {
         /* gauss convolve */
-        if (Gauss_Convolve(EE, spec1, &nek, sigmaE))
+        if (Gauss_Convolve(EE, spec1, &nek, sigmaE, NULL, NULL))
           exit(1);
-        FindPeak(EE, spec1, &ep, &sp, nek);
+        FindPeak(EE, spec1, &ep, &sp, NULL, nek);
 #ifdef DEBUG
         fprintf(stderr, "after convolution, peak found at %e eV\n", ep);
 #endif    
       } else {
-        FindPeak(EE, spec1, &ep, &sp, nek);
+        FindPeak(EE, spec1, &ep, &sp, NULL, nek);
 #ifdef DEBUG
         fprintf(stderr, "peak found at %e eV\n", ep);
 #endif
@@ -1181,63 +1166,6 @@ void CalculateFlux(ELECTRON_BEAM_PARAM eBeam,
   return;
 }
 
-int Gauss_Convolve(double *E, double *spec, long *ns, double sigmaE) 
-{
-  long nSigma=3,nppSigma=6,ne1,ne2,ns1,np;
-  
-  int i,j;
-  double ep,sp,sigp,de,sum, *gs,x, *spec2;
-	
-  ns1=*ns;
-  gs=spec2=NULL;
-  
-  if (!E || !spec) {
-    fprintf(stderr,"No energy or spectra points!\n");
-    return 1;
-  }
-  FindPeak(E,spec,&ep,&sp,ns1);
-  /*generate Gaussian with correct sigma in units of x-axis */
-  de=E[1]-E[0];
-  sigp=2.0*sigmaE*ep/de; /*sigma in x-axis units */
-  
-  if (sigp < (nppSigma-1)) {
-    fprintf(stderr,"too few data points for Gaussian convolution: de=%e, sigmaE=%e, ep=%e, sigp=%e\n", de, sigmaE, ep, sigp);
-    return 1; 
-  }
-  np=(2*nSigma)*sigp+1;
-  if (np%2==0) np=np+1; /* make odd */
-  gs=(double*)calloc(np,sizeof(*gs));
-  spec2=(double*)calloc(ns1,sizeof(*spec2));
-  sum=0.0;
-  for (i=0;i<np;i++) {
-    x=i*1.0-0.5*(np-1);
-    gs[i]=exp(-x*x/2.0/(sigp*sigp));
-    sum=sum+gs[i];
-  }
-  
-  /*make convolution */
-  ne1=np/2;
-  ne2=ns1-ne1-1;
-  if (ne2<0) {
-    fprintf(stderr,"Error: Check the number of peak search points (ns=%ld)\n", *ns);
-    return 1;
-  }
-  for (i=ne1;i<=ne2;i++) {
-    spec2[i]=0.0;
-    for (j=0;j<np;j++)
-      spec2[i]=spec2[i]+spec[i+ne1-j]*gs[j];
-  }
- /* fprintf(stderr,"np=%d, sum=%e, ne1=%d, ne2=%d\n",np,sum,ne1,ne2); */
-  /*retun in original array and make adjustment of array sizes */
-  *ns=ne2-ne1+1;
-  for (i=ne1;i<=ne2;i++) {
-    E[i-ne1]=E[i];
-    spec[i-ne1]=spec2[i]/sum;
-  }
-  free(spec2);
-  free(gs);
-  return 0;
-}
 
 void getKValueDataFromFile(UNDULATOR_PARAM *undulator_param)
 {
