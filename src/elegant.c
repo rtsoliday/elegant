@@ -87,21 +87,21 @@ void showUsageOrGreeting(unsigned long mode) {
 #if USE_MPI
 #  if HAVE_GPU
   char *USAGE = "usage: mpirun -np <number of processes> gpu-Pelegant <inputfile> [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is gpu-Pelegant 2026.3Beta1 ALPHA RELEASE, "__DATE__
+  char *GREETING = "This is gpu-Pelegant 2026.3.0 ALPHA RELEASE, "__DATE__
     ", by M. Borland, K. Amyx, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, J.R. King, N. Kuklev, R. Lindberg, I.V. Pogorelov, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.\nParallelized by Y. Wang, H. Shang, and M. Borland.";
 #  else
   char *USAGE = "usage: mpirun -np <number of processes> Pelegant <inputfile> [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is elegant 2026.3Beta1 "__DATE__
+  char *GREETING = "This is elegant 2026.3.0 "__DATE__
     ", by M. Borland, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, N. Kuklev, R. Lindberg, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.\nParallelized by Y. Wang, H. Shang, and M. Borland.";
 #  endif
 #else
 #  if HAVE_GPU
   char *USAGE = "usage: gpu-elegant {<inputfile>|-pipe=in} [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is gpu-elegant 2026.3Beta1 ALPHA RELEASE, "__DATE__
+  char *GREETING = "This is gpu-elegant 2026.3.0 ALPHA RELEASE, "__DATE__
     ", by M. Borland, K. Amyx, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, J.R. King, N. Kuklev, R. Lindberg, I.V. Pogorelov, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.";
 #  else
   char *USAGE = "usage: elegant {<inputfile>|-pipe=in} [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is elegant 2026.3Beta1, "__DATE__
+  char *GREETING = "This is elegant 2026.3.0, "__DATE__
     ", by M. Borland, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, N. Kuklev, R. Lindberg, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.";
 #  endif
 #endif
@@ -212,7 +212,9 @@ void showUsageOrGreeting(unsigned long mode) {
 #define CORRECT_LATTICE 80
 #define COMPUTE_LATTICE_RESPONSE_MATRIX 81
 #define LOAD_LATTICE_RESPONSE_MATRIX 82
-#define N_COMMANDS 83
+#define UNDULATOR_BRIGHTNESS 83
+#define LOAD_KNOBS 84
+#define N_COMMANDS 85
 
 char *command[N_COMMANDS] = {
   "run_setup",
@@ -298,6 +300,8 @@ char *command[N_COMMANDS] = {
   "correct_lattice",
   "compute_lattice_response_matrix",
   "load_lattice_response_matrix",
+  "undulator_brightness",
+  "load_knobs",
 };
 
 char *description[N_COMMANDS] = {
@@ -383,7 +387,9 @@ char *description[N_COMMANDS] = {
   "load_coupling_response_matrix  load a previously-saved coupling-correction response matrix",
   "correct_lattice                 correct linear lattice (beta_x, beta_y, eta_x) by adjusting normal quadrupoles",
   "compute_lattice_response_matrix compute and save the response matrix for lattice correction",
-  "load_lattice_response_matrix    load a previously-saved lattice-correction response matrix"};
+  "load_lattice_response_matrix    load a previously-saved lattice-correction response matrix",
+  "undulator_brightness            compute Lindberg undulator brightness as an RPN scalar (one per invocation)",
+  "load_knobs                      load knob definitions from SDDS; each knob is a scalar usable as a vary/optimization/error target"};
 
 #define NAMELIST_BUFLEN 65536
 
@@ -397,8 +403,8 @@ long writePermitted = 1;
 /* For serial version, isMaster and isSlave are both set to 1 */
 long isMaster = 1;
 long isSlave = 1;
-long notSinglePart = 0;       /* All the processors will do the same thing by default */
-long runInSinglePartMode = 0; /* This flag will be set as true under some special cases, such as genetic optimization */
+long distributedBeam = 0;       /* All the processors will do the same thing by default */
+long independentRunPerRank = 0; /* This flag will be set as true under some special cases, such as genetic optimization */
 double memDistFactor = 1.0;   /* In serial version, the memory will be allocted for all the particles */
 long do_find_aperture = 0;
 
@@ -432,6 +438,8 @@ void set_fpu(unsigned int mode) {
 int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coord);
 void finish_coupled_twiss_output();
 void run_rpn_load(NAMELIST_TEXT *nltext, RUN *run);
+void setup_undulator_brightness(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
+void setup_load_knobs(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
 void setupLinearChromaticTracking(NAMELIST_TEXT *nltext, LINE_LIST *beamline);
 void setup_coupled_twiss_output(NAMELIST_TEXT *nltext, RUN *run,
                                 LINE_LIST *beamline, long *do_coupled_twiss_output,
@@ -1171,7 +1179,7 @@ int main(int argc, char **argv)
           break;
         case SET_SDDS_BEAM:
 #if USE_MPI
-          notSinglePart = 1;
+          distributedBeam = 1;
 #endif
           if (!run_setuped || !run_controled)
             bombElegant("run_setup and run_control must precede sdds_beam namelist", NULL);
@@ -1741,7 +1749,7 @@ int main(int argc, char **argv)
             fl_do_tune_correction = fl_do_coupling_correction = fl_do_lattice_correction = do_closed_orbit = do_twiss_output = do_coupled_twiss_output = do_response_output =
             ionEffectsSeen = 0;
 #if USE_MPI
-          runInSinglePartMode = 0; /* We should set the flag to the normal parallel tracking after parallel optimization */
+          independentRunPerRank = 0; /* We should set the flag to the normal parallel tracking after parallel optimization */
 #endif
           break;
         case OPTIMIZATION_VARIABLE:
@@ -1777,6 +1785,12 @@ int main(int argc, char **argv)
           break;
         case RPN_LOAD:
           run_rpn_load(&namelist_text, &run_conditions);
+          break;
+        case UNDULATOR_BRIGHTNESS:
+          setup_undulator_brightness(&namelist_text, &run_conditions, beamline);
+          break;
+        case LOAD_KNOBS:
+          setup_load_knobs(&namelist_text, &run_conditions, beamline);
           break;
         case PROGRAM_TRACE:
           process_trace_request(&namelist_text);
@@ -3363,10 +3377,10 @@ void runFiducialParticle(RUN *run, VARY *control, double *startCoord, LINE_LIST 
   double **coord, pCentral;
   long code;
 #if USE_MPI
-  long notSinglePart0, partOnMaster0;
-  notSinglePart0 = notSinglePart;
+  long distributedBeam0, partOnMaster0;
+  distributedBeam0 = distributedBeam;
   partOnMaster0 = partOnMaster;
-  notSinglePart = 0;
+  distributedBeam = 0;
   partOnMaster = 1;
 #endif
 
@@ -3399,7 +3413,7 @@ void runFiducialParticle(RUN *run, VARY *control, double *startCoord, LINE_LIST 
     fflush(stdout);
   }
 #if USE_MPI
-  notSinglePart = notSinglePart0;
+  distributedBeam = distributedBeam0;
   partOnMaster = partOnMaster0;
 #endif
   if (control->fiducial_flag & FIRST_BEAM_IS_FIDUCIAL && final) {
