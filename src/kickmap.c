@@ -60,7 +60,7 @@ long trackKickMap(
   isrCoef = particleRadius * sqrt(55.0 / (24 * sqrt(3)) * pow5(pRef) * 137.0359895);
 
   for (ik = 0; ik < nKicks; ik++) {
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       for (ip = 0; ip <= iTop; ip++) {
         coord = particle[ip];
 
