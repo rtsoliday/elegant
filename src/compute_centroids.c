@@ -104,7 +104,7 @@ void compute_centroids(
   sumArray = malloc(sizeof(double) * n_processors);
   errorArray = malloc(sizeof(double) * n_processors);
 #  endif
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (((parallelStatus == trueParallel) && isSlave) || ((parallelStatus != trueParallel) && isMaster))
       active = 1;
     else
@@ -130,13 +130,13 @@ void compute_centroids(
 #endif
     }
   }
-  if (!USE_MPI || !notSinglePart) {
+  if (!USE_MPI || !distributedBeam) {
     if (n_part)
       for (i_coord = 0; i_coord < 6; i_coord++)
         centroid[i_coord] = sum[i_coord] / n_part;
   }
 #if USE_MPI
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (parallelStatus != trueParallel) {
       if (isMaster && n_part)
         for (i_coord = 0; i_coord < 6; i_coord++)
@@ -207,7 +207,7 @@ void compute_sigmas(
   long n_total = 0;
   double sum2_total[6];
 
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (isMaster && parallelStatus == trueParallel)
       n_part = 0;
     if (((parallelStatus == trueParallel) && isSlave) || ((parallelStatus != trueParallel) && isMaster))
@@ -230,7 +230,7 @@ void compute_sigmas(
         sum2[i_coord] += sqr(part[i_coord] - centroid[i_coord]);
     }
 #if USE_MPI
-    if (notSinglePart) {
+    if (distributedBeam) {
       /* compute total number of particles over processors */
       MPI_Allreduce(sum2, sum2_total, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
       MPI_Allreduce(&n_part, &n_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -682,7 +682,7 @@ void accumulate_beam_sums1(
   errorArray = malloc(sizeof(double) * n_processors);
 #  endif
 
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (((parallelStatus == trueParallel) && isSlave) || ((parallelStatus != trueParallel) && isMaster))
       active = 1;
     else
@@ -751,13 +751,13 @@ void accumulate_beam_sums1(
 #  endif
         }
       }
-      if (!notSinglePart && npCount) {
+      if (!distributedBeam && npCount) {
         /* single-particle mode and this process has a particle */
         if (!(flags & BEAM_SUMS_EXACTEMIT))
           sums->centroid[i] = (sums->centroid[i] * sums->n_part + centroid[i]) / (sums->n_part + npCount);
         centroid[i] /= npCount;
       }
-      if (notSinglePart && (parallelStatus != trueParallel) && isMaster) {
+      if (distributedBeam && (parallelStatus != trueParallel) && isMaster) {
         /* multi-particle mode and, but not true parallel mode, so master has the particles */
         if (npCount) {
           if (!(flags & BEAM_SUMS_EXACTEMIT))
@@ -782,12 +782,12 @@ void accumulate_beam_sums1(
 #  endif
           }
         }
-        if (!notSinglePart && npCount) {
+        if (!distributedBeam && npCount) {
           /* single-particle mode and this process has a particle */
           sums->spinSums->centroid[i] = (sums->spinSums->centroid[i] * sums->n_part + spinCentroid[i]) / (sums->n_part + npCount);
           spinCentroid[i] /= npCount;
         }
-        if (notSinglePart && (parallelStatus != trueParallel) && isMaster) {
+        if (distributedBeam && (parallelStatus != trueParallel) && isMaster) {
           /* multi-particle mode and, but not true parallel mode, so master has the particles */
           if (npCount) {
             sums->spinSums->centroid[i] = (sums->spinSums->centroid[i] * sums->n_part + spinCentroid[i]) / (sums->n_part + npCount);
@@ -798,7 +798,7 @@ void accumulate_beam_sums1(
     }
   } /* active */
 
-  if (notSinglePart) {
+  if (distributedBeam) {
     /* compute sums over processors */
     if (parallelStatus == trueParallel) {
       if (isMaster) {
@@ -899,7 +899,7 @@ void accumulate_beam_sums1(
   }
 
   if (!(flags & BEAM_SUMS_NOMINMAX) && !(flags & BEAM_SUMS_EXACTEMIT) && sums->beamSums2) {
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (parallelStatus == trueParallel) {
         /* compute sums->beamSums2->maxabs over processors*/
         MPI_Allreduce(sums->beamSums2->maxabs, buffer, 7, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
@@ -919,7 +919,7 @@ void accumulate_beam_sums1(
     if (active) {
       for (i = 0; i < 7; i++) {
 
-        /* if ((parallelStatus==trueParallel) && notSinglePart)  */
+        /* if ((parallelStatus==trueParallel) && distributedBeam)  */
         if (i >= 1)
           offset += i - 1;
 
@@ -938,7 +938,7 @@ void accumulate_beam_sums1(
             continue;
           }
 
-          if (notSinglePart) {
+          if (distributedBeam) {
             if (parallelStatus == trueParallel) {
               index = 6 * i + j - offset;
               Sij_p[index] = 0;
@@ -1008,7 +1008,7 @@ void accumulate_beam_sums1(
       }
     }
 
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (parallelStatus == trueParallel) {
         if (isMaster) {
           memset(Sij_p, 0, sizeof(double) * 28);
@@ -1076,7 +1076,7 @@ void accumulate_beam_sums1(
 
   if (!(flags & BEAM_SUMS_EXACTEMIT)) {
 
-    if (!notSinglePart) {
+    if (!distributedBeam) {
       sums->n_part += npCount;
       sums->charge = mp_charge * npCount;
     } else if (!SDDS_MPI_IO) {
