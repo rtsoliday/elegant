@@ -114,7 +114,6 @@ elegant_SRC = alpha_data.c \
 	pointInsideContour.c \
 	poisson.cc \
 	poissonBuffer.cc \
-	pressureData.c \
 	print_line.c \
 	quad_matrix.c \
 	ramp.c \
@@ -161,7 +160,11 @@ elegant_SRC = alpha_data.c \
 	warnings.c \
 	zibs.c \
 	zlongit.c \
-	ztransverse.c
+	ztransverse.c \
+	impedance.c \
+	cwake.c \
+	undulator_brightness.c \
+	knobs.c
 
 elegantto_SRC = bombElegant.c \
 	cfgets.c \
@@ -219,8 +222,8 @@ else
 endif
 
 
-CFLAGS +=  -I$(SDDS_REPO)/include -I$(OBJ_DIR) -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -Og
-CCFLAGS +=  -I$(SDDS_REPO)/include -I$(OBJ_DIR) -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -Og
+CFLAGS +=  -I../physics -I$(SDDS_REPO)/include -I$(OBJ_DIR) -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -Og
+CCFLAGS +=  -I../physics -I$(SDDS_REPO)/include -I$(OBJ_DIR) -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -Og
 
 ELEGANT_INSTALL_NAME = elegant$(EXEEXT)
 CUDA_REQUESTED := $(filter 1 yes YES true TRUE on ON,$(HAVE_CUDA) $(HAVE_GPU))
@@ -282,16 +285,18 @@ endif
 ifeq ($(OS), Linux)
   CFLAGS += -std=gnu11 $(MKL_CFLAG) $(MKL_INCLUDE) $(LAPACK_CFLAG) $(LAPACK_INCLUDE) $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
   CCFLAGS += $(MKL_CFLAG) $(MKL_INCLUDE) $(LAPACK_CFLAG) $(LAPACK_INCLUDE) $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
-  LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -fopenmp $(LDFLAGS)
+  LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -fopenmp $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(FFTW3_LIB)  $(MKL_LIB) $(LAPACK_LIB) $(PROD_SYS_LIBS)
+  PROD_LIBS = -loagphy
   PROD_LIBS_SDDS = -lmdbcommon -lmatlib -lfftpack -lSDDS1 -lnamelist -lrpnlib -lmdbmth -lmdblib
 endif
 
 ifeq ($(OS), Darwin)
   CFLAGS += -DCLAPACK
   CCFLAGS += -DCLAPACK
-  LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) $(LDFLAGS)
+  LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) $(LDFLAGS)
   PROD_SYS_LIBS := -framework Accelerate $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(FFTW3_LIB)  $(MKL_LIB) $(LAPACK_LIB) $(PROD_SYS_LIBS)
+  PROD_LIBS = -loagphy
   PROD_LIBS_SDDS = -lmdbcommon -lmatlib -lfftpack -lSDDS1 -lnamelist -lrpnlib -lmdbmth -lmdblib
 endif
 
@@ -299,8 +304,9 @@ ifeq ($(OS), Windows)
   CFLAGS += -I$(SDDS_REPO)/lzma -I../../gsl $(MKL_CFLAG) $(MKL_INCLUDE) $(MKL_INCLUDE)/fftw -wd4018 -wd4244 -wd4267 -wd4311
   CCFLAGS += -I$(SDDS_REPO)/lzma -I../../gsl $(MKL_CFLAG) $(MKL_INCLUDE) $(MKL_INCLUDE)/fftw -wd4018 -wd4244 -wd4267 -wd4311
   PROD_SYS_LIBS := gsl.lib gslcblas.lib $(MKL_LIB) $(PROD_SYS_LIBS)
+  PROD_LIBS = oagphy.lib
   PROD_LIBS_SDDS = mdbcommon.lib matlib.lib fftpack.lib SDDS1.lib namelist.lib rpnlib.lib mdbmth.lib mdblib.lib lzma.lib z.lib
-  LIB_LINK_DIRS += -LIBPATH:$(SDDS_REPO)/lib/$(OS)-$(ARCH)
+  LIB_LINK_DIRS += -LIBPATH:$(SDDS_REPO)/lib/$(OS)-$(ARCH) -LIBPATH:../lib/$(OS)-$(ARCH)
 endif
 
 ifeq ($(MDEBUG),1)
@@ -411,6 +417,16 @@ $(OBJ_DIR)/run_rpnexpr.$(OBJEXT): $(OBJ_DIR)/run_rpnexpr.h
 
 $(OBJ_DIR)/run_rpnexpr.h: run_rpnexpr.nl
 	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables run_rpnexpr.nl $(OBJ_DIR)/run_rpnexpr.h
+
+$(OBJ_DIR)/undulator_brightness.$(OBJEXT): $(OBJ_DIR)/undulator_brightness.h
+
+$(OBJ_DIR)/undulator_brightness.h: undulator_brightness.nl
+	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables undulator_brightness.nl $(OBJ_DIR)/undulator_brightness.h
+
+$(OBJ_DIR)/knobs.$(OBJEXT): $(OBJ_DIR)/load_knobs.h
+
+$(OBJ_DIR)/load_knobs.h: load_knobs.nl
+	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables load_knobs.nl $(OBJ_DIR)/load_knobs.h
 
 $(OBJ_DIR)/ionEffects.$(OBJEXT): $(OBJ_DIR)/ionEffects.h
 
