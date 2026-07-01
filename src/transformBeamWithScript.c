@@ -554,11 +554,11 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
   getTrackingContext(&trackingContext);
 
 #  if MPI_DEBUG
-  printf("transformBeamWithScript_p: isMaster = %ld, notSinglePart = %ld, isSlave = %ld\n",
-         isMaster, notSinglePart, isSlave);
+  printf("transformBeamWithScript_p: isMaster = %ld, distributedBeam = %ld, isSlave = %ld\n",
+         isMaster, distributedBeam, isSlave);
 #  endif
 
-  if (notSinglePart) {
+  if (distributedBeam) {
     MPI_Allreduce(&np, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     if (npTotal == 0)
       return 0;
@@ -585,7 +585,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
     printf("Writing data to script input file %s\n", input);
     fflush(stdout);
   }
-  if (notSinglePart || (!notSinglePart && isMaster)) {
+  if (distributedBeam || (!distributedBeam && isMaster)) {
 #  if MPI_DEBUG
     printf("dumping data to the script input file %s\n", input);
     fflush(stdout);
@@ -662,13 +662,13 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
   /* read the data from script output file */
 #  if SDDS_MPI_IO
 #    ifdef MPI_DEBUG
-  printf("Waiting on MPI barrier, notSinglePart = %ld\n", notSinglePart);
+  printf("Waiting on MPI barrier, distributedBeam = %ld\n", distributedBeam);
   fflush(stdout);
 #    endif
 
   MPI_Barrier(MPI_COMM_WORLD);
 
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (!fexists(output))
       SDDS_Bomb("unable to find script output file");
     SDDSin.parallel_io = 1;
@@ -700,7 +700,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
   fflush(stdout);
 #  endif
 
-  if (notSinglePart || (!notSinglePart && isMaster)) {
+  if (distributedBeam || (!distributedBeam && isMaster)) {
     if (!check_sdds_column(&SDDSin, "x", "m") ||
         !check_sdds_column(&SDDSin, "y", "m") ||
         !check_sdds_column(&SDDSin, "xp", NULL) ||
@@ -733,10 +733,10 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
   printf("npNew = %ld\n", npNew);
   fflush(stdout);
 #  endif
-  if (!notSinglePart && npNew > 1)
+  if (!distributedBeam && npNew > 1)
     bombElegant("More than 1 particle returned for SCRIPT element when one particle provided in single-particle mode.", NULL);
 
-  if (!notSinglePart) {
+  if (!distributedBeam) {
     MPI_Bcast(&npNew, 1, MPI_LONG, 0, MPI_COMM_WORLD);
     npNewTotal = npNew;
   } else
@@ -770,7 +770,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
 #  endif
   }
 
-  if (!isMaster && notSinglePart && (npNew + nLost) > np) {
+  if (!isMaster && distributedBeam && (npNew + nLost) > np) {
     /* Resize the input array, preserving the data */
     part = (double **)resize_czarray_2d((void **)part, sizeof(double), npNew + nLost, totalPropertiesPerParticle);
     if (beam) {
@@ -784,7 +784,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
 #  endif
   }
 
-  if (!isMaster && npNew > 0 && notSinglePart) {
+  if (!isMaster && npNew > 0 && distributedBeam) {
 #  if MPI_DEBUG
     printf("Copying particle data\n");
     fflush(stdout);
@@ -834,7 +834,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
     }
   } else {
     /* No particle ID data in the file, so generate some */
-    if (isSlave && notSinglePart) {
+    if (isSlave && distributedBeam) {
       long sum = 0, tmp, my_offset = 0, *offset = tmalloc(n_processors * sizeof(*offset));
       MPI_Allgather(&npNew, 1, MPI_LONG, offset, 1, MPI_LONG, workers);
       tmp = offset[0];
@@ -871,7 +871,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
       part[j][bunchIndex] = (part[j][6] - 1) / beam->id_slots_per_bunch;
 
   /* update charge */
-  if ((!notSinglePart && isMaster) || notSinglePart) {
+  if ((!distributedBeam && isMaster) || distributedBeam) {
     if (charge) {
       double totalCharge, oldMacroParticleCharge;
       oldMacroParticleCharge = charge->macroParticleCharge;
@@ -883,7 +883,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
 	printf("Charge changed from %21.15e to %21.15e\n", charge->charge, totalCharge);
       charge->charge = totalCharge;
       charge->macroParticleCharge = 0;
-      if (!notSinglePart) {
+      if (!distributedBeam) {
         if (npNew)
           charge->macroParticleCharge = totalCharge / npNew;
 	if (script->verbosity>3) 
@@ -906,7 +906,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
     }
   }
 
-  if (charge && notSinglePart) {
+  if (charge && distributedBeam) {
     if (MPI_Bcast(&(charge->charge), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD)!=MPI_SUCCESS ||
 	MPI_Bcast(&charge->macroParticleCharge, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD)!=MPI_SUCCESS)
       bombElegant("MPI failed broadcasting charge data", NULL);
@@ -941,7 +941,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
   }
 
   /* Close files */
-  if (notSinglePart || (isMaster && !notSinglePart)) {
+  if (distributedBeam || (isMaster && !distributedBeam)) {
     if (SDDS_ReadPage(&SDDSin) != -1)
       SDDS_Bomb("Script output file has multiple pages");
     if (!SDDS_Terminate(&SDDSin))
