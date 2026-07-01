@@ -40,5 +40,7 @@
     STRING reference_element = NULL;
     long reference_element_occurrence = 0;
     long reflect_reference_values = 0;
+    STRING pressure_data = NULL;
+    double pressure_factor = 1.0;
 #end
 
