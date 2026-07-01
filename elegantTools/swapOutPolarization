@@ -6,13 +6,14 @@ polarization and Touschek lifetime of a multibunch beam during swap-out
 operation with topup-style conditional injection.
 
 Model:
-  * N bunches in a storage ring, each starts unpolarized (P=0) and
-    carrying initial charge q0 = targetCurrent / nBunches, so the
-    initial total beam current equals targetCurrent.
+  * N bunches in a storage ring, each starts at polarization
+    injectedPolarization (default 0) and carries initial charge
+    q0 = targetCurrent / nBunches, so the initial total beam current
+    equals targetCurrent.
   * Every swap_interval seconds, the total current is checked:
-        - if Itot < targetCurrent, the weakest bunch is replaced by
-          a fresh unpolarized bunch carrying injectedCharge units of
-          population (P=0);
+        - if Itot < targetCurrent, the weakest bunch is replaced by a
+          fresh bunch carrying injectedCharge units of population and
+          polarization injectedPolarization;
         - if Itot >= targetCurrent, no injection is performed and
           the bunches continue evolving freely until the next check.
     Ties among multiple bunches at the minimum population are broken
@@ -149,6 +150,11 @@ def parse_args(argv):
     p.add_argument("-injectedCharge",      dest="inject_nC",     required=True, type=float,
                    help="charge of the fresh bunch installed at each swap-out "
                         "injection, in nanocoulombs.")
+    p.add_argument("-injectedPolarization", dest="inject_P",     default=0.0,   type=float,
+                   help="polarization of the injected bunch.  Applies both to "
+                        "the t=0 fill (every bunch starts at this P) and to "
+                        "each swap-out replacement.  Must be in [-1, 1]; "
+                        "default 0 (fully unpolarized injection).")
     p.add_argument("-nSteps",              dest="n_steps",       default=2000,  type=int,
                    help="approximate number of output time samples (default 2000).")
     p.add_argument("-output",              dest="output",        default=None,  type=str,
@@ -268,6 +274,9 @@ def main():
 
     target_mA   = args.target_mA          # user's target current in mA
     inject_nC   = args.inject_nC          # user's injection charge per swap, nC
+    inject_P    = args.inject_P           # polarization of injected bunches
+    if not (-1.0 <= inject_P <= 1.0):
+        sys.exit("error: -injectedPolarization must be in [-1, 1]")
     q0_nC       = target_mA / N / mA_per_nC   # initial per-bunch charge (nC)
     target_nC   = target_mA / mA_per_nC       # total target charge in nC
 
@@ -293,6 +302,7 @@ def main():
     print(f"# targetCurrent = {target_mA:.6e} mA  (= {target_nC:.6e} nC total)", file=sys.stderr)
     print(f"# q0 per bunch  = {q0_nC:.6e} nC  (= {q0_nC*mA_per_nC:.6e} mA)", file=sys.stderr)
     print(f"# injectedCharge= {inject_nC:.6e} nC  (= {inject_nC*mA_per_nC:.6e} mA)", file=sys.stderr)
+    print(f"# injectedPol   = {inject_P:.6e}", file=sys.stderr)
     print(f"# swapInterval  = {swap_int:.6e} s  ({swap_int/3600:.4f} hr)", file=sys.stderr)
     print(f"# totalTime     = {t_end:.6e} s  ({t_end/3600:.4f} hr)", file=sys.stderr)
     print(f"# Ratio table   : {len(pol_tab)} rows, P=[{pol_tab[0]:.3f},{pol_tab[-1]:.3f}], "
@@ -314,7 +324,9 @@ def main():
         return np.concatenate([dQ, dP])
 
     y = np.zeros(2 * N)
-    y[:N] = q0_nC  # all bunches at the initial (target/N) charge
+    y[:N] = q0_nC      # all bunches at the initial (target/N) charge
+    y[N:] = inject_P   # initial polarization of every bunch matches the
+                       # injected-bunch polarization (same model as swap-in)
 
     # --- swap-check schedule:  every swap_int starting at t=swap_int ---
     swap_times = np.arange(swap_int, t_end + 0.5 * swap_int, swap_int)
@@ -393,7 +405,7 @@ def main():
                 cands = np.where(Qs <= min_Q + 1e-12)[0]
                 chosen = int(rng.choice(cands))
                 y[chosen]     = inject_nC
-                y[N + chosen] = 0.0
+                y[N + chosen] = inject_P
                 n_injections += 1
             next_swap_idx += 1
             t_seg_start = t_seg_end
@@ -413,6 +425,7 @@ def main():
             ("swapInterval",   swap_int,      "double", "s",  "interval between swap-out injection checks"),
             ("targetCurrent",  target_mA,     "double", "mA", "initial / topup target total beam current"),
             ("injectedCharge", inject_nC,     "double", "nC", "fresh bunch charge installed per injection"),
+            ("injectedPolarization", inject_P, "double", "",  "polarization of every injected bunch (also used for t=0 fill)"),
             ("circumference",  pass_length,   "double", "m",  "ring circumference (from twiss PassLength)"),
             ("nInjections",    n_injections,  "long",   "",   "number of swap-out injections actually performed"),
         ]
