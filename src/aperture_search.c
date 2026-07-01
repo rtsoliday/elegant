@@ -1540,7 +1540,7 @@ long do_aperture_search_grid_p
  ) {
   double **coord;
   double p_central;
-  long ip, np, nLeft, index, npLocal;
+  long ip, np = 0, nLeft, index, npLocal;
   double area;
   double orbit[6] = {0, 0, 0, 0, 0, 0};
   double *uLimit, *vLimit, *vLimit1, *xLost, *yLost, *sLost, *deltaLost;
@@ -1637,7 +1637,8 @@ long do_aperture_search_grid_p
     nv = 2;
   du = (umax - umin)/(nu-1);
 
-  coord = (double **)czarray_2d(sizeof(**coord), nu*nv, totalPropertiesPerParticle);
+  np = nu * nv;
+  coord = (double **)czarray_2d(sizeof(**coord), np, totalPropertiesPerParticle);
 
   sides = vmin<0 ? 2 : 1;
   area = 0;

@@ -240,7 +240,9 @@ void track_through_impedance(double **part0, long np0, IMPEDANCE *imp,
   double *Itime = NULL, *xItime = NULL, *yItime = NULL;
   double *Ifreq = NULL;
   double *Vt[IMPEDANCE_N_WAKES] = {NULL};
+#if !USE_MPI
   long i_pass0 = i_pass;
+#endif
   long needTransverseX = 0, needTransverseY = 0;
   long needLongDriver = 0;
 #if USE_MPI

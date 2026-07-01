@@ -2471,7 +2471,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   double macroParticleCharge, CSRConstant, gamma2, gamma3;
   long iBin, iBinBehind;
   long csrInhibit = 0;
-#if defined(HAVE_GPU)
+#if defined(HAVE_GPU) && !USE_MPI
   long csrDgammaHostCurrent = 1;
 #endif
 #if defined(HAVE_GPU) && !USE_MPI
@@ -3370,12 +3370,14 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
             }
             dGamma[iBin] = T1[iBin] + T2[iBin];
           }
-#ifdef HAVE_GPU
+#if defined(HAVE_GPU) && !USE_MPI
           csrDgammaHostCurrent = 1;
 #endif
 #ifdef HAVE_GPU
           } else {
+#  if !USE_MPI
             csrDgammaHostCurrent = copyCsrDgammaToHost;
+#  endif
           }
 #endif
         }
