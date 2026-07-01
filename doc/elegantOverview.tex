@@ -1,0 +1,160 @@
+% elegantOverview.tex
+%
+% A standalone LaTeX rendering of the "Overview of elegant and SDDS" page,
+% https://ops.aps.anl.gov/elegant.html (Michael Borland, 2010-12-20).
+%
+% Build with:  pdflatex elegantOverview.tex
+%
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\elegant}{\texttt{elegant}}
+\newcommand{\sdds}{SDDS}
+
+\title{Overview of \elegant{} and \sdds{}}
+\author{Michael Borland}
+\date{2010-12-20}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document briefly summarizes the capabilities of \elegant{} and the
+\sdds{} toolkit for simulating storage rings, linacs, and beam-transport
+systems, in both the serial (\elegant{}) and parallel (\texttt{Pelegant})
+versions. It is intended for potential new users who want a general sense of
+what the codes can do without first reading the manual. Detailed examples are
+not given here; instead, the reader is referred to the set of example files.
+This is a LaTeX rendering of the online overview page,
+\url{https://ops.aps.anl.gov/elegant.html}.
+\end{abstract}
+
+\section{Introduction}
+
+\elegant{} (ELEctron Generation ANd Tracking) is an accelerator-simulation
+program that has grown to address a wide variety of single-particle and
+collective-dynamics problems. It is open source: both the source code and
+ready-to-run executables are available. New users are encouraged to obtain the
+example files and to join the user forum. At a minimum, users should subscribe
+to the forum's ``Bugs'' topic in order to receive notification of bugs and
+fixes.
+
+The capabilities of \elegant{} and its associated tools fall into three broad
+categories, described in the sections that follow:
+\begin{itemize}[nosep]
+  \item \textbf{Simulation capabilities}, which correspond to commands in the
+        main input file.
+  \item \textbf{Physics capabilities}, which correspond to the elements used in
+        the lattice-definition file.
+  \item \textbf{Cooperative capabilities}, which are provided by other programs
+        that work together with \elegant{} through \sdds{} files.
+\end{itemize}
+
+\paragraph{Where to get more.} The following resources are available online:
+\begin{itemize}[nosep]
+  \item Example files:
+        \url{https://ops.aps.anl.gov/cgi-bin/oagLog4.cgi?name=elegantExamples.tar.gz}
+  \item Source code and executables:
+        \url{https://www.aps.anl.gov/Accelerator-Operations-Physics/Software\#elegant}
+  \item Manual:
+        \url{https://ops.aps.anl.gov/manuals/elegant_latest/elegant.html}
+  \item User forum:
+        \url{https://www3.aps.anl.gov/forums/elegant/}
+  \item \sdds{} information page:
+        \url{https://ops.aps.anl.gov/SDDSInfo.shtml}
+\end{itemize}
+
+\section{Simulation Capabilities}
+
+These capabilities correspond to commands in the main \elegant{} input file.
+
+\begin{itemize}
+  \item Tracking of rings, linacs, and beam-transport lines.
+  \item Computation of $s$-dependent and final beam properties, including beam
+        moments, Twiss parameters, matrix elements, the trajectory or closed
+        orbit, the response matrix, and floor (survey) coordinates.
+  \item Determination of apertures, including the physical (input) aperture,
+        the dynamic acceptance, and the momentum acceptance.
+  \item Optimization of lattice and beam properties.
+  \item Tracking with errors, including generation and loading of error sets
+        and correction of tunes, chromaticities, and orbit/trajectory.
+  \item Control of lattice parameters, including scanning, altering, and
+        loading values from \sdds{} data, as well as inserting and subdividing
+        elements.
+  \item Generation of particle bunches, or reading of an externally supplied
+        distribution.
+  \item Multi-stage simulation, in which results are passed from one run to the
+        next.
+  \item Time-dependent simulation through ramping and modulation of element
+        parameters.
+  \item Computation of frequency maps for rings.
+  \item Changing of the particle type.
+\end{itemize}
+
+\section{Physics Capabilities}
+
+These capabilities correspond to the elements available in the
+lattice-definition file. They are grouped into single-particle dynamics,
+collective dynamics, and other effects.
+
+\subsection{Single-particle dynamics}
+\begin{itemize}
+  \item Magnetic elements, modeled with matrix and/or symplectic-integration
+        methods.
+  \item Stray fields and steering (corrector) elements.
+  \item Undulator and wiggler kick maps.
+  \item Synchrotron radiation, including its effect on the beam.
+  \item RF cavities.
+  \item Traveling-wave accelerating structures.
+  \item Scattering from material and residual gas.
+  \item Kickers.
+  \item User-defined transformations and matrices.
+  \item Apertures and scrapers.
+\end{itemize}
+
+\subsection{Collective dynamics}
+\begin{itemize}
+  \item Short-range wake fields and impedances.
+  \item Long-range, resonant-mode wake fields.
+  \item Coherent synchrotron radiation.
+  \item Longitudinal space-charge impedance.
+  \item Transverse space-charge kicks.
+  \item Intrabeam scattering.
+  \item Touschek scattering.
+\end{itemize}
+
+\subsection{Other}
+\begin{itemize}
+  \item Beam-position monitors.
+  \item Phase-space output and analysis monitors.
+  \item Digital feedback systems.
+\end{itemize}
+
+\section{Cooperative Capabilities}
+
+These capabilities are provided by other programs that work together with
+\elegant{} through \sdds{} files.
+
+\begin{itemize}
+  \item A general-purpose \sdds{} toolkit for postprocessing and graphics.
+  \item Reading of particle data produced by ASTRA, IMPACT, and TRACK.
+  \item Phase-space analysis.
+  \item Computation of radiation properties, such as brightness and flux.
+  \item Upsampling of particle distributions.
+  \item Processing of quadrupole-scan emittance-measurement data.
+  \item Computation of coherent-synchrotron-radiation impedance.
+  \item Computation of lifetime, intrabeam-scattering, and potential-well
+        effects.
+  \item Translation of lattices to and from other formats.
+  \item Computation of multipole-error data.
+\end{itemize}
+
+\nocite{SDDS1,SDDS2,Halbach_69a,Huang2004,Xiao2007SC,Xiao2008a,Xiao2010a,Warnock,Elleaume1992,ASTRA,IMPACT,TRACK}
+\bibliographystyle{unsrt}
+\bibliography{references}
+
+\end{document}
