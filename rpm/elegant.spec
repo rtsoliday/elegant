@@ -109,6 +109,7 @@ install -s -m 755 sddsresdiag %{buildroot}%{_bindir}/sddsresdiag
 install -s -m 755 sddssasefel %{buildroot}%{_bindir}/sddssasefel
 install -s -m 755 sddssyncflux %{buildroot}%{_bindir}/sddssyncflux
 install -s -m 755 sddsTouschekInteg %{buildroot}%{_bindir}/sddsTouschekInteg
+install -s -m 755 sddsupsample %{buildroot}%{_bindir}/sddsupsample
 install -s -m 755 sddsurgent %{buildroot}%{_bindir}/sddsurgent
 install -s -m 755 sddsws %{buildroot}%{_bindir}/sddsws
 install -s -m 755 sddsxra %{buildroot}%{_bindir}/sddsxra
@@ -241,6 +242,7 @@ install -m 444 undulatorTuningCurve.spin %{buildroot}%{_prefix}/local/oag/apps/c
 %{_bindir}/sddssasefel
 %{_bindir}/sddssyncflux
 %{_bindir}/sddsTouschekInteg
+%{_bindir}/sddsupsample
 %{_bindir}/sddsurgent
 %{_bindir}/sddsws
 %{_bindir}/sddsxra
