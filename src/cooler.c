@@ -41,7 +41,7 @@ void coolerPickup(CPICKUP *cpickup, double **part0, long np0, long pass, double 
 #if USE_MPI
   if (!partOnMaster) {
     // this element does nothing in single particle mode (e.g., trajectory, orbit, ..)
-    if (notSinglePart == 0)
+    if (distributedBeam == 0)
       return;
   }
 #endif
@@ -91,7 +91,7 @@ void coolerPickup(CPICKUP *cpickup, double **part0, long np0, long pass, double 
 #endif
 
   // assign buckets normal
-  if (isSlave || !notSinglePart
+  if (isSlave || !distributedBeam
 #if USE_MPI
       || (partOnMaster && myid == 0)
 #endif
@@ -198,7 +198,7 @@ void coolerPickup(CPICKUP *cpickup, double **part0, long np0, long pass, double 
 #endif
 
   //memory managment
-  if (isSlave || !notSinglePart
+  if (isSlave || !distributedBeam
 #if USE_MPI
       || (partOnMaster && myid==0)
 #endif
@@ -290,7 +290,7 @@ void coolerKicker(CKICKER *ckicker, double **part0, long np0, LINE_LIST *beamlin
 
 #if USE_MPI
   if (!partOnMaster) {
-    if (notSinglePart == 0)
+    if (distributedBeam == 0)
       /* this element does nothing in single particle mode (e.g., trajectory, orbit, ..) */
       return;
   }
@@ -345,7 +345,7 @@ void coolerKicker(CKICKER *ckicker, double **part0, long np0, LINE_LIST *beamlin
     bombElegantVA("CKICKER and CPICKUP with ID=%s are not synchronized to the same pass (%ld vs %ld)\n",
                   pass, ckicker->pickup->lastPass);
 
-  if (isSlave || !notSinglePart
+  if (isSlave || !distributedBeam
 #if USE_MPI
       || (partOnMaster && myid == 0)
 #endif
@@ -669,7 +669,7 @@ void coolerKicker(CKICKER *ckicker, double **part0, long np0, LINE_LIST *beamlin
     } // bucket
 
     // Clean up bucket
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 
     // Sync all nodes
