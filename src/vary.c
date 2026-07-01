@@ -16,6 +16,7 @@
 #include "track.h"
 #include "vary.h"
 #include "correctorStash.h"
+#include "knobs.h"
 #if defined(__APPLE__) || defined(__linux__)
 #  include <unistd.h>
 #endif
@@ -182,6 +183,23 @@ void add_varied_element(VARY *_control, NAMELIST_TEXT *nltext, RUN *run, LINE_LI
   if (name == NULL)
     bombElegant("element name missing in vary_element namelist", NULL);
   str_toupper(name);
+  {
+    long knobIndex = find_knob(name);
+    if (knobIndex >= 0) {
+      /* Knob slot.  Encoded with varied_type=T_KNOB and varied_param=knobIndex
+       * so that assert_parameter_values() branches to set_knob_value(). */
+      if (item && strlen(item))
+        printWarning("vary_element: item= is ignored when name= matches a knob.", name);
+      if (multiplicative || differential)
+        bombElegant("vary_element: multiplicative and differential modes are not supported for knobs", name);
+      cp_str(&_control->element[n_elements_to_vary], name);
+      cp_str(&_control->item[n_elements_to_vary], "value");
+      _control->varied_type[n_elements_to_vary] = T_KNOB;
+      _control->varied_param[n_elements_to_vary] = knobIndex;
+      cp_str(&_control->varied_quan_unit[n_elements_to_vary], "");
+      goto knob_initial_done;
+    }
+  }
   context = NULL;
   if (!find_element(name, &context, beamline->elem)) {
     printf("error: cannot vary element %s--not in beamline\n", name);
@@ -203,6 +221,7 @@ void add_varied_element(VARY *_control, NAMELIST_TEXT *nltext, RUN *run, LINE_LI
   cp_str(&_control->item[n_elements_to_vary], item);
   cp_str(&_control->varied_quan_unit[n_elements_to_vary],
          entity_description[_control->varied_type[n_elements_to_vary]].parameter[_control->varied_param[n_elements_to_vary]].unit);
+knob_initial_done:;
   if (geometric && (multiplicative || differential)) {
     printf("error: geometric is incompatible with multiplicative and differential modes\n");
     exitElegant(1);
@@ -241,8 +260,13 @@ void add_varied_element(VARY *_control, NAMELIST_TEXT *nltext, RUN *run, LINE_LI
   _control->varied_quan_value[n_elements_to_vary] = initial;
   _control->final[n_elements_to_vary] = final;
   _control->step[n_elements_to_vary] = 0; /* will be set after all vary data is read in */
-  _control->varied_quan_name[n_elements_to_vary] = tmalloc(sizeof(char) * (strlen(name) + strlen(item) + 3));
-  sprintf(_control->varied_quan_name[n_elements_to_vary], "%s.%s", name, item);
+  if (_control->varied_type[n_elements_to_vary] == T_KNOB) {
+    _control->varied_quan_name[n_elements_to_vary] = tmalloc(sizeof(char) * (strlen(name) + 7));
+    sprintf(_control->varied_quan_name[n_elements_to_vary], "%s.value", name);
+  } else {
+    _control->varied_quan_name[n_elements_to_vary] = tmalloc(sizeof(char) * (strlen(name) + strlen(item) + 3));
+    sprintf(_control->varied_quan_name[n_elements_to_vary], "%s.%s", name, item);
+  }
 
   _control->flags[n_elements_to_vary] = 0;
   if (geometric && !enumeration_file) {
@@ -620,6 +644,8 @@ void set_element_flags(LINE_LIST *beamline, char **elem_name, long *elem_perturb
     eptr = NULL;
     if (type && type[i_elem] == T_FREEVAR)
       continue;
+    if (type && type[i_elem] == T_KNOB)
+      continue; /* knob slots: matrix invalidation is handled by set_knob_value */
     if (!elem_name[i_elem]) {
       printf("error: name missing for element %ld (set_element_flags)\n", i_elem);
       fflush(stdout);
@@ -666,6 +692,12 @@ void reset_parameter_values(char **elem_name, long *param_number, long *type, lo
   for (i_elem = 0; i_elem < n_elems; i_elem++) {
     eptr = NULL;
     elem_type = type[i_elem];
+    if (elem_type == T_KNOB) {
+      /* Knob slot: setting back to 0 propagates the inverse delta to all
+       * linked element parameters, restoring them to their pre-knob state. */
+      set_knob_value(param_number[i_elem], 0.0, beamline);
+      continue;
+    }
     param = param_number[i_elem];
     data_type = entity_description[elem_type].parameter[param].type;
     if (!elem_name[i_elem]) {
@@ -729,6 +761,11 @@ void assert_parameter_values(char **elem_name, long *param_number, long *type, d
     elem_type = type[i_elem];
     if (elem_type == T_FREEVAR) /* special case of a free variable from the optimizer */
       continue;
+    if (elem_type == T_KNOB) {
+      /* Knob slot: param_number[] holds the knob index. */
+      set_knob_value(param_number[i_elem], value[i_elem], beamline);
+      continue;
+    }
     param = param_number[i_elem];
     data_type = entity_description[elem_type].parameter[param].type;
     if (!elem_name[i_elem]) {
@@ -849,6 +886,21 @@ void assert_perturbations(char **elem_name, long *param_number, long *type, long
   for (i_elem = 0; i_elem < n_elems; i_elem++) {
     eptr = NULL;
     elem_type = type[i_elem];
+    if (elem_type == T_KNOB) {
+      /* Knob slot: param_number[] holds the knob index.  Draw delta and
+       * perturb the knob value (always additive on the knob scalar). */
+      if (permit_flags & FORCE_ZERO_ERRORS) {
+        delta = 0;
+      } else {
+        delta = perturbation(amplitude[i_elem], cutoff[i_elem], error_type[i_elem],
+                             sampleIndex[i_elem], errorSamples);
+        if (bound_to[i_elem] >= 0)
+          delta = perturb[bound_to[i_elem]];
+        perturb_knob(param_number[i_elem], delta, beamline);
+      }
+      perturb[i_elem] = (elem_perturb_flags[i_elem] & ANTIBIND_ERRORS) ? -delta : delta;
+      continue;
+    }
     param = param_number[i_elem];
     data_type = entity_description[elem_type].parameter[param].type;
     i_group = 0;
