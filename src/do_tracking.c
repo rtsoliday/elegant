@@ -297,7 +297,7 @@ long do_tracking(
     my_rate = 0.0;
   else
     my_rate = 1.0;
-  if (notSinglePart && partOnMaster) /* This is a special case when the first beam is fiducial. We need scatter the beam in the second step. */
+  if (distributedBeam && partOnMaster) /* This is a special case when the first beam is fiducial. We need scatter the beam in the second step. */
     distributed = 0;
 #endif
 
@@ -365,7 +365,7 @@ long do_tracking(
   }
 
 #if SDDS_MPI_IO
-  if (notSinglePart && !partOnMaster) {
+  if (distributedBeam && !partOnMaster) {
     if (isMaster)
       nOriginal = 0;
     MPI_Allreduce(&nOriginal, &total_nOriginal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -395,7 +395,7 @@ long do_tracking(
   }
 
 #if SDDS_MPI_IO
-  if (isSlave || (!notSinglePart))
+  if (isSlave || (!distributedBeam))
 #else
     if (isMaster)
 #endif
@@ -410,7 +410,7 @@ long do_tracking(
   nToTrack = nLeft = nMaximum = nOriginal;
 
 #if USE_MPI
-  if (!partOnMaster && notSinglePart) {
+  if (!partOnMaster && distributedBeam) {
     if (isMaster)
       nToTrack = 0;
     if (beam)
@@ -446,7 +446,7 @@ long do_tracking(
               run && run->always_change_p0,
               run && run->backtrack);
 #  if USE_MPI
-  if (notSinglePart && run->load_balancing_on == 1)
+  if (distributedBeam && run->load_balancing_on == 1)
     gpuDisableForRun("Pelegant load_balancing_on=1 CUDA redistribution is deferred");
 #  endif
 #endif
@@ -498,7 +498,7 @@ long do_tracking(
 
   i_pass = passOffset;
 #if SDDS_MPI_IO
-  if (isSlave || (!notSinglePart) || partOnMaster) {
+  if (isSlave || (!distributedBeam) || partOnMaster) {
 #else
     if (isMaster) { /* As the particles have not been distributed, only master needs to do these computation */
 #endif
@@ -701,7 +701,7 @@ long do_tracking(
                   nToTrack, i_pass);
 #else
           if (i_pass % 20 == 0) {
-            if (!partOnMaster && notSinglePart) {
+            if (!partOnMaster && distributedBeam) {
               sprintf(s, "%ld particles present after pass %ld        ",
                       beam ? beam->n_to_track_total : -1, i_pass);
             } else { /* singlePart tracking or partOnMaster */
@@ -723,7 +723,7 @@ long do_tracking(
         elementsTracked = -1;
         eptrPred = eptr;
 #if USE_MPI
-        if (notSinglePart) {
+        if (distributedBeam) {
           my_wtime = 0.0;
           nParElements = 0;
           nElements = 0;
@@ -817,7 +817,7 @@ long do_tracking(
               if (nOriginal)
                 charge->macroParticleCharge = charge->charge / (nOriginal);
 #else
-              if (notSinglePart) {
+              if (distributedBeam) {
                 if (total_nOriginal)
                   charge->macroParticleCharge = charge->charge / (total_nOriginal);
               } else {
@@ -841,7 +841,7 @@ long do_tracking(
         printMessageAndTime(stdout, "do_tracking checkpoint 0.9.9\n");
 #endif
         bool skippable = !(flags & (TEST_PARTICLES + CLOSED_ORBIT_TRACKING + OPTIMIZING));
-        while (eptr && (nToTrack || (USE_MPI && notSinglePart))) {
+        while (eptr && (nToTrack || (USE_MPI && distributedBeam))) {
           if (skippable) {
             if (run->checkBeamStructure && beam)
               checkBeamStructure(beam);
@@ -990,7 +990,7 @@ long do_tracking(
           fflush(stdout);
 #endif
 #if USE_MPI
-          if (notSinglePart) {
+          if (distributedBeam) {
             active = 0;
             if (classFlags & UNIPROCESSOR) {
               /* This element cannot be done in parallel. Only the master CPU will work. */
@@ -1137,7 +1137,7 @@ long do_tracking(
               fflush(stdout);
 #endif
 #if USE_MPI
-              if (!partOnMaster && notSinglePart) {
+              if (!partOnMaster && distributedBeam) {
                 if (isMaster)
                   nToTrack = 0;
                 if (beam)
@@ -1172,7 +1172,7 @@ long do_tracking(
               /* This element is the place-holder for the chromatic linear matrix or
                * the longitudinal-only matrix
                */
-              if ((!USE_MPI || !notSinglePart) || (USE_MPI && (myid != 0))) {
+              if ((!USE_MPI || !distributedBeam) || (USE_MPI && (myid != 0))) {
                 /* Only the slave CPUs will work on this part */
                 if (flags & LINEAR_CHROMATIC_MATRIX) {
 #ifdef HAVE_GPU
@@ -1290,7 +1290,7 @@ long do_tracking(
 #if USE_MPI
                     long nToTrackTotal = nToTrack;
                     if (beam) {
-                      if (!partOnMaster && notSinglePart)
+                      if (!partOnMaster && distributedBeam)
                         MPI_Allreduce(&nToTrack, &nToTrackTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
                     }
                     if (nToTrackTotal > 0)
@@ -1302,7 +1302,7 @@ long do_tracking(
                   }
                 }
                 /* Only the slave CPUs will track */
-                if ((!USE_MPI || !notSinglePart) || (USE_MPI && (myid != 0)))
+                if ((!USE_MPI || !distributedBeam) || (USE_MPI && (myid != 0)))
                   track_particles(coord, eptr->matrix, coord, nToTrack);
               }
             }      /* matrix-based tracking */
@@ -1339,7 +1339,7 @@ long do_tracking(
               MPE_Log_event(event2a, 0, NULL);
               MPE_Log_pack(bytebuf, &bytebuf_pos, 's', strlen(entity_name[eptr->type]), entity_name[eptr->type]);
 #endif
-              if (active && (((!USE_MPI || !notSinglePart) && nParticlesStartPass) ||
+              if (active && (((!USE_MPI || !distributedBeam) && nParticlesStartPass) ||
 #if USE_MPI
                              (beam && beam->n_to_track_total) || (classFlags & RUN_ZERO_PARTICLES) ||
 #endif
@@ -1370,7 +1370,7 @@ long do_tracking(
                     if (nOriginal)
                       charge->macroParticleCharge = charge->charge / (nOriginal);
 #else
-                    if (notSinglePart) {
+                    if (distributedBeam) {
                       if (total_nOriginal)
                         charge->macroParticleCharge = charge->charge / (total_nOriginal);
                     } else {
@@ -1399,7 +1399,7 @@ long do_tracking(
                       }
                     */
                     if (!(flags & CLOSED_ORBIT_TRACKING)) {
-                      if (isMaster || !notSinglePart)
+                      if (isMaster || !distributedBeam)
                         store_fitpoint_matrix_values((MARK *)eptr->p_elem, eptr->name,
                                                      eptr->occurence, eptr->accumMatrix);
                       store_fitpoint_beam_parameters((MARK *)eptr->p_elem, eptr->name, eptr->occurence,
@@ -1620,9 +1620,9 @@ long do_tracking(
                   MPE_Log_event(event1a, 0, "start watch"); /* record time spent on I/O operations */
 #endif
 #if USE_MPI
-                  if (!notSinglePart) /* When each processor tracks the beam independently, the watch point will be disabled in Pelegant */
+                  if (!distributedBeam) /* When each processor tracks the beam independently, the watch point will be disabled in Pelegant */
                     break;
-                  if (!partOnMaster && notSinglePart) { /* Update the total particle number to get the correct charge */
+                  if (!partOnMaster && distributedBeam) { /* Update the total particle number to get the correct charge */
                     if (isMaster)
                       nToTrack = 0;
                     if (beam)
@@ -1690,7 +1690,7 @@ long do_tracking(
                             (watch->end_pass < 0 || i_pass <= watch->end_pass)) {
 #if SDDS_MPI_IO
                           /* This part will be done in serial for now. A parallel version of FFT could be used here */
-                          if (!partOnMaster && notSinglePart) {
+                          if (!partOnMaster && distributedBeam) {
                             char buffer[16384];
                             snprintf(buffer, 16384, "%s (%s FFT) is a serial element. It is not recommended for simulations with a large number of particles because of possible memory issues.", eptr->name, entity_name[eptr->type]);
                             printWarning(buffer, NULL);
@@ -1706,7 +1706,7 @@ long do_tracking(
 					   beamline->revolution_length);
 #if SDDS_MPI_IO
                           }
-                          if (!partOnMaster && notSinglePart) {
+                          if (!partOnMaster && distributedBeam) {
 #  if USE_MPI && MPI_DEBUG
                             printf("Scattering particles (3): nToTrack = %ld\n", nToTrack);
 #  endif
@@ -1730,9 +1730,9 @@ long do_tracking(
                   break;
                 case T_SLICE_POINT:
 #if USE_MPI
-                  if (!notSinglePart) /* When each processor tracks the beam independently, the slice point will be disabled in Pelegant */
+                  if (!distributedBeam) /* When each processor tracks the beam independently, the slice point will be disabled in Pelegant */
                     break;
-                  if (!partOnMaster && notSinglePart) { /* Update the total particle number to get the correct charge */
+                  if (!partOnMaster && distributedBeam) { /* Update the total particle number to get the correct charge */
                     if (isMaster)
                       nToTrack = 0;
                     if (beam)
@@ -2250,6 +2250,16 @@ long do_tracking(
                     track_through_ztransverse(coord, nToTrack, (ZTRANSVERSE *)eptr->p_elem, *P_central, run, i_pass,
                                               charge);
                   break;
+                case T_IMPEDANCE:
+                  if (!(flags & TEST_PARTICLES))
+                    track_through_impedance(coord, nToTrack, (IMPEDANCE *)eptr->p_elem, *P_central, run, i_pass,
+                                            charge);
+                  break;
+                case T_CWAKE:
+                  if (!(flags & TEST_PARTICLES))
+                    track_through_cwake(coord, nToTrack, (CWAKE *)eptr->p_elem, P_central, run, i_pass,
+                                        charge);
+                  break;
                 case T_IONEFFECTS:
                   if (!(flags & TEST_PARTICLES))
                     trackWithIonEffects(coord, nToTrack, (IONEFFECTS *)eptr->p_elem, *P_central, i_pass, n_passes, charge);
@@ -2434,7 +2444,7 @@ long do_tracking(
                           printf("* Computing beam-based twiss transformation matrix for %s at z=%e m\n",
                                  eptr->name, z);
 #if SDDS_MPI_IO
-                        if (!partOnMaster && notSinglePart) {
+                        if (!partOnMaster && distributedBeam) {
                           if (isMaster)
                             nToTrack = 0;
                           if (beam)
@@ -2520,7 +2530,7 @@ long do_tracking(
                         bombElegant("no matrix for element that must have matrix", NULL);
                     }
                     /* Only the slave CPUs will track */
-                    if ((!USE_MPI || !notSinglePart) || (USE_MPI && (myid != 0)))
+                    if ((!USE_MPI || !distributedBeam) || (USE_MPI && (myid != 0)))
                       track_particles(coord, eptr->matrix, coord, nToTrack);
                     switch (type) {
                     case T_HCOR:
@@ -2544,7 +2554,7 @@ long do_tracking(
                   case T_EVCOR:
                   case T_EHVCOR:
                     /* Only the slave CPUs will track */
-                    if ((!USE_MPI || !notSinglePart) || (USE_MPI && (myid != 0)))
+                    if ((!USE_MPI || !distributedBeam) || (USE_MPI && (myid != 0)))
                       trackThroughExactCorrector(coord, nToTrack, eptr, *P_central, accepted, last_z, NULL);
                     break;
                     /* INSERT ENTRIES FOR NEW ELEMENTS ABOVE THIS LINE */
@@ -2562,10 +2572,10 @@ long do_tracking(
               }
 
 #if USE_MPI
-              if ((myid == 0) && notSinglePart && (!usefulOperation(eptr, flags, i_pass)))
+              if ((myid == 0) && distributedBeam && (!usefulOperation(eptr, flags, i_pass)))
                 active = 0;
 #endif
-              if ((!USE_MPI || !notSinglePart) || (USE_MPI && active)) {
+              if ((!USE_MPI || !distributedBeam) || (USE_MPI && active)) {
                 if (!(flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES)) && !(classFlags & NO_APERTURE)) {
                   if (x_max || y_max) {
                     if (!elliptical)
@@ -2707,7 +2717,7 @@ long do_tracking(
             fflush(stdout);
 #endif
 #if USE_MPI
-            if (notSinglePart) {
+            if (distributedBeam) {
               if (!(classFlags & (UNIPROCESSOR | MPALGORITHM))) {
                 end_wtime = MPI_Wtime();
                 my_wtime = my_wtime + end_wtime - start_wtime;
@@ -2741,7 +2751,7 @@ long do_tracking(
             printf("element %s#%ld, %ld particles, %ld left\n", eptr->name, eptr->occurence, nToTrack, nLeft);
             fflush(stdout);
 #endif
-            if ((!USE_MPI || !notSinglePart) || (USE_MPI && active)) {
+            if ((!USE_MPI || !distributedBeam) || (USE_MPI && active)) {
               nLeft = limit_amplitudes(coord, DBL_MAX, DBL_MAX, nLeft, accepted, z, *P_central, 0, 0, eptr);
 #ifndef HAVE_GPU /* Obstructions are not implemented in GPU code */
               nLeft = filterParticlesWithObstructions(coord, nLeft, accepted, z, *P_central);
@@ -2767,13 +2777,13 @@ long do_tracking(
 
 #ifdef DEBUG_CRASH
             printMessageAndTime(stdout, "do_tracking checkpoint 16: ");
-            printf("element %s#%ld, %ld particles, %ld left, runInSinglePartMode=%ld\n", eptr->name, eptr->occurence, nToTrack, nLeft,
-                   runInSinglePartMode);
+            printf("element %s#%ld, %ld particles, %ld left, independentRunPerRank=%ld\n", eptr->name, eptr->occurence, nToTrack, nLeft,
+                   independentRunPerRank);
             fflush(stdout);
 #endif
 
 #if USE_MPI
-            if (flags & ALLOW_MPI_ABORT_TRACKING && !runInSinglePartMode) {
+            if (flags & ALLOW_MPI_ABORT_TRACKING && !independentRunPerRank) {
 #  ifdef DEBUG_CRASH
               printMessageAndTime(stdout, "do_tracking checkpoint 16.1, mpiAbort=");
               printf("%d: ", mpiAbort);
@@ -2820,7 +2830,7 @@ long do_tracking(
             i_elem++;
             nToTrack = nLeft;
 #if USE_MPI
-            if (!partOnMaster && notSinglePart) {
+            if (!partOnMaster && distributedBeam) {
               /* We have to collect information from all the processors to print correct info during tracking */
               long nToTrackC;
               nToTrackC = nToTrack;
@@ -2861,7 +2871,7 @@ long do_tracking(
 #endif
           if (!(flags & TEST_PARTICLES) && sliceAnalysis && sliceAnalysis->active && !sliceAnalysis->finalValuesOnly) {
 #if USE_MPI
-            if (notSinglePart) {
+            if (distributedBeam) {
               if (!(classFlags & UNIPROCESSOR)) { /* This function will be parallelized in the future */
                 printf("performSliceAnalysisOutput is not supported in parallel mode currently.\n");
                 MPI_Abort(MPI_COMM_WORLD, 1);
@@ -2884,7 +2894,7 @@ long do_tracking(
 #if !SDDS_MPI_IO
             *effort += nLeft;
 #else
-            if ((isMaster && (partOnMaster || !notSinglePart)) || (isSlave && !partOnMaster))
+            if ((isMaster && (partOnMaster || !distributedBeam)) || (isSlave && !partOnMaster))
               *effort += nLeft;
 #endif
           }
@@ -2901,7 +2911,7 @@ long do_tracking(
                  cpu_time() / 100.0, page_faults(), memoryUsage());
           fflush(stdout);
 #endif
-          if ((!USE_MPI || !notSinglePart) && (i_pass == passOffset || watch_pt_seen || feedbackDriverSeen)) {
+          if ((!USE_MPI || !distributedBeam) && (i_pass == passOffset || watch_pt_seen || feedbackDriverSeen)) {
             /* if eptr is not NULL, then all particles have been lost */
             /* some work still has to be done, however. */
             while (eptr) {
@@ -2931,7 +2941,7 @@ long do_tracking(
                 break;
               case T_WATCH:
 #if USE_MPI
-                if (!notSinglePart) /* When each processor tracks the beam independently, the watch point will be disabled in Pelegant */
+                if (!distributedBeam) /* When each processor tracks the beam independently, the watch point will be disabled in Pelegant */
                   break;
 #endif
                 if (!(flags & TEST_PARTICLES) && !(flags & INHIBIT_FILE_OUTPUT)) {
@@ -3028,7 +3038,7 @@ long do_tracking(
 #endif
 
 #if USE_MPI
-          if (notSinglePart) {
+          if (distributedBeam) {
             if (run->load_balancing_on == 1) { /* User can choose if load balancing needs to be done */
               if (balanceStatus == startMode) {
                 balanceStatus = checkBalance(my_wtime, myid, n_processors, 1);
@@ -3144,9 +3154,9 @@ long do_tracking(
 
 #if USE_MPI
 #  if !SDDS_MPI_IO
-        if (notSinglePart)
+        if (distributedBeam)
           /* change back to sequential mode before leaving the do_tracking function */
-          if (parallelStatus == trueParallel && notSinglePart) {
+          if (parallelStatus == trueParallel && distributedBeam) {
             gatherParticles(&coord, &nToTrack, &nLost, &accepted, n_processors, myid, &round);
             MPI_Bcast(&nToTrack, 1, MPI_LONG, 0, MPI_COMM_WORLD);
             parallelStatus = notParallel;
@@ -3154,7 +3164,7 @@ long do_tracking(
           }
 #  else
         /* Make sure that the particles are distributed to the slave processors for parallel IO */
-        if (partOnMaster && notSinglePart) {
+        if (partOnMaster && distributedBeam) {
 #    if USE_MPI && MPI_DEBUG
           printf("Scattering particles (4): nToTrack = %ld\n", nToTrack);
 #    endif
@@ -3255,7 +3265,7 @@ long do_tracking(
             exitElegant(1);
           }
 #if SDDS_MPI_IO
-          if (!partOnMaster && notSinglePart) {
+          if (!partOnMaster && distributedBeam) {
             if (isMaster)
               nToTrack = 0;
             if (beam)
@@ -3284,7 +3294,7 @@ long do_tracking(
           printf("%ld particles present after pass %ld        \n",
                  nToTrack, i_pass);
 #else
-          if (!partOnMaster && notSinglePart) {
+          if (!partOnMaster && distributedBeam) {
             /* We have to collect information from all the processors to print correct info during tracking */
             if (isMaster)
               nToTrack = 0;
@@ -3457,7 +3467,7 @@ long do_tracking(
 #if USE_MPI
         long np_total;
         double P_total = 0.0;
-        if (notSinglePart) {
+        if (distributedBeam) {
           if (((parallelStatus == trueParallel) && isSlave) || ((parallelStatus != trueParallel) && isMaster))
             active = 1;
           else
@@ -3489,7 +3499,7 @@ long do_tracking(
           return;
         }
 #else
-        if (notSinglePart) {
+        if (distributedBeam) {
           if (parallelStatus != trueParallel) {
             if (!np) {
               log_exit("do_match_energy");
@@ -3521,7 +3531,7 @@ long do_tracking(
 #if (!USE_MPI)
           P_average /= np;
 #else
-          if (notSinglePart) {
+          if (distributedBeam) {
             if (parallelStatus != trueParallel) {
               if (isMaster)
                 P_average /= np;
@@ -3570,7 +3580,7 @@ long do_tracking(
 #if (!USE_MPI)
           P_average /= np;
 #else
-          if (notSinglePart) {
+          if (distributedBeam) {
             if (parallelStatus != trueParallel) {
               if (isMaster)
                 P_average /= np;
@@ -3664,7 +3674,7 @@ long do_tracking(
           *P_central = P_new;
         }
 #else
-        if (notSinglePart) {
+        if (distributedBeam) {
           if (!np)
             *P_central = P_new;
 
@@ -3762,7 +3772,7 @@ long do_tracking(
         if (center->onPass >= 0 && iPass != center->onPass)
           return;
         /*
-          printf("center_beam starting loop, notSinglePart=%ld\n", notSinglePart);
+          printf("center_beam starting loop, distributedBeam=%ld\n", distributedBeam);
           fflush(stdout);
         */
         for (ic = 0; ic < 6; ic++) {
@@ -3771,7 +3781,7 @@ long do_tracking(
               for (i = sum = 0; i < np; i++)
                 sum += part[i][ic];
 #if USE_MPI
-              if (notSinglePart) {
+              if (distributedBeam) {
                 double sum_total;
                 long np_total;
 
@@ -4003,10 +4013,10 @@ long do_tracking(
         accumulate_beam_sums(sums, coord, np, Po, 0.0, NULL, 0.0, 0.0, -1, -1, 0);
 #if USE_MPI
 #  if MPI_DEBUG
-        printf("myid=%d: np = %ld, parallelStatus = %d, partOnMaster = %d, notSinglePart = %d\n", myid, np,
-               parallelStatus, partOnMaster, notSinglePart);
+        printf("myid=%d: np = %ld, parallelStatus = %d, partOnMaster = %d, distributedBeam = %d\n", myid, np,
+               parallelStatus, partOnMaster, distributedBeam);
 #  endif
-        if (parallelStatus == trueParallel && !partOnMaster && notSinglePart)
+        if (parallelStatus == trueParallel && !partOnMaster && distributedBeam)
           MPI_Allreduce(&np, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
         else
           npTotal = np;
@@ -4016,7 +4026,7 @@ long do_tracking(
 #else
         npTotal = np;
 #endif
-        /* if (isMaster || !notSinglePart) { */
+        /* if (isMaster || !distributedBeam) { */
         for (i = 0; i < 6; i++) {
           centroid[i] = sums->centroid[i];
           sigma[i] = sqrt(sums->beamSums2->sigma[i][i]);
@@ -4427,7 +4437,7 @@ long do_tracking(
 #if !USE_MPI
             matr->sReference = sum / np;
 #else
-            if (notSinglePart) {
+            if (distributedBeam) {
               if (isSlave) {
                 double sum_total;
                 long np_total;
@@ -4492,7 +4502,7 @@ long do_tracking(
 #if !USE_MPI
             matr->sReference = sum / np;
 #else
-            if (notSinglePart) {
+            if (distributedBeam) {
               if (isSlave) {
                 double sum_total;
                 long np_total;
