@@ -158,7 +158,7 @@
     (when (and on-header (not (elegant--namelist-has-end-ahead-p)))
       (save-excursion
         (newline)
-        (insert "&end")))
+        (insert "&end\n\n")))
     (elegant-indent-line)))
 
 ;; ----------------------------
