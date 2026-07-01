@@ -87,6 +87,7 @@
    "twiss_output"
    "twiss_analysis"
    "rf_setup"
+   "undulator_brightness"
    "run_control"
    "vary_element"
    )
@@ -468,8 +469,8 @@
           "upper_limits"
           "exclude"
           "bind_name_pattern"
-          "bpm_name_pattern"
-          "bpm_type_pattern"
+          "measurement_elements"
+          "measurement_types"
           "n_iterations"
           "convergence"
           "change_tolerance"
@@ -501,8 +502,8 @@
           "items"
           "exclude"
           "bind_name_pattern"
-          "bpm_name_pattern"
-          "bpm_type_pattern"
+          "measurement_elements"
+          "measurement_types"
           "response_perturbation"
           "measurement_noise"
           "measurement_noise_cutoff"
@@ -1543,6 +1544,33 @@
           "track_for_frequency"
           "phase_offset"
           ))
+   (cons "undulator_brightness"
+         (list
+          "tag"
+          "wavelength"
+          "photon_energy"
+          "harmonic"
+          "detuning"
+          "period_length"
+          "n_periods"
+          "total_length"
+          "current"
+          "use_twiss_output_values"
+          "coupling"
+          "twiss_element"
+          "twiss_occurence"
+          "emitx"
+          "emity"
+          "betax"
+          "alphax"
+          "betay"
+          "alphay"
+          "etax"
+          "etaxp"
+          "etay"
+          "etayp"
+          "Sdelta"
+          ))
    (cons "run_control"
          (list
           "n_steps"
@@ -1954,8 +1982,8 @@
           (cons "upper_limits" "STRING")
           (cons "exclude" "STRING")
           (cons "bind_name_pattern" "STRING")
-          (cons "bpm_name_pattern" "STRING")
-          (cons "bpm_type_pattern" "STRING")
+          (cons "measurement_elements" "STRING")
+          (cons "measurement_types" "STRING")
           (cons "n_iterations" "long")
           (cons "convergence" "double")
           (cons "change_tolerance" "double")
@@ -1987,8 +2015,8 @@
           (cons "items" "STRING")
           (cons "exclude" "STRING")
           (cons "bind_name_pattern" "STRING")
-          (cons "bpm_name_pattern" "STRING")
-          (cons "bpm_type_pattern" "STRING")
+          (cons "measurement_elements" "STRING")
+          (cons "measurement_types" "STRING")
           (cons "response_perturbation" "double")
           (cons "measurement_noise" "double")
           (cons "measurement_noise_cutoff" "double")
@@ -3028,6 +3056,33 @@
           (cons "output_only" "long")
           (cons "track_for_frequency" "long")
           (cons "phase_offset" "double")
+          ))
+   (cons "undulator_brightness"
+         (list
+          (cons "tag" "STRING")
+          (cons "wavelength" "double")
+          (cons "photon_energy" "double")
+          (cons "harmonic" "long")
+          (cons "detuning" "double")
+          (cons "period_length" "double")
+          (cons "n_periods" "long")
+          (cons "total_length" "double")
+          (cons "current" "double")
+          (cons "use_twiss_output_values" "long")
+          (cons "coupling" "double")
+          (cons "twiss_element" "STRING")
+          (cons "twiss_occurence" "long")
+          (cons "emitx" "double")
+          (cons "emity" "double")
+          (cons "betax" "double")
+          (cons "alphax" "double")
+          (cons "betay" "double")
+          (cons "alphay" "double")
+          (cons "etax" "double")
+          (cons "etaxp" "double")
+          (cons "etay" "double")
+          (cons "etayp" "double")
+          (cons "Sdelta" "double")
           ))
    (cons "run_control"
          (list
