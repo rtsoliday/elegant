@@ -502,10 +502,10 @@ long doTuneFootprint(
 
 #if USE_MPI
   partOnMaster = 1;
-  notSinglePart = 0;
+  distributedBeam = 0;
 #  ifdef DEBUG
-  printf("parallelStatus = %d, partOnMaster = %d, notSinglePart = %ld, runInSinglePartMode = %ld\n",
-         parallelStatus, partOnMaster, notSinglePart, runInSinglePartMode);
+  printf("parallelStatus = %d, partOnMaster = %d, distributedBeam = %ld, independentRunPerRank = %ld\n",
+         parallelStatus, partOnMaster, distributedBeam, independentRunPerRank);
 #  endif
 
   setupTuneFootprintDataTypes();
