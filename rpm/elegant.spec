@@ -52,8 +52,6 @@ install -s -m 755 csrImpedance %{buildroot}%{_bindir}/csrImpedance
 install -s -m 755 curvedDipoleFringeCalc %{buildroot}%{_bindir}/curvedDipoleFringeCalc
 install    -m 755 doubleDist6 %{buildroot}%{_bindir}/doubleDist6
 install -s -m 755 elasticScatteringAnalysis %{buildroot}%{_bindir}/elasticScatteringAnalysis
-install    -m 755 elasticScatteringLifetime %{buildroot}%{_bindir}/elasticScatteringLifetime
-install    -m 755 elasticScatteringLifetimeDetailed %{buildroot}%{_bindir}/elasticScatteringLifetimeDetailed
 install -s -m 755 elegant %{buildroot}%{_bindir}/elegant
 install -s -m 755 elegantto %{buildroot}%{_bindir}/elegantto
 install    -m 755 elegant2astra %{buildroot}%{_bindir}/elegant2astra
@@ -186,8 +184,6 @@ install -m 444 undulatorTuningCurve.spin %{buildroot}%{_prefix}/local/oag/apps/c
 %{_bindir}/curvedDipoleFringeCalc
 %{_bindir}/doubleDist6
 %{_bindir}/elasticScatteringAnalysis
-%{_bindir}/elasticScatteringLifetime
-%{_bindir}/elasticScatteringLifetimeDetailed
 %{_bindir}/elegant
 %{_bindir}/elegantto
 %{_bindir}/elegant2astra

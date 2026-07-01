@@ -6,7 +6,7 @@ endif
 include ../Makefile.rules
 
 EIGEN3_DIR = $(firstword $(wildcard /opt/local/include/eigen3 /opt/homebrew/include/eigen3 /usr/local/include/eigen3 /usr/include/eigen3))
-EIGEN3_INC = $(if $(EIGEN3_DIR),-I$(EIGEN3_DIR),)
+EIGEN3_INC = $(if $(EIGEN3_DIR),-isystem $(EIGEN3_DIR),)
 
 SCRIPTS = analyzeMagnets \
 	beamLifetimeCalc \
@@ -21,8 +21,6 @@ SCRIPTS = analyzeMagnets \
 	coreEmittance \
 	correctCoupling \
 	doubleDist6 \
-	elasticScatteringLifetime \
-	elasticScatteringLifetimeDetailed \
 	elegant2astra \
 	elegant2shower \
 	elegant2track \
@@ -143,4 +141,3 @@ $(OBJ_DIR)/sddsrandmult.$(OBJEXT): $(OBJ_DIR)/sddsrandmult.h
 
 $(OBJ_DIR)/sddsrandmult.h: sddsrandmult.nl
 	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables sddsrandmult.nl $(OBJ_DIR)/sddsrandmult.h
-

@@ -22,15 +22,16 @@
 //   - All geometry (PCA, steps, kNN) is done in globally-whitened coordinates.
 //   - Local PCA is computed from kNN set. If your filaments curve/branch tightly, lower --k (e.g. 8–16).
 //
-// Build (example):
-//   g++ -O3 -fopenmp -I/usr/include/eigen3 -o sddsupsample sddsupsample.cc \
-//       -lSDDS1 -lm -lz
-//
-// Usage:
-//   ./sddsupsample in.sdds out.sdds --multiplier 100 --mode tangent --k 16 --alpha 0.02 --beta 0 \
-//       --tan-cap-frac 0.05 --ortho-factor 0.5 --reject-factor 1.01
-//
-//   ./sddsupsample in.sdds out.sdds --multiplier 100 --mode interp --k 32 --noise 0.02
+/* Build (example):
+ *   g++ -O3 -fopenmp -I/usr/include/eigen3 -o sddsupsample sddsupsample.cc \
+ *       -lSDDS1 -lm -lz
+ *
+ * Usage:
+ *   ./sddsupsample in.sdds out.sdds --multiplier 100 --mode tangent --k 16 --alpha 0.02 --beta 0 \
+ *       --tan-cap-frac 0.05 --ortho-factor 0.5 --reject-factor 1.01
+ *
+ *   ./sddsupsample in.sdds out.sdds --multiplier 100 --mode interp --k 32 --noise 0.02
+ */
 //
 // SPDX-License-Identifier: MIT
 
