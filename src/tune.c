@@ -60,6 +60,8 @@ void setup_tune_correction(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline,
   set_print_namelist_flags(0);
   if (processNamelist(&correct_tunes, nltext) == NAMELIST_ERROR)
     bombElegant(NULL, NULL);
+  if (!quadrupoles || !strlen(quadrupoles))
+    bombElegant("The quadrupoles parameter must be given", NULL);
   str_toupper(quadrupoles);
   if (has_wildcards(quadrupoles) && strchr(quadrupoles, '-'))
     quadrupoles = expand_ranges(quadrupoles);
