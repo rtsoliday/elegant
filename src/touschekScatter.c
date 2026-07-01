@@ -727,7 +727,7 @@ void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
           }
       }
 #if USE_MPI
-      notSinglePart = 0;
+      distributedBeam = 0;
       partOnMaster = 1;
       parallelStatus = notParallel;
 #endif
@@ -762,7 +762,7 @@ void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
         fflush(stdout);
 #endif
 #if USE_MPI
-        notSinglePart = 1;
+        distributedBeam = 1;
         partOnMaster = 1;
         parallelStatus = notParallel;
 #endif
@@ -779,7 +779,7 @@ void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
                              FIRST_BEAM_IS_FIDUCIAL + FIDUCIAL_BEAM_SEEN + RESTRICT_FIDUCIALIZATION + (verbosity > 2 ? 0 : SILENT_RUNNING + INHIBIT_FILE_OUTPUT), control->n_passes, 0, NULL,
                              NULL, NULL, NULL, eptr);
         nLost = beam->n_lost;
-        notSinglePart = 0;
+        distributedBeam = 0;
         if (verbosity > 1)
           report_stats(stdout, "Tracking completed (1): ");
 #if USE_MPI
