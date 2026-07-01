@@ -532,12 +532,12 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
 
       /* compute centroids and sigmas */
 #if SDDS_MPI_IO
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (myid == 0) /* The total number of particles survived is on the master */
       n_part_total = sums->n_part;
     MPI_Bcast(&n_part_total, 1, MPI_LONG, 0, MPI_COMM_WORLD);
   }
-  if ((notSinglePart && n_part_total) || (!notSinglePart && sums->n_part))
+  if ((distributedBeam && n_part_total) || (!distributedBeam && sums->n_part))
   /* We have to check the total number of particles, otherwise it will cause
 	 synchronization problem as no particle left on some processors */
 #else
@@ -587,7 +587,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
          !(deltaData = malloc(sizeof(*deltaData) * (percDataMax = sums->n_part)))))
       bombElegant("memory allocation failure (compute_final_properties)", NULL);
 #if SDDS_MPI_IO
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
 #endif
       for (i = sum = 0; i < sums->n_part; i++) {
         if (!coord[i]) {
@@ -608,7 +608,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
           tmax = t;
       }
 #if SDDS_MPI_IO
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (isMaster) {
         tmax = dp_max = -DBL_MAX;
         tmin = dp_min = DBL_MAX;
@@ -626,20 +626,20 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
       MPI_Reduce(&tmp, &sum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     }
 #endif
-    if (isMaster || !notSinglePart) {
+    if (isMaster || !distributedBeam) {
       dt = tmax - tmin;
       Ddp = dp_max - dp_min;
       data[6 + F_CENTROID_OFFSET] = (tc = sum / sums->n_part);
     }
 #if SDDS_MPI_IO
-    if (notSinglePart)
+    if (distributedBeam)
       MPI_Bcast(&tc, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 #endif
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       for (i = sum = 0; i < sums->n_part; i++)
         sum += sqr(tData[i] - tc);
 #if SDDS_MPI_IO
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (isMaster)
         sum = 0.0;
       tmp = sum;
@@ -653,7 +653,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
     approximate_percentiles(tPosition2, percLevel2, 9, tData, sums->n_part, ANALYSIS_BINS2);
     approximate_percentiles(deltaPosition, percLevel, 12, deltaData, sums->n_part, ANALYSIS_BINS2);
 #else
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (n_part_total) {
         approximate_percentiles_p(tPosition, percLevel, 12, tData, sums->n_part, ANALYSIS_BINS2);
         approximate_percentiles_p(tPosition2, percLevel2, 9, tData, sums->n_part, ANALYSIS_BINS2);
@@ -692,7 +692,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
   pAverage = p_central;
 
 #if SDDS_MPI_IO
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
 #endif
     for (i = 0; i < sums->n_part; i++) {
       p_sum += (p = (1 + coord[i][5]) * p_central);
@@ -700,7 +700,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
     }
 
 #if SDDS_MPI_IO
-  if (notSinglePart) {
+  if (distributedBeam) {
     double *tmp_sum = malloc(2 * sizeof(*tmp_sum)),
            *tmp = malloc(2 * sizeof(*tmp_sum));
     tmp[0] = p_sum;
@@ -712,7 +712,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
     free(tmp_sum);
   }
 #endif
-  if (isMaster || !notSinglePart) {
+  if (isMaster || !distributedBeam) {
     if (sums->n_part) {
       pAverage = data[F_T_OFFSET + 2] = p_sum / sums->n_part;
       data[F_T_OFFSET + 3] = (gamma_sum / sums->n_part - 1) * particleMassMV;
@@ -727,8 +727,8 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
     data[F_WIDTH_OFFSET] = approximateBeamWidth(0.6826F, coord, sums->n_part, 0L) / 2.;
     data[F_WIDTH_OFFSET + 1] = approximateBeamWidth(0.6826F, coord, sums->n_part, 2L) / 2.;
 #else
-  if ((notSinglePart && n_part_total > 3) || (!notSinglePart && coord && sums->n_part > 3)) { /* In the version with parallel IO, coord on master points to NULL */
-    if (!notSinglePart) {
+  if ((distributedBeam && n_part_total > 3) || (!distributedBeam && coord && sums->n_part > 3)) { /* In the version with parallel IO, coord on master points to NULL */
+    if (!distributedBeam) {
       /* All the processors compute the final properties independently. */
       data[F_WIDTH_OFFSET] = approximateBeamWidth_p(0.6826F, coord, sums->n_part, 0L) / 2.;
       data[F_WIDTH_OFFSET + 1] = approximateBeamWidth_p(0.6826F, coord, sums->n_part, 2L) / 2.;
@@ -766,7 +766,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
 #if !SDDS_MPI_IO
   data[F_EMIT_OFFSET + 4] = rms_longitudinal_emittance(coord, sums->n_part, p_central, 0, 0);
 #else
-  if (notSinglePart)
+  if (distributedBeam)
     data[F_EMIT_OFFSET + 4] = rms_longitudinal_emittance_p(coord, sums->n_part, p_central, 0, 0);
   else
     data[F_EMIT_OFFSET + 4] = rms_longitudinal_emittance(coord, sums->n_part, p_central, 0, 0);
@@ -923,7 +923,7 @@ double rms_emittance_p(double **coord, long i1, long i2, long n,
   double xc, xpc, xc_local = 0.0, xpc_local = 0.0;
   long i, n_total = 0;
 
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (isMaster)
       n = 0; /* The master will not contribute anything in this routine */
     MPI_Allreduce(&n, &n_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -1035,7 +1035,7 @@ double rms_longitudinal_emittance_p(double **coord, long n, double Po, long star
   double *time = NULL;
   long n_total = 0;
 
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (isMaster)
       n = 0;
     MPI_Allreduce(&n, &n_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -1306,7 +1306,7 @@ double approximateBeamWidth(double fraction, double **part, long nPart, long iCo
   binParticleCoordinate(&hist, &maxBins, &xMin, &xMax, &dx, &bins,
                         1.01, part, nPart, iCoord);
 #if USE_MPI
-  if (notSinglePart) { /* Master needs to know the information to write the result */
+  if (distributedBeam) { /* Master needs to know the information to write the result */
     buffer = malloc(sizeof(double) * bins);
     MPI_Allreduce(hist, buffer, bins, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     memcpy(hist, buffer, sizeof(double) * bins);
@@ -1487,7 +1487,7 @@ void computeBeamTwissParameters3(TWISSBEAM *twiss, double **data, long particles
 #if USE_MPI
   long particles_total, index = 0;
   double S_p[21], S_p_sum[21], Sbeta_p[21], Sbeta_p_sum[21];
-  if (notSinglePart)
+  if (distributedBeam)
     MPI_Allreduce(&particles, &particles_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 #endif
 
@@ -1502,7 +1502,7 @@ void computeBeamTwissParameters3(TWISSBEAM *twiss, double **data, long particles
 #if (!USE_MPI)
       S[j][i] = S[i][j] = sum / particles;
 #else
-      if (notSinglePart)
+      if (distributedBeam)
         S_p[index++] = sum;
       else
         S[j][i] = S[i][j] = sum / particles;
@@ -1511,7 +1511,7 @@ void computeBeamTwissParameters3(TWISSBEAM *twiss, double **data, long particles
   }
 
 #if USE_MPI
-  if (notSinglePart) {
+  if (distributedBeam) {
     MPI_Allreduce(S_p, S_p_sum, 21, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     index = 0;
     for (i = 0; i < 6; i++) {
@@ -1534,7 +1534,7 @@ void computeBeamTwissParameters3(TWISSBEAM *twiss, double **data, long particles
   memcpy(twiss->eta, eta, sizeof(*(twiss->eta)) * 4);
 
 #if USE_MPI
-  if (notSinglePart)
+  if (distributedBeam)
     index = 0;
 #endif
   for (i = 0; i < 6; i++) {
@@ -1544,7 +1544,7 @@ void computeBeamTwissParameters3(TWISSBEAM *twiss, double **data, long particles
 #if (!USE_MPI)
       Sbeta[j][i] = Sbeta[i][j] = sum / particles;
 #else
-      if (notSinglePart)
+      if (distributedBeam)
         Sbeta_p[index++] = sum;
       else
         Sbeta[j][i] = Sbeta[i][j] = sum / particles;
@@ -1552,7 +1552,7 @@ void computeBeamTwissParameters3(TWISSBEAM *twiss, double **data, long particles
     }
   }
 #if USE_MPI
-  if (notSinglePart) {
+  if (distributedBeam) {
     MPI_Allreduce(Sbeta_p, Sbeta_p_sum, 21, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     index = 0;
     for (i = 0; i < 6; i++) {
