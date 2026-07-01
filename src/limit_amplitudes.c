@@ -684,6 +684,7 @@ long elimit_amplitudes(
       matter.width = matter.spacing = matter.tilt = matter.center = 0;
       matter.nSlots = 0;
       matter.startPass = matter.endPass = -1;
+      matter.forceMCS = 0;
 
       for (ip = 0; ip < np; ip++) {
         ini = initial[ip];
@@ -841,7 +842,7 @@ long elimit_amplitudes(
       if (maxBuffer < np &&
           !(deltaBuffer = SDDS_Realloc(deltaBuffer, sizeof(*deltaBuffer) * (maxBuffer = np))))
         SDDS_Bomb("memory allocation failure");
-      if (isSlave || !notSinglePart)
+      if (isSlave || !distributedBeam)
         for (ip = 0; ip < np; ip++)
           deltaBuffer[ip] = initial[ip][5];
       /* eliminate lowest lowerfraction of particles and highest
@@ -855,7 +856,7 @@ long elimit_amplitudes(
         level[count++] = 100 - pfilter->upperFraction * 100;
       }
 #if SDDS_MPI_IO
-      if (notSinglePart)
+      if (distributedBeam)
         approximate_percentiles_p(limit, level, count, deltaBuffer, np, pfilter->bins);
       else
         compute_percentiles(limit, level, count, deltaBuffer, np);
@@ -878,7 +879,7 @@ long elimit_amplitudes(
           /* filter in next block so there are no discrepancies due to
            * small numerical differences
            */
-          if (isSlave || !notSinglePart)
+          if (isSlave || !distributedBeam)
             for (ip = 0; ip <= itop; ip++) {
               if ((upper[i] && initial[ip][5] > limit[i]) ||
                   (!upper[i] && initial[ip][5] < limit[i])) {
@@ -898,7 +899,7 @@ long elimit_amplitudes(
     }
     if (pfilter->limitsFixed) {
       double p;
-      if (isSlave || !notSinglePart)
+      if (isSlave || !distributedBeam)
         for (ip = 0; ip <= itop; ip++) {
           p = (1 + initial[ip][5]) * Po;
           if ((pfilter->hasUpper && p > pfilter->pUpper) ||
@@ -933,7 +934,7 @@ long elimit_amplitudes(
 #endif
         }
 #if USE_MPI
-      if (notSinglePart) {
+      if (distributedBeam) {
         if (USE_MPI) {
           long itop_total;
           double reference_total;
@@ -947,7 +948,7 @@ long elimit_amplitudes(
       reference /= (itop + 1);
 #endif
     }
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       for (ip = 0; ip <= itop; ip++) {
         if (fabs(initial[ip][5] - reference) < pfilter->deltaLimit)
           continue;
