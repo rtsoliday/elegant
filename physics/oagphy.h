@@ -54,7 +54,8 @@ epicsShareFuncOAGPHY extern long GetTwissValues(SDDS_DATASET *SDDSin,
                                                 double *ex0, double *ey0, 
                                                 double *Sdelta0, double *pCentral, 
                                                 double emitRatio, double coupling);
-epicsShareFuncOAGPHY extern void FindPeak(double *E,double *spec,double *ep,double *sp,long n);
+/* fwhm is optional: pass NULL to skip FWHM computation. */
+epicsShareFuncOAGPHY extern void FindPeak(double *E,double *spec,double *ep,double *sp,double *fwhm,long n);
 epicsShareFuncOAGPHY extern void ComputeBeamSize(double period, long Nu, double ex, 
                                                  double ey, double Sdelta0, 
                                                  double betax, double alphax, 
@@ -63,7 +64,22 @@ epicsShareFuncOAGPHY extern void ComputeBeamSize(double period, long Nu, double 
                                                  double etay, double etayp,
                                                  double *Sx, double *Sy, double *Sxp, double *Syp);
 
+/* nstart and nend are optional output pointers: pass NULL to skip.
+ * Returns 0 on success, 1 on failure. */
 epicsShareFuncOAGPHY extern int Gauss_Convolve(double *E,double *spec,long *ns,double sigmaE, long *nstart, long *nend);
- 
+
+	/*****  Computes the undulator brightness produced by a Gaussian electron beam  ***/
+epicsShareFuncOAGPHY extern double computeBrightnessLindberg(double radLambda, int radHarm, double radDet,
+			 double undLength, int undN, double undK,
+			 double emitx, double emity, double betax, double betay,
+			 double alphax, double alphay, double sigmaDelta, double current);
+
+	/*****  Computes the undulator flux in the central cone near an odd harmonic  ***/
+epicsShareFuncOAGPHY extern double computeFluxLindberg(int radHarm, int undN, double undK,
+			   double radDet, double sigmaDelta, double current);
+
+epicsShareFuncOAGPHY extern void computeEffectiveBeamParameters(double *exEff, double *betaxEff, double *alphaxEff,
+								double ex, double betax, double alphax,
+								double etax, double etaxp, double Sdelta);
 #endif
 
