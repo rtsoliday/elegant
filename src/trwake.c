@@ -67,7 +67,7 @@ void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
   else
     rampFactor = (i_pass + 1.0) / wakeData->rampPasses;
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     index_bunch_assignments(part0, np0, (charge && wakeData->bunchedBeamMode) ? charge->idSlotsPerBunch : 0, Po, &time0, &ibParticle, &ipBucket, &npBucket, &nBuckets, -1);
 
     for (iBucket = 0; iBucket < nBuckets; iBucket++) {
@@ -114,10 +114,10 @@ void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
       fflush(stdout);
 #endif
 #if USE_MPI
-      if (isSlave && notSinglePart)
+      if (isSlave && distributedBeam)
         find_global_min_max(&tmin, &tmax, np, workers);
 #endif
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         if ((tmax - tmin) > (wakeData->t[wakeData->wakePoints - 1] - wakeData->t[0])) {
           fprintf(stderr, "The beam is longer than the transverse wake function.\nThis would produce unphysical results.\n");
           fprintf(stderr, "The beam length is %le s, while the wake length is %le s\n",
@@ -166,7 +166,7 @@ void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
         printWarningForTracking("Some particles not binned in TRWAKE.", warningBuffer);
       }
 #else
-      if (notSinglePart) {
+      if (distributedBeam) {
         if (isSlave) {
           int all_binned, result = 1;
 
@@ -196,13 +196,13 @@ void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
         }
       }
 #endif
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         for (plane = 0; plane < 2; plane++) {
           if (!wakeData->W[plane])
             continue;
 
 #if USE_MPI
-          if (isSlave && notSinglePart) {
+          if (isSlave && distributedBeam) {
             buffer = malloc(sizeof(double) * nb);
             if (nb<=0)
               bombElegantVA("Error in TRWAKE: number of bins is %ld\n", nb);
@@ -283,7 +283,7 @@ void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
     free(time);
   if (pbin)
     free(pbin);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
   if (Vtime)
     free(Vtime);
@@ -561,7 +561,7 @@ double computeTimeCoordinates(double *time, double Po, double **part, long np) {
   if (!partOnMaster) {
     long np_total = 0;
     double tmean_total;
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       for (ip = 0; ip < np; ip++) {
         P = Po * (part[ip][5] + 1);
 #  ifndef USE_KAHAN
@@ -573,7 +573,7 @@ double computeTimeCoordinates(double *time, double Po, double **part, long np) {
       }
     }
     tmean_total = DBL_MAX;
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (isMaster) {
         tmean = 0;
         np = 0;
