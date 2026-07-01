@@ -51,8 +51,8 @@ void track_through_frfmode(
 #endif
 
 #if DEBUG == 1 && USE_MPI == 1
-  printf("FRFMODE(1): myid=%d, isSlave=%ld, notSinglePart=%ld, np0=%ld\n",
-         myid, isSlave, notSinglePart, np0);
+  printf("FRFMODE(1): myid=%d, isSlave=%ld, distributedBeam=%ld, np0=%ld\n",
+         myid, isSlave, distributedBeam, np0);
   fflush(stdout);
 #endif
 #if USE_MPI
@@ -85,12 +85,12 @@ void track_through_frfmode(
   }
 
 #if DEBUG == 1 && USE_MPI == 1
-  printf("FRFMODE(2): myid=%d, isSlave=%ld, notSinglePart=%ld\n",
-         myid, isSlave, notSinglePart);
+  printf("FRFMODE(2): myid=%d, isSlave=%ld, distributedBeam=%ld\n",
+         myid, isSlave, distributedBeam);
   fflush(stdout);
 #endif
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
 #ifdef DEBUG
     printf("FRFMODE: Determining bucket assignments\n");
     fflush(stdout);
@@ -122,7 +122,7 @@ void track_through_frfmode(
     np = -1;
 #if USE_MPI
     /* Master needs to know if this bucket has particles */
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBuckets == 1)
         np = np0;
       else if (npBucket)
@@ -149,7 +149,7 @@ void track_through_frfmode(
     lastBin = 0;
     firstBin = rfmode->n_bins;
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBuckets == 1) {
         time = time0;
         part = part0;
@@ -182,7 +182,7 @@ void track_through_frfmode(
       }
 
 #if USE_MPI
-      if (notSinglePart) {
+      if (distributedBeam) {
         if (isSlave) {
           double t_total;
           MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
@@ -289,7 +289,7 @@ void track_through_frfmode(
       MPI_Allreduce(&firstBin, &firstBin_global, 1, MPI_LONG, MPI_MIN, MPI_COMM_WORLD);
       firstBin = firstBin_global;
       lastBin = lastBin_global;
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         long *buffer;
         buffer = (long *)calloc(lastBin - firstBin + 1, sizeof(long));
         MPI_Allreduce(&Ihist[firstBin], buffer, lastBin - firstBin + 1, MPI_LONG, MPI_SUM, workers);
@@ -309,7 +309,7 @@ void track_through_frfmode(
     else
       rampFactor = (pass + 1.0) / rfmode->rampPasses;
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       tPrevious = rfmode->last_t;
 
       for (ib = firstBin; ib <= lastBin; ib++) {
@@ -437,7 +437,7 @@ void track_through_frfmode(
     free(time);
   if (pbin)
     free(pbin);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 #ifdef DEBUG
   printf("FRFMODE: Returning\n");
