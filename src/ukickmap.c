@@ -139,7 +139,7 @@ long trackUndulatorKickMap(
       }
     }
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       for (ip = 0; ip <= iTop; ip++) {
         coord = particle[ip];
 
