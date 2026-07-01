@@ -186,7 +186,7 @@ long new_sdds_beam(
   } else {
     lessPartAllowed = 0; /* This flag will control if the simulation runs in single particle mode in track_beam function */
   }
-  notSinglePart = 1; /* All CPUs will track the fiducial beam in parallel */
+  distributedBeam = 1; /* All CPUs will track the fiducial beam in parallel */
   partOnMaster = 0;
 #endif
 
@@ -195,7 +195,7 @@ long new_sdds_beam(
     if (!save_initial_coordinates)
       bombElegant("logic error---initial beam coordinates not saved", NULL);
 #if SDDS_MPI_IO
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
 #endif
       if (beam->original == NULL)
         bombElegant("can't retrack with previous bunch--there isn't one!", NULL);
@@ -238,7 +238,7 @@ long new_sdds_beam(
         }
         if (run->acceptance)
 #if USE_MPI
-          if (isSlave || !notSinglePart)
+          if (isSlave || !distributedBeam)
 #endif
             beam->accepted = (double **)czarray_2d(sizeof(double), (long)(beam->n_particle * memDistFactor), totalPropertiesPerParticle);
         new_particle_data = 1;
@@ -261,7 +261,7 @@ long new_sdds_beam(
       /* read the new page */
       if ((beam->n_original = get_sdds_particles(&beam->original, &beam->id_slots_per_bunch, track_pages_separately, n_tables_to_skip)) >= 0) {
 #if SDDS_MPI_IO
-        if (isSlave || !notSinglePart)
+        if (isSlave || !distributedBeam)
 #endif
           {
             n_tables_to_skip = 0; /* use the user's parameter only the first time */
@@ -289,7 +289,7 @@ long new_sdds_beam(
 
   p_central = beam->p0_original = run->p_central;
 #if SDDS_MPI_IO
-  if (isSlave && notSinglePart && new_particle_data) { /* Compute the offset of particle ID for different processors */
+  if (isSlave && distributedBeam && new_particle_data) { /* Compute the offset of particle ID for different processors */
     long sum = 0, tmp, my_offset, *offset = tmalloc(n_processors * sizeof(*offset)),
       n_particle = (beam->n_original) / sample_interval * sample_fraction;
     MPI_Allgather(&n_particle, 1, MPI_LONG, offset, 1, MPI_LONG, workers);
@@ -314,7 +314,7 @@ long new_sdds_beam(
      */
 
 #if SDDS_MPI_IO
-    if (isSlave || (!notSinglePart)) {
+    if (isSlave || (!distributedBeam)) {
 #endif
       if (input_type_code == SPIFFE_BEAM) {
         if (!beam->original)
@@ -520,12 +520,12 @@ long new_sdds_beam(
 #if SDDS_MPI_IO
     }
     /* We need change to the singlePart mode for certain special situations */
-    if (do_find_aperture || runInSinglePartMode) {
-      notSinglePart = 0;
+    if (do_find_aperture || independentRunPerRank) {
+      distributedBeam = 0;
       lessPartAllowed = 1;
       partOnMaster = 1;
     }
-    if (isSlave || (!notSinglePart) || (partOnMaster)) {
+    if (isSlave || (!distributedBeam) || (partOnMaster)) {
 #endif
       if (!beam->original)
         bombElegant("beam->original is NULL (new_sdds_beam.3)", NULL);
@@ -554,7 +554,7 @@ long new_sdds_beam(
 #endif
   }
 #if SDDS_MPI_IO
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (isMaster)
       beam->n_to_track = 0;
 #  ifdef MPI_DEBUG
@@ -568,12 +568,12 @@ long new_sdds_beam(
   }
 
   /* We need change to the singlePart mode for certain special situations */
-  if (do_find_aperture || runInSinglePartMode) {
-    notSinglePart = 0;
+  if (do_find_aperture || independentRunPerRank) {
+    distributedBeam = 0;
     lessPartAllowed = 1;
     partOnMaster = 1;
   }
-  if (isSlave || (!notSinglePart) || partOnMaster) {
+  if (isSlave || (!distributedBeam) || partOnMaster) {
 #endif
     if (new_particle_data && save_initial_coordinates &&
         (one_random_bunch || (reuse_bunch && input_type_code != SPIFFE_BEAM))) {
@@ -587,7 +587,7 @@ long new_sdds_beam(
       if (beam->original == beam->particle)
         bombElegant("logic error in new_sdds_beam: array for original coordinates is missing", NULL);
 #if SDDS_MPI_IO
-      if (!notSinglePart && new_particle_data) { /* Each processor will hold a copy of the whole beam */
+      if (!distributedBeam && new_particle_data) { /* Each processor will hold a copy of the whole beam */
         long np_total, np = beam->n_to_track;
         double **data_all = NULL, **data = beam->particle;
         int *offset_array = (int *)tmalloc(n_processors * sizeof(*offset_array));
@@ -1137,7 +1137,7 @@ long get_sdds_particles(double ***particle,
 #if !SDDS_MPI_IO
         tave /= np;
 #else
-        if (notSinglePart) {
+        if (distributedBeam) {
           if (isSlave) {
             double total_sum;
             long total_particles;
