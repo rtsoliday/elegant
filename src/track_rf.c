@@ -57,7 +57,7 @@ void track_through_rf_deflector(
   if (rf_param->voltage == 0 ||
       (rf_param->startPass >= 0 && pass < rf_param->startPass) ||
       (rf_param->endPass >= 0 && pass > rf_param->endPass)) {
-    if (isSlave || !notSinglePart)
+    if (isSlave || !distributedBeam)
       exactDrift(initial, n_particles, rf_param->length);
     return;
   }
@@ -117,7 +117,7 @@ void track_through_rf_deflector(
 
   Estrength = voltFactor * (particleCharge * rf_param->voltage / n_kicks) / (particleMass * sqr(c_mks));
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     if (rf_param->dx || rf_param->dy || rf_param->dz)
       offsetBeamCoordinatesForMisalignment(initial, n_particles, rf_param->dx, rf_param->dy, rf_param->dz);
     if (rf_param->tilt)
@@ -265,7 +265,7 @@ void track_through_rftm110_deflector(
   t_first = rf_param->t_first_particle;
   phase0 = (rf_param->phase + gauss_rn_lim(0.0, rf_param->phaseNoise, 2, random_3) + (rf_param->phaseNoiseGroup ? rf_param->groupPhaseNoise * GetNoiseGroupValue(rf_param->phaseNoiseGroup) : 0)) * PI / 180.0 - omega * t_first;
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     if (rf_param->tilt)
       rotateBeamCoordinatesForMisalignment(initial, n_particles, rf_param->tilt);
     for (ip = 0; ip < n_particles; ip++) {
@@ -336,7 +336,7 @@ void set_up_rftm110(RFTM110 *rf_param, double **initial, long n_particles, doubl
 #endif
 
   if (!rf_param->fiducial_seen) {
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       for (ip = rf_param->t_first_particle = 0; ip < n_particles; ip++) {
         pc = pc_central * (1 + initial[ip][5]);
         beta = pc / sqrt(1 + sqr(pc));
@@ -348,7 +348,7 @@ void set_up_rftm110(RFTM110 *rf_param, double **initial, long n_particles, doubl
       }
     }
 #if USE_MPI
-    if (USE_MPI && notSinglePart) {
+    if (USE_MPI && distributedBeam) {
       long n_total;
 #  ifndef USE_KAHAN
       double tmp;
@@ -588,7 +588,7 @@ void track_through_multipole_deflector
         phase = rf_param->phase[mode] * PI / 180.0 + omega * (t_part - t_first);
         ptPhaseFactor = cos(phase) / k;
         pzPhaseFactor = sin(phase);
-        if (isSlave || !notSinglePart) {
+        if (isSlave || !distributedBeam) {
           switch (mode) {
           case 0: /* dipole */
             dpx += rf_param->b[0] * ptPhaseFactor;
@@ -656,7 +656,7 @@ void set_up_mrfdf(MRFDF *rf_param, double **initial, long n_particles, double pc
 #endif
 
   if (!rf_param->fiducial_seen) {
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       for (ip = rf_param->t_first_particle = 0; ip < n_particles; ip++) {
         pc = pc_central * (1 + initial[ip][5]);
         beta = pc / sqrt(1 + sqr(pc));
@@ -668,7 +668,7 @@ void set_up_mrfdf(MRFDF *rf_param, double **initial, long n_particles, double pc
       }
     }
 #if USE_MPI
-    if (USE_MPI && notSinglePart) {
+    if (USE_MPI && distributedBeam) {
       long n_total;
 #  ifndef USE_KAHAN
       double tmp;
