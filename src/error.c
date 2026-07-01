@@ -18,6 +18,7 @@
 #include "mdb.h"
 #include "track.h"
 #include "error.h"
+#include "knobs.h"
 
 long duplicate_name(char **list, long n_list, char *name);
 void assignRandomizedIntegersToArray(long *sequence, long n, long min, long step);
@@ -164,9 +165,19 @@ void add_error_element(ERRORVAL *errcon, NAMELIST_TEXT *nltext, LINE_LIST *beaml
   if (echoNamelists)
     print_namelist(stdout, &error_element);
 
-  /* check for valid input and copy to errcon arrays */
-  if (item == NULL)
+  /* check for valid input and copy to errcon arrays.
+   * Note: item= is required for element targets, but ignored when name
+   * refers to a knob (handled in the knob shortcut below). */
+  if (item == NULL && name != NULL && !has_wildcards(name)) {
+    char *upTmp = tmalloc(sizeof(*upTmp) * (strlen(name) + 1));
+    strcpy(upTmp, name);
+    str_toupper(upTmp);
+    if (find_knob(upTmp) < 0)
+      bombElegant("item name missing in error namelist", NULL);
+    free(upTmp);
+  } else if (item == NULL) {
     bombElegant("item name missing in error namelist", NULL);
+  }
   if ((errorDistCode = match_string(type, known_error_type, N_ERROR_TYPES, 0)) < 0)
     bombElegant("unknown error type specified", NULL);
   if (errorDistCode == SAMPLED_ERRORS) {
@@ -244,6 +255,71 @@ void add_error_element(ERRORVAL *errcon, NAMELIST_TEXT *nltext, LINE_LIST *beaml
   }
   if (element_type && has_wildcards(element_type) && strchr(element_type, '-'))
     element_type = expand_ranges(element_type);
+
+  /* Knob shortcut: if `name` (no wildcards) matches a knob, register a single
+   * ERRORVAL slot encoded with elem_type=T_KNOB and param_number=knobIndex;
+   * skip element iteration entirely. */
+  if (!has_wildcards(name)) {
+    long knobIndex;
+    char *upName = tmalloc(sizeof(*upName) * (strlen(name) + 1));
+    strcpy(upName, name);
+    str_toupper(upName);
+    knobIndex = find_knob(upName);
+    if (knobIndex >= 0) {
+      if (item && strlen(item))
+        printWarning("error_element: item= is ignored when name= matches a knob.", upName);
+      if (fractional)
+        bombElegant("error_element: fractional errors are not supported for knobs", upName);
+      errcon->name = trealloc(errcon->name, sizeof(*errcon->name) * (n_items + 1));
+      errcon->item = trealloc(errcon->item, sizeof(*errcon->item) * (n_items + 1));
+      errcon->quan_name = trealloc(errcon->quan_name, sizeof(*errcon->quan_name) * (n_items + 1));
+      errcon->quan_final_index = trealloc(errcon->quan_final_index, sizeof(*errcon->quan_final_index) * (n_items + 1));
+      errcon->quan_unit = trealloc(errcon->quan_unit, sizeof(*errcon->quan_unit) * (n_items + 1));
+      errcon->error_level = trealloc(errcon->error_level, sizeof(*errcon->error_level) * (n_items + 1));
+      errcon->error_cutoff = trealloc(errcon->error_cutoff, sizeof(*errcon->error_cutoff) * (n_items + 1));
+      errcon->error_type = trealloc(errcon->error_type, sizeof(*errcon->error_type) * (n_items + 1));
+      errcon->elem_type = trealloc(errcon->elem_type, sizeof(*errcon->elem_type) * (n_items + 1));
+      errcon->param_number = trealloc(errcon->param_number, sizeof(*errcon->param_number) * (n_items + 1));
+      errcon->sampleIndex = trealloc(errcon->sampleIndex, sizeof(*errcon->sampleIndex) * (n_items + 1));
+      errcon->flags = trealloc(errcon->flags, sizeof(*errcon->flags) * (n_items + 1));
+      errcon->bind_number = trealloc(errcon->bind_number, sizeof(*errcon->bind_number) * (n_items + 1));
+      errcon->boundTo = trealloc(errcon->boundTo, sizeof(*errcon->boundTo) * (n_items + 1));
+      errcon->unperturbed_value = trealloc(errcon->unperturbed_value, sizeof(*errcon->unperturbed_value) * (n_items + 1));
+      errcon->error_value = trealloc(errcon->error_value, sizeof(*errcon->error_value) * (n_items + 1));
+      errcon->sMin = trealloc(errcon->sMin, sizeof(*errcon->sMin) * (n_items + 1));
+      errcon->sMax = trealloc(errcon->sMax, sizeof(*errcon->sMax) * (n_items + 1));
+
+      cp_str(errcon->name + n_items, upName);
+      cp_str(errcon->item + n_items, "value");
+      errcon->quan_name[n_items] = tmalloc(sizeof(char) * (strlen(upName) + 8));
+      sprintf(errcon->quan_name[n_items], "d%s.value", upName);
+      errcon->quan_final_index[n_items] = -1;
+      cp_str(&errcon->quan_unit[n_items], "");
+      errcon->error_level[n_items] = amplitude * error_factor;
+      errcon->error_cutoff[n_items] = cutoff;
+      errcon->error_type[n_items] = errorDistCode;
+      errcon->elem_type[n_items] = T_KNOB;
+      errcon->param_number[n_items] = knobIndex;
+      errcon->sampleIndex[n_items] = -1;
+      errcon->flags[n_items] = 0;
+      errcon->flags[n_items] += (bind == 0 ? 0 : (bind == -1 ? ANTIBIND_ERRORS : BIND_ERRORS));
+      errcon->flags[n_items] += (post_correction ? POST_CORRECTION : PRE_CORRECTION);
+      /* Note: NONADDITIVE_ERRORS and FRACTIONAL_ERRORS are not honored on
+       * knobs; perturb_knob always adds delta to the current knob value. */
+      errcon->bind_number[n_items] = bind_number;
+      errcon->boundTo[n_items] = -1;
+      errcon->unperturbed_value[n_items] = 0.0;
+      errcon->error_value[n_items] = 0.0;
+      errcon->sMin[n_items] = sMin;
+      errcon->sMax[n_items] = sMax;
+      errcon->n_items = n_items + 1;
+      free(upName);
+      log_exit("add_error_element");
+      return;
+    }
+    free(upName);
+  }
+
   if (has_wildcards(name)) {
     if (strchr(name, '-'))
       name = expand_ranges(name);
