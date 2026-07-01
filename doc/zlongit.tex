@@ -33,6 +33,19 @@ Other notes:
  being used, as {\tt elegant} will try to resolve the resonance peak and achieve the desired
  bin spacing. This can result in poor performance, particularly for the parallel version.
 \item Wake output is available only in the serial version.
+\item By default, the binning grid is centered on the bunch
+  ($t_{\rm min} = \langle t\rangle - n_b\,dt/2$) and bin indices are
+  computed by truncation ($i_b = \lfloor (t-t_{\rm min})/dt\rfloor$),
+  so bin {\em left edges\/} sit at $t_{\rm min} + i_b\,dt$.  Setting
+  {\tt BIN\_CENTERED=1} switches to the convention used by {\tt
+  ZTRANSVERSE} and {\tt IMPEDANCE}: the bunch is placed one bin in
+  from the left edge of the grid, and bin {\em centers\/} sit at
+  $t_{\rm min} + i_b\,dt$ (with $i_b$ computed by rounding).  The two
+  conventions give physically equivalent results that typically
+  differ at the half-bin sampling level ($\sim 10^{-6}$ relative);
+  use {\tt BIN\_CENTERED=1} when combining a {\tt ZLONGIT} element
+  with a {\tt ZTRANSVERSE} or {\tt IMPEDANCE} element where you want
+  the bunch to be binned identically in both.
 \end{enumerate}
 
 Bunched-mode application of the impedance is possible using specially-prepared input
