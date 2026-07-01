@@ -20,7 +20,7 @@
 #define SQR_PI (PI * PI)
 #define ALPHA (1. / 137.036)
 #define mp_mks 1.672648500000000e-27
-#define kb_mks 1.380658000000000e-23
+#define kb_mks k_boltzmann_mks
 
 #define BS_Y0 (1e-8)
 
@@ -35,10 +35,10 @@ double solveBremsstrahlungCDF(double F);
 long track_through_matter(
   double **part, long np, long iPass, MATTER *matter, double Po, double **accepted, double z0) {
   long ip;
-  double L, Nrad, *coord, theta_rms = 0, beta, P, gamma = 0.0;
-  double z1, z2, dx, dy, ds, t = 0.0, dGammaFactor;
+  double L, Nrad, *coord, theta_rms = 0, beta, beta4gamma2, P, gamma = 0.0;
+  double z1, z2, dx, dy, ds = 0.0, t = 0.0, dGammaFactor;
   double K1, K2 = 0.0, sigmaTotal, probScatter = 0.0, dgamma;
-  double Xo, probBSScatter = 0, probERScatter = 0, rho;
+  double Xo, probBSScatter = 0, probERScatter = 0, rho, nDensity;
   //long nScatters = 0;
   long i_top, isLost;
   /* long sections; */
@@ -84,15 +84,18 @@ long track_through_matter(
     bombElegant("ENERGY_DECAY=1 and NUCLEAR_BREHMSSTRAHLUNG=1 or ELECTRON_RECOIL=1 options to MATTER/SCATTER element are mutually exclusive", NULL);
 
   beta = Po / sqrt(sqr(Po) + 1);
+  beta4gamma2 = sqr(beta)*sqr(Po);
   rho = matter->rho;
   if (matter->pressure > 0 && matter->temperature > 0)
-    rho = matter->multiplicity * matter->pressure / (kb_mks * matter->temperature) * mp_mks * matter->A;
+    rho = matter->multiplicity * matter->pressure/(kb_mks * matter->temperature) * mp_mks * matter->A;
+  nDensity = rho/(mp_mks * matter->A);
 
   if (matter->Xo == 0) {
     if (matter->Z < 1 || matter->A < 1 || rho <= 0)
       bombElegant("XO=0 but Z, A, rho, pressure, temperature, multiplicity invalid for MATTER element", NULL);
     Xo = radiationLength(matter->Z, matter->A, rho);
-    /* printf("Computed radiation length for Z=%ld, A=%le, rho=%le is %le m\n",
+    /*
+    printf("Computed radiation length for Z=%ld, A=%le, rho=%le is %le m\n",
            matter->Z, matter->A, matter->rho, Xo);
     */
   } else {
@@ -108,7 +111,7 @@ long track_through_matter(
   Nrad = L / Xo;
   dGammaFactor = 1 - exp(-Nrad);
   prob = probBS = probER = 0;
-  if (Nrad < 1e-3 || matter->nuclearBremsstrahlung || matter->electronRecoil) {
+  if ((Nrad < 1e-3 || matter->nuclearBremsstrahlung || matter->electronRecoil) && !matter->forceMCS) {
     if (rho == 0)
       bombElegant("MATTER element is too thin or requests special features---provide Z, A, and rho (or pressure and temperature) for single-scattering calculation.", NULL);
     K1 = 4 * matter->Z * (matter->Z + 1) * sqr(particleRadius / (beta * Po));
@@ -130,10 +133,18 @@ long track_through_matter(
     prob = probScatter / sections0;
     probBS = probBSScatter / sections0;
     probER = probERScatter / sections0;
+    /*
     printf("Sections=%ld, L1 = %le, probIS = %le, probBS = %le, probER = %le\n", sections0, L1, prob, probBS, probER);
+    */
   } else {
-    multipleScattering = 1;
-    theta_rms = 13.6 / particleMassMV / Po / sqr(beta) * sqrt(Nrad) * (1 + 0.038 * log(Nrad));
+    if (matter->forceMCS && Nrad<1e-3) {
+        multipleScattering = 2;
+	/* This is for the projected angles */
+        theta_rms = sqrt(4*PI*nDensity*L*sqr(particleRadius)/beta4gamma2*matter->Z*(matter->Z+1)*log(184.15/pow(matter->Z,1./3.)));
+    } else {
+      multipleScattering = 1;
+      theta_rms = 13.6 / particleMassMV / Po / sqr(beta) * sqrt(Nrad) * (1 + 0.038 * log(Nrad));
+    }
   }
 
   i_top = np - 1;
@@ -178,7 +189,7 @@ long track_through_matter(
         beta = P / gamma;
         t = coord[4] / beta;
       }
-      if (multipleScattering) {
+      if (multipleScattering==1) {
         /* use the multiple scattering formula */
         z1 = gauss_rn(0, random_2);
         z2 = gauss_rn(0, random_2);
@@ -189,6 +200,16 @@ long track_through_matter(
         coord[2] += (dy = (z1 / SQRT_3 + z2) * L * theta_rms / 2 + L * coord[3]);
         coord[3] += z2 * theta_rms;
         ds = sqrt(sqr(L) + sqr(dx) + sqr(dy));
+      } else if (multipleScattering==2) {
+	coord[0] += L/2*coord[1];
+	coord[2] += L/2*coord[3];
+        z1 = gauss_rn(0, random_2);
+        z2 = gauss_rn(0, random_2);
+        coord[1] += theta_rms*z1;
+        coord[3] += theta_rms*z2;
+	coord[0] += L/2*coord[1];
+	coord[2] += L/2*coord[3];
+	ds = L;
       } else {
         /* model scattering using the cross section */
         double F, theta, phi, zs, dxp, dyp;
