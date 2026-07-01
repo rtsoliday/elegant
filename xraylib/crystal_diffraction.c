@@ -430,11 +430,10 @@ int Crystal_ReadFile (const char* file_name, Crystal_Array* c_array) {
 
   /* Loop over all lines of the file. */
 
-  while (!feof(fp)) {
+  while (fgets(buffer, 100, fp)) {
 
     /* Start of compound def looks like: "#S <num> <Compound>" */
 
-    fgets (buffer, 100, fp);
     if (buffer[0] != '#' || buffer[1] != 'S') continue;
 
     ex = sscanf(buffer, "%20s %d %20s", tag, &i, compound);
@@ -456,10 +455,7 @@ int Crystal_ReadFile (const char* file_name, Crystal_Array* c_array) {
 
     found_it = FALSE;
 
-    while (!feof(fp)) {
-
-      fgets (buffer, 100, fp);
-
+    while (fgets(buffer, 100, fp)) {
       if (buffer[0] == '#' && buffer[1] == 'L') break;
 
       if (buffer[0] == '#' && buffer[1] == 'U' && buffer[2] == 'C' &&
@@ -499,8 +495,7 @@ int Crystal_ReadFile (const char* file_name, Crystal_Array* c_array) {
     floc = ftell(fp);  /* Memorize current location in file */
 
     n = 0;
-    while (!feof(fp)) {
-      fgets (buffer, 100, fp);
+    while (fgets(buffer, 100, fp)) {
       if (buffer[0] == '#') break;
       n++;
     }
