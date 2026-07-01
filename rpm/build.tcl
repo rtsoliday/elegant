@@ -2,7 +2,7 @@
 # \
 exec tclsh "$0" "$@"
 
-set version 2026.2.0
+set version 2026.3.0
 set name elegant-$version
 puts "Building $name RPM"
 
