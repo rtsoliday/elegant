@@ -181,7 +181,7 @@ void SDDS_PhaseSpaceSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, lon
                           char *command_file, char *lattice_file, char *caller) {
   log_entry("SDDS_PhaseSpaceSetup");
 #if SDDS_MPI_IO
-  if (notSinglePart)
+  if (distributedBeam)
     SDDS_table->parallel_io = 1;
   else
     SDDS_table->parallel_io = 0;
@@ -834,7 +834,7 @@ void dump_watch_particles(WATCH *watch, long step, long pass, double **particle,
   }
 
 #if SDDS_MPI_IO
-  if (isMaster && notSinglePart) /* No particle will be dumped by master */
+  if (isMaster && distributedBeam) /* No particle will be dumped by master */
     particles = 0;
   else
 #endif
@@ -866,7 +866,7 @@ void dump_watch_particles(WATCH *watch, long step, long pass, double **particle,
   row = 0;
   count = 0;
 #if SDDS_MPI_IO
-  if ((isSlave && notSinglePart) || (!notSinglePart && isMaster))
+  if ((isSlave && distributedBeam) || (!distributedBeam && isMaster))
 #endif
     for (i = 0; i < particles; i += watch->sparseInterval) {
       if (!((watch->startPID < 0 && watch->endPID < 0) || (particle[i][6] >= watch->startPID && particle[i][6] <= watch->endPID)))
@@ -920,7 +920,7 @@ void dump_watch_particles(WATCH *watch, long step, long pass, double **particle,
     }
 
 #if SDDS_MPI_IO
-  if (USE_MPI && notSinglePart) {
+  if (USE_MPI && distributedBeam) {
     MPI_Allreduce(&row, &total_row, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&count, &total_count, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     if (isMaster)
@@ -1678,7 +1678,7 @@ void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, long particles,
 #endif
 
   log_entry("dump_phase_space");
-  if ((notSinglePart && isSlave) || (!notSinglePart && isMaster)) {
+  if ((distributedBeam && isSlave) || (!distributedBeam && isMaster)) {
     if (!particle)
       bombElegant("NULL coordinate pointer passed to dump_phase_space", NULL);
 
@@ -1694,7 +1694,7 @@ void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, long particles,
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
 #if SDDS_MPI_IO
-  if (notSinglePart) {
+  if (distributedBeam) {
     MPI_Reduce(&particles, &total_particles, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
     if (isMaster) {
       particles = total_particles;
@@ -1710,7 +1710,7 @@ void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, long particles,
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
 #if SDDS_MPI_IO
-  if ((notSinglePart && isSlave) || (!notSinglePart && isMaster))
+  if ((distributedBeam && isSlave) || (!distributedBeam && isMaster))
 #endif
     for (i = 0; i < particles; i++) {
       p = Po * (1 + particle[i][5]);
@@ -1732,7 +1732,7 @@ void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, long particles,
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
 #if SDDS_MPI_IO
-  if ((notSinglePart && !SDDS_MPI_WriteTable(SDDS_table)) || (!notSinglePart && !SDDS_WriteTable(SDDS_table)) || !SDDS_ShortenTable(SDDS_table, 1))
+  if ((distributedBeam && !SDDS_MPI_WriteTable(SDDS_table)) || (!distributedBeam && !SDDS_WriteTable(SDDS_table)) || !SDDS_ShortenTable(SDDS_table, 1))
 #else
   if (!SDDS_WriteTable(SDDS_table) || !SDDS_ShortenTable(SDDS_table, 1))
 #endif
