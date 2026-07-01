@@ -19,6 +19,7 @@
 #include "scan.h"
 #include "SDDS.h"
 #include "sddsbrightness.h"
+#include "oagphy.h"
 #if defined(linux) || (defined(_WIN32) && !defined(_MINGW))
 #  include <omp.h>
 #else
@@ -104,26 +105,13 @@ double ComputeBrightness(double period, long Nu, double K, long n,
                          double betay, double alphay, double etay, double etayp,
                          double *lambda, double *Fn,
                          short spectralBroadening);
-long GetTwissValues(SDDS_DATASET *SDDSin,
-                    double *betax, double *alphax, double *etax, double *etaxp,
-                    double *betay, double *alphay, double *etay, double *etayp,
-                    double *ex0, double *ey0, double *Sdelta0, double *pCentral, double emitRatio,
-                    double coupling);
 double computeFactorOfConvolution(long periods, long harmonic, double Sdelta0);
 double convolutionFunc(double x);
 double delta0, sincNu; /*two constants used in convolutionFunc() */
 
-double computeBrightnessLindberg(double radLambda, int radHarm, double radDet,
-                                 double undLength, int undN, double undK,
-                                 double emitx, double emity, double betax, double betay,
-                                 double alphax, double alphay, double sigmaDelta, double current);
-double computeFluxLindberg(int radHarm, int undN, double undK,
-			   double radDet, double sigmaDelta, double current);
+/* GetTwissValues, FindPeak, Gauss_Convolve, ComputeBeamSize are provided by
+ * liboagphy (see physics/oagphy.h and physics/brightness.c). */
 
-/*following functions are needed for calculating brightness using Dejus's method */
-void FindPeak(double *E, double *spec, double *ep, double *sp, double *fwhm, int32_t n);
-int Gauss_Convolve(double *E, double *spec, int32_t *ns, double sigmaE);
-/* note that sigmaE=Sdelta0 */
 void Dejus_CalculateBrightness(double current, long nE,
                                double period_mks, long nP, long device,
                                long ihMin, long ihMax, long ihStep, double sigmaE,
@@ -136,10 +124,6 @@ void Dejus_CalculateBrightness(double current, long nE,
                                double *sigmax, double *sigmay, double *sigmaxp, double *sigmayp,
                                double **K, double ***FnOut, double ***FWHMOut,
                                double ***Energy, double ***Brightness, double ***LamdarOut);
-void ComputeBeamSize(double period, long Nu, double ex0, double ey0, double Sdelta0,
-                     double betax, double alphax, double etax, double etaxp,
-                     double betay, double alphay, double etay, double etayp,
-                     double *Sx, double *Sy, double *Sxp, double *Syp);
 void getKValueData(double **Kvalue, int32_t *Kpoints, char *filename, char *columnName);
 void getBValueData(double **Bvalue, int32_t *Bpoints, char *filename, char *columnName);
 void usb(
@@ -566,6 +550,7 @@ int main(int argc, char **argv) {
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     } else if (method==LINDBERG) {
       double *flux, *K, *lambda, *energy, *brightness;
+      double exEff, eyEff, betaxEff, betayEff, alphaxEff, alphayEff;
       flux = malloc(sizeof(double)*KPoints);
       K = malloc(sizeof(double)*KPoints);
       lambda = malloc(sizeof(double)*KPoints);
@@ -581,8 +566,10 @@ int main(int argc, char **argv) {
 	  else
 	    K[iK] = KStart + iK*dK;
           lambda[iK] = periodLength/(2*sqr(pCentral)*h)*(1 + sqr(K[iK])/2);
+	  computeEffectiveBeamParameters(&exEff, &betaxEff, &alphaxEff, ex0, betax, alphax, etax, etaxp, Sdelta0);
+	  computeEffectiveBeamParameters(&eyEff, &betayEff, &alphayEff, ey0, betay, alphay, etay, etayp, Sdelta0);
           brightness[iK] = computeBrightnessLindberg(lambda[iK], h, detuning, periodLength*periods, periods, K[iK],
-                                         ex0, ey0, betax, betay, alphax, alphay, Sdelta0, current/1e3);
+                                         exEff, eyEff, betaxEff, betayEff, alphaxEff, alphayEff, Sdelta0, current/1e3);
           flux[iK] = computeFluxLindberg(h, periods, K[iK], detuning, Sdelta0, current/1e3);
           energy[iK] = 12.39 / (1e10*lambda[iK]);
 	}
@@ -810,232 +797,6 @@ double convolutionFunc(double x) {
   gx = exp(-(x * x) / (8 * delta0 * delta0));
   multResult = C * sx * gx;
   return multResult;
-}
-
-long GetTwissValues(SDDS_DATASET *SDDSin,
-                    double *betax, double *alphax, double *etax, double *etaxp,
-                    double *betay, double *alphay, double *etay, double *etayp,
-                    double *ex0, double *ey0, double *Sdelta0, double *pCentral,
-                    double emitRatio, double coupling) {
-  double *data;
-  long rows, ey0Exist = 0;
-
-  if (!(rows = SDDS_RowCount(SDDSin)))
-    return 0;
-
-  if (!(data = SDDS_GetColumnInDoubles(SDDSin, "betax")))
-    SDDS_Bomb("unable to get betax");
-  *betax = data[rows - 1];
-  free(data);
-
-  if (!(data = SDDS_GetColumnInDoubles(SDDSin, "alphax")))
-    SDDS_Bomb("unable to get alphax");
-  *alphax = data[rows - 1];
-  free(data);
-
-  if (!(data = SDDS_GetColumnInDoubles(SDDSin, "etax")))
-    SDDS_Bomb("unable to get etax");
-  *etax = data[rows - 1];
-  free(data);
-
-  if (!(data = SDDS_GetColumnInDoubles(SDDSin, "etaxp")))
-    SDDS_Bomb("unable to get etax");
-  *etaxp = data[rows - 1];
-  free(data);
-
-  if (!(data = SDDS_GetColumnInDoubles(SDDSin, "betay")))
-    SDDS_Bomb("unable to get betay");
-  *betay = data[rows - 1];
-  free(data);
-
-  if (!(data = SDDS_GetColumnInDoubles(SDDSin, "alphay")))
-    SDDS_Bomb("unable to get alphay");
-  *alphay = data[rows - 1];
-  free(data);
-
-  if (!(data = SDDS_GetColumnInDoubles(SDDSin, "etay")))
-    SDDS_Bomb("unable to get etay");
-  *etay = data[rows - 1];
-  free(data);
-
-  if (!(data = SDDS_GetColumnInDoubles(SDDSin, "etayp")))
-    SDDS_Bomb("unable to get etay");
-  *etayp = data[rows - 1];
-  free(data);
-  if (SDDS_CheckParameter(SDDSin, "ex0", "$gp$rm", SDDS_ANY_FLOATING_TYPE, NULL) == SDDS_CHECK_OK ||
-      SDDS_CheckParameter(SDDSin, "ex0", "m", SDDS_ANY_FLOATING_TYPE, NULL) == SDDS_CHECK_OK) {
-    if (!SDDS_GetParameterAsDouble(SDDSin, "ex0", ex0))
-      SDDS_Bomb("unable to get ex0 parameter from input file");
-  } else {
-    if (!(data = SDDS_GetColumnInDoubles(SDDSin, "ex")))
-      SDDS_Bomb("unable to get ex");
-    *ex0 = data[0];
-    free(data);
-  }
-  if (SDDS_CheckParameter(SDDSin, "pCentral", NULL, SDDS_ANY_FLOATING_TYPE, NULL) == SDDS_CHECK_OK) {
-    if (!SDDS_GetParameterAsDouble(SDDSin, "pCentral", pCentral))
-      SDDS_Bomb("unable to get pCentral parameter from input file");
-  } else {
-    if (!(data = SDDS_GetColumnInDoubles(SDDSin, "pCentral")))
-      SDDS_Bomb("unable to get pCentral");
-    *pCentral = data[0];
-    free(data);
-  }
-  if (SDDS_CheckParameter(SDDSin, "Sdelta0", "", SDDS_ANY_FLOATING_TYPE, NULL) == SDDS_CHECK_OK) {
-    if (!SDDS_GetParameterAsDouble(SDDSin, "Sdelta0", Sdelta0))
-      SDDS_Bomb("unable to get Sdelta0 parameter from input file");
-  } else {
-    if (!(data = SDDS_GetColumnInDoubles(SDDSin, "Sdelta")))
-      SDDS_Bomb("unable to get pCentral");
-    *Sdelta0 = data[0];
-    free(data);
-  }
-  /* get ey0 if it is there */
-  if (SDDS_GetParameterAsDouble(SDDSin, "ey0", ey0)) {
-    ey0Exist = 1;
-  } else if ((data = SDDS_GetColumnInDoubles(SDDSin, "ey"))) {
-    ey0Exist = 1;
-    *ey0 = data[0];
-    free(data);
-  }
-  if (*ex0 <= 0.0)
-    SDDS_Bomb("ex0 should be greater than zero.");
-  if (!ey0Exist) {
-    double Jx, Jy;
-    if (SDDS_CheckParameter(SDDSin, "Jx", NULL, SDDS_ANY_FLOATING_TYPE, NULL) != SDDS_CHECK_OK ||
-        SDDS_CheckParameter(SDDSin, "Jy", NULL, SDDS_ANY_FLOATING_TYPE, NULL) != SDDS_CHECK_OK ||
-        !SDDS_GetParameterAsDouble(SDDSin, "Jx", &Jx) ||
-        !SDDS_GetParameterAsDouble(SDDSin, "Jy", &Jy)) {
-      SDDS_Bomb("unable to get Jx and/or Jy parameter from input file");
-    }
-    if (emitRatio == 0 && coupling == 0)
-      SDDS_Bomb("No vertical emittance data in file: give -emittanceRatio or -coupling");
-    if (coupling) {
-      *ex0 = *ex0 / (1 + Jy * coupling / Jx);
-      *ey0 = coupling * (*ex0);
-    } else {
-      *ey0 = *ex0 * emitRatio;
-    }
-  }
-  return 1;
-}
-
-void FindPeak(double *E, double *spec, double *ep, double *sp, double *fwhm, int32_t n) {
-  long i, ip;
-  double e1, e2;
-
-  *sp = spec[0];
-  *ep = E[0];
-  ip = -1;
-  for (i = 1; i < n; i++) {
-    if (*sp < spec[i]) {
-      *sp = spec[i];
-      *ep = E[i];
-      ip = i;
-    }
-  }
-  if (fwhm && ip != -1) {
-    *fwhm = -1;
-    e1 = e2 = -1;
-    for (i = ip; i >= 1; i--) {
-      if (spec[i] < (spec[ip] / 2)) {
-        e1 = E[i] + (E[i + 1] - E[i]) / (spec[i + 1] - spec[i]) * (spec[ip] / 2 - spec[i]);
-        break;
-      }
-    }
-    for (i = ip; i < (n - 1); i++) {
-      if (spec[i + 1] < (spec[ip] / 2)) {
-        e2 = E[i] + (E[i + 1] - E[i]) / (spec[i + 1] - spec[i]) * (spec[ip] / 2 - spec[i]);
-        break;
-      }
-    }
-    if (e1 > 0 && e2 > 0)
-      *fwhm = e2 - e1;
-  }
-}
-
-int Gauss_Convolve(double *E, double *spec, int32_t *ns, double sigmaE) {
-  int32_t nSigma = 3, nppSigma = 6, ne1, ne2, ns1, np;
-  int32_t i, j;
-  double ep, sp, sigp, de, sum, *gs, x, *spec2;
-
-  ns1 = *ns;
-  gs = spec2 = NULL;
-
-  if (!E || !spec) {
-    fprintf(stderr, "No energy or spectra points!\n");
-    return 1;
-  }
-  FindPeak(E, spec, &ep, &sp, NULL, ns1);
-
-  /*generate Gaussian with correct sigma in units of x-axis */
-  de = E[1] - E[0];
-  sigp = 2.0 * sigmaE * ep / de; /*sigma in x-axis units */
-
-  if (sigp < (nppSigma - 1)) {
-    fprintf(stderr, "too few data points for Gaussian convolution\n");
-    return 1;
-  }
-  np = (2 * nSigma) * sigp + 1;
-  if (np % 2 == 0)
-    np = np + 1; /* make odd */
-  gs = (double *)calloc(np, sizeof(*gs));
-  spec2 = (double *)calloc(ns1, sizeof(*spec2));
-  sum = 0.0;
-  for (i = 0; i < np; i++) {
-    x = i * 1.0 - 0.5 * (np - 1);
-    gs[i] = exp(-x * x / 2.0 / (sigp * sigp));
-    /*  fprintf(stderr,"x=%e, gs=%e\n",x,gs[i]); */
-    sum = sum + gs[i];
-  }
-  /*fprintf(stderr,"sigp=%e,nSigma=%d\n",sigp,nSigma); */
-
-  /*make convolution */
-  ne1 = np / 2;
-  ne2 = ns1 - ne1 - 1;
-  if (ne2 < 0) {
-    fprintf(stderr, "Error: Check the number of peak search points\n");
-    return 1;
-  }
-  for (i = ne1; i <= ne2; i++) {
-    spec2[i] = 0.0;
-    for (j = 0; j < np; j++)
-      spec2[i] = spec2[i] + spec[i + ne1 - j] * gs[j];
-  }
-  /* fprintf(stderr,"np=%d, sum=%e, ne1=%d, ne2=%d\n",np,sum,ne1,ne2); */
-  /*retun in original array and make adjustment of array sizes */
-  *ns = ne2 - ne1 + 1;
-  for (i = ne1; i <= ne2; i++) {
-    E[i - ne1] = E[i];
-    spec[i - ne1] = spec2[i] / sum;
-  }
-  free(spec2);
-  free(gs);
-  return 0;
-}
-
-/*compute the beam size from twiss parameters
-  output: Sx --- sigmaX
-  Sy --- sigmaY
-  Sxp --- sigmaX prime
-  Syp --- sigmaY prime
-*/
-void ComputeBeamSize(double period, long Nu, double ex, double ey, double Sdelta0,
-                     double betax, double alphax, double etax, double etaxp,
-                     double betay, double alphay, double etay, double etayp,
-                     double *Sx, double *Sy, double *Sxp, double *Syp) {
-  double gammax, gammay;
-
-  gammax = (1 + sqr(alphax)) / betax;
-  gammay = (1 + sqr(alphay)) / betay;
-  if (Sxp)
-    *Sxp = sqrt(ex * gammax + sqr(Sdelta0 * etaxp)) * 1.0e3;
-  if (Syp)
-    *Syp = sqrt(ey * gammay + sqr(Sdelta0 * etayp)) * 1.0e3;
-  if (Sx)
-    *Sx = sqrt(ex * betax + sqr(Sdelta0 * etax)) * 1.0e3;
-  if (Sy)
-    *Sy = sqrt(ey * betay + sqr(Sdelta0 * etay)) * 1.0e3;
 }
 
 /*caculate brightness by calling fortran subroutine usb(), written by Dejus */
@@ -1362,9 +1123,12 @@ void Dejus_CalculateBrightness(double current, long nE,
         FindPeak(tmpE_local, tmpSpec_local, &ep, &sp, NULL, ns);
         /* fprintf(stderr,"j=%d,points %d,maxE %e,minE %e,peakE %e,peakB %e\n",j,nek,ekMax,ekMin,ep,sp); */
         if (sigmaE > 0) {
-          /* gauss convolve */
-          if (Gauss_Convolve(tmpE_local, tmpSpec_local, &ns, sigmaE))
+          /* gauss convolve.  Gauss_Convolve takes a long*; ns is an int32_t
+           * here to satisfy the fortran usb_() ABI elsewhere in this function. */
+          long nsLong = ns;
+          if (Gauss_Convolve(tmpE_local, tmpSpec_local, &nsLong, sigmaE, NULL, NULL))
             exit(1);
+          ns = nsLong;
         }
         FindPeak(tmpE_local, tmpSpec_local, &ep, &sp, &fwhm[j][ih], ns);
         /* fprintf(stderr,"after gauss convolve, peakE %e, peakB %e\n",ep,sp); */
