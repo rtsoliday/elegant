@@ -79,7 +79,7 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
 
   set_up_wake(wakeData, run, i_pass, np0, charge);
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     rampFactor = 0;
     if (i_pass >= (wakeData->rampPasses - 1))
       rampFactor = 1;
@@ -142,14 +142,14 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
       fflush(stdout);
 #endif
 #if USE_MPI
-      if (isSlave && notSinglePart)
+      if (isSlave && distributedBeam)
         find_global_min_max(&tmin, &tmax, np, workers);
 #  ifdef DEBUG
       printf("WAKE: global tmin=%21.15le, tmax=%21.15le, np=%ld\n", tmin, tmax, np);
       fflush(stdout);
 #  endif
 #endif
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         if ((tmax - tmin) > (wakeData->t[wakeData->wakePoints - 1] - wakeData->t[0])) {
           if (!wakeData->allowLongBeam) {
             fprintf(stderr, "Error: The beam is longer than the longitudinal wake function.\nThis may produce unphysical results.\n");
@@ -224,7 +224,7 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
         n_binned = binTimeDistribution(Itime, pbin, tmin, dt, nb, time, part, Po, np);
       }
 
-      if (!USE_MPI || !notSinglePart) {
+      if (!USE_MPI || !distributedBeam) {
         if (n_binned != np) {
           snprintf(warningBuffer, 1024,
                    "Only %ld of %ld particles were binned. Consider setting n_bins=0 to invoke autoscaling.",
@@ -248,7 +248,7 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
         }
       }
 
-      if (isSlave && notSinglePart) {
+      if (isSlave && distributedBeam) {
         buffer = malloc(sizeof(double) * nb);
         if (nb<=0)
           bombElegantVA("Error in WAKE: number of bins is %ld\n", nb);
@@ -257,7 +257,7 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
         free(buffer);
       }
 #endif
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         if (wakeData->smoothing && nb >= (2 * wakeData->SGHalfWidth + 1)) {
           if (!SavitzyGolaySmooth(Itime, nb, wakeData->SGOrder, wakeData->SGHalfWidth, wakeData->SGHalfWidth, 0)) {
             fprintf(stderr, "Problem with smoothing for WAKE element (file %s)\n",
@@ -275,7 +275,7 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
          For the wake, the argument is the normal convention wherein larger
          arguments are later times.
          */
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         Vtime[nb] = 0;
         convolveArrays(Vtime, nb,
                        Itime, nb,
@@ -320,7 +320,7 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
     free(time);
   if (pbin)
     free(pbin);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
   if (Itime)
     free(Itime);
@@ -382,7 +382,7 @@ void set_up_wake(WAKE *wakeData, RUN *run, long pass, long particles, CHARGE *ch
     if (particles)
       wakeData->macroParticleCharge = wakeData->charge / particles;
 #else
-    if (notSinglePart) {
+    if (distributedBeam) {
       long particles_total;
       if (isSlave) {
         MPI_Allreduce(&particles, &particles_total, 1, MPI_LONG, MPI_SUM, workers);
@@ -468,7 +468,7 @@ void set_up_wake(WAKE *wakeData, RUN *run, long pass, long particles, CHARGE *ch
   }
   find_min_max(&tmin, &tmax, wakeData->t, wakeData->wakePoints);
 #if USE_MPI
-  if (isSlave && notSinglePart)
+  if (isSlave && distributedBeam)
     find_global_min_max(&tmin, &tmax, wakeData->wakePoints, workers);
 #endif
   if (tmin >= tmax) {
@@ -555,7 +555,7 @@ void track_through_corgpipe(double **part, long np, CORGPIPE *corgpipe, double *
   /* this element does nothing in single particle mode (e.g., trajectory, orbit, ..) */
   /*
 #if USE_MPI
-  if (notSinglePart==0)
+  if (distributedBeam==0)
     return;
 #else
   if (np<2)
@@ -695,7 +695,7 @@ void track_through_corgplates(double **part, long np, CORGPLATES *corgplates, do
   /* this element does nothing in single particle mode (e.g., trajectory, orbit, ..) */
   /*
 #if USE_MPI
-  if (notSinglePart==0)
+  if (distributedBeam==0)
     return;
 #else
   if (np<2)
