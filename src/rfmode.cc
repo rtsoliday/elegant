@@ -135,7 +135,7 @@ void track_through_rfmode(
     if (np0)
       rfmode->mp_charge = rfmode->charge / np0;
 #else
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (np_total)
         rfmode->mp_charge = rfmode->charge / np_total;
     } else {
@@ -207,7 +207,7 @@ void track_through_rfmode(
 #endif
   }
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
 #ifdef DEBUG
     printf("RFMODE: Determining bucket assignments\n");
 #endif
@@ -257,7 +257,7 @@ void track_through_rfmode(
 #endif
 #if USE_MPI
     /* Master needs to know if this bucket has particles */
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBuckets == 1)
         np = np0;
       else if (npBucket)
@@ -276,7 +276,7 @@ void track_through_rfmode(
       continue;
 #endif
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       if (nBuckets == 1) {
         time = time0;
         part = part0;
@@ -306,7 +306,7 @@ void track_through_rfmode(
       }
 
 #if USE_MPI
-      if (notSinglePart) {
+      if (distributedBeam) {
         if (isSlave) {
           double t_total;
           MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
@@ -753,7 +753,7 @@ void track_through_rfmode(
         fflush(stdout);
       }
 #  endif
-      if (isSlave || !notSinglePart) {
+      if (isSlave || !distributedBeam) {
         long *buffer;
         buffer = (long *)calloc(lastBin - firstBin + 1, sizeof(long));
         MPI_Allreduce(&Ihist[firstBin], buffer, lastBin - firstBin + 1, MPI_LONG, MPI_SUM, workers);
@@ -778,7 +778,7 @@ void track_through_rfmode(
 #  endif
 #endif
 
-    if (isSlave || !notSinglePart) {
+    if (isSlave || !distributedBeam) {
       /* These values are fixed and can be used to compute the effect on the beam of
          * the "long-range" fields (previous turns) only
          */
@@ -1099,7 +1099,7 @@ void track_through_rfmode(
     free(time);
   if (pbin)
     free(pbin);
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 }
 
@@ -1423,7 +1423,7 @@ void runBinlessRfMode(
     if (np)
       rfmode->mp_charge = rfmode->charge / np;
 #else
-    if (notSinglePart) {
+    if (distributedBeam) {
       if (np_total)
         rfmode->mp_charge = rfmode->charge / np_total;
     } else {
@@ -1465,7 +1465,7 @@ void runBinlessRfMode(
   qsort(tData, np, sizeof(*tData), compTimeData);
 
 #if USE_MPI
-  if (notSinglePart) {
+  if (distributedBeam) {
     if (isSlave) {
       double t_total;
 
