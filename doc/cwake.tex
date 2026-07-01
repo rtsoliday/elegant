@@ -1,0 +1,96 @@
+The {\tt CWAKE} element combines the physics of a co-located {\tt
+WAKE} (longitudinal monopole), one or more {\tt TRWAKE} elements
+(transverse dipole and quadrupole), and two optional
+position-independent (``constant'') transverse deflecting channels,
+into a single element.  All channels are driven from one SDDS file;
+particle binning, bunch identification, and the per-bunch loop are
+done only once across every enabled channel.  This typically reduces
+the per-call overhead by about a factor of two relative to stacking
+{\tt WAKE} and one or more {\tt TRWAKE} elements at the same location.
+
+\subsection*{Channels}
+
+Seven wake channels are supported; each is enabled by naming its
+column in the input SDDS file.  Channels whose column is left at the
+default ({\tt NULL}) are disabled.  At least one channel must be
+enabled.
+
+\begin{center}
+\begin{tabular}{lllll}
+\hline
+channel        & drive $(d_x,d_y)$ & probe $(p_x,p_y)$ & kick on     & column param \\\hline
+longitudinal   & $(0,0)$           & $(0,0)$           & $\Delta E$  & {\tt WZCOLUMN} \\
+$x$ dipole     & $(1,0)$           & $(0,0)$           & $\Delta x'$ & {\tt WXCOLUMN} \\
+$y$ dipole     & $(0,1)$           & $(0,0)$           & $\Delta y'$ & {\tt WYCOLUMN} \\
+$x$ quadrupole & $(0,0)$           & $(1,0)$           & $\Delta x'$ & {\tt QXCOLUMN} \\
+$y$ quadrupole & $(0,0)$           & $(0,1)$           & $\Delta y'$ & {\tt QYCOLUMN} \\
+$x$ constant   & $(0,0)$           & $(0,0)$           & $\Delta x'$ & {\tt CXCOLUMN} \\
+$y$ constant   & $(0,0)$           & $(0,0)$           & $\Delta y'$ & {\tt CYCOLUMN} \\
+\hline
+\end{tabular}
+\end{center}
+
+The two constant channels apply a uniform transverse deflection that depends only on the bunch current $I(t)$, not on
+the centroid position of the bunch or the position of the probe particle.  These model deflecting wakes from asymmetric
+structures where the wake voltage is independent of the probe particle's transverse coordinates.
+
+Five of the channels ({longitudinal, $x$/$y$ quadrupole, $x$/$y$ constant}) share the same $I(t)$ driver histogram; this
+histogram is built exactly once per bunch regardless of how many of those channels are enabled.  Each transverse-dipole
+channel adds one additional moment histogram ($xI(t)$ or $yI(t)$).
+
+\subsection*{Scale factors}
+
+Following the {\tt LRWAKE} convention, every channel has its own
+scale parameter on top of the global {\tt FACTOR}:
+\begin{itemize}
+\item {\tt FACTOR} multiplies every channel.
+\item {\tt ZFACTOR} multiplies the longitudinal channel only.
+\item {\tt XFACTOR} ({\tt YFACTOR}) multiplies the $x$ ($y$) dipole channel.
+\item {\tt QXFACTOR} ({\tt QYFACTOR}) multiplies the $x$ ($y$) quadrupole channel.
+\item {\tt CXFACTOR} ({\tt CYFACTOR}) multiplies the $x$ ($y$) constant channel.
+\end{itemize}
+The effective scale of each channel is {\tt FACTOR} $\times$ the
+channel factor $\times$ the pass-ramp factor.
+
+\subsection*{Binning}
+
+Bin grids match those of {\tt WAKE} and {\tt TRWAKE} (centered bins,
+$t_{\rm min} = t_{\rm mean} - n_b\,dt/2$ when {\tt N\_BINS} is given,
+otherwise autoscale from the beam length with $t_{\rm min} -= dt$).
+The wake-function time spacing in the input file fixes $dt$.
+
+\subsection*{Notes}
+
+\begin{enumerate}
+\item The beam charge must be specified via a {\tt CHARGE} element
+  somewhere upstream in the beamline.  Unlike {\tt WAKE} and {\tt
+  TRWAKE}, {\tt CWAKE} has no deprecated charge parameter; omitting
+  the {\tt CHARGE} element is an error.
+\item The original {\tt WAKE} and {\tt TRWAKE} elements are unchanged
+  and remain available.  Existing input decks need no modification.
+  However, users are encouraged to switch to \verb|CWAKE|.
+\item Bunched-mode operation via {\tt BUNCHED\_BEAM\_MODE=1}; see
+  Section~\ref{sect:bunchedBeams}.
+\item When only the longitudinal channel is enabled, results are
+  bit-identical to a stand-alone {\tt WAKE}.  Likewise for any single
+  transverse channel and the corresponding stand-alone {\tt TRWAKE}.
+\item When the longitudinal channel is combined with any transverse
+  channel, {\tt CWAKE} refreshes $p_z$ from the post-longitudinal
+  particle state before applying the transverse kicks, matching the
+  behavior of stacked {\tt WAKE} $+$ {\tt TRWAKE} elements where each
+  subsequent {\tt TRWAKE} recomputes $p_z$ from the updated particles.
+  A small residual ($\sim 10^{-6}$ relative) remains when both
+  dipole and quadrupole channels are present, because the baseline
+  {\tt TRWAKE}(quadrupole) sees a $p_z$ that has been updated by
+  the dipole kick, whereas {\tt CWAKE} uses the same post-longitudinal
+  $p_z$ for all transverse channels.
+\item The {\tt CXCOLUMN}/{\tt CYCOLUMN} constant deflecting channels
+  have no single-element counterpart in {\tt WAKE} or {\tt TRWAKE},
+  but they are equivalent to a {\tt TRWAKE} element configured with
+  all four {\tt X\_DRIVE\_EXPONENT}, {\tt Y\_DRIVE\_EXPONENT},
+  {\tt X\_PROBE\_EXPONENT}, and {\tt Y\_PROBE\_EXPONENT} set to zero.
+\item The wake-function file must satisfy the same conventions as
+  {\tt WAKE}/{\tt TRWAKE}: time column in seconds, monotonic equal
+  spacing, wake samples in $V/C$ (longitudinal and constant
+  channels), $V/C/{\rm m}$ (dipole), or $V/C/{\rm m}^2$ (quadrupole).
+\end{enumerate}
