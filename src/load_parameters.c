@@ -1059,7 +1059,7 @@ void dumpLatticeParameters(char *filename, RUN *run, LINE_LIST *beamline, long s
       /* some kludges to avoid saving things that shouldn't be saved as the user didn't
          set them in the first place
          */
-      if (strcmp(parameter[iParam].name, "PHASE_REFERENCE") == 0 && value > LONG_MAX / 2) {
+      if (strcmp(parameter[iParam].name, "PHASE_REFERENCE") == 0 && value > ((double)LONG_MAX / 2)) {
         doSave = 0;
       }
 
