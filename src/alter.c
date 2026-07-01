@@ -10,6 +10,7 @@
 #include "mdb.h"
 #include "track.h"
 #include "match_string.h"
+#include "knobs.h"
 
 #define DEBUG 0
 
@@ -24,6 +25,7 @@ typedef struct {
   double s_start, s_end;
   char *after, *before;
   long done;
+  long knobIndex; /* >=0: this spec targets a knob (see knobs.h); element fields are ignored */
 } ALTER_SPEC;
 
 static ALTER_SPEC *alterSpec = NULL;
@@ -80,6 +82,52 @@ void setup_alter_element(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
     bombElegant("no name given", NULL);
   if (has_wildcards(name) && strchr(name, '-'))
     name = expand_ranges(name);
+  {
+    /* Knob shortcut: if name (no wildcards) matches a knob, register the
+     * spec as a knob target.  All element-targeting fields are rejected. */
+    long knobIdx = -1;
+    char *upName = NULL;
+    if (!has_wildcards(name)) {
+      upName = tmalloc(sizeof(*upName) * (strlen(name) + 1));
+      strcpy(upName, name);
+      str_toupper(upName);
+      knobIdx = find_knob(upName);
+    }
+    if (knobIdx >= 0) {
+      if (item && strlen(item))
+        printWarning("alter_elements: item= is ignored when name= matches a knob.", upName);
+      if (multiplicative)
+        bombElegant("alter_elements: multiplicative is not supported for knobs", upName);
+      if (string_value && strlen(string_value))
+        bombElegant("alter_elements: string_value is not supported for knobs", upName);
+      if (type && strlen(type))
+        printWarning("alter_elements: type= is ignored when name= matches a knob.", upName);
+      if (exclude && strlen(exclude))
+        printWarning("alter_elements: exclude= is ignored when name= matches a knob.", upName);
+      if (start_occurence != 0 || end_occurence != 0)
+        printWarning("alter_elements: start/end_occurence are ignored when name= matches a knob.", upName);
+      if ((after && strlen(after)) || (before && strlen(before)))
+        printWarning("alter_elements: after/before are ignored when name= matches a knob.", upName);
+      alterSpec = SDDS_Realloc(alterSpec, sizeof(*alterSpec) * (alterSpecs + 1));
+      memset(&alterSpec[alterSpecs], 0, sizeof(*alterSpec));
+      cp_str(&alterSpec[alterSpecs].name, upName);
+      cp_str(&alterSpec[alterSpecs].item, "value");
+      alterSpec[alterSpecs].value = value;
+      alterSpec[alterSpecs].differential = differential;
+      alterSpec[alterSpecs].multiplicative = 0;
+      alterSpec[alterSpecs].alter_at_each_step = alter_at_each_step;
+      alterSpec[alterSpecs].alter_before_load_parameters = alter_before_load_parameters;
+      alterSpec[alterSpecs].verbose = verbose;
+      alterSpec[alterSpecs].knobIndex = knobIdx;
+      alterSpec[alterSpecs].done = 0;
+      alterSpecs++;
+      free(upName);
+      do_alter_elements(run, beamline, 0, 0);
+      return;
+    }
+    if (upName)
+      free(upName);
+  }
   if (!item || !strlen(item))
     bombElegant("no item given", NULL);
   item = str_toupper(item);
@@ -191,6 +239,7 @@ void setup_alter_element(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
   alterSpec[alterSpecs].s_start = s_start;
   alterSpec[alterSpecs].s_end = s_end;
   alterSpec[alterSpecs].done = 0;
+  alterSpec[alterSpecs].knobIndex = -1;
   alterSpecs++;
 
   do_alter_elements(run, beamline, 0, 0);
@@ -213,6 +262,20 @@ void do_alter_elements(RUN *run, LINE_LIST *beamline, short before_load_paramete
     if (per_step == 0 && alterSpec[i].done)
       continue;
     alterSpec[i].done = 1;
+    if (alterSpec[i].knobIndex >= 0) {
+      /* Knob target: set or perturb the knob's scalar value; the cascade to
+       * linked element parameters happens inside set_knob_value(). */
+      double oldValue = get_knob_value(alterSpec[i].knobIndex);
+      double newValue = alterSpec[i].differential ? oldValue + alterSpec[i].value
+                                                  : alterSpec[i].value;
+      set_knob_value(alterSpec[i].knobIndex, newValue, beamline);
+      if (alterSpec[i].verbose && printingEnabled) {
+        printf("Knob %s.value changed from %21.15e to %21.15e\n",
+               alterSpec[i].name, oldValue, newValue);
+        fflush(stdout);
+      }
+      continue;
+    }
     context = NULL;
     lastType = -1;
     nMatches = 0;
