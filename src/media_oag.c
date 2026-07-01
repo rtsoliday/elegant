@@ -16,7 +16,7 @@ long approximate_percentiles_p(double *position, double *percent, long positions
 
   hist = cdf = NULL;
 
-  if (!notSinglePart)
+  if (!distributedBeam)
     return approximate_percentiles(position, percent, positions, x, n, bins);
 
   if (bins < 2 || positions <= 0) /* In the parallel version, n=0 will not be a condition to return, as no particle on Master */
@@ -24,7 +24,7 @@ long approximate_percentiles_p(double *position, double *percent, long positions
 
   if (!(hist = calloc(sizeof(*hist), bins)))
     return 0;
-  if (isMaster && notSinglePart)
+  if (isMaster && distributedBeam)
     n = 0;
   find_min_max(&xMin, &xMax, x, n);
   if (isMaster) {
