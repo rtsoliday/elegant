@@ -106,7 +106,7 @@ void index_bunch_assignments(double **part, long np, long idSlotsPerBunch, doubl
     fflush(stdout);
 #endif
 #if USE_MPI
-    if (isSlave || !notSinglePart || partOnMaster) {
+    if (isSlave || !distributedBeam || partOnMaster) {
 #  ifdef DEBUG
       printf("...performing bunch assignment\n");
       fflush(stdout);
@@ -219,7 +219,7 @@ void index_bunch_assignments(double **part, long np, long idSlotsPerBunch, doubl
     printf("Waiting on barrier at end of index_bunch_assignment\n");
     fflush(stdout);
 #  endif
-    if (notSinglePart)
+    if (distributedBeam)
       MPI_Barrier(workers);
     else
       MPI_Barrier(MPI_COMM_WORLD);
@@ -276,14 +276,14 @@ void track_through_lrwake(double **part, long np, LRWAKE *wakeData, double *P0In
   /* this element does nothing in single particle mode (e.g., trajectory, orbit, ..) */
   /*
 #if USE_MPI
-  if (notSinglePart==0)
+  if (distributedBeam==0)
     return;
 #endif
 */
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
 #ifdef DEBUG
-    printf("Running track_through_lrwake, isSlave=%ld, notSinglePart=%ld\n", isSlave, notSinglePart);
+    printf("Running track_through_lrwake, isSlave=%ld, distributedBeam=%ld\n", isSlave, distributedBeam);
 #endif
 
     P0 = *P0Input;
