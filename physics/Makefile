@@ -6,7 +6,7 @@ endif
 include ../Makefile.rules
 
 LIBRARY = oagphy
-LIBRARY_SRC = brightness.c pressureData.c
+LIBRARY_SRC = brightness.c pressureData.c lindbergBrightness.c
 
 SCRIPTS = spectraCLI spectra2sdds
 
