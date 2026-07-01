@@ -33,7 +33,7 @@
 \begin{document}
 
 \title{User's Manual for {\tt elegant}}
-\author{Program Version 2026.2\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
+\author{Program Version 2026.3\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
 \maketitle
 
 Note: another source of help for {\tt elegant} is the on-line
@@ -57,21 +57,42 @@ Here is a summary of what's changed since release 2026.2.  Historical change log
 \subsection{Bug Fixes for Elements}
 
 \begin{itemize}
-\item None.
+  \item None.
 \end{itemize}
 
 \subsection{Bug Fixes for Commands}
 \begin{itemize}
-\item None.
+\item A bug was fixed in IBS calculations for \verb|moments_output| that resulted in non-periodic solutions. The emittances were not
+  much affected.
+\item A limitation was resolved in coupled twiss parameter computations that resulted in the taking the absolute value of the vertical dispersion.
 \end{itemize}
 
 \subsection{New and Modified Elements}
 \begin{itemize}
-\item None.
+\item The \verb|IMPEDANCE| element was added, combining the physics of \verb|ZLONGIT| and \verb|ZTRANSVERSE|. This allows
+  combining simulation of short-range monopole, dipole, and quadrupole impedances into a single element, giving a
+  significant performance improvement compared to a sequence of separate elements.
+\item The \verb|CWAKE| element was added, combining the physics of \verb|WAKE| and \verb|TRWAKE|. This allows combining
+  simulation  of short-range monopole, dipole, and quadrupole wakes into a single element, giving a
+  significant performance improvement compared to a sequence of separate elements.
+\item Spin tracking was added to the \verb|CCBEND| and \verb|LGBEND| elements. With \verb|spin_tracking=1| set
+  in \verb|run_setup|, both elements apply Thomas-BMT precession through the body and at the entrance/exit
+  edges.
+\item For \verb|CCBEND| and \verb|LGBEND|, the body radiation calculation now includes the contribution of
+  spurious systematic and random multipoles ({\tt SYSTEMATIC\_MULTIPOLES}, {\tt RANDOM\_MULTIPOLES}, etc.). 
+  Previously these were applied to the orbit but omitted from the
+  radiation calculation. 
 \end{itemize}
 
 \subsection{New and Modified Commands}
 \begin{itemize}
+\item Added the \verb|load_knobs| command, which allows loading knob definitions that link changes in multiple elements to
+  a user-defined handle. The handle can be used in \verb|alter_elements|, \verb|error_element|, \verb|optimization_variable|,
+  and \verb|vary_element|.
+\item Added the \verb|undulator_brightness| command, which computes the x-ray brightness of a specified undulator at a specified
+  photon energy, typically for the periodic lattice functions and equilibrium emittance computed by \verb|twiss_output|.
+  The results are available for optimization.
+\item The \verb|moments_output| command now optionally includes the effect of elastic gas scattering.
 \item The \verb|coupled_twiss| command now supplies \verb|alphax1|, \verb|alphax2|, \verb|alphay1|, and \verb|alphay2| in
   the output file, along with other quantities needed for progagation-based calculations.
 \item The \verb|coupled_twiss| command now supports propagation of coupled lattice functions by setting \verb|matched=0|.
@@ -86,6 +107,8 @@ Here is a summary of what's changed since release 2026.2.  Historical change log
   next step. This is almost certainly not what is wanted in most cases, in light of which we decided to change the default behavior.
 \item The \verb|twiss_output| command now computes the equilibrium polarization and self-polarization time when
   \verb|radiation_integrals=1|.
+\item The \verb|parallel_optimization_setup| command now allows selection of the \verb|randomsample| method. If selected, each processor
+  uses a different random sequence.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -104,6 +127,8 @@ Changes to these tools in this release include
 \begin{itemize}
 \item The \verb|touschekLifetime| program now computes the lifetime including polarization, based on
   \cite{PhysRevAccelBeams.27.124401}.
+\item The script \verb|swapOutPolarization| was added to model the build-up of polarization during swap-out operation and
+  the effect on the beam lifetime.
 \end{itemize}
 
 \subsection{Known Bugs, Problems, and Limitations}
@@ -477,7 +502,7 @@ example.)
 \section{Preparing beams for bunch-mode simulations}\label{sect:bunchedBeams}
 
 Certain collective-effects elements in {\tt elegant} can operate under the assumption that the beam is organized into bunches.
-This includes the {\tt FRFMODE}, {\tt FTRFMODE}, {\tt LRWAKE}, {\tt RFMODE}, {\tt WAKE}, {\tt TRFMODE}, {\tt TRWAKE}, {\tt ZLONGIT}, and {\tt ZTRANSVERSE} elements, as well as space charge effects via the \verb|insert_sceffects| command and ion effects via the
+This includes the {\tt FRFMODE}, {\tt FTRFMODE}, {\tt LRWAKE}, {\tt RFMODE}, {\tt WAKE}, {\tt TRFMODE}, {\tt TRWAKE}, {\tt CWAKE}, {\tt ZLONGIT}, {\tt ZTRANSVERSE}, and {\tt IMPEDANCE} elements, as well as space charge effects via the \verb|insert_sceffects| command and ion effects via the
 \verb|ion_effects| command.
 At present, this behavior is only available when loading a beam from an external file using the \verb|sdds_beam| command.
 A typical sequence is to run {\tt elegant} once to generate a beam file using \verb|bunched_beam|, then load that beam into a subsequent run.
@@ -823,7 +848,16 @@ Command name & Type & Description \\\hline
 \begin{itemize}
 \item \verb|name| --- A possibly-wildcard-containing string giving the names of the
         elements to alter.  If not specified, then one must specify \verb|type|.
-\item \verb|item| --- The name of the parameter to alter.
+        May alternatively name a knob defined via \verb|&load_knobs| (see
+        \ref{subsec:loadknobs}); in that case \verb|item|, \verb|type|,
+        \verb|exclude|, \verb|start_occurence|/\verb|end_occurence|,
+        \verb|s_start|/\verb|s_end|, \verb|after|/\verb|before|, and
+        \verb|string_value| are ignored, \verb|multiplicative| is rejected,
+        and \verb|value| (combined with \verb|differential| as usual) sets
+        the knob's scalar.  The new knob value cascades to every linked
+        element parameter as $\Delta\cdot\textrm{Factor}$.
+\item \verb|item| --- The name of the parameter to alter.  Required for
+        element targets; ignored when \verb|name| is a knob.
 \item \verb|type| --- A possibly-wildcard-containing string giving the names of element
         {\em types} to alter.  May be specified with \verb|name| or by itself.
 \item \verb|exclude| --- A possibly-wildcard-containing string giving the names of elements
@@ -3157,10 +3191,15 @@ and \verb|SOLE|.
 
 \begin{itemize}
 \item \verb|name| --- The possibly wildcarded name of the elements for which errors are being specified.
+ May alternatively name a knob defined via \verb|&load_knobs| (see \ref{subsec:loadknobs}); in that case
+ \verb|item|, \verb|element_type|, \verb|after|, \verb|before|, \verb|fractional|, and \verb|nonadditive|
+ are ignored, no wildcards are accepted, and the random draw is always added to the knob's current value,
+ which in turn updates every linked element parameter by $\textrm{draw}\cdot\textrm{Factor}$.
 \item \verb|element_type| --- An optional, possibly wildcarded string giving the type of elements to
  which the errors should be applied.  E.g., \verb|element_type=*MON*| would match all beam position monitors.
  If this item is given, then \verb|name| may be left blank.
-\item \verb|item| --- The parameter of the elements to which the error pertains.
+\item \verb|item| --- The parameter of the elements to which the error pertains.  Required for element
+ targets; ignored when \verb|name| is a knob.
 \item \verb|type| --- The type of random distribution to use.  May be one of ``uniform'', ``gaussian'', ``plus\_or\_minus'',
   or ``sampled''.
   A ``plus\_or\_minus'' error is equal in magnitude to the amplitude given, with the sign randomly chosen.
@@ -4420,6 +4459,104 @@ inherited family count.  If neither command provides a matrix,
 
 %\begin{latexonly}
 \newpage
+\begin{center}{\Large\verb|load_knobs|}\end{center}
+%\end{latexonly}
+\subsection{load\_knobs \label{subsec:loadknobs}}
+
+\begin{itemize}
+\item type: setup command.
+\item function: load \emph{knob} definitions from an SDDS file.  A knob is
+        a virtual scalar variable whose value $V$ drives a fixed
+        linear combination of element parameters: setting $V$ offsets
+        each linked $(\textrm{element},\textrm{parameter})$ pair by
+        $(V - V_{\textrm{prev}}) \cdot \textrm{Factor}$, so the lattice
+        carries the cumulative contribution of every knob.  Knobs can
+        be the target of \verb|&vary_element|,
+        \verb|&optimization_variable|, and \verb|&error_element| in
+        place of a real element.
+\item Command syntax, including use of equations and subcommands, is
+        discussed in \ref{sect:generalCommandSyntax}.
+\end{itemize}
+
+\begin{verbatim}
+&load_knobs
+    STRING filename = NULL;
+    long verbose = 0;
+&end
+\end{verbatim}
+
+\paragraph{Input file format.}
+The file must contain one string parameter (\verb|KnobName|) and
+three required columns and one optional column:
+\begin{itemize}
+\item \verb|ElementName| (string) --- the element to drive.  Wildcards
+        are supported and expanded at load time using the same
+        \verb|wfind_element|/\verb|expand_ranges| idiom as
+        \verb|&alter_elements|.
+\item \verb|ElementParameter| (string) --- the parameter of that
+        element to drive.
+\item \verb|Factor| (numeric) --- the per-unit-of-$V$ offset applied
+        to that parameter.
+\item \verb|ElementOccurence| (long, optional) --- when present, each
+        row is resolved to the unique element matching both
+        \verb|ElementName| and the given \verb|occurence| value
+        (1-based, the same value used in
+        \verb|parameter_output|).  This permits the same
+        \verb|ElementName| to repeat within a page with different
+        occurence values.  Wildcards in \verb|ElementName| are
+        \emph{not} permitted when \verb|ElementOccurence| is supplied;
+        such rows are rejected at load time.  (Note the elegant
+        spelling: ``occurence'', single \emph{r}.)
+\end{itemize}
+Each page of the file defines one knob.  The page's \verb|KnobName|
+parameter is the knob's name and must be unique across all
+\verb|&load_knobs| invocations (case-insensitive; names are
+upper-cased internally).
+
+Each registered knob is initialized with $V{=}0$ and exposed as the
+RPN scalar \verb|<KnobName>.value|, which tracks the knob's current
+value across all subsequent \verb|&vary_element|,
+\verb|&optimization_variable|, and \verb|&error_element| activity.
+
+\paragraph{Referencing a knob.}
+In \verb|&vary_element| / \verb|&optimization_variable| /
+\verb|&error_element|, set \verb|name=<KnobName>| (the \verb|item=|
+slot is ignored and may be omitted).  The value the command produces
+is assigned directly to $V$; the linked element parameters update by
+the delta times their respective \verb|Factor| values.  When several
+knobs touch the same element parameter, their contributions sum
+naturally (each knob's update is delta-from-previous, so the lattice
+state at any time is $p = p_0 + \sum_j V_j \cdot F_j$).
+
+\paragraph{Notes and limitations (v1).}
+\begin{itemize}
+\item \verb|&vary_element| modes \verb|multiplicative| and
+        \verb|differential| are rejected for knob targets (the knob's
+        intrinsic ``current value'' is the additive scalar $V$).
+\item \verb|&error_element| with a knob target is always
+        \emph{additive} on $V$; the \verb|fractional|
+        and \verb|nonadditive| modifiers do not apply.  The error log
+        does not record knob deltas in v1; element parameters
+        themselves carry the cumulative effect and can be inspected
+        via \verb|parameter_output|.
+\item \verb|&save_lattice| does not bake the converged knob value
+        into the saved element definitions.  Re-issue
+        \verb|&load_knobs| (and re-set the knob values) after
+        reloading.
+\end{itemize}
+
+\paragraph{Parameters.}
+\begin{itemize}
+\item \verb|filename| --- {\em Required.}  Path to the SDDS file
+        described above.  Subject to the usual
+        \verb|compose_filename|/\verb|search_path| resolution.
+\item \verb|verbose| --- If nonzero, prints one line per loaded knob
+        with the number of \linebreak (element, parameter) targets
+        after wildcard expansion.
+\end{itemize}
+
+%\begin{latexonly}
+\newpage
 \begin{center}{\Large\verb|load_lattice_response_matrix|}\end{center}
 %\end{latexonly}
 \subsection{load\_lattice\_response\_matrix \label{subsec:loadlatticeresponsematrix}}
@@ -4896,6 +5033,8 @@ modulation will be applied.
     STRING reference_element = NULL;
     long reference_element_occurrence = 0;
     long reflect_reference_values = 0;
+    STRING pressure_data = NULL;
+    double pressure_factor = 1.0;
 &end
 \end{verbatim}
 
@@ -4934,6 +5073,14 @@ be output, and not the parameters as a function of s.
   will disable this feature.
 \item \verb|emit_x|, \verb|beta_x|, \verb|alpha_x|, \verb|eta_x|, \verb|etap_x|, and related quantities for \verb|y| and \verb|z| ---
   If \verb|matched=0|, then these specify the starting beam ellipses in all three planes.
+\item \verb|pressure_data| --- The name of an optional SDDS file giving the residual-gas pressure
+  profile along the lattice. If provided, the effect of elastic (Coulomb) scattering of the beam
+  from residual-gas nuclei is included as a diffusive growth of the transverse divergences. The
+  format of this file is described below.
+\item \verb|pressure_factor| --- A factor by which all pressure values read from \verb|pressure_data|
+  are multiplied as the file is read. This is convenient for scaling an entire pressure profile, for
+  example to model a different base pressure or to apply a safety margin, without editing the data
+  file. The default is 1.0.
 \end{itemize}
 
 This command performs several functions.  In the most basic form, it
@@ -4957,7 +5104,35 @@ The results of moments computation may be subjected to optimization
 using values at marker elements.  See the documentation for
 \verb|MARK| for more details.
 
-{\bf Notes:} 
+If a \verb|pressure_data| file is supplied, \verb|moments_output| includes the emittance growth
+due to elastic (Coulomb) scattering of the beam from residual-gas nuclei. At each element a
+diffusion term is added to $\langle x^{\prime 2}\rangle$ and $\langle y^{\prime 2}\rangle$ based on the local
+partial pressures, the gas species, the gas temperature, and the beam momentum. The same physics is
+available during tracking with the \verb|MATTER| element when \verb|FORCE_MCS=1|.
+
+The pressure-data file is an SDDS file with the following structure:
+\begin{itemize}
+\item Column \verb|s| (units \verb|m|) --- the location along the lattice. The values must be
+  monotonically increasing and uniformly spaced (to within 0.1\%). The program \verb|sddsinterp| with
+  the \verb|-equispaced| or \verb|-sequence| option can be used to transform data that is not
+  equispaced.
+\item One floating-point column per gas species, named for that species (see the list below), giving
+  the partial pressure of the species as a function of \verb|s|. The units must be \verb|Torr| (or
+  equivalently \verb|T|) or \verb|nT| (or equivalently \verb|nTorr|); values given in \verb|nT| are
+  converted to \verb|Torr| automatically. Each value is also multiplied by \verb|pressure_factor|.
+\item Optional parameter \verb|Gasses| (an SDDS string) --- a comma- or space-separated list of the
+  species to use, e.g.\ \verb|"H2O H2 N2 O2 CO2 CO CH4"|. If this parameter is absent, every column
+  whose name matches a recognized species is used automatically.
+\item Optional parameter \verb|Temperature| (units \verb|K|) --- the gas temperature, used with the
+  ideal-gas law to convert pressure to number density. If absent, 293~K is assumed.
+\end{itemize}
+The recognized gas species are
+\verb|H2|, \verb|H2O|, \verb|N2|, \verb|O2|, \verb|CO2|, \verb|CO|, \verb|CH4|, \verb|C|,
+\verb|CH3|, \verb|OH|, \verb|C2H2|, \verb|C2H4|, \verb|COH|, \verb|C2H6|, \verb|C2H5|, and
+\verb|CF3|. When \verb|Gasses| is absent, columns whose names are not in this list are ignored; if a
+species named in \verb|Gasses| is not recognized, a warning is issued.
+
+{\bf Notes:}
 \begin{itemize}
 \item  When using \verb|CSBEND|, \verb|KQUAD|, and \verb|KSEXT| elements, one may find that the 
 calculations of \verb|moments_output| do not make sense. This is because, by default, synchrotron
@@ -5630,7 +5805,14 @@ a significant difference in the optimization speed.
 \end{verbatim}
 
 \begin{itemize}
-\item \verb|method| --- May be one of ``genetic'', ``hybridsimplex'' or ``swarm''. If the default ``simplex'' method is chosen, all the processors will do the same optimization as the serial version if there is only one particle for optimization tracking, or do optimization tracking in parallel if the number of particles is larger than the number of CPUs. All algorithms can be used for global optimization. ``swarm'' is recommended when there is sufficient computation resource available, so it can reach the optimization target fast. ``hybridsimplex'' is recommended when the initial point is close to the optimal result. ``genetic'' can be chosen for a global optimizer with a random start point (0 should be avoided for any initial coordinate). 
+\item \verb|method| --- May be one of ``simplex'', ``randomsample'', ``genetic'', ``hybridsimplex'' or ``swarm''. If the
+  default ``simplex'' method is chosen, all the processors will do the same optimization as the serial version if there
+  is only one particle for optimization tracking, or do optimization tracking in parallel if the number of particles is
+  larger than the number of CPUs. All algorithms can be used for global optimization. ``swarm'' is recommended when
+  there is sufficient computation resource available, so it can reach the optimization target fast. ``hybridsimplex'' is
+  recommended when the initial point is close to the optimal result. ``genetic'' can be chosen for a global optimizer
+  with a random start point (0 should be avoided for any initial coordinate). ``randomsample'' may help if other methods
+  fail or if it seems advisable to look for solutions far from the starting point.
 
 \item \verb|random_factor| --- The factor to scale the step size for both parallel swarm and genetic methods.
 
@@ -5831,8 +6013,13 @@ at the beginning of such a name.
 \end{verbatim}
 
 \begin{itemize}
-\item \verb|name| --- The name of the element.
-\item \verb|item| --- The parameter of the element to be varied.
+\item \verb|name| --- The name of the element.  May alternatively name a knob defined via
+ \verb|&load_knobs| (see \ref{subsec:loadknobs}); in that case \verb|item| is ignored, the optimizer
+ treats the knob's scalar value as the variable, and each trial value cascades to every linked
+ element parameter as $\Delta\cdot\textrm{Factor}$.  The RPN scalar
+ \verb|<KnobName>.value| reflects the current value during optimization.
+\item \verb|item| --- The parameter of the element to be varied.  Required for element targets;
+ ignored when \verb|name| is a knob.
 \item \verb|lower_limit|, \verb|upper_limit| --- The lower and upper limits allowed for the parameter.  If these are
 equal, the range of the parameter is unlimited.
 \item \verb|differential_limits| --- If nonzero, then the lower and upper limits are being given relative to the initial value,
@@ -7656,6 +7843,189 @@ integers and $p$ is $x$ or $y$.  $A_q = (1 + \alpha_q) q^2/\beta_q$, with $q=x$ 
 
 %\begin{latexonly}
 \newpage
+\begin{center}{\Large\verb|undulator_brightness|}\end{center}
+%\end{latexonly}
+\subsection{undulator\_brightness \label{subsec:undulatorbrightness}}
+
+\begin{itemize}
+\item type: setup command.
+\item function: compute the on-resonance brightness of a planar undulator
+        using R. Lindberg's analytic Gaussian-beam formula and expose the
+        result as an RPN scalar.  The scalar is refreshed every time the
+        Twiss parameters are recomputed --- including each evaluation of
+        the optimization function --- so the value tracks lattice changes
+        and can be used directly as an optimization target.
+\item Command syntax, including use of equations and subcommands, is
+        discussed in \ref{sect:generalCommandSyntax}.
+\end{itemize}
+
+\begin{verbatim}
+&undulator_brightness
+    STRING tag = NULL;
+    double wavelength = 0;
+    double photon_energy = 0;
+    long   harmonic = 1;
+    double detuning = -0.5;
+    double period_length = 0;
+    long   n_periods = 0;
+    double total_length = 0;
+    double current = 0;
+    long   use_twiss_output_values = 0;
+    double coupling = 0;
+    STRING twiss_element = NULL;
+    long   twiss_occurence = 1;
+    double emitx = 0;
+    double emity = 0;
+    double betax = 0;
+    double alphax = 0;
+    double betay = 0;
+    double alphay = 0;
+    double etax = 0;
+    double etaxp = 0;
+    double etay = 0;
+    double etayp = 0;
+    double Sdelta = 0;
+&end
+\end{verbatim}
+
+The command may be issued multiple times to register multiple undulator
+brightness probes (different photon energies, different undulators,
+different observation points in the lattice).  Each registration
+creates an RPN scalar named \verb|<tag>.brightness|, distinguished by
+the user-supplied \verb|tag| (same naming convention as
+\verb|rpn_load|).  Until the first \verb|twiss_output| runs, the
+scalar holds the value 0.
+
+The deflection parameter $K$ is {\em not} a namelist input.  It is
+derived at every evaluation from the undulator resonance condition
+\begin{equation}
+\lambda \;=\; \frac{\lambda_u}{2\,n\,\gamma^{2}}\,
+              \left(1 + \frac{K^{2}}{2}\right),
+\end{equation}
+using $\gamma$ obtained from \verb|Pref_output| (which is $\gamma\beta$)
+at the chosen Twiss source element, $n$ from \verb|harmonic|,
+$\lambda_u$ from \verb|period_length|, and $\lambda$ from either
+\verb|wavelength| or \verb|photon_energy|.  If the requested wavelength
+is below the fundamental at $K{=}0$, the spec warns once and leaves the
+RPN scalar at its previous value.
+
+Beam parameters (the $(\epsilon, \beta, \alpha, \eta, \eta', \sigma_\delta)$
+tuple for each plane) are first reduced to their dispersion-corrected
+effective values before being passed to the brightness routine, so the
+dispersion fields \verb|etax|, \verb|etaxp|, \verb|etay|, \verb|etayp|
+are functional inputs, not ornamental.
+
+\begin{itemize}
+
+\item \verb|tag| --- {\em Required.}  Short label prepended to the RPN
+        scalar name: the brightness is stored as \verb|<tag>.brightness|.
+        Tags must be unique across all \verb|undulator_brightness|
+        registrations.
+
+\item \verb|wavelength| --- Photon wavelength in meters.  Exactly one
+        of \verb|wavelength| and \verb|photon_energy| must be greater
+        than zero.
+
+\item \verb|photon_energy| --- Photon energy in keV.  Internally
+        converted to \verb|wavelength| via $\lambda = 12.39841984 \times
+        10^{-10}\,\textrm{m}\,/\,E[\textrm{keV}]$.
+
+\item \verb|harmonic| --- Odd harmonic number $n$ at which the brightness
+        is evaluated.  Default 1.
+
+\item \verb|detuning| --- Scaled detuning $\Delta\lambda / \lambda =
+        (2\pi N/n)\,\textrm{detuning}$ fed through to Lindberg's formula
+        as \verb|radDet|.  Good choices are $0$ (on resonance),
+        $-0.5$ (default, near the flux maximum), or $-1$ (broader peak).
+
+\item \verb|period_length| --- {\em Required.}  Undulator magnetic
+        period $\lambda_u$, meters.
+
+\item \verb|n_periods| --- Number $N$ of magnetic periods.  The total
+        undulator length used in the brightness calculation is
+        $N\lambda_u$.  Either \verb|n_periods| or \verb|total_length|
+        must be supplied (with \verb|total_length| taking precedence
+        when both are given).
+
+\item \verb|total_length| --- Optional total length of the undulator,
+        meters.  When greater than zero, the period count is derived as
+\begin{equation}
+N \;=\; \lfloor \, L_{\textrm{tot}} \, / \, \lambda_u \, \rfloor,
+\end{equation}
+        and the brightness is evaluated for an undulator of length
+        $N\lambda_u$ (i.e. truncated to a whole number of periods).
+        If \verb|n_periods| is also set to a different value, the
+        derived $N$ overrides it and a warning is issued.  If
+        \verb|total_length| is less than one \verb|period_length|, the
+        run is aborted.
+
+\item \verb|current| --- {\em Required.}  Stored beam current, amperes.
+
+\item \verb|use_twiss_output_values| --- If nonzero, the beam
+        emittances, optical functions, and energy spread are taken from
+        the live Twiss / radiation-integrals state at the Twiss source
+        element described below.  The explicit beam-parameter fields
+        (\verb|emitx|, $\dots$, \verb|Sdelta|) are ignored in this mode.
+        Requires \verb|coupling > 0| and a prior \verb|&twiss_output|
+        invocation with \verb|radiation_integrals = 1|.
+
+\item \verb|coupling| --- {\em Required when} \verb|use_twiss_output_values=1|.
+        Transverse coupling parameter $\kappa$ used to split the natural
+        emittance computed from radiation integrals:
+\begin{equation}
+\epsilon_x \;=\; \frac{\epsilon_{x0}}{1 + (J_y/J_x)\,\kappa},
+\qquad
+\epsilon_y \;=\; \kappa\,\epsilon_x,
+\end{equation}
+        with damping partition numbers $J_x, J_y$ taken from the
+        radiation-integrals structure of the beamline.
+
+\item \verb|twiss_element| --- Optional element name marking the
+        location at which the Twiss source values
+        ($\beta_{x,y}, \alpha_{x,y}, \eta_{x,y}, \eta'_{x,y}$) and
+        $\gamma$ are evaluated.  Defaults to the last element of the
+        beamline.  The element need not be a \verb|MARK| --- any
+        element with valid Twiss data may be used (in
+        \verb|use_twiss_output_values=1| mode, $\epsilon_{x,y}$ and
+        $\sigma_\delta$ remain ring-averaged quantities from the
+        radiation integrals).
+
+\item \verb|twiss_occurence| --- 1-based occurrence index of
+        \verb|twiss_element| in the expanded beamline.  Ignored if
+        \verb|twiss_element| is blank.  Default 1. Note that "occurence"
+        is deliberately misspelled to be consistent with historical
+        usage in the interface.
+
+\item \verb|emitx|, \verb|emity| --- Horizontal and vertical
+        geometric emittances, meters$\cdot$radian.  Used only when
+        \verb|use_twiss_output_values=0|.  \verb|emitx| must be
+        positive; \verb|emity| may be zero (round beam not supported by
+        the underlying formula, but values down to the diffraction
+        limit are fine).
+
+\item \verb|betax|, \verb|alphax|, \verb|betay|, \verb|alphay| ---
+        Twiss parameters at the undulator center, used only when
+        \verb|use_twiss_output_values=0|.  \verb|betax| and \verb|betay|
+        must be positive.
+
+\item \verb|etax|, \verb|etaxp|, \verb|etay|, \verb|etayp| ---
+        Dispersion and its derivative at the undulator center.  Used
+        only when \verb|use_twiss_output_values=0|.  These contribute to
+        the brightness via the dispersion-corrected effective beam
+        parameters; pass zero if dispersion is negligible at the
+        observation point.
+
+\item \verb|Sdelta| --- RMS relative energy spread $\sigma_\delta =
+        \sigma_E / E$.  Used only when
+        \verb|use_twiss_output_values=0|.  Must be positive.
+
+\end{itemize}
+
+The reported brightness is in conventional accelerator units of
+photons\,/\,s\,/\,0.1\%\,BW\,/\,mm$^2$\,/\,mrad$^2$.
+
+%\begin{latexonly}
+\newpage
 \begin{center}{\Large\verb|vary_element|}\end{center}
 %\end{latexonly}
 \subsection{vary\_element \label{subsec:varyelement}}
@@ -7695,8 +8065,15 @@ at the beginning of such a name.
 \item \verb|index_limit| --- A positive integer giving the number of values the index will take.
  Must be given if this \verb|index_number| has not been listed in a previous \verb|vary_element|
 command, unless \verb|enumeration_file| is given.
-\item \verb|name| --- The name of an element.
-\item \verb|item| --- The parameter of the element to vary.
+\item \verb|name| --- The name of an element.  May alternatively name a knob defined via
+ \verb|&load_knobs| (see \ref{subsec:loadknobs}); in that case \verb|item| is ignored, the
+ \verb|initial|, \verb|final|, and \verb|enumeration_*| values address the knob's scalar value
+ directly, and the knob updates every linked element parameter by $\Delta\cdot\textrm{Factor}$
+ each vary step.  The \verb|differential| and \verb|multiplicative| modifiers are rejected for
+ knob targets (the knob's natural starting value is zero, so additive variation is the only
+ sensible mode); \verb|geometric| variation is permitted.
+\item \verb|item| --- The parameter of the element to vary.  Required for element targets;
+ ignored when \verb|name| is a knob.
 \item \verb|initial|, \verb|final| --- The initial and final values of the parameter.
 \item \verb|enumeration_file| --- Name of an SDDS file giving values for the item.
 \item \verb|enumeration_column| --- Column of the SDDS file giving the values.
@@ -12711,254 +13088,10 @@ Here is a summary of what's changed since release 27.1.0:
 
 \newpage
 
-\begin{thebibliography}{99}
-
-\bibitem{Kernighan}
-    B. W. Kernighan and D. M. Ritchie, {\em The C Programming Language},
-    Prentice-Hall, Englewood Cliffs, N.J., second edition, 1988.
-
-\bibitem{MAD}
-    H. Grote, F. C. Iselin, ``The MAD Program--Version 8.1,'' CERN/SL/90-13(AP), June 1991.
-
-\bibitem{KLBrown}
-    K. L. Brown, R. V. Servranckx, ``First- and Second-Order Charged Particle Optics,'' 
-    SLAC-PUB-3381, July 1984.
-
-\bibitem{Borland_thesis}
-    M. Borland, ``A High-Brightness Thermionic Microwave Electron Gun,'' SLAC-Report-402,
-    February 1991, Stanford University Ph.D. Thesis.
-
-\bibitem{Enge}
-    H. A. Enge, ``Achromatic Mirror for Ion Beams,'' Rev. Sci. Inst., 34(4), 1963.
-
-\bibitem{Borland_PC}
-    M. Borland, private communication.
-
-\bibitem{Numerical_Recipes}
-    W. H. Press, {\em et al}, {\em Numerical Recipes in C}, Cambridge University
-    Press, Cambridge, 1988.
-
-\bibitem{SDDS1}
-M. Borland, ``A Self-Describing File Protocol for Simulation
-Integration and Shared Postprocessors,'' Proc. 1995 PAC, May 1-5,
-1995, Dallas, Texas, pp. 2184-2186 (1996).
-
-\bibitem{SDDS2}
-M. Borland, ``A Universal Postprocessing Toolkit for Accelerator 
-Simulation and Data Analysis,'' Proc. 1998 ICAP Conference, 
-Sept. 14-18, 1998, Monterey, California, to be published.
-
-\bibitem{DQS} T. P. Green, ``Research Toward a Heterogeneous Networked
-Computer Cluster: The Distributed Queuing System Version 3.0,'' SCRI
-Technical Publication, 1994.
-
-\bibitem{S2EJitter} M. Borland {\em et al}, ``Start-to-End Jitter Simulation
-of the LCLS,'' Proceedings of the 2001 Particle Accelerator Conference,
-Chicago, 2001.
-
-\bibitem{TopUpTracking} M. Borland and L. Emery, ``Tracking Studies of
-Top-Up Safety for the Advanced Photon Source,'', Proceedings of the
-1999 Particle Accelerator Conference, New York, 1999, pg 2319-2321.
-
-\bibitem{MingXie} M. Xie, ``Free Electron Laser Driven by SLAC
-LINAC''.
-
-\bibitem{GENESIS} S. Reiche, {\em NIM} A 429 (1999) 242.
-
-\bibitem{BM}
-  J.D. Bjorken, S.K. Mtingwa, ``Intrabeam Scattering,'' Part. Acc. Vol. 13, 
-  1983, 115-143.
-
-\bibitem{Halbach_69a}
-    K. Halbach, ``First Order Perturbation Effects in Iron-Dominated Two-Dimensional Symmetrial Multipoles'',
-    NIM {\bf 74-1}, 1969, 147-164.
-
-\bibitem{Jackson}
-  J. D. Jackson, {\em Clasical Electrodynamics}, second edition.
-
-\bibitem{Ripken}
- G. Ripken, DESY Report No. R1-70/04, 1970 (unpublished).
-
-\bibitem{HAPE}
-  {\em Handbook of Accelerator Physics and Engineering}, A. Chao and M. Tigner eds., 1998.
-
-\bibitem{Derbenev}
-  Ya. S. Derbenev, J. Rossbach, E. L. Saldin, V. D. Shiltsev, ``Microbunch Radiative Tail-Head
-  Interaction,'' September 1995, TESLA-FEL 95-05.
-
-\bibitem{Xiao2007A}
-  A. Xiao {\em et al.}, ``Direct Space-Charge Calculation in {\tt elegant} and its Application to the
- ILC Damping Ring,'' Proc. PAC2007, 3456-3458.
-
-\bibitem{Huang2004}
-  Z. Huang {\em et al.}, Phys. Rev. ST Accel. Beams {\bf 7} 074401 (2004).
-
-\bibitem{Piwinski}
-  A. Piwinski, `` The Touschek effect in strong focusing storage rings,'' DESY-98-179, Nov 1998.
-
-\bibitem{Xiao2007a}
-  A. Xiao {\em et al.}, ``Touschek Effect Calculation and its Application to a Transport Line,''
-  Proc. PAC07, 3453-3455 (2007).
-
-\bibitem{Warnock}
-  W. Warnock, ``Shielded Coherent Synchrotron Radiation and Its Effect on Very Short Bunches,'' SLAC-PUB-5375, 1990.
-
-\bibitem{Agoh}
-  T. Agoh and K. Yokoya, ``Calculation of coherent synchrotron radiation using mesh,'' Phys. Rev. ST Accel. Beams 7,
-  054403 (2004).
-
-\bibitem{Elleaume1992}
-  P. Elleaume, ``A New Approach to Electron Beam Dynamics in Undulators and Wigglers,'' Proc. EPAC 1992, 661-663.
-
-\bibitem{radia}
-  http://www.esrf.eu/Accelerators/Groups/InsertionDevices/Software/Radia
-
-\bibitem{Bengtsson}
- J. Bengtsson, "The Sextupole Scheme for the Swiss Light Source (SLS): An Analytic Approach," SLS Note 9/97,
- March 7, 1997. (Corrections to several typos were supplied by W. Guo, NSLS.)
-
-\bibitem{ASTRA}
-  K. Fl\"{o}ttmann, Astra User Manual, http://www.desy.de/~mpyflo/Astra\_dokumentation/
-
-\bibitem{IMPACT}
-J. Qiang {\em et al.},  J.~Comp.~Phys. 163, 434 (2000).
-
-\bibitem{TRACK}
-  V. N. Aseev {\em et al.}, Proc. PAC05, 2053-2055 (2005); ASCII version 39 from B. Mustapha.
-
-\bibitem{Chi2005}
-  H. Chi {\em et al.}, Mathematics and Computers in Simulation {\bf 70} (2005) 9-21.
-
-\bibitem{Zhou-IPAC10}
-  D. Zhou {\em et al.}, ``Explicit maps for the fringe field of a quadrupole,'' Proc. IPAC10.
-
-\bibitem{Irwin-PAC95}
-  J. Irwin {\em et al.}, ``Explicit soft fringe maps of a quadrupole,'' Proc. PAC95.
-
-\bibitem{WangCXDrivingTerms}
-  C. X. Wang, ``Explicit Formulas for 2nd-order Driving Terms due to Sextupoles and Chromatic Effects of Quadrupoles,''
-  ANL/APS/LS-330, March 10, 2012.
-
-\bibitem{Bengtsson-SSC232}
-  J. Bengtsson and J. Irwin, ``Analytical Calculations of Smear and Tune Shift,'' SSC-232, Feb. 1990.
-
-\bibitem{Bane-SLAC14925}
- K. Bane, ``Corrugated Pipe as a Beam Dechirper,'' SLAC-PUB-14925, April 2012.
-
-\bibitem{Tsai-RMP46}
- Y.S. Tsai, Rev. Mod. Phys. 46, 815 (1974)
-\bibitem{Wrulich-CAS94}
- A. Wrulich, CERN Accelerator School 94-01, Vol. 1, 409 (1994).
-\bibitem{LeDuff-NIM239}
- J. LeDuff, NIM A 239 (1985) 83-101.
-
-\bibitem{sRDT}
- A. Franchi {\em et al.}, Phys. Rev. ST Accel. Beams 17, 074001 (2014).
-
-\bibitem{Floettmann-PRSTAB6-034202}.
- K. Floettmann, Phys. Rev. ST Accel. Beams 6, 034202 (2003).
-
-\bibitem{Berenc-IPAC15-MOPMA006}
- T. Berenc, M. Borland, and R. R. Lindberg, ``Modeling RF Feedback in Elegant for Bunch-Lengthening Studies for the Advanced Photon Source Upgrade,''
- Proc. of IPAC15, MOPMA006 (2015).
-
-\bibitem{KHwang}
-  K. Hwang and S. Y. Lee, ``Dipole fringe field thin map for compact synchrotrons'', Phys. Rev. ST Accel. Beams {\bf 18}, 122401, 2015; K. Hwang, ``On intrinsic nonlinear particle 
-  motion in compact synchrotrons,'' Indiana University Ph. D. Thesis, 2015.
-
-\bibitem{TAPAs}
-  M. Borland, ``Android application for accelerator physics and engineering calculations,'' Proc. of PAC 2013, 1364-1366.
-
-\bibitem{Nakamura2004}
-  T. Nakamura {\em et al.}, ``Transverse bunch-by-bunch feedback system for the SPRing-8 Storage Ring,'' Proc. of EPAC 2004, 2649.
-
-\bibitem{Chao-PRSTAB-111001}
-  A. Chao {\em et al.}, ``Tune shifts of bunch trains due to resistive vacuum chambers without circular symmetry,''
-  Phys. Rev. ST Accel. Beams, {\bf 5}, 111001 (2002).
-
-\bibitem{Bacconier-SPS80-2}
-Y. Bacconier and G. Brianti, CERN/SPS/80-2 (1980).
-
-\bibitem{Venturini-NIMA427-387}
-M. Venturini and A. Dragt, ``Accurate computation of transfer maps from magnetic field data,'' 
-NIM A 427 (1999) 387-392.
-
-\bibitem{GPU1}
-J. R. King, I. V. Pogorelov, M. Borland, R. Soliday, K. Amyx,
-``Current status of the GPU-Accelerated version of elegant,''
-Proc. IPAC15, 623 (2015).
-
-\bibitem{Bassetti}
-M. Bassetti, G. Erskine, CERN ISR TH/80-06 (1980).
-
-\bibitem{BuesingPC}
-B. Buesing, private communication, 2018.
-
-\bibitem{RLindbergPC}
-R. Lindberg, private communication, 2018.
-
-\bibitem{Sun-NAPAC19}
-Y.-P. Sun and C.-Y. Yao, ``Tracking With Space Harmonics in ELEGANT Code,'' Proc. NAPAC19.
-
-\bibitem{Li-arxiv-1912.00121}
-  Y. Li {\em et al.}, ``Fast dynamic aperture optimization with reversal integration,''
-  arXiv:1912.00121, 30 November 2019.
-
-\bibitem{Mitchell-2007}
-  C. E. Mitchell, ``Calculation of Realistic charged-particle transfer maps.'' Ph.D. thesis, University of Maryland, College Park, 2007. http://www.physics.umd.edu/dsat/
-
-\bibitem{Venturini2021}
- M. Venturini, ``Particle dynamics and misaligned lattice elements,'' ALS Technical Note ALSU-AP-2021-001, Feb. 2021.
-
-\bibitem{BassettiErskine}
- M. Bassetti and G. Erskine, CERN ISR TH/80-06 (1980).
-
-\bibitem{Furman-LBL-34682}
- M. Furman, ``Compact Complex Expressions for the Electric Field of 2-D Elliptical Charge Distributions,''
- LBL-34682 (2007).
-
-\bibitem{Borland-LS356}
-  M. Borland, ``Symplectic integration  in {\tt elegant},'' ANL/APS/LS-356, Rev. 1, Dec. 2021.
-
-\bibitem{Huang-RCDS}
- X. Huang, ``An algorithm for online optimization of accelerators,'' NIM A 726, 77-83, 2013.
-
-\bibitem{Zhang-PRSTAB-18-010702}
-  Z. Zhang {\em et al.}, ``Electron beam energy chirp control with a rectangular corrugated structure at the
-  Linac Coherent Light Source,'' Phys. Rev. ST Accel. Beams 18, 010702 (2015).
-
-\bibitem{HalbachModel}
-  K. Halbach, J. de Physique, C1, 1983.
-
-\bibitem{DejusModels}
-  R. Dejus {\em et al.}, ANL/APS/LS-314, 2009.
-  
-\bibitem{MoogModels}
-  E. Moog {\em et al.}, ANL/APS/LS-348, 2017.
-  
-\bibitem{Kim-SCU-Scaling} S. H. Kim, ``A scaling law for the magnetic
-  ﬁelds of superconducting undulators,'' Nuclear Instruments and
-  Methods in Physics Research Section A: Accelerators, Spectrometers,
-  Detectors and Associated Equipment, vol. 546, no. 3, pp. 604–619,
-  2005
-
-\bibitem{IvanyushenkovPC} Y. Ivanyushenkov, private communication.
-
-\bibitem{KuboOide} K. Kubo and K. Oide, ``Intrabeam scattering in electron storage rings,''
- Phys. Rev. ST Accel. Beams, vol. 4, no. 12, 124401, 2001.
-
-\bibitem{Safranek-LOCO} J. Safranek, ``Experimental Determination of Storage Ring Optics Using Orbit Response Measurements,''
-  NIM A, vol. 388, page 27, 1997.
-
-\bibitem{PhysRevAccelBeams.27.124401} H. Fu {\em et al.}, ``New analytical formula on the Touschek lifetime of the
-  polarized electron beam in electron storage rings,'' Phys. Rev. Accel. Beams, vol. 27, 124401, 2024.
-
-\bibitem{SokolovTernov1964} A. A. Sokolov and I. M. Ternov, ``On polarization and spin effects in
-  the theory of synchrotron radiation,'' Sov. Phys. Doklady, vol. 8, page 1203, 1964.
-
-\bibitem{Mane2005} S. R. Mane, Yu. M. Shatunov, and K. Yokoya, ``Spin-polarized charged
-  particle beams in high-energy accelerators,'' Rep. Prog. Phys., vol. 68, page 1997, 2005.
-
-\end{thebibliography}
+\bibliographystyle{unsrt}
+% List references in order of first use (unsrt). Trailing \nocite keeps any
+% reference that is not cited in the text, appended after the cited ones.
+\nocite{Kernighan,MAD,KLBrown,Borland_thesis,Enge,Borland_PC,Numerical_Recipes,SDDS1,SDDS2,DQS,S2EJitter,TopUpTracking,MingXie,GENESIS,BM,Halbach_69a,Jackson,Ripken,HAPE,Derbenev,Xiao2007SC,Huang2004,Piwinski,Xiao2007a,Warnock,Agoh,Elleaume1992,radia,Bengtsson,ASTRA,IMPACT,TRACK,Chi2005,Zhou-IPAC10,Irwin-PAC95,WangCXDrivingTerms,Bengtsson-SSC232,Bane-SLAC14925,Tsai-RMP46,Wrulich-CAS94,LeDuff-NIM239,sRDT,Floettmann-PRSTAB6-034202,Berenc-IPAC15-MOPMA006,KHwang,TAPAs,Nakamura2004,Chao-PRSTAB-111001,Bacconier-SPS80-2,Venturini-NIMA427-387,GPU1,Bassetti,BuesingPC,RLindbergPC,Sun-NAPAC19,Li-arxiv-1912.00121,Mitchell-2007,Venturini2021,BassettiErskine,Furman-LBL-34682,Borland-LS356,Huang-RCDS,Zhang-PRSTAB-18-010702,HalbachModel,DejusModels,MoogModels,Kim-SCU-Scaling,IvanyushenkovPC,KuboOide,Safranek-LOCO,PhysRevAccelBeams.27.124401,SokolovTernov1964,Mane2005}
+\bibliography{references}
 
 \end{document}
