@@ -123,7 +123,7 @@ void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po
   printf("ZLONGIT, myid = %d\n", myid);
 #endif
 
-  if (isSlave || !notSinglePart) {
+  if (isSlave || !distributedBeam) {
     index_bunch_assignments(part0, np0, (charge && zlongit->bunchedBeamMode) ? charge->idSlotsPerBunch : 0, Po, &time0, &ibParticle, &ipBucket, &npBucket, &nBuckets, -1);
 #if USE_MPI
     if (mpiAbort)
@@ -253,7 +253,15 @@ void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po
           time[ip] = 2 * tmean - time[ip];
       }
 
-      tmin = tmean - dt * nb / 2.0;
+      if (zlongit->bin_centered) {
+        /* ZTRANSVERSE/IMPEDANCE convention: bunch left-justified in grid,
+         * bin centers at tmin + ib*dt. */
+        tmin -= dt;
+      } else {
+        /* Legacy ZLONGIT convention: bunch centered in grid, bin
+         * left-edges at tmin + ib*dt (bin centers at tmin + (ib+0.5)*dt). */
+        tmin = tmean - dt * nb / 2.0;
+      }
 
 #ifdef DEBUG
       printf("tmin = %21.15e  tmax = %21.15e  dt = %21.15e  nb = %ld\n",
@@ -266,14 +274,21 @@ void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po
       n_binned = 0;
       for (ip = 0; ip < np; ip++) {
         pbin[ip] = -1;
-        ib = (time[ip] - tmin) / dt;
+        if (zlongit->bin_centered)
+          ib = (long)((time[ip] - tmin) / dt + 0.5);
+        else
+          ib = (time[ip] - tmin) / dt;
         if (ib < 0)
           continue;
         if (ib > nb - 1)
           continue;
         if (zlongit->area_weight && ib > 1 && ib < (nb - 1)) {
-          double dist;
-          dist = (time[ip] - ((ib + 0.5) * dt + tmin)) / dt;
+          double dist, bin_center;
+          if (zlongit->bin_centered)
+            bin_center = ib * dt + tmin;
+          else
+            bin_center = (ib + 0.5) * dt + tmin;
+          dist = (time[ip] - bin_center) / dt;
           Itime[ib] += 0.5;
           Itime[ib - 1] += 0.25 - 0.5 * dist;
           Itime[ib + 1] += 0.25 + 0.5 * dist;
@@ -410,7 +425,7 @@ void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po
           /* wake potential output */
           factor = zlongit->macroParticleCharge * particleRelSign / dt;
           if ((zlongit->wake_interval <= 0 || ((i_pass0 - zlongit->wake_start) % zlongit->wake_interval) == 0) &&
-              i_pass0 >= zlongit->wake_start && i_pass0 <= zlongit->wake_end) {
+              i_pass0 >= zlongit->wake_start && (zlongit->wake_end<0 || i_pass0 <= zlongit->wake_end)) {
             if (!SDDS_StartTable(zlongit->SDDS_wake, nb)) {
               SDDS_SetError("Problem starting SDDS table for wake output (track_through_zlongit)");
               SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -461,10 +476,12 @@ void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po
       for (ip = 0; ip < np; ip++) {
         if ((ib = pbin[ip]) >= 0 && ib <= (nb - 1)) {
           if (zlongit->interpolate && ib > 0) {
-            /* dt/2 offset is so that center of bin is location where
-             * particle sees voltage for that bin only
-             */
-            dt1 = time[ip] - (tmin + dt / 2.0 + dt * ib);
+            /* bin_centered convention: bin center at tmin + dt*ib.
+             * legacy convention: bin center at tmin + dt/2 + dt*ib. */
+            if (zlongit->bin_centered)
+              dt1 = time[ip] - (tmin + dt * ib);
+            else
+              dt1 = time[ip] - (tmin + dt / 2.0 + dt * ib);
             if (dt1 < 0)
               dt1 += dt;
             else
@@ -548,7 +565,7 @@ void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po
   if (pbin)
     free(pbin);
 
-  if (isSlave || !notSinglePart)
+  if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 
 #if USE_MPI
