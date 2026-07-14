@@ -87,21 +87,21 @@ void showUsageOrGreeting(unsigned long mode) {
 #if USE_MPI
 #  if HAVE_GPU
   char *USAGE = "usage: mpirun -np <number of processes> gpu-Pelegant <inputfile> [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is gpu-Pelegant 2026.3.0 ALPHA RELEASE, "__DATE__
+  char *GREETING = "This is gpu-Pelegant 2026.4Beta1 ALPHA RELEASE, "__DATE__
     ", by M. Borland, K. Amyx, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, J.R. King, N. Kuklev, R. Lindberg, I.V. Pogorelov, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.\nParallelized by Y. Wang, H. Shang, and M. Borland.";
 #  else
   char *USAGE = "usage: mpirun -np <number of processes> Pelegant <inputfile> [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is elegant 2026.3.0 "__DATE__
+  char *GREETING = "This is elegant 2026.4Beta1 "__DATE__
     ", by M. Borland, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, N. Kuklev, R. Lindberg, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.\nParallelized by Y. Wang, H. Shang, and M. Borland.";
 #  endif
 #else
 #  if HAVE_GPU
   char *USAGE = "usage: gpu-elegant {<inputfile>|-pipe=in} [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is gpu-elegant 2026.3.0 ALPHA RELEASE, "__DATE__
+  char *GREETING = "This is gpu-elegant 2026.4Beta1 ALPHA RELEASE, "__DATE__
     ", by M. Borland, K. Amyx, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, J.R. King, N. Kuklev, R. Lindberg, I.V. Pogorelov, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.";
 #  else
   char *USAGE = "usage: elegant {<inputfile>|-pipe=in} [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is elegant 2026.3.0, "__DATE__
+  char *GREETING = "This is elegant 2026.4Beta1, "__DATE__
     ", by M. Borland, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, N. Kuklev, R. Lindberg, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.";
 #  endif
 #endif
@@ -3363,6 +3363,17 @@ void exitElegant(long status) {
   if (!status && semaphore_file)
     createSemaphoreFile(semaphore_file);
 #if USE_MPI
+  if (status) {
+    /* Abnormal/error exit (including from the SIGSEGV traceback handler): the
+     * other ranks are not guaranteed to reach this same collective path -- they
+     * may be blocked in a different collective (e.g. MPI_Allreduce in
+     * new_sdds_beam). A Barrier/Finalize here would therefore deadlock the whole
+     * job and hide the failure as a hang. Abort the entire MPI job instead so the
+     * error terminates immediately and visibly. */
+    fflush(stdout);
+    fflush(stderr);
+    MPI_Abort(MPI_COMM_WORLD, (int)status);
+  }
   MPI_Barrier(MPI_COMM_WORLD);
   if (isSlave)
     MPI_Comm_free(&workers);
