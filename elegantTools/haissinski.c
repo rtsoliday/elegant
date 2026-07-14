@@ -20,18 +20,21 @@
 #include "match_string.h"
 #include "SDDS.h"
 #include "constants.h"
+#include "fftpackC.h"
 
 static char *USAGE1 = "haissinski <twissFile> <resultsFile>\n\
+ {-semaphoreFile=<filename>}\n\
  {-wakeFunction=<file>,tColumn=<name>,wColumn=<name> |\n\
   -model=[L=<Henry>|Zn=<Ohms>],R=<Ohm> |\n\
   -BBResonator=Rs=<Ohm>,frequency=<Hz>,Q=<value>[,wall=<Ohms>]} \n\
  {-charge=<C>|-particles=<value>|-bunchCurrent=<A>}\n\
  {-steps=<numberOfChargeSteps>} {-outputLastStepOnly}\n\
- {-RF=Voltage=<V>,harmonic=<value>,phase=<value>|-length=<s>}\n\
- {-harmonicCavity=Voltage=<V>,harmonicFactor=<harmonicFactor>,phase=<value>}\n\
+ {-RF=Voltage=<V>,harmonic=<value>,phase=<radians>|-length=<s>}\n\
+ {-harmonicCavity=Voltage=<V>,harmonicFactor=<harmonicFactor>,phase=<radians>}\n\
  {-superPeriods=<number>} {-energy=<GeV>} \n\
  -integrationParameters=deltaTime=<s>,points=<number>,\n\
 iterations=<number>,fraction=<value>,tolerance=<value> \n\
+ {-fftConvolution}\n\
 Calculation of steady-state longitudinal bunch density distribution \n\
 in an electron storage ring. \n\
 <twissFile>    Elegant twiss file that contains ring parameters required\n\
@@ -41,6 +44,7 @@ in an electron storage ring. \n\
 <resultsFile>  Output file with bunch distribution, wake potential for the\n\
                solved bunch distribution. The time coordinate is the\n\
                time advance from a reference point.\n\
+semaphoreFile  If given, an empty file that is created when the computation finishes.\n\
 wakeFunction   Input the wake function for an impulse response of a 1 C charge.\n\
                Time and wake column names should be specified with \n\
                units s and V/C respectively.\n";
@@ -72,7 +76,11 @@ integrationParameters   Specifies integration parameters for solving the \n\
                points is the number of points requested for the charge density.\n\
                iterationLimits is the number of iterations for solving the \n\
                integral equation. fraction is the relaxation fraction between \n\
-               0 and 1 to reduce numerical instabilities.";
+               0 and 1 to reduce numerical instabilities.\n\
+fftConvolution Compute the wake/density convolution with an FFT (O(n log n))\n\
+               instead of the default direct sum (O(n^2)). Gives the same\n\
+               result and is much faster for large -integrationParameters points;\n\
+               only affects the -wakeFunction and -BBResonator paths.";
 
 #define VERBOSE 0
 #define CHARGE 1
@@ -90,7 +98,9 @@ integrationParameters   Specifies integration parameters for solving the \n\
 #define HARMONIC_CAVITY 13
 #define BUNCH_CURRENT 14
 #define BBRESONATOR 15
-#define N_OPTIONS 16
+#define SEMAPHORE_FILE 16
+#define FFTCONVOLUTION 17
+#define N_OPTIONS 18
 char *option[N_OPTIONS] = {
   "verbose",
   "charge",
@@ -107,7 +117,10 @@ char *option[N_OPTIONS] = {
   "outputlaststeponly",
   "harmoniccavity",
   "bunchcurrent",
-  "bbresonator"};
+  "bbresonator",
+  "semaphorefile",
+  "fftconvolution"
+};
 
 typedef struct {
   double *y, xStart, xDelta;
@@ -172,11 +185,12 @@ void makeBBRWakeFunction(FUNCTION *wake, double dt, long points,
                          double Q, double R, double omega, double rw, double T0);
 
 long verbosity;
+long useFFTConvolution = 0; /* -fftConvolution: use O(n log n) FFT for the wake convolution */
 
 int main(int argc, char **argv) {
   SCANNED_ARG *scanned;
   long i, j, k, outputLastStepOnly;
-  char *twissFile, *resultsFile;
+  char *twissFile, *resultsFile, *semaphoreFile=NULL;
   SDDS_DATASET resultsPage;
   double particles, charge, finalCharge, length;
   long steps, converged;
@@ -374,6 +388,15 @@ int main(int argc, char **argv) {
           bomb("invalid -model syntax/values", "-model=[L=<Henry>|Zn=<Ohms>],R=<Ohm>");
         useWakeFunction = 0;
         useBBR = 1;
+        break;
+      case SEMAPHORE_FILE:
+        if (scanned[i].n_items!=2 || !strlen(semaphoreFile = scanned[i].list[1]))
+          bomb("bad -semaphoreFile syntax", "-semaphoreFile=<file>");
+	if (fexists(semaphoreFile))
+	  remove(semaphoreFile);
+	break;
+      case FFTCONVOLUTION:
+        useFFTConvolution = 1;
         break;
       default:
         bomb("unknown option given.", NULL);
@@ -616,7 +639,9 @@ int main(int argc, char **argv) {
   }
   if (!SDDS_Terminate(&resultsPage))
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
-
+  if (semaphoreFile && strlen(semaphoreFile))
+    fclose(fopen(semaphoreFile, "w"));
+    
   return 0;
 }
 
@@ -922,6 +947,44 @@ void getRfPotential(FUNCTION *pot, FUNCTION *rfVoltage, RINGPARAMETERS *paramete
     pot->y[i] -= P0;
 }
 
+/* Compute the induced voltage (Vind) as the wake/density convolution using an
+   FFT, i.e. O(n log n) instead of the O(n^2) direct sum. This reproduces the
+   direct loop below to machine precision. The sum is a cross-correlation
+   (density is indexed at i+index-offset), computed as
+   IFFT(conj(FFT(wake)) * FFT(density)); the fftpack convention here requires
+   multiplying the inverse transform by the (padded) length L. */
+static void inducedVoltageFFT(FUNCTION *Vind, FUNCTION *density, FUNCTION *wake) {
+  long N = density->points, M = wake->points, woffset = wake->offset;
+  long L = 1, i, k, p, q;
+  double *A, *B, *C;
+
+  while (L < N + M)
+    L <<= 1;
+  A = calloc(2 * L, sizeof(*A)); /* complex, interleaved re,im; zero-padded */
+  B = calloc(2 * L, sizeof(*B));
+  C = calloc(2 * L, sizeof(*C));
+  for (p = 0; p < M; p++)
+    A[2 * p] = wake->y[p];
+  for (q = 0; q < N; q++)
+    B[2 * q] = density->y[q];
+  complexFFT(A, L, 0);
+  complexFFT(B, L, 0);
+  for (k = 0; k < L; k++) {
+    double ar = A[2 * k], ai = A[2 * k + 1], br = B[2 * k], bi = B[2 * k + 1];
+    C[2 * k] = ar * br + ai * bi;     /* Re[ conj(A) * B ] */
+    C[2 * k + 1] = ar * bi - ai * br; /* Im[ conj(A) * B ] */
+  }
+  complexFFT(C, L, INVERSE_FFT);
+  for (i = 0; i < N; i++) {
+    long lag = i - woffset;
+    long idx = lag >= 0 ? lag : L + lag; /* negative lags wrap around */
+    Vind->y[i] = -density->xDelta * C[2 * idx] * (double)L;
+  }
+  free(A);
+  free(B);
+  free(C);
+}
+
 void getPotentialDistortion(FUNCTION *potentialDistortion,
                             FUNCTION *Vind,
                             FUNCTION *density, FUNCTION *wake) {
@@ -954,7 +1017,11 @@ void getPotentialDistortion(FUNCTION *potentialDistortion,
     Vind->y = SDDS_Malloc(sizeof(*Vind->y) * Vind->points);
   }
 
-  /* calculate induced voltage as a convolution. i.e. a n^2 calculation. */
+  /* calculate induced voltage as a convolution. i.e. a n^2 calculation
+     (unless -fftConvolution requests the O(n log n) FFT version). */
+  if (useFFTConvolution) {
+    inducedVoltageFFT(Vind, density, wake);
+  } else
   for (i = 0; i < density->points; i++) {
     Vind->y[i] = 0.0;                                /* i is the index for tau in internal note (where the
                                                         induced voltage is to be calculated*/
