@@ -36,7 +36,7 @@ char *option[N_OPTIONS] = {
 char *USAGE1 = "elasticScatteringAnalysis <SDDSinputfile> <outputRootname>\n\
   [-twiss=<filename>] [-pressure=<filename>[,periodic]]\n\
   [-storedCharge=<Coulombs>] [-verbose]\n\n\
-The input file should be created by the &inelastic_scattering command in Pelegant.\n\
+The input file should be created by the &elastic_scattering command in Pelegant.\n\
 Three output files are created with different extensions:\n\
  + .sdds : out-scattering rate and other quantities as a function of scattering location s.\n\
  + .full : contribution to out-scattering rate from each lost particle.\n\
@@ -159,7 +159,7 @@ int main(int argc, char **argv) {
       SDDS_CheckColumn(&SDDSin, "betax", "m", SDDS_DOUBLE, stderr) != SDDS_CHECK_OKAY ||
       SDDS_CheckColumn(&SDDSin, "betay", "m", SDDS_DOUBLE, stderr) != SDDS_CHECK_OKAY) {
     fprintf(stderr,
-            "inelasticScatteringAnalysis: didn't find 's', 'betax', and 'betay' columns with units 'm' in %s",
+            "elasticScatteringAnalysis: didn't find 's', 'betax', and 'betay' columns with units 'm' in %s",
             twissFile);
     exit(1);
   }
