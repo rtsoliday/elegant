@@ -454,7 +454,7 @@ void computeSASEFELAtEnd(SASEFEL_OUTPUT *sasefelOutput, double **particle, long 
   long count, slicesFound = 0, j;
   double aveCoord[7], rmsCoord[7];
 
-#if SDDS_MPI_IO
+#if USE_MPI
   long total_count;
   long total_particles;
 
@@ -497,8 +497,8 @@ void computeSASEFELAtEnd(SASEFEL_OUTPUT *sasefelOutput, double **particle, long 
     aveCoord[j] += time[i];
   }
 
-#if SDDS_MPI_IO
-  if (SDDS_MPI_IO) {
+#if USE_MPI
+  if (USE_MPI) {
     double aveCoord_tmp[7];
 
     memcpy(aveCoord_tmp, aveCoord, 7 * sizeof(aveCoord[0]));
@@ -521,10 +521,10 @@ void computeSASEFELAtEnd(SASEFEL_OUTPUT *sasefelOutput, double **particle, long 
   /* compute rms energy spread */
   for (i = deltaRMS = 0; i < particles; i++)
     deltaRMS += sqr(particle[i][5] - deltaAve);
-#if !SDDS_MPI_IO
+#if !USE_MPI
   sasefelOutput->Sdelta[0] = deltaRMS = sqrt(deltaRMS / particles);
 #else
-  if (SDDS_MPI_IO) {
+  if (USE_MPI) {
     double deltaRMS_sum;
 
     MPI_Reduce(&deltaRMS, &deltaRMS_sum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -538,14 +538,14 @@ void computeSASEFELAtEnd(SASEFEL_OUTPUT *sasefelOutput, double **particle, long 
    */
   percentLevel[0] = 10;
   percentLevel[1] = 90;
-#if SDDS_MPI_IO
+#if USE_MPI
   approximate_percentiles_p(xLimit, percentLevel, 2, time, particles, ANALYSIS_BINS);
 #else
   compute_percentiles(xLimit, percentLevel, 2, time, particles);
 #endif
   sasefelOutput->rmsBunchLength[0] = tRMS = (xLimit[1] - xLimit[0]) / (0.8 * sqrt(2 * PI));
 
-#if SDDS_MPI_IO
+#if USE_MPI
   emitx = rms_emittance_p(particle, 0, 1, particles, &S11, &S12, NULL, NULL, NULL, NULL);
   emity = rms_emittance_p(particle, 2, 3, particles, &S33, &S34, NULL, NULL, NULL, NULL);
 #else
@@ -611,7 +611,7 @@ void computeSASEFELAtEnd(SASEFEL_OUTPUT *sasefelOutput, double **particle, long 
       /* compute rms-equivalent time value so that Q/(sqrt(2*PI)*tRMS) is
        * the average current in the slice
        */
-#if SDDS_MPI_IO
+#if USE_MPI
       approximate_percentiles_p(xLimit, percentLevel, 2, time, particles, ANALYSIS_BINS);
 #else
       compute_percentiles(xLimit, percentLevel, 2, time, particles);
@@ -629,7 +629,7 @@ void computeSASEFELAtEnd(SASEFEL_OUTPUT *sasefelOutput, double **particle, long 
           aveCoord[j] += time[i];
         }
       }
-#if SDDS_MPI_IO
+#if USE_MPI
       MPI_Allreduce(&count, &total_count, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
       count = total_count;
 #endif
@@ -653,8 +653,8 @@ void computeSASEFELAtEnd(SASEFEL_OUTPUT *sasefelOutput, double **particle, long 
       }
       slicesFound++;
       sasefelOutput->sliceFound[slice] = 1;
-#if SDDS_MPI_IO
-      if (SDDS_MPI_IO) {
+#if USE_MPI
+      if (USE_MPI) {
         double aveCoord_tmp[7];
 
         memcpy(aveCoord_tmp, aveCoord, 7 * sizeof(aveCoord[0]));
@@ -681,8 +681,8 @@ void computeSASEFELAtEnd(SASEFEL_OUTPUT *sasefelOutput, double **particle, long 
           S12 += (particle[i][0] - aveCoord[0]) * (particle[i][1] - aveCoord[1]);
           S34 += (particle[i][2] - aveCoord[2]) * (particle[i][3] - aveCoord[3]);
         }
-#if SDDS_MPI_IO
-      if (SDDS_MPI_IO) {
+#if USE_MPI
+      if (USE_MPI) {
         double rmsCoord_tmp[6],
           S12_tmp = S12, S34_tmp = S34;
 
