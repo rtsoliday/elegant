@@ -2111,8 +2111,7 @@ double optimization_function(double *value, long *invalid) {
   TUNE_FOOTPRINTS tuneFP;
   static long nLostMemory = -1;
 #if USE_MPI
-  long beamNoToTrack;
-  long nLostTotal;
+  long nOriginalTotal, nLostTotal;
 #endif
 
   log_entry("optimization_function");
@@ -2713,17 +2712,12 @@ double optimization_function(double *value, long *invalid) {
     if (!output->sums_vs_z)
       bombElegant("sums_vs_z element of output structure is NULL--programming error (optimization_function)", NULL);
 #if USE_MPI
-#if MPI_DEBUG
-      printf("computing final properties.\n");
-      fflush(stdout);
-#endif
-
     if (distributedBeam)
-      beamNoToTrack = beam->n_to_track_total;
+      nOriginalTotal = beam->n_original_total;
     else
-      beamNoToTrack = beam->n_to_track;
+      nOriginalTotal = beam->n_original;
     if ((i = compute_final_properties(final_property_value, output->sums_vs_z + output->n_z_points,
-                                      beamNoToTrack, beam->p0, M, beam->particle,
+                                      nOriginalTotal, beam->p0, M, beam->particle,
                                       control->i_step, control->indexLimitProduct * control->n_steps,
                                       charge)) != final_property_values) {
 #else
