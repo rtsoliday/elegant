@@ -364,7 +364,7 @@ long do_tracking(
     beam->n_lost = 0;
   }
 
-#if SDDS_MPI_IO
+#if USE_MPI
   if (distributedBeam && !partOnMaster) {
     if (isMaster)
       nOriginal = 0;
@@ -2443,7 +2443,7 @@ long do_tracking(
                         if (((TWISSELEMENT *)eptr->p_elem)->verbose)
                           printf("* Computing beam-based twiss transformation matrix for %s at z=%e m\n",
                                  eptr->name, z);
-#if SDDS_MPI_IO
+#if USE_MPI
                         if (!partOnMaster && distributedBeam) {
                           if (isMaster)
                             nToTrack = 0;
@@ -3264,7 +3264,7 @@ long do_tracking(
             fflush(stdout);
             exitElegant(1);
           }
-#if SDDS_MPI_IO
+#if USE_MPI
           if (!partOnMaster && distributedBeam) {
             if (isMaster)
               nToTrack = 0;
@@ -3290,7 +3290,7 @@ long do_tracking(
         log_exit("do_tracking.3");
         log_entry("do_tracking.4");
         if (!(flags & SILENT_RUNNING) && !is_batch && n_passes != 1 && !(flags & TEST_PARTICLES)) {
-#if !SDDS_MPI_IO
+#if !USE_MPI
           printf("%ld particles present after pass %ld        \n",
                  nToTrack, i_pass);
 #else
@@ -3335,7 +3335,7 @@ long do_tracking(
         log_exit("do_tracking");
 
         if (charge && finalCharge) {
-#if !SDDS_MPI_IO
+#if !USE_MPI
           *finalCharge = nToTrack * charge->macroParticleCharge;
 #else
           if (!partOnMaster) {
@@ -3986,12 +3986,12 @@ long do_tracking(
       void store_fitpoint_beam_parameters(MARK *fpt, char *name, long occurence, double **coord, long np, double Po) {
         long i, j, k;
         long npTotal;
-        static double emit[3], sigma[6], centroid[6], beta[3], alpha[3], emitc[3], min[6], max[6];
+        static double emit[3], sigma[7], centroid[7], beta[3], alpha[3], emitc[3], min[7], max[7];
         static BEAM_SUMS *sums;
-        static char *centroid_name_suffix[8] = {
-          "Cx", "Cxp", "Cy", "Cyp", "Cs", "Cdelta", "pCentral", "Particles"};
-        static char *sigma_name_suffix[6] = {
-          "Sx", "Sxp", "Sy", "Syp", "Ss", "Sdelta"};
+        static char *centroid_name_suffix[9] = {
+          "Cx", "Cxp", "Cy", "Cyp", "Cs", "Cdelta", "Ct", "pCentral", "Particles"};
+        static char *sigma_name_suffix[7] = {
+          "Sx", "Sxp", "Sy", "Syp", "Ss", "Sdelta", "St"};
         static char *emit_name_suffix[5] = {
           "ex", "ey", "es", "ecx", "ecy"};
         static char *beta_name_suffix[2] = {
@@ -4002,10 +4002,10 @@ long do_tracking(
           "alphaxBeam",
           "alphayBeam",
         };
-        static char *max_name_suffix[6] = {
-          "max1", "max2", "max3", "max4", "max5", "max6"};
-        static char *min_name_suffix[6] = {
-          "min1", "min2", "min3", "min4", "min5", "min6"};
+        static char *max_name_suffix[7] = {
+          "max1", "max2", "max3", "max4", "max5", "max6", "max7"};
+        static char *min_name_suffix[7] = {
+          "min1", "min2", "min3", "min4", "min5", "min6", "min7"};
         static char s[1000];
 
         sums = allocateBeamSums(0, 1);
@@ -4027,31 +4027,31 @@ long do_tracking(
         npTotal = np;
 #endif
         /* if (isMaster || !distributedBeam) { */
-        for (i = 0; i < 6; i++) {
+        for (i = 0; i < 7; i++) {
           centroid[i] = sums->centroid[i];
           sigma[i] = sqrt(sums->beamSums2->sigma[i][i]);
           min[i] = sums->beamSums2->min[i];
           max[i] = sums->beamSums2->max[i];
-          if (i % 2 == 0) {
+          if (i % 2 == 0 && i<6) {
             beta[i / 2] = alpha[i / 2] = emitc[i / 2] = emit[i / 2] = 0;
             computeEmitTwissFromSigmaMatrix(emit + i / 2, emitc + i / 2, beta + i / 2, alpha + i / 2, sums->beamSums2->sigma, i);
           }
         }
 
         if (!(fpt->init_flags & 2)) {
-          fpt->centroid_mem = tmalloc(sizeof(*fpt->centroid_mem) * 8);
-          fpt->sigma_mem = tmalloc(sizeof(*fpt->sigma_mem) * 6);
-          fpt->min_mem = tmalloc(sizeof(*fpt->min_mem) * 6);
-          fpt->max_mem = tmalloc(sizeof(*fpt->max_mem) * 6);
+          fpt->centroid_mem = tmalloc(sizeof(*fpt->centroid_mem) * 9);
+          fpt->sigma_mem = tmalloc(sizeof(*fpt->sigma_mem) * 7);
+          fpt->min_mem = tmalloc(sizeof(*fpt->min_mem) * 7);
+          fpt->max_mem = tmalloc(sizeof(*fpt->max_mem) * 7);
           fpt->emit_mem = tmalloc(sizeof(*fpt->emit_mem) * 5);
           fpt->betaBeam_mem = tmalloc(sizeof(*fpt->betaBeam_mem) * 2);
           fpt->alphaBeam_mem = tmalloc(sizeof(*fpt->alphaBeam_mem) * 2);
           fpt->sij_mem = tmalloc(sizeof(*fpt->sigma_mem) * 15);
-          for (i = 0; i < 8; i++) {
+          for (i = 0; i < 9; i++) {
             sprintf(s, "%s#%ld.%s", name, occurence, centroid_name_suffix[i]);
             fpt->centroid_mem[i] = rpn_create_mem(s, 0);
           }
-          for (i = 0; i < 6; i++) {
+          for (i = 0; i < 7; i++) {
             sprintf(s, "%s#%ld.%s", name, occurence, sigma_name_suffix[i]);
             fpt->sigma_mem[i] = rpn_create_mem(s, 0);
             sprintf(s, "%s#%ld.%s", name, occurence, min_name_suffix[i]);
@@ -4077,7 +4077,7 @@ long do_tracking(
           }
           fpt->init_flags |= 2;
         }
-        for (i = 0; i < 6; i++) {
+        for (i = 0; i < 7; i++) {
           rpn_store(centroid[i], NULL, fpt->centroid_mem[i]);
           rpn_store(sigma[i], NULL, fpt->sigma_mem[i]);
           rpn_store(min[i], NULL, fpt->min_mem[i]);
@@ -4094,8 +4094,8 @@ long do_tracking(
         for (i = k = 0; i < 6; i++)
           for (j = i + 1; j < 6; j++, k++)
             rpn_store(sums->beamSums2->sigma[i][j], NULL, fpt->sij_mem[k]);
-        rpn_store(Po, NULL, fpt->centroid_mem[6]);
-        rpn_store((double)npTotal, NULL, fpt->centroid_mem[7]);
+        rpn_store(Po, NULL, fpt->centroid_mem[7]);
+        rpn_store((double)npTotal, NULL, fpt->centroid_mem[8]);
         /* } */
         freeBeamSums(sums, 1);
       }
@@ -5343,7 +5343,7 @@ long do_tracking(
         long i, j;
         BEAM_SUMS *sums;
 
-#if SDDS_MPI_IO
+#if USE_MPI
         long npTotal;
         MPI_Reduce(&np, &npTotal, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
         if (isMaster && npTotal < 10) {
