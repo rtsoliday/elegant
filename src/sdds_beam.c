@@ -316,6 +316,23 @@ long new_sdds_beam(
 #if SDDS_MPI_IO
     if (isSlave || (!distributedBeam)) {
 #endif
+      /* A preceding element (e.g. a SCRIPT element that changes the particle
+       * count) may have resized beam->particle during the previous pass. When
+       * the beam is reused, the regeneration loops below write up to
+       * n_particles_per_ring*n_original entries into beam->particle, so ensure it
+       * (and beam->accepted) is at least that large again; otherwise the array is
+       * overrun, which caused a SEGV (masked as an MPI hang) with SCRIPT+reuse. */
+      if (beam->particle && beam->particle != beam->original) {
+        long neededParticles = (long)(n_particles_per_ring * beam->n_original * memDistFactor);
+        if (neededParticles < 1)
+          neededParticles = 1;
+        if (beam->n_particle < neededParticles) {
+          beam->particle = (double **)resize_czarray_2d((void **)beam->particle, sizeof(double), neededParticles, totalPropertiesPerParticle);
+          if (run->acceptance && beam->accepted)
+            beam->accepted = (double **)resize_czarray_2d((void **)beam->accepted, sizeof(double), neededParticles, totalPropertiesPerParticle);
+          beam->n_particle = neededParticles;
+        }
+      }
       if (input_type_code == SPIFFE_BEAM) {
         if (!beam->original)
           bombElegant("beam->original array is NULL (new_sdds_beam-2)", NULL);
@@ -531,6 +548,25 @@ long new_sdds_beam(
         bombElegant("beam->original is NULL (new_sdds_beam.3)", NULL);
       if (!beam->particle)
         bombElegant("beam->particle is NULL (new_sdds_beam.3)", NULL);
+      /* A preceding element (e.g. a SCRIPT element that changes the particle
+       * count) may have resized beam->particle smaller during the previous pass.
+       * When the saved bunch is reused (e.g. during optimization), the loop below
+       * writes beam->n_saved entries into beam->particle, so ensure it (and
+       * beam->accepted) is at least that large again; otherwise the array is
+       * overrun, which caused a SEGV/MPI_Abort with SCRIPT+reuse and losses. */
+      if (beam->particle != beam->original) {
+        long neededParticles = (long)(n_particles_per_ring * beam->n_original * memDistFactor);
+        if (neededParticles < beam->n_saved)
+          neededParticles = beam->n_saved;
+        if (neededParticles < 1)
+          neededParticles = 1;
+        if (beam->n_particle < neededParticles) {
+          beam->particle = (double **)resize_czarray_2d((void **)beam->particle, sizeof(double), neededParticles, totalPropertiesPerParticle);
+          if (run->acceptance && beam->accepted)
+            beam->accepted = (double **)resize_czarray_2d((void **)beam->accepted, sizeof(double), neededParticles, totalPropertiesPerParticle);
+          beam->n_particle = neededParticles;
+        }
+      }
       for (i = 0; i < beam->n_saved; i++) {
         if (!beam->original[i]) {
           printf("error: beam->original[%ld] is NULL (new_sdds_beam.3)\n", i);
