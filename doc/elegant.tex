@@ -33,7 +33,7 @@
 \begin{document}
 
 \title{User's Manual for {\tt elegant}}
-\author{Program Version 2026.3\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
+\author{Program Version 2026.4\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
 \maketitle
 
 Note: another source of help for {\tt elegant} is the on-line
@@ -49,66 +49,31 @@ at a high level.
 Starting in Version 2025.4, AI coding assistants have been used for addition of new features and generation
 of documentation.
 
-\section{Highlights of What's New in Version 2026.3}
+\section{Highlights of What's New in Version 2026.4}
 
-Here is a summary of what's changed since release 2026.2.  Historical change logs are collected in Section
+Here is a summary of what's changed since release 2026.3.  Historical change logs are collected in Section
 \ref{sect:changeLog}.
 
 \subsection{Bug Fixes for Elements}
 
 \begin{itemize}
-  \item None.
+\item None.
 \end{itemize}
 
 \subsection{Bug Fixes for Commands}
 \begin{itemize}
-\item A bug was fixed in IBS calculations for \verb|moments_output| that resulted in non-periodic solutions. The emittances were not
-  much affected.
-\item A limitation was resolved in coupled twiss parameter computations that resulted in the taking the absolute value of the vertical dispersion.
+\item None.
 \end{itemize}
 
 \subsection{New and Modified Elements}
 \begin{itemize}
-\item The \verb|IMPEDANCE| element was added, combining the physics of \verb|ZLONGIT| and \verb|ZTRANSVERSE|. This allows
-  combining simulation of short-range monopole, dipole, and quadrupole impedances into a single element, giving a
-  significant performance improvement compared to a sequence of separate elements.
-\item The \verb|CWAKE| element was added, combining the physics of \verb|WAKE| and \verb|TRWAKE|. This allows combining
-  simulation  of short-range monopole, dipole, and quadrupole wakes into a single element, giving a
-  significant performance improvement compared to a sequence of separate elements.
-\item Spin tracking was added to the \verb|CCBEND| and \verb|LGBEND| elements. With \verb|spin_tracking=1| set
-  in \verb|run_setup|, both elements apply Thomas-BMT precession through the body and at the entrance/exit
-  edges.
-\item For \verb|CCBEND| and \verb|LGBEND|, the body radiation calculation now includes the contribution of
-  spurious systematic and random multipoles ({\tt SYSTEMATIC\_MULTIPOLES}, {\tt RANDOM\_MULTIPOLES}, etc.). 
-  Previously these were applied to the orbit but omitted from the
-  radiation calculation. 
+\item None.
 \end{itemize}
 
 \subsection{New and Modified Commands}
 \begin{itemize}
-\item Added the \verb|load_knobs| command, which allows loading knob definitions that link changes in multiple elements to
-  a user-defined handle. The handle can be used in \verb|alter_elements|, \verb|error_element|, \verb|optimization_variable|,
-  and \verb|vary_element|.
-\item Added the \verb|undulator_brightness| command, which computes the x-ray brightness of a specified undulator at a specified
-  photon energy, typically for the periodic lattice functions and equilibrium emittance computed by \verb|twiss_output|.
-  The results are available for optimization.
-\item The \verb|moments_output| command now optionally includes the effect of elastic gas scattering.
-\item The \verb|coupled_twiss| command now supplies \verb|alphax1|, \verb|alphax2|, \verb|alphay1|, and \verb|alphay2| in
-  the output file, along with other quantities needed for progagation-based calculations.
-\item The \verb|coupled_twiss| command now supports propagation of coupled lattice functions by setting \verb|matched=0|.
-\item The \verb|correct_coupling|, \verb|compute_coupling_response_matrix|, and \verb|load_coupling_response_matrix| commands
-  were added, supplying a method of correcting coupling using the vertical dispersion response to (typically) skew quadrupoles.
-\item The \verb|correct_lattice|, \verb|compute_lattice_response_matrix|, and \verb|load_lattice_response_matrix| commands
-  were added, supplying a method of correcting the linear lattice functions ($\beta_x$, $\beta_y$, $\eta_x$) at
-  selected BPMs by adjusting (typically) normal quadrupoles, against a user-supplied design-twiss reference file.
-\item The \verb|correct|, \verb|correct_tunes|, \verb|correct_chromaticity|, \verb|correct_coupling|, and \verb|correct_lattice|
-  commands all have a \verb|reset_correctors_each_step| qualifier that can be used to force correctors back to the initial
-  values at the start of each step. Previous versions would automatically propagate the previous corrector strengths into the
-  next step. This is almost certainly not what is wanted in most cases, in light of which we decided to change the default behavior.
-\item The \verb|twiss_output| command now computes the equilibrium polarization and self-polarization time when
-  \verb|radiation_integrals=1|.
-\item The \verb|parallel_optimization_setup| command now allows selection of the \verb|randomsample| method. If selected, each processor
-  uses a different random sequence.
+\item The \verb|save_lattice| command now has a \verb|comment| parameter that can be used to provide a text that
+  will be placed into the saved lattice file as a comment.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -6719,6 +6684,7 @@ supported; the ``Ming-Xie'' model is based on the simple parametrization M. Xie\
     STRING filename = NULL;
     long output_seq = 0;
     long suppress_defaults = 1;
+    STRING comment = NULL;
 &end
 \end{verbatim}
 
@@ -6733,6 +6699,10 @@ sub-beamline definitions in the original lattice file will be destroyed from the
 This feature is intended to be used 
 together with \verb|insert_elements| and \verb|replace_elements|.
 \item \verb|suppress_defaults| --- If non-zero, the lattice will not contain default values of parameters.
+\item \verb|comment| --- If given, this text is written as a comment at the top of the saved file.
+Each line is prefixed with the lattice comment character ``\verb|!|'', so the saved file can still be
+read back by \verb|elegant|. This is useful for recording provenance, e.g., how or when the lattice
+was generated. Multiline comments can be specified by  placing \verb|\n| in the text as an end-of-line indicator.
 \end{itemize}
 
 %\begin{latexonly}
@@ -10272,10 +10242,90 @@ terminal input and terminal output, respectively.
 
 \section{Change Log\label{sect:changeLog}}
 
+\subsection{Highlights of What's New in Version 2026.3}
+
+Here is a summary of what's changed since release 2026.2.
+
+\subsubsection{Bug Fixes for Elements}
+
+\begin{itemize}
+  \item None.
+\end{itemize}
+
+\subsubsection{Bug Fixes for Commands}
+\begin{itemize}
+\item A bug was fixed in IBS calculations for \verb|moments_output| that resulted in non-periodic solutions. The emittances were not
+  much affected.
+\item A limitation was resolved in coupled twiss parameter computations that resulted in the taking the absolute value of the vertical dispersion.
+\end{itemize}
+
+\subsubsection{New and Modified Elements}
+\begin{itemize}
+\item The \verb|IMPEDANCE| element was added, combining the physics of \verb|ZLONGIT| and \verb|ZTRANSVERSE|. This allows
+  combining simulation of short-range monopole, dipole, and quadrupole impedances into a single element, giving a
+  significant performance improvement compared to a sequence of separate elements.
+\item The \verb|CWAKE| element was added, combining the physics of \verb|WAKE| and \verb|TRWAKE|. This allows combining
+  simulation  of short-range monopole, dipole, and quadrupole wakes into a single element, giving a
+  significant performance improvement compared to a sequence of separate elements.
+\item Spin tracking was added to the \verb|CCBEND| and \verb|LGBEND| elements. With \verb|spin_tracking=1| set
+  in \verb|run_setup|, both elements apply Thomas-BMT precession through the body and at the entrance/exit
+  edges.
+\item For \verb|CCBEND| and \verb|LGBEND|, the body radiation calculation now includes the contribution of
+  spurious systematic and random multipoles ({\tt SYSTEMATIC\_MULTIPOLES}, {\tt RANDOM\_MULTIPOLES}, etc.). 
+  Previously these were applied to the orbit but omitted from the
+  radiation calculation. 
+\end{itemize}
+
+\subsubsection{New and Modified Commands}
+\begin{itemize}
+\item Added the \verb|load_knobs| command, which allows loading knob definitions that link changes in multiple elements to
+  a user-defined handle. The handle can be used in \verb|alter_elements|, \verb|error_element|, \verb|optimization_variable|,
+  and \verb|vary_element|.
+\item Added the \verb|undulator_brightness| command, which computes the x-ray brightness of a specified undulator at a specified
+  photon energy, typically for the periodic lattice functions and equilibrium emittance computed by \verb|twiss_output|.
+  The results are available for optimization.
+\item The \verb|moments_output| command now optionally includes the effect of elastic gas scattering.
+\item The \verb|coupled_twiss| command now supplies \verb|alphax1|, \verb|alphax2|, \verb|alphay1|, and \verb|alphay2| in
+  the output file, along with other quantities needed for progagation-based calculations.
+\item The \verb|coupled_twiss| command now supports propagation of coupled lattice functions by setting \verb|matched=0|.
+\item The \verb|correct_coupling|, \verb|compute_coupling_response_matrix|, and \verb|load_coupling_response_matrix| commands
+  were added, supplying a method of correcting coupling using the vertical dispersion response to (typically) skew quadrupoles.
+\item The \verb|correct_lattice|, \verb|compute_lattice_response_matrix|, and \verb|load_lattice_response_matrix| commands
+  were added, supplying a method of correcting the linear lattice functions ($\beta_x$, $\beta_y$, $\eta_x$) at
+  selected BPMs by adjusting (typically) normal quadrupoles, against a user-supplied design-twiss reference file.
+\item The \verb|correct|, \verb|correct_tunes|, \verb|correct_chromaticity|, \verb|correct_coupling|, and \verb|correct_lattice|
+  commands all have a \verb|reset_correctors_each_step| qualifier that can be used to force correctors back to the initial
+  values at the start of each step. Previous versions would automatically propagate the previous corrector strengths into the
+  next step. This is almost certainly not what is wanted in most cases, in light of which we decided to change the default behavior.
+\item The \verb|twiss_output| command now computes the equilibrium polarization and self-polarization time when
+  \verb|radiation_integrals=1|.
+\item The \verb|parallel_optimization_setup| command now allows selection of the \verb|randomsample| method. If selected, each processor
+  uses a different random sequence.
+\end{itemize}
+
+\subsubsection{Changes to Examples}
+
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{Changes to Related Programs and Files}
+
+The {\tt elegant} distribution includes many programs and scripts that perform computations with {\tt elegant}
+output data, provide interfaces with other programs, or prepare data for use with {\tt elegant}. These
+are listed in Section \ref{sect:tools}. 
+
+Changes to these tools in this release include
+\begin{itemize}
+\item The \verb|touschekLifetime| program now computes the lifetime including polarization, based on
+  \cite{PhysRevAccelBeams.27.124401}.
+\item The script \verb|swapOutPolarization| was added to model the build-up of polarization during swap-out operation and
+  the effect on the beam lifetime.
+\end{itemize}
+
 \subsection{Highlights of What's New in Version 2026.2}
 
-Here is a summary of what's changed since release 2026.1.  Historical change logs are collected in Section
-\ref{sect:changeLog}.
+Here is a summary of what's changed since release 2026.1.
 
 The major change is support for spin tracking. This is invoked by setting \verb|spin_tracking=1| in the \verb|run_setup|
 command.
