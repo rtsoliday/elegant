@@ -363,7 +363,7 @@ void dump_final_properties(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums,
       fflush(stdout);
       abort();
     }
-#if SDDS_MPI_IO
+#if USE_MPI
   /* This is required to let all the processors get right n_properties and perturbed_quan_duplicates */
   MPI_Bcast(&n_properties, 1, MPI_LONG, 0, MPI_COMM_WORLD);
   MPI_Bcast(&perturbed_quan_duplicates, 1, MPI_LONG, 0, MPI_COMM_WORLD);
@@ -508,9 +508,9 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
   double deltaPosition[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   double percLevel2[9] = {10, 20, 30, 40, 50, 60, 70, 80, 90};
   double tPosition2[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-#if SDDS_MPI_IO
+#if USE_MPI
   double tmp;
-  long n_part_total;
+  long n_part_total, n_orig_total;
 #endif
   log_entry("compute_final_properties");
 #ifdef DEBUG
@@ -531,11 +531,13 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
       bombElegant("particle coordinate array is null (compute_final_properties)", NULL);
 
       /* compute centroids and sigmas */
-#if SDDS_MPI_IO
+#if USE_MPI
   if (distributedBeam) {
-    if (myid == 0) /* The total number of particles survived is on the master */
+    n_orig_total = n_original;
+    if (myid == 0)
       n_part_total = sums->n_part;
     MPI_Bcast(&n_part_total, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&n_orig_total, 1, MPI_LONG, 0, MPI_COMM_WORLD);
   }
   if ((distributedBeam && n_part_total) || (!distributedBeam && sums->n_part))
   /* We have to check the total number of particles, otherwise it will cause
@@ -586,7 +588,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
         (!(tData = malloc(sizeof(*tData) * (percDataMax = sums->n_part))) ||
          !(deltaData = malloc(sizeof(*deltaData) * (percDataMax = sums->n_part)))))
       bombElegant("memory allocation failure (compute_final_properties)", NULL);
-#if SDDS_MPI_IO
+#if USE_MPI
     if (isSlave || !distributedBeam)
 #endif
       for (i = sum = 0; i < sums->n_part; i++) {
@@ -607,7 +609,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
         if (t > tmax)
           tmax = t;
       }
-#if SDDS_MPI_IO
+#if USE_MPI
     if (distributedBeam) {
       if (isMaster) {
         tmax = dp_max = -DBL_MAX;
@@ -631,14 +633,14 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
       Ddp = dp_max - dp_min;
       data[6 + F_CENTROID_OFFSET] = (tc = sum / sums->n_part);
     }
-#if SDDS_MPI_IO
+#if USE_MPI
     if (distributedBeam)
       MPI_Bcast(&tc, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 #endif
     if (isSlave || !distributedBeam)
       for (i = sum = 0; i < sums->n_part; i++)
         sum += sqr(tData[i] - tc);
-#if SDDS_MPI_IO
+#if USE_MPI
     if (distributedBeam) {
       if (isMaster)
         sum = 0.0;
@@ -647,7 +649,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
     }
 #endif
     data[6 + F_SIGMA_OFFSET] = sqrt(sum / sums->n_part);
-#if !SDDS_MPI_IO
+#if !USE_MPI
     /* results of these calls used below */
     approximate_percentiles(tPosition, percLevel, 12, tData, sums->n_part, ANALYSIS_BINS2);
     approximate_percentiles(tPosition2, percLevel2, 9, tData, sums->n_part, ANALYSIS_BINS2);
@@ -679,11 +681,18 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
 #endif
 
   /* transmission */
+#if USE_MPI
+  if (n_orig_total)
+    data[F_T_OFFSET] = ((double)n_part_total) / n_orig_total;
+  else
+    data[F_T_OFFSET] = 0;
+#else  
   if (n_original)
     data[F_T_OFFSET] = ((double)sums->n_part) / n_original;
   else
     data[F_T_OFFSET] = 0;
-
+#endif
+  
   /* lattice momentum :*/
   data[F_T_OFFSET + 1] = p_central;
 
@@ -691,7 +700,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
   p_sum = gamma_sum = 0;
   pAverage = p_central;
 
-#if SDDS_MPI_IO
+#if USE_MPI
   if (isSlave || !distributedBeam)
 #endif
     for (i = 0; i < sums->n_part; i++) {
@@ -699,7 +708,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
       gamma_sum += sqrt(sqr(p) + 1);
     }
 
-#if SDDS_MPI_IO
+#if USE_MPI
   if (distributedBeam) {
     double *tmp_sum = malloc(2 * sizeof(*tmp_sum)),
            *tmp = malloc(2 * sizeof(*tmp_sum));
@@ -722,7 +731,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
     data[F_T_OFFSET + 4] = charge;
   }
   /* compute "sigma" from width of particle distributions for x and y */
-#if !SDDS_MPI_IO
+#if !USE_MPI
   if (coord && sums->n_part > 3) {
     data[F_WIDTH_OFFSET] = approximateBeamWidth(0.6826F, coord, sums->n_part, 0L) / 2.;
     data[F_WIDTH_OFFSET + 1] = approximateBeamWidth(0.6826F, coord, sums->n_part, 2L) / 2.;
@@ -763,7 +772,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
     computeEmitTwissFromSigmaMatrix(data + F_EMIT_OFFSET + 1, data + F_EMIT_OFFSET + 3, NULL, NULL, sums->beamSums2->sigma, 2);
   }
 
-#if !SDDS_MPI_IO
+#if !USE_MPI
   data[F_EMIT_OFFSET + 4] = rms_longitudinal_emittance(coord, sums->n_part, p_central, 0, 0);
 #else
   if (distributedBeam)
