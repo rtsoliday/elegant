@@ -73,7 +73,7 @@ long generate_bunch(
   double s56, beta, emit, alpha = 0.0;
   double *randomizedData = NULL;
   TWISSBEAM twissBeam;
-#if !SDDS_MPI_IO
+#if !USE_MPI
   /* for Pelegant regression test */
   static long initial_saved = 0;
   static double **first_particle_address;
@@ -580,7 +580,7 @@ void gaussian_distribution(
   if (haltonID[offset] && haltonID[offset + 1]) {
     double s12[2], buffer[2];
     long dim;
-#if SDDS_MPI_IO
+#if USE_MPI
     /* To generate n particles with Halton sequence on m processors, each processor will 
        generate all particles, but only n/m particles will be used for each of the processors */
     long i, start_particle = 0, end_particle = n_particles, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
@@ -685,7 +685,7 @@ void uniform_distribution(
   range1 = 2 * max1 * cutoff;
   range2 = 2 * max2 * cutoff;
 
-#if SDDS_MPI_IO
+#if USE_MPI
   if (distributedBeam) {
     if (haltonID[offset] && haltonID[offset + 1]) {
       /* To generate n particles with Halton sequence on m processors, each processor will 
@@ -877,7 +877,7 @@ void hard_edge_distribution(
   range1 = 2 * max1 * cutoff;
   range2 = 2 * max2 * cutoff;
 
-#if SDDS_MPI_IO
+#if USE_MPI
   if (distributedBeam) {
     if (haltonID[offset] && haltonID[offset + 1]) {
       /* To generate n particles with Halton sequence on m processors, each processor will 
@@ -1044,7 +1044,7 @@ void enforce_sigma_values(double **coord, long n_part, long offset, double s1d, 
     s1a += sqr(coord[i][offset + 0]);
     s2a += sqr(coord[i][offset + 1]);
   }
-#if !SDDS_MPI_IO
+#if !USE_MPI
   s1a = sqrt(s1a / n_part);
   s2a = sqrt(s2a / n_part);
 #else
@@ -1084,7 +1084,7 @@ void zero_centroid(double **particle, long n_particles, long coord) {
   }
   for (i = sum = 0; i < n_particles; i++)
     sum += particle[i][coord];
-#if !SDDS_MPI_IO
+#if !USE_MPI
   sum /= n_particles;
 #else
   if (distributedBeam) {
@@ -1139,7 +1139,7 @@ long dynap_distribution(double **particle, long n_particles, double sx, double s
   return (nx * ny);
 }
 
-#if SDDS_MPI_IO
+#if USE_MPI
 long dynap_distribution_p(double **particle, long n_particles, double sx, double sy,
                           long nx, long ny) {
   long ix, iy, ip;

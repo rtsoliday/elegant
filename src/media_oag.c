@@ -5,7 +5,7 @@
   * Yusong Wang, 2007
   */
 
-#if SDDS_MPI_IO
+#if USE_MPI
 
 #  include "track.h"
 

@@ -283,14 +283,14 @@ void finish_bunched_beam_setup(
   if (one_random_bunch) {
     /* make a seed for reinitializing the beam RN generator */
     beamRepeatSeed = 1e8 * random_4(1);
-#if SDDS_MPI_IO
+#if USE_MPI
     /* All processors will have same beamRepeatSeed after here. This will make
        it easy for the serial version to generate the same sequence */
     MPI_Bcast(&beamRepeatSeed, 1, MPI_LONG, 1, MPI_COMM_WORLD);
 #endif
     random_4(-beamRepeatSeed);
   }
-#if !SDDS_MPI_IO
+#if !USE_MPI
   else if ((run->random_sequence_No > 1) && (control->n_steps == 1)) { /* This part will take effect for regression test when random_sequence_No>1 */
     beamRepeatSeed = 1e8 * random_4(1);
     random_4(-beamRepeatSeed);
@@ -925,8 +925,8 @@ void do_track_beam_output(RUN *run, VARY *control,
     if (!(flags & SILENT_RUNNING)) {
       printf("Dumping lost-particle data...\n");
       fflush(stdout);
-#if SDDS_MPI_IO
-      if (SDDS_MPI_IO) {
+#if USE_MPI
+      if (USE_MPI) {
         long total_lost, n_lost;
         if (distributedBeam) {
           if (isMaster)

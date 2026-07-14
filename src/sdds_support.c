@@ -919,7 +919,7 @@ void dump_watch_particles(WATCH *watch, long step, long pass, double **particle,
       }
     }
 
-#if SDDS_MPI_IO
+#if USE_MPI
   if (USE_MPI && distributedBeam) {
     MPI_Allreduce(&row, &total_row, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&count, &total_count, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -1216,7 +1216,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
       npCount++;
     }
   }
-#if SDDS_MPI_IO
+#if USE_MPI
   if (USE_MPI) {
     double p_sum_total, gamma_sum_total, sum_total, error_sum_total;
     double outBuffer[5], inBuffer[5];
@@ -1693,7 +1693,7 @@ void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, long particles,
     SDDS_SetError("Problem starting SDDS table (dump_phase_space)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
-#if SDDS_MPI_IO
+#if USE_MPI
   if (distributedBeam) {
     MPI_Reduce(&particles, &total_particles, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
     if (isMaster) {

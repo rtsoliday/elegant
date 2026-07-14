@@ -86,7 +86,7 @@ void determineScriptNames(SCRIPT *script, char **rootname0, char **input0, char 
 #ifdef USE_MPI
     if (isMaster && !(rootname = tmpname(NULL)))
       bombElegant("problem generating temporary filename for script", NULL);
-#  if SDDS_MPI_IO
+#  if USE_MPI
     if (isMaster)
       rootnameLength = strlen(rootname) + 1;
     if (!forceSerial) {
