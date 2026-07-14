@@ -15,6 +15,18 @@ CUDA_NVCC_RELEASE_MAJOR = $(shell $(1) --version 2>/dev/null | sed -n 's/.*relea
 CUDA_NVCC_IS_SUPPORTED = $(shell major=`$(1) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | tail -n 1`; if [ -n "$$major" ] && [ "$$major" -ge "$(CUDA_NVCC_MINIMUM_MAJOR)" ]; then printf 1; fi)
 CUDA_SUPPORTED_NVCCS = $(strip $(foreach nvcc,$(1),$(if $(call CUDA_NVCC_IS_SUPPORTED,$(nvcc)),$(nvcc))))
 
+# SDDS libraries may contain OpenMP code. Apple Clang does not provide the
+# OpenMP runtime itself, so locate the MacPorts or Homebrew libomp installation
+# and add it to every Darwin executable link.
+DARWIN_OPENMP_LIBRARY := $(firstword $(wildcard \
+                          /opt/local/lib/libomp/libomp.dylib \
+                          /opt/homebrew/opt/libomp/lib/libomp.dylib \
+                          /usr/local/opt/libomp/lib/libomp.dylib))
+ifneq ($(strip $(DARWIN_OPENMP_LIBRARY)),)
+  DARWIN_OPENMP_LIBDIR := $(patsubst %/,%,$(dir $(DARWIN_OPENMP_LIBRARY)))
+  DARWIN_OPENMP_LDFLAGS := -L$(DARWIN_OPENMP_LIBDIR) -Wl,-rpath,$(DARWIN_OPENMP_LIBDIR) -lomp
+endif
+
 EPICS_HOST := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 EPICS_ARCH = $(ARCH)
 ifeq ($(findstring cygwin, $(EPICS_HOST)),cygwin)
@@ -337,8 +349,8 @@ ifeq ($(OS), Darwin)
   CFLAGS = -Wno-deprecated-non-prototype -m64 -O3 -g -Wall -fPIC -fno-common $(MAC_VERSION) $(EXTRA_INC_DIRS)
   CCFLAGS = -Wno-deprecated-non-prototype -m64 -O3 -g -Wall -fPIC -fno-common -std=c++11 $(MAC_VERSION) $(EXTRA_INC_DIRS)
   LDFLAGS = $(MAC_VERSION) -std=c++11
-  LIBRARY_SYS_LIBS = -lm
-  PROD_SYS_LIBS = -lm
+  LIBRARY_SYS_LIBS = $(DARWIN_OPENMP_LDFLAGS) -lm
+  PROD_SYS_LIBS = $(DARWIN_OPENMP_LDFLAGS) -lm
   OBJEXT = o
   LIBEXT = a
   LIBPRE = lib

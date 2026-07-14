@@ -44,6 +44,53 @@ Run **elegant** with an appropriate input file:
 
 Output files are generated in SDDS format and can be post-processed with the SDDS Toolkit.
 
+## Regression baselines
+
+`scripts/elegant_test_regression.py` creates a durable set of outputs from the
+serial tests in an `elegantTestSet` SVN working copy. It exports each test to a
+disposable directory, so the SVN checkout and its `reference` directories are
+never modified. The working copy must be clean, and candidate comparisons must
+use the same SVN URL and revision as the baseline.
+
+Create a baseline with a known-good build:
+
+```bash
+python3 scripts/elegant_test_regression.py baseline \
+  --test-set /path/to/elegantTestSet \
+  --elegant ./bin/Linux-x86_64/elegant \
+  --output /path/to/elegant-baseline-2026.3.0 \
+  --jobs 8
+```
+
+Run the same tests with a future build and compare the results:
+
+```bash
+python3 scripts/elegant_test_regression.py compare \
+  --test-set /path/to/elegantTestSet \
+  --baseline /path/to/elegant-baseline-2026.3.0 \
+  --elegant /path/to/future/elegant \
+  --output /path/to/elegant-candidate-2027.1.0 \
+  --jobs 8
+```
+
+For the graphical launcher, run:
+
+```bash
+python3 scripts/elegant_test_regression.py gui
+```
+
+The comparison exits with status 0 only when every test runs successfully and
+the output file sets and contents match. SDDS data and schema are compared
+exactly by default; volatile run metadata (`SVNVersion`, CPU and elapsed time,
+and memory usage) is ignored. Added, missing, and changed files are reported in
+`comparison.txt`, with full manifests, logs, and candidate outputs retained for
+review. Use `--absolute-tolerance` or `--relative-tolerance` only when a
+numerical change has been explicitly accepted. Pass test directory names after
+the `baseline` options to make a smaller focused baseline first. The runner
+uses up to eight concurrent tests by default. Every individual test has a hard
+10-minute limit; timed-out processes are terminated and listed in
+`timed_out_tests.txt`, the JSON manifest, and the individual test log.
+
 ## Contributing
 
 Contributions, bug reports, and suggestions are welcome. Please open an issue or submit a pull request with your improvements.
