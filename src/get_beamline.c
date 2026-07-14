@@ -1188,6 +1188,20 @@ void do_save_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
       filename = compose_filename(filename, run->rootname);
     fp = fopen_e(filename, "w", FOPEN_INFORM_OF_OPEN);
 
+    /* optional user-supplied comment at the top of the file; '!' is the
+       lattice comment character, so prefix every line of the comment with it */
+    if (comment && strlen(comment)) {
+      char *cp;
+      fputs("! ", fp);
+      interpret_escapes(comment);
+      for (cp = comment; *cp; cp++) {
+	fputc(*cp, fp);
+        if (*cp == '\n' && *(cp + 1))
+          fputs("! ", fp);
+      }
+      fputc('\n', fp);
+    }
+
     if (!output_seq) {
       object = &inputObject;
       do {
