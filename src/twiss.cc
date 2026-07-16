@@ -122,6 +122,7 @@ static short mirror;
 static long nRfca = 0;
 static ELEMENT_LIST **rfcaElem = NULL;
 static FILE *fpRf = NULL;
+static FILE *fpBucket = NULL;
 
 VMATRIX *compute_periodic_twiss(
                                 double *betax, double *alphax, double *etax, double *etapx, double *NUx,
@@ -5538,6 +5539,26 @@ void setup_rf_setup(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline, long d
     fprintf(fpRf, "&data mode=ascii &end\n");
   }
 
+  if (fpBucket)
+    fclose(fpBucket);
+  fpBucket = NULL;
+  if (rf_setup_struct.bucket_filename) {
+    if (rf_setup_struct.bucket_points < 2)
+      bombElegant("rf_setup bucket_points must be at least 2", NULL);
+    rf_setup_struct.bucket_filename = compose_filename(rf_setup_struct.bucket_filename, run->rootname);
+    fpBucket = fopen(rf_setup_struct.bucket_filename, "w");
+    fprintf(fpBucket, "SDDS1\n");
+    fprintf(fpBucket, "&parameter name=Frequency, type=double, units=Hz &end\n");
+    fprintf(fpBucket, "&parameter name=Harmonic, type=long &end\n");
+    fprintf(fpBucket, "&parameter name=Voltage, type=double, units=V &end\n");
+    fprintf(fpBucket, "&parameter name=PhiSynch, type=double, units=deg &end\n");
+    fprintf(fpBucket, "&parameter name=BucketHalfHeight, type=double &end\n");
+    fprintf(fpBucket, "&column name=t, type=double, units=s, description=\"time relative to the synchronous particle\" &end\n");
+    fprintf(fpBucket, "&column name=p, type=double, units=\"m$be$nc\", description=\"central momentum on the separatrix\" &end\n");
+    fprintf(fpBucket, "&column name=delta, type=double, description=\"(p-pCentral)/pCentral on the separatrix\" &end\n");
+    fprintf(fpBucket, "&data mode=ascii &end\n");
+  }
+
   *do_rf_setup = 0;
   if (!rf_setup_struct.set_for_each_step)
     run_rf_setup(run, beamline, 1);
@@ -5669,6 +5690,66 @@ void run_rf_setup(RUN *run, LINE_LIST *beamline, long writeToFile) {
   if (writeToFile && fpRf) {
     fprintf(fpRf, "%21.15le\n%21.15le\n%21.15le\n%21.15le\n%21.15le\n%21.15le\n%21.15le\n%ld\n",
             phase, voltage * nRfca, rfAcceptance, nus, Sz0, St0, frf, h);
+  }
+
+  if (writeToFile && fpBucket) {
+    /* Write the rf-bucket separatrix in (t, p) space.  The separatrix through the
+       unstable fixed point phi_u = pi - phi_s of the longitudinal Hamiltonian is
+          delta(phi)^2 = Vtot/(pi h E) * [cos(phi_u) - cos(phi) + (phi_u - phi) sin(phi_s)] / eta,
+       whose peak equals the bucket half height (rfAcceptance) computed above.
+       phi is converted to time via t = (phi - phi_s)/wrf (relative to the
+       synchronous particle) and to momentum via p = pCentral*(1 + delta). */
+    long np = rf_setup_struct.bucket_points, ip;
+    double phi_s = phase * PI / 180.0;
+    double phi_u = PI - phi_s;
+    double sins = sin(phi_s);
+    double Vtot = voltage * nRfca;
+    double A = Vtot / (PI * h * E); /* delta^2 = A*bracket(phi)/eta */
+    double phi2, dphi, phi, d2, delta, tval, a, b, fa, fm, m;
+    long k, nRows = 0;
+#define RFBUCKET_BRACKET(ph) (cos(phi_u) - cos(ph) + (phi_u - (ph)) * sins)
+
+    if (rfAcceptance > 0 && Vtot > 0) {
+      /* find phi2, the second zero of the bracket (the far edge of the bucket),
+         on the opposite side of phi_s from phi_u, by bisection */
+      a = phi_s;
+      b = phi_u + ((phi_s > phi_u) ? 1.0 : -1.0) * PIx2;
+      fa = RFBUCKET_BRACKET(a);
+      for (k = 0; k < 200; k++) {
+        m = 0.5 * (a + b);
+        fm = RFBUCKET_BRACKET(m);
+        if ((fm > 0) == (fa > 0)) {
+          a = m;
+          fa = fm;
+        } else
+          b = m;
+      }
+      phi2 = 0.5 * (a + b);
+      nRows = 2 * np;
+    }
+
+    fprintf(fpBucket, "%21.15le\n%ld\n%21.15le\n%21.15le\n%21.15le\n%ld\n",
+            frf, h, Vtot, phase, rfAcceptance, nRows);
+    if (nRows) {
+      dphi = (phi2 - phi_u) / (np - 1);
+      /* upper branch: phi_u -> phi2 with delta >= 0 */
+      for (ip = 0; ip < np; ip++) {
+        phi = phi_u + ip * dphi;
+        d2 = A * RFBUCKET_BRACKET(phi) / eta;
+        delta = (d2 > 0) ? sqrt(d2) : 0.0;
+        tval = (phi - phi_s) / wrf;
+        fprintf(fpBucket, "%21.15le %21.15le %21.15le\n", tval, pCentral * (1 + delta), delta);
+      }
+      /* lower branch: phi2 -> phi_u with delta <= 0 (closes the contour) */
+      for (ip = np - 1; ip >= 0; ip--) {
+        phi = phi_u + ip * dphi;
+        d2 = A * RFBUCKET_BRACKET(phi) / eta;
+        delta = (d2 > 0) ? -sqrt(d2) : 0.0;
+        tval = (phi - phi_s) / wrf;
+        fprintf(fpBucket, "%21.15le %21.15le %21.15le\n", tval, pCentral * (1 + delta), delta);
+      }
+    }
+#undef RFBUCKET_BRACKET
   }
 }
 
