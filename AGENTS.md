@@ -2,6 +2,75 @@
 
 This file contains a short tactical summary based on repository evidence. `../llm-wiki/scripts/refresh_wiki.py` rewrites only the machine-managed block.
 
+## Operational Security for Automated Tests and Diagnostics
+
+Development and testing occur on monitored laboratory systems. Commands that
+combine temporary executable content, runtime injection, wrapper scripts, or
+headless process automation may resemble malicious activity and trigger
+security alerts even when used for legitimate debugging.
+
+### Default requirements
+
+- Prefer existing repository build and test targets over ad hoc shell workflows.
+- Run commands as separate, directly attributable steps. Do not combine
+  compilation, permission changes, execution, log collection, and cleanup into
+  one `bash -lc` command.
+- Place generated executables and shared libraries in the repository's
+  documented build or test-artifact directory, not in `/tmp`.
+- Do not create executable wrapper scripts dynamically. Prefer checked-in test
+  helpers, direct argument-list process execution, or purpose-built test
+  binaries.
+- Do not apply `chmod +x` to generated content unless the user has explicitly
+  approved it. Checked-in scripts should carry their executable bit in Git.
+- Prefer supported headless facilities, such as `QT_QPA_PLATFORM=offscreen`,
+  over additional display or process wrappers when they satisfy the test.
+- Preserve commands, source paths, output paths, and test names in test logs so
+  activity can be readily attributed to this repository.
+
+### Security-sensitive techniques
+
+Codex must not introduce or execute any of the following without explicit user
+approval in the current conversation:
+
+- `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, or other runtime library injection
+- `ptrace`, debugger attachment, syscall/API hooking, or symbol interposition
+- generated executable content in `/tmp`, `/var/tmp`, or another shared
+  temporary directory
+- dynamically generated wrapper scripts that execute or replace another program
+- privilege changes, capability changes, setuid/setgid behavior, or namespace
+  manipulation
+- disabling, bypassing, or testing endpoint security controls
+
+Before requesting approval, Codex must explain:
+
+1. why the technique is necessary;
+2. which process and files it affects;
+3. where generated artifacts will be stored;
+4. what safer alternatives were considered;
+5. the exact command or repository test target that will run; and
+6. how artifacts will be retained or removed.
+
+Approval for one command or test does not authorize unrelated uses of the same
+technique.
+
+### Design and test guidance
+
+When a regression test appears to require runtime injection or executable
+wrappers, first prefer one of these approaches:
+
+1. Extract the relevant behavior into a directly testable function or component.
+2. Add a narrow, documented test interface to the application.
+3. Use a checked-in helper program built through the normal build system.
+4. Run the security-sensitive integration test only through a named, opt-in
+   target on an approved test host or CI runner.
+
+Security-sensitive tests must be clearly named and excluded from routine local
+test execution by default. Their documentation should state why the technique
+is used and identify the expected processes and artifacts.
+
+If a requested diagnostic cannot be completed without a security-sensitive
+technique, stop and ask the user rather than constructing an ad hoc workaround.
+
 <!-- BEGIN MACHINE:summary -->
 ## Quick start
 - Repository-local guidance is sufficient: start with `AGENTS.md`, `README.md`, `docs/`, build/test/config files, and the source tree.
