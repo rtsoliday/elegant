@@ -1,11 +1,13 @@
 #include "gpu_base.h"
 
 #include <cuda_runtime_api.h>
+#include <cufft.h>
 #include <thrust/device_ptr.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 
 #include <cstring>
+#include <cstdio>
 #include <float.h>
 #include <limits.h>
 
@@ -26,6 +28,186 @@ typedef struct GPU_MATCH_ENERGY_PARTIAL {
   double sum;
   double error;
 } GPU_MATCH_ENERGY_PARTIAL;
+
+typedef struct GPU_COMBINED_WAKE_SCRATCH {
+  double *time;
+  double *pz;
+  long *pbin;
+  double *histogram;
+  double *histogramPartial;
+  double *voltage;
+  double *table;
+  double *fftReal;
+  cufftDoubleComplex *driverFrequency;
+  cufftDoubleComplex *tableFrequency;
+  cufftDoubleComplex *channelFrequency;
+  unsigned long long *binnedCount;
+  int *driverFirstBin;
+  long particleCapacity;
+  long binCapacity;
+  long tableCapacity;
+  long histogramPartials;
+  long planBins;
+  cufftHandle forwardPlan;
+  cufftHandle inversePlan;
+  const double *hostTable[GPU_COMBINED_WAKE_CHANNELS];
+  long hostTablePoints[GPU_COMBINED_WAKE_CHANNELS];
+} GPU_COMBINED_WAKE_SCRATCH;
+
+static GPU_COMBINED_WAKE_SCRATCH gpuCombinedWakeScratch;
+
+static void releaseCombinedWakeScratch(void) {
+  cudaFree(gpuCombinedWakeScratch.time);
+  cudaFree(gpuCombinedWakeScratch.pz);
+  cudaFree(gpuCombinedWakeScratch.pbin);
+  cudaFree(gpuCombinedWakeScratch.histogram);
+  cudaFree(gpuCombinedWakeScratch.histogramPartial);
+  cudaFree(gpuCombinedWakeScratch.voltage);
+  cudaFree(gpuCombinedWakeScratch.table);
+  cudaFree(gpuCombinedWakeScratch.fftReal);
+  cudaFree(gpuCombinedWakeScratch.driverFrequency);
+  cudaFree(gpuCombinedWakeScratch.tableFrequency);
+  cudaFree(gpuCombinedWakeScratch.channelFrequency);
+  cudaFree(gpuCombinedWakeScratch.binnedCount);
+  cudaFree(gpuCombinedWakeScratch.driverFirstBin);
+  if (gpuCombinedWakeScratch.forwardPlan)
+    cufftDestroy(gpuCombinedWakeScratch.forwardPlan);
+  if (gpuCombinedWakeScratch.inversePlan)
+    cufftDestroy(gpuCombinedWakeScratch.inversePlan);
+  std::memset(&gpuCombinedWakeScratch, 0, sizeof(gpuCombinedWakeScratch));
+}
+
+extern "C" void gpuCudaCombinedWakeRelease(void) {
+  releaseCombinedWakeScratch();
+}
+
+static int ensureCombinedWakeScratch(long nParticles, long bins,
+                                     long tablePoints, long planBins) {
+  cudaError_t status;
+  cufftResult fftStatus;
+  long particleCapacity = gpuCombinedWakeScratch.particleCapacity;
+  long binCapacity = gpuCombinedWakeScratch.binCapacity;
+  long tableCapacity = gpuCombinedWakeScratch.tableCapacity;
+  long frequencyPoints, histogramCapacityBins;
+  long desiredHistogramPartials, histogramPartials, maxHistogramPartials;
+
+  if (nParticles <= 0 || bins < 2 || tablePoints <= 0 || planBins < bins)
+    return static_cast<int>(cudaErrorInvalidValue);
+  histogramCapacityBins = binCapacity > bins ? binCapacity : bins;
+  maxHistogramPartials =
+    (64L * 1024 * 1024) /
+    (3 * histogramCapacityBins * static_cast<long>(sizeof(double)));
+  if (maxHistogramPartials < 1)
+    maxHistogramPartials = 1;
+  if (maxHistogramPartials > 1024)
+    maxHistogramPartials = 1024;
+  if (maxHistogramPartials >= 256)
+    maxHistogramPartials = maxHistogramPartials / 256 * 256;
+  desiredHistogramPartials = (nParticles + 255) / 256;
+  if (desiredHistogramPartials >= 256)
+    desiredHistogramPartials =
+      (desiredHistogramPartials + 255) / 256 * 256;
+  if (desiredHistogramPartials < 1)
+    desiredHistogramPartials = 1;
+  histogramPartials = desiredHistogramPartials < maxHistogramPartials ?
+                      desiredHistogramPartials : maxHistogramPartials;
+  if (particleCapacity >= nParticles && binCapacity >= bins &&
+      tableCapacity >= tablePoints &&
+      gpuCombinedWakeScratch.planBins == planBins &&
+      gpuCombinedWakeScratch.histogramPartials == histogramPartials)
+    return static_cast<int>(cudaSuccess);
+
+  if (particleCapacity < nParticles)
+    particleCapacity = nParticles;
+  if (binCapacity < bins)
+    binCapacity = bins;
+  if (tableCapacity < tablePoints)
+    tableCapacity = tablePoints;
+  releaseCombinedWakeScratch();
+  gpuCombinedWakeScratch.particleCapacity = particleCapacity;
+  gpuCombinedWakeScratch.binCapacity = binCapacity;
+  gpuCombinedWakeScratch.tableCapacity = tableCapacity;
+  gpuCombinedWakeScratch.histogramPartials = histogramPartials;
+  gpuCombinedWakeScratch.planBins = planBins;
+  frequencyPoints = planBins / 2 + 1;
+
+  status = cudaMalloc(&gpuCombinedWakeScratch.time,
+                      particleCapacity * sizeof(*gpuCombinedWakeScratch.time));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.pz,
+                      particleCapacity * sizeof(*gpuCombinedWakeScratch.pz));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.pbin,
+                      particleCapacity * sizeof(*gpuCombinedWakeScratch.pbin));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.histogram,
+                      3 * binCapacity * sizeof(*gpuCombinedWakeScratch.histogram));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.histogramPartial,
+                      3 * binCapacity * histogramPartials *
+                      sizeof(*gpuCombinedWakeScratch.histogramPartial));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.voltage,
+                      GPU_COMBINED_WAKE_CHANNELS * binCapacity *
+                      sizeof(*gpuCombinedWakeScratch.voltage));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.table,
+                      GPU_COMBINED_WAKE_CHANNELS * tableCapacity *
+                      sizeof(*gpuCombinedWakeScratch.table));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.fftReal,
+                      planBins * sizeof(*gpuCombinedWakeScratch.fftReal));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.driverFrequency,
+                      3 * frequencyPoints *
+                      sizeof(*gpuCombinedWakeScratch.driverFrequency));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.tableFrequency,
+                      GPU_COMBINED_WAKE_CHANNELS * frequencyPoints *
+                      sizeof(*gpuCombinedWakeScratch.tableFrequency));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.channelFrequency,
+                      GPU_COMBINED_WAKE_CHANNELS * frequencyPoints *
+                      sizeof(*gpuCombinedWakeScratch.channelFrequency));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.binnedCount,
+                      sizeof(*gpuCombinedWakeScratch.binnedCount));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(&gpuCombinedWakeScratch.driverFirstBin,
+                      3 * sizeof(*gpuCombinedWakeScratch.driverFirstBin));
+  if (status != cudaSuccess)
+    goto fail;
+
+  fftStatus = cufftPlan1d(&gpuCombinedWakeScratch.forwardPlan,
+                         static_cast<int>(planBins), CUFFT_D2Z, 1);
+  if (fftStatus != CUFFT_SUCCESS) {
+    status = cudaErrorUnknown;
+    goto fail;
+  }
+  fftStatus = cufftPlan1d(&gpuCombinedWakeScratch.inversePlan,
+                         static_cast<int>(planBins), CUFFT_Z2D, 1);
+  if (fftStatus != CUFFT_SUCCESS) {
+    status = cudaErrorUnknown;
+    goto fail;
+  }
+  return static_cast<int>(cudaSuccess);
+
+fail:
+  releaseCombinedWakeScratch();
+  return static_cast<int>(status);
+}
 
 static int uploadCsbendDataIfNeeded(const GPU_CSBEND_DATA *csbend) {
   static GPU_CSBEND_DATA cachedCsbendData;
@@ -2833,6 +3015,269 @@ __global__ void gpuTrwakeApplyKicksKernel(double *coord, long nParticles,
   gpuTrwakeStoreLocalCoordinates(part, wake, x, xp, y, yp);
 }
 
+__global__ void gpuCombinedWakePrepareKernel(
+  double *coord, long nParticles, int stride, GPU_COMBINED_WAKE_DATA wake,
+  double *time, double *pz, long *pbin,
+  unsigned long long *binnedCount) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+  double t;
+  long ib;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  pbin[ip] = -1;
+  if (wake.useBunchFilter &&
+      static_cast<long>(part[wake.bunchIndexColumn]) != wake.selectedBunch)
+    return;
+  t = gpuParticleTime(part, wake.pCentral, wake.cMks);
+  time[ip] = t;
+  ib = static_cast<long>((t - wake.tmin) / wake.dt + 0.5);
+  if (ib < 0 || ib >= wake.bins)
+    return;
+  pbin[ip] = ib;
+  pz[ip] = wake.pCentral * (1 + part[5]) /
+           sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  atomicAdd(binnedCount, 1ULL);
+}
+
+__global__ void gpuCombinedWakeHistogramPartialKernel(
+  const double *coord, long nParticles, int stride,
+  GPU_COMBINED_WAKE_DATA wake, const long *pbin, double *partial,
+  long partialCount) {
+  long partialIndex = blockIdx.x * blockDim.x + threadIdx.x;
+  long first, last;
+  double *local;
+
+  if (partialIndex >= partialCount)
+    return;
+  first = nParticles * partialIndex / partialCount;
+  last = nParticles * (partialIndex + 1) / partialCount;
+  local = partial + partialIndex * 3 * wake.bins;
+  for (long ip = first; ip < last; ip++) {
+    long ib = pbin[ip];
+    const double *part;
+    if (ib < 0 || ib >= wake.bins)
+      continue;
+    part = coord + ip * stride;
+    local[ib] += 1;
+    local[wake.bins + ib] += part[0] - wake.offset[0];
+    local[2 * wake.bins + ib] += part[2] - wake.offset[1];
+  }
+}
+
+__global__ void gpuCombinedWakeHistogramReduceKernel(
+  const double *partial, long bins, long partialCount, double *histogram) {
+  extern __shared__ double combinedWakePartial[];
+  long histogramIndex = blockIdx.x;
+  long tid = threadIdx.x;
+  double sum = 0;
+
+  if (histogramIndex >= 3 * bins)
+    return;
+  for (long ipartial = tid; ipartial < partialCount;
+       ipartial += blockDim.x)
+    sum += partial[ipartial * 3 * bins + histogramIndex];
+  combinedWakePartial[tid] = sum;
+  __syncthreads();
+  for (long offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (tid < offset)
+      combinedWakePartial[tid] += combinedWakePartial[tid + offset];
+    __syncthreads();
+  }
+  if (tid == 0)
+    histogram[histogramIndex] = combinedWakePartial[0];
+}
+
+__global__ void gpuCombinedWakeConvolutionKernel(
+  double *voltage, const double *histogram, const double *table,
+  GPU_COMBINED_WAKE_DATA wake, long tableStride) {
+  long ib = blockIdx.x * blockDim.x + threadIdx.x;
+  long channel = blockIdx.y;
+  long ib1, ib2, di;
+  double sum = 0;
+
+  if (channel >= GPU_COMBINED_WAKE_CHANNELS || ib >= wake.bins ||
+      !wake.enabled[channel])
+    return;
+  ib2 = ib + wake.i0;
+  ib1 = di = 0;
+  if (ib2 >= wake.tablePoints) {
+    di = ib2 - wake.tablePoints + 1;
+    ib1 += di;
+    ib2 -= di;
+  }
+  for (; ib1 < wake.bins && ib2 >= 0; ib1++, ib2--)
+    sum += histogram[wake.driver[channel] * wake.bins + ib1] *
+           table[channel * tableStride + ib2];
+  voltage[channel * wake.bins + ib] = sum * wake.factor[channel];
+}
+
+__global__ void gpuCombinedWakeFrequencyMultiplyKernel(
+  cufftDoubleComplex *output, const cufftDoubleComplex *driver,
+  const cufftDoubleComplex *table, long frequencyPoints) {
+  long frequency = blockIdx.x * blockDim.x + threadIdx.x;
+  cufftDoubleComplex result;
+
+  if (frequency >= frequencyPoints)
+    return;
+  result.x = driver[frequency].x * table[frequency].x -
+             driver[frequency].y * table[frequency].y;
+  result.y = driver[frequency].x * table[frequency].y +
+             driver[frequency].y * table[frequency].x;
+  output[frequency] = result;
+}
+
+__global__ void gpuCombinedWakeDriverFirstBinKernel(
+  const double *histogram, long bins, int *driverFirstBin) {
+  long index = blockIdx.x * blockDim.x + threadIdx.x;
+  long driver, bin;
+
+  if (index >= 3 * bins || histogram[index] == 0)
+    return;
+  driver = index / bins;
+  bin = index - driver * bins;
+  atomicMin(driverFirstBin + driver, static_cast<int>(bin));
+}
+
+__global__ void gpuCombinedWakeExtractConvolutionKernel(
+  double *voltage, const double *convolution,
+  const int *driverFirstBin, GPU_COMBINED_WAKE_DATA wake,
+  long channel, long fftBins) {
+  long ib = blockIdx.x * blockDim.x + threadIdx.x;
+  long convolutionIndex;
+  int firstBin;
+
+  if (ib >= wake.bins || channel >= GPU_COMBINED_WAKE_CHANNELS)
+    return;
+  convolutionIndex = ib + wake.i0;
+  firstBin = driverFirstBin[wake.driver[channel]];
+  voltage[channel * wake.bins + ib] =
+    firstBin < wake.bins && convolutionIndex >= firstBin &&
+    convolutionIndex < fftBins ?
+    convolution[convolutionIndex] * wake.factor[channel] / fftBins : 0;
+}
+
+__global__ void gpuCombinedImpedanceMultiplyKernel(
+  cufftDoubleComplex *channelFrequency,
+  const cufftDoubleComplex *driverFrequency, const double *table,
+  GPU_COMBINED_WAKE_DATA wake, long tableStride) {
+  long frequency = blockIdx.x * blockDim.x + threadIdx.x;
+  long channel = blockIdx.y;
+  long frequencyPoints = wake.bins / 2 + 1;
+  cufftDoubleComplex result = {0, 0};
+
+  if (channel >= GPU_COMBINED_WAKE_CHANNELS || frequency >= frequencyPoints ||
+      !wake.enabled[channel])
+    return;
+  const cufftDoubleComplex value =
+    driverFrequency[wake.driver[channel] * frequencyPoints + frequency];
+  double zr, zi = 0;
+  if (frequency == 0) {
+    zr = table[channel * tableStride];
+  } else if (frequency == wake.bins / 2 && !(wake.bins % 2)) {
+    zr = table[channel * tableStride + wake.bins - 1];
+  } else {
+    zr = table[channel * tableStride + 2 * frequency - 1];
+    zi = table[channel * tableStride + 2 * frequency];
+  }
+  double factor = wake.factor[channel] / wake.bins;
+  result.x = (value.x * zr - value.y * zi) * factor;
+  result.y = (value.x * zi + value.y * zr) * factor;
+  channelFrequency[channel * frequencyPoints + frequency] = result;
+}
+
+__device__ __forceinline__ double gpuCombinedInterpolatedVoltage(
+  const double *voltage, double time, long ib,
+  const GPU_COMBINED_WAKE_DATA *wake) {
+  double dt1;
+
+  if (!wake->interpolate)
+    return voltage[ib];
+  dt1 = time - (wake->tmin + wake->dt * ib);
+  if ((dt1 < 0 && ib) || ib == wake->bins - 1) {
+    ib--;
+    dt1 += wake->dt;
+  }
+  return voltage[ib] + (voltage[ib + 1] - voltage[ib]) /
+                       wake->dt * dt1;
+}
+
+__device__ __forceinline__ void gpuCombinedAddToParticleEnergy(
+  double *part, double timeOfFlight, const GPU_COMBINED_WAKE_DATA *wake,
+  double dgamma) {
+  double p = wake->pCentral * (1 + part[5]);
+  double gamma = sqrt(p * p + 1);
+  double gamma1 = gamma + dgamma;
+  double p1, pz, pz1, pRatio;
+
+  if (gamma1 <= 1)
+    gamma1 = 1 + 1e-7;
+  p1 = sqrt(gamma1 * gamma1 - 1);
+  part[5] = (p1 - wake->pCentral) / wake->pCentral;
+  part[4] = timeOfFlight * wake->cMks * p1 / gamma1;
+  pz = p / sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  pz1 = sqrt(pz * pz + gamma1 * gamma1 - gamma * gamma);
+  pRatio = pz / pz1;
+  part[1] *= pRatio;
+  part[3] *= pRatio;
+}
+
+__global__ void gpuCombinedWakeApplyKicksKernel(
+  double *coord, long nParticles, int stride, GPU_COMBINED_WAKE_DATA wake,
+  const double *time, const double *pz, const long *pbin,
+  const double *voltage) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+  long ib;
+  double transversePz;
+
+  if (ip >= nParticles)
+    return;
+  ib = pbin[ip];
+  if (ib < 0 || ib >= wake.bins)
+    return;
+  part = coord + ip * stride;
+  if (wake.enabled[0]) {
+    double value = gpuCombinedInterpolatedVoltage(
+      voltage, time[ip], ib, &wake);
+    double dgamma = value /
+      (1e6 * wake.particleMassMV * wake.particleRelSign);
+    if (dgamma)
+      gpuCombinedAddToParticleEnergy(part, time[ip], &wake, -dgamma);
+  }
+  if (wake.mode == GPU_COMBINED_WAKE_MODE_TIME)
+    transversePz = wake.pCentral * (1 + part[5]) /
+      sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  else
+    transversePz = pz[ip];
+
+  for (long channel = 1; channel < GPU_COMBINED_WAKE_CHANNELS; channel++) {
+    const double *channelVoltage;
+    double value;
+    int plane;
+    if (!wake.enabled[channel])
+      continue;
+    channelVoltage = voltage + channel * wake.bins;
+    value = gpuCombinedInterpolatedVoltage(channelVoltage, time[ip], ib, &wake);
+    plane = wake.kickPlane[channel];
+    if (wake.probeExponent[channel] > 0) {
+      double coordinate = plane == 1 ? part[0] : part[2];
+      value *= gpuIntegerPower(coordinate,
+                               wake.probeExponent[channel]);
+    }
+    if (value && transversePz) {
+      value /= 1e6 * wake.particleMassMV * wake.particleRelSign *
+               transversePz;
+      if (plane == 1)
+        part[1] += value;
+      else if (plane == 2)
+        part[3] += value;
+    }
+  }
+}
+
 __global__ void gpuCsrCsbendWakeKernel(const double *ctHist,
                                        const double *ctHistDeriv,
                                        const double *denom,
@@ -3755,6 +4200,50 @@ __global__ void gpuLongMinMaxKernel(double *coord, long nParticles, int stride,
     result->min = minValue[0];
     result->max = maxValue[0];
   }
+}
+
+__global__ void gpuSortedBunchValidateKernel(
+  const double *coord, long nParticles, int stride, int coordinateIndex,
+  int *sorted) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  if (ip + 1 >= nParticles)
+    return;
+  if (static_cast<long>(coord[ip * stride + coordinateIndex]) >
+      static_cast<long>(coord[(ip + 1) * stride + coordinateIndex]))
+    atomicExch(sorted, 0);
+}
+
+__global__ void gpuSortedBunchRangesKernel(
+  const double *coord, long nParticles, int stride, int coordinateIndex,
+  long minBunch, long nBuckets, long *start, long *count) {
+  long bucket = blockIdx.x * blockDim.x + threadIdx.x;
+  long low, high, middle, first, last, target;
+
+  if (bucket >= nBuckets)
+    return;
+  target = minBunch + bucket;
+  low = 0;
+  high = nParticles;
+  while (low < high) {
+    middle = low + (high - low) / 2;
+    if (static_cast<long>(coord[middle * stride + coordinateIndex]) < target)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  first = low;
+  low = first;
+  high = nParticles;
+  while (low < high) {
+    middle = low + (high - low) / 2;
+    if (static_cast<long>(coord[middle * stride + coordinateIndex]) <= target)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  last = low;
+  start[bucket] = first;
+  count[bucket] = last - first;
 }
 
 __global__ void gpuDoubleMinMaxKernel(double *coord, long nParticles, int stride,
@@ -5293,6 +5782,294 @@ extern "C" int gpuCudaCsrCsbendFinalizeSimpleChecked(void *coord,
     return static_cast<int>(cudaStatus);
   *lostCount = static_cast<long>(hostLostCount);
   return static_cast<int>(cudaSuccess);
+}
+
+extern "C" int gpuCudaCombinedWakeTrack(
+  void *coord, long nParticles, int stride,
+  const GPU_COMBINED_WAKE_DATA *wake,
+  const double *const *tables, long *binnedCount,
+  double *histogramReturn, double *voltageReturn,
+  float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  cufftResult fftStatus;
+  unsigned long long hostBinnedCount = 0;
+  long frequencyPoints, planBins, requiredConvolutionBins;
+  int useTimeFft = 0;
+  int threads = 256;
+  int particleBlocks, binBlocks, histogramPartialBlocks, status;
+  dim3 channelGrid;
+
+  if (!coord || !wake || !tables || !binnedCount || stride < 6 ||
+      wake->bins < 2 || wake->tablePoints <= 0 || wake->dt <= 0 ||
+      (wake->mode != GPU_COMBINED_WAKE_MODE_TIME &&
+       wake->mode != GPU_COMBINED_WAKE_MODE_IMPEDANCE))
+    return static_cast<int>(cudaErrorInvalidValue);
+  *binnedCount = 0;
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+  for (long channel = 0; channel < GPU_COMBINED_WAKE_CHANNELS; channel++) {
+    if (wake->enabled[channel] && (!tables[channel] ||
+        wake->driver[channel] < 0 || wake->driver[channel] > 2))
+      return static_cast<int>(cudaErrorInvalidValue);
+  }
+
+  planBins = wake->bins;
+  useTimeFft = wake->mode == GPU_COMBINED_WAKE_MODE_TIME &&
+               wake->allowTimeFft &&
+               wake->bins > 0 &&
+               wake->tablePoints > 262144 / wake->bins;
+  if (useTimeFft) {
+    requiredConvolutionBins = wake->bins + wake->tablePoints - 1;
+    planBins = 1;
+    while (planBins < requiredConvolutionBins) {
+      if (planBins > LONG_MAX / 2)
+        return static_cast<int>(cudaErrorInvalidValue);
+      planBins <<= 1;
+    }
+  }
+
+  status = ensureCombinedWakeScratch(nParticles, wake->bins,
+                                     wake->tablePoints, planBins);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  particleBlocks = static_cast<int>((nParticles + threads - 1) / threads);
+  binBlocks = static_cast<int>((wake->bins + threads - 1) / threads);
+  histogramPartialBlocks = static_cast<int>(
+    (gpuCombinedWakeScratch.histogramPartials + threads - 1) / threads);
+  frequencyPoints = planBins / 2 + 1;
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  cudaStatus = cudaMemset(gpuCombinedWakeScratch.histogram, 0,
+                          3 * wake->bins *
+                          sizeof(*gpuCombinedWakeScratch.histogram));
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemset(
+      gpuCombinedWakeScratch.histogramPartial, 0,
+      3 * wake->bins * gpuCombinedWakeScratch.histogramPartials *
+      sizeof(*gpuCombinedWakeScratch.histogramPartial));
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemset(gpuCombinedWakeScratch.voltage, 0,
+                            GPU_COMBINED_WAKE_CHANNELS * wake->bins *
+                            sizeof(*gpuCombinedWakeScratch.voltage));
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemset(gpuCombinedWakeScratch.binnedCount, 0,
+                            sizeof(*gpuCombinedWakeScratch.binnedCount));
+  if (cudaStatus == cudaSuccess && useTimeFft)
+    cudaStatus = cudaMemset(gpuCombinedWakeScratch.driverFirstBin, 0x7f,
+                            3 * sizeof(*gpuCombinedWakeScratch.driverFirstBin));
+
+  for (long channel = 0;
+       cudaStatus == cudaSuccess && channel < GPU_COMBINED_WAKE_CHANNELS;
+       channel++) {
+    if (!wake->enabled[channel])
+      continue;
+    if (gpuCombinedWakeScratch.hostTable[channel] == tables[channel] &&
+        gpuCombinedWakeScratch.hostTablePoints[channel] == wake->tablePoints)
+      continue;
+    cudaStatus = cudaMemcpy(
+      gpuCombinedWakeScratch.table +
+        channel * gpuCombinedWakeScratch.tableCapacity,
+      tables[channel], wake->tablePoints * sizeof(**tables),
+      cudaMemcpyHostToDevice);
+    if (cudaStatus == cudaSuccess && useTimeFft)
+      cudaStatus = cudaMemset(gpuCombinedWakeScratch.fftReal, 0,
+                              planBins * sizeof(*gpuCombinedWakeScratch.fftReal));
+    if (cudaStatus == cudaSuccess && useTimeFft)
+      cudaStatus = cudaMemcpy(
+        gpuCombinedWakeScratch.fftReal,
+        gpuCombinedWakeScratch.table +
+          channel * gpuCombinedWakeScratch.tableCapacity,
+        wake->tablePoints * sizeof(*gpuCombinedWakeScratch.fftReal),
+        cudaMemcpyDeviceToDevice);
+    if (cudaStatus == cudaSuccess && useTimeFft) {
+      fftStatus = cufftExecD2Z(
+        gpuCombinedWakeScratch.forwardPlan,
+        gpuCombinedWakeScratch.fftReal,
+        gpuCombinedWakeScratch.tableFrequency + channel * frequencyPoints);
+      if (fftStatus != CUFFT_SUCCESS)
+        cudaStatus = cudaErrorUnknown;
+    }
+    if (cudaStatus == cudaSuccess) {
+      gpuCombinedWakeScratch.hostTable[channel] = tables[channel];
+      gpuCombinedWakeScratch.hostTablePoints[channel] = wake->tablePoints;
+    }
+  }
+
+  if (cudaStatus == cudaSuccess)
+    gpuCombinedWakePrepareKernel<<<particleBlocks, threads>>>(
+      static_cast<double *>(coord), nParticles, stride, *wake,
+      gpuCombinedWakeScratch.time, gpuCombinedWakeScratch.pz,
+      gpuCombinedWakeScratch.pbin, gpuCombinedWakeScratch.binnedCount);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess)
+    gpuCombinedWakeHistogramPartialKernel<<<histogramPartialBlocks, threads>>>(
+      static_cast<const double *>(coord), nParticles, stride, *wake,
+      gpuCombinedWakeScratch.pbin, gpuCombinedWakeScratch.histogramPartial,
+      gpuCombinedWakeScratch.histogramPartials);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess)
+    gpuCombinedWakeHistogramReduceKernel<<<static_cast<int>(3 * wake->bins),
+                                           threads,
+                                           threads * sizeof(double)>>>(
+      gpuCombinedWakeScratch.histogramPartial, wake->bins,
+      gpuCombinedWakeScratch.histogramPartials,
+      gpuCombinedWakeScratch.histogram);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess && useTimeFft) {
+    gpuCombinedWakeDriverFirstBinKernel<<<
+      static_cast<int>((3 * wake->bins + threads - 1) / threads), threads>>>(
+        gpuCombinedWakeScratch.histogram, wake->bins,
+        gpuCombinedWakeScratch.driverFirstBin);
+    cudaStatus = cudaGetLastError();
+  }
+  if (cudaStatus == cudaSuccess &&
+      wake->mode == GPU_COMBINED_WAKE_MODE_TIME && !useTimeFft) {
+    channelGrid = dim3(binBlocks, GPU_COMBINED_WAKE_CHANNELS, 1);
+    gpuCombinedWakeConvolutionKernel<<<channelGrid, threads>>>(
+      gpuCombinedWakeScratch.voltage,
+      gpuCombinedWakeScratch.histogram,
+      gpuCombinedWakeScratch.table, *wake,
+      gpuCombinedWakeScratch.tableCapacity);
+    cudaStatus = cudaGetLastError();
+  } else if (cudaStatus == cudaSuccess &&
+             wake->mode == GPU_COMBINED_WAKE_MODE_TIME) {
+    int driverNeeded[3] = {0, 0, 0};
+    int frequencyBlocks = static_cast<int>(
+      (frequencyPoints + threads - 1) / threads);
+    for (long channel = 0; channel < GPU_COMBINED_WAKE_CHANNELS; channel++)
+      if (wake->enabled[channel])
+        driverNeeded[wake->driver[channel]] = 1;
+    for (int driver = 0; driver < 3 && cudaStatus == cudaSuccess; driver++) {
+      if (!driverNeeded[driver])
+        continue;
+      cudaStatus = cudaMemset(gpuCombinedWakeScratch.fftReal, 0,
+                              planBins * sizeof(*gpuCombinedWakeScratch.fftReal));
+      if (cudaStatus == cudaSuccess)
+        cudaStatus = cudaMemcpy(
+          gpuCombinedWakeScratch.fftReal,
+          gpuCombinedWakeScratch.histogram + driver * wake->bins,
+          wake->bins * sizeof(*gpuCombinedWakeScratch.fftReal),
+          cudaMemcpyDeviceToDevice);
+      if (cudaStatus == cudaSuccess) {
+        fftStatus = cufftExecD2Z(
+          gpuCombinedWakeScratch.forwardPlan,
+          gpuCombinedWakeScratch.fftReal,
+          gpuCombinedWakeScratch.driverFrequency + driver * frequencyPoints);
+        if (fftStatus != CUFFT_SUCCESS)
+          cudaStatus = cudaErrorUnknown;
+      }
+    }
+    for (long channel = 0;
+         channel < GPU_COMBINED_WAKE_CHANNELS && cudaStatus == cudaSuccess;
+         channel++) {
+      if (!wake->enabled[channel])
+        continue;
+      gpuCombinedWakeFrequencyMultiplyKernel<<<frequencyBlocks, threads>>>(
+        gpuCombinedWakeScratch.channelFrequency + channel * frequencyPoints,
+        gpuCombinedWakeScratch.driverFrequency +
+          wake->driver[channel] * frequencyPoints,
+        gpuCombinedWakeScratch.tableFrequency + channel * frequencyPoints,
+        frequencyPoints);
+      cudaStatus = cudaGetLastError();
+      if (cudaStatus != cudaSuccess)
+        continue;
+      fftStatus = cufftExecZ2D(
+        gpuCombinedWakeScratch.inversePlan,
+        gpuCombinedWakeScratch.channelFrequency + channel * frequencyPoints,
+        gpuCombinedWakeScratch.fftReal);
+      if (fftStatus != CUFFT_SUCCESS) {
+        cudaStatus = cudaErrorUnknown;
+        continue;
+      }
+      gpuCombinedWakeExtractConvolutionKernel<<<binBlocks, threads>>>(
+        gpuCombinedWakeScratch.voltage, gpuCombinedWakeScratch.fftReal,
+        gpuCombinedWakeScratch.driverFirstBin, *wake, channel, planBins);
+      cudaStatus = cudaGetLastError();
+    }
+  } else if (cudaStatus == cudaSuccess) {
+    int driverNeeded[3] = {0, 0, 0};
+    for (long channel = 0; channel < GPU_COMBINED_WAKE_CHANNELS; channel++)
+      if (wake->enabled[channel])
+        driverNeeded[wake->driver[channel]] = 1;
+    for (int driver = 0; driver < 3 && cudaStatus == cudaSuccess; driver++) {
+      if (!driverNeeded[driver])
+        continue;
+      fftStatus = cufftExecD2Z(
+        gpuCombinedWakeScratch.forwardPlan,
+        gpuCombinedWakeScratch.histogram + driver * wake->bins,
+        gpuCombinedWakeScratch.driverFrequency + driver * frequencyPoints);
+      if (fftStatus != CUFFT_SUCCESS) {
+        std::fprintf(stderr, "elegant CUDA: cuFFT D2Z failed with status %d\n",
+                     static_cast<int>(fftStatus));
+        cudaStatus = cudaErrorUnknown;
+      }
+    }
+    if (cudaStatus == cudaSuccess) {
+      channelGrid = dim3(
+        static_cast<unsigned int>((frequencyPoints + threads - 1) / threads),
+        GPU_COMBINED_WAKE_CHANNELS, 1);
+      gpuCombinedImpedanceMultiplyKernel<<<channelGrid, threads>>>(
+        gpuCombinedWakeScratch.channelFrequency,
+        gpuCombinedWakeScratch.driverFrequency,
+        gpuCombinedWakeScratch.table, *wake,
+        gpuCombinedWakeScratch.tableCapacity);
+      cudaStatus = cudaGetLastError();
+    }
+    for (long channel = 0;
+         channel < GPU_COMBINED_WAKE_CHANNELS && cudaStatus == cudaSuccess;
+         channel++) {
+      if (!wake->enabled[channel])
+        continue;
+      fftStatus = cufftExecZ2D(
+        gpuCombinedWakeScratch.inversePlan,
+        gpuCombinedWakeScratch.channelFrequency + channel * frequencyPoints,
+        gpuCombinedWakeScratch.voltage + channel * wake->bins);
+      if (fftStatus != CUFFT_SUCCESS) {
+        std::fprintf(stderr, "elegant CUDA: cuFFT Z2D failed with status %d\n",
+                     static_cast<int>(fftStatus));
+        cudaStatus = cudaErrorUnknown;
+      }
+    }
+  }
+
+  if (cudaStatus == cudaSuccess)
+    gpuCombinedWakeApplyKicksKernel<<<particleBlocks, threads>>>(
+      static_cast<double *>(coord), nParticles, stride, *wake,
+      gpuCombinedWakeScratch.time, gpuCombinedWakeScratch.pz,
+      gpuCombinedWakeScratch.pbin, gpuCombinedWakeScratch.voltage);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(&hostBinnedCount,
+                            gpuCombinedWakeScratch.binnedCount,
+                            sizeof(hostBinnedCount), cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess && histogramReturn)
+    cudaStatus = cudaMemcpy(histogramReturn,
+                            gpuCombinedWakeScratch.histogram,
+                            3 * wake->bins * sizeof(*histogramReturn),
+                            cudaMemcpyDeviceToHost);
+  if (voltageReturn) {
+    for (long channel = 0;
+         cudaStatus == cudaSuccess && channel < GPU_COMBINED_WAKE_CHANNELS;
+         channel++)
+      cudaStatus = cudaMemcpy(
+        voltageReturn + channel * wake->bins,
+        gpuCombinedWakeScratch.voltage + channel * wake->bins,
+        wake->bins * sizeof(*voltageReturn), cudaMemcpyDeviceToHost);
+  }
+
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  if (status == static_cast<int>(cudaSuccess))
+    *binnedCount = static_cast<long>(hostBinnedCount);
+  return status;
 }
 
 extern "C" int gpuCudaWakeLongitudinalTrack(void *coord, long nParticles,
@@ -7207,6 +7984,74 @@ extern "C" int gpuCudaLongMinMax(void *coord, long nParticles, int stride,
   }
   cudaStatus = cudaMemcpy(result, deviceResult, sizeof(*result), cudaMemcpyDeviceToHost);
   cudaFree(deviceResult);
+  return static_cast<int>(cudaStatus);
+}
+
+extern "C" int gpuCudaSortedBunchRanges(
+  void *coord, long nParticles, int stride, int coordinateIndex,
+  long minBunch, long nBuckets, long *start, long *count, long *sorted,
+  float *milliseconds) {
+  cudaEvent_t startEvent, stopEvent;
+  cudaError_t cudaStatus;
+  long *deviceStart = NULL, *deviceCount = NULL;
+  int *deviceSorted = NULL, hostSorted = 1;
+  int threads = 256, blocks, bucketBlocks, status;
+
+  if (!coord || nParticles <= 0 || stride <= 0 || coordinateIndex < 0 ||
+      coordinateIndex >= stride || nBuckets <= 0 || !start || !count ||
+      !sorted)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *sorted = 0;
+  cudaStatus = cudaMalloc(&deviceStart, nBuckets * sizeof(*deviceStart));
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMalloc(&deviceCount, nBuckets * sizeof(*deviceCount));
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMalloc(&deviceSorted, sizeof(*deviceSorted));
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(deviceSorted, &hostSorted, sizeof(hostSorted),
+                            cudaMemcpyHostToDevice);
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+
+  status = prepareTimedLaunch(&startEvent, &stopEvent, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaStatus = static_cast<cudaError_t>(status);
+    goto cleanup;
+  }
+  blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  bucketBlocks = static_cast<int>((nBuckets + threads - 1) / threads);
+  gpuSortedBunchValidateKernel<<<blocks, threads>>>(
+    static_cast<const double *>(coord), nParticles, stride, coordinateIndex,
+    deviceSorted);
+  cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess) {
+    gpuSortedBunchRangesKernel<<<bucketBlocks, threads>>>(
+      static_cast<const double *>(coord), nParticles, stride, coordinateIndex,
+      minBunch, nBuckets, deviceStart, deviceCount);
+    cudaStatus = cudaGetLastError();
+  }
+  status = launchTimedKernel(cudaStatus, startEvent, stopEvent, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaStatus = static_cast<cudaError_t>(status);
+    goto cleanup;
+  }
+  cudaStatus = cudaMemcpy(&hostSorted, deviceSorted, sizeof(hostSorted),
+                          cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(start, deviceStart,
+                            nBuckets * sizeof(*deviceStart),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(count, deviceCount,
+                            nBuckets * sizeof(*deviceCount),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    *sorted = hostSorted ? 1 : 0;
+
+cleanup:
+  cudaFree(deviceStart);
+  cudaFree(deviceCount);
+  cudaFree(deviceSorted);
   return static_cast<int>(cudaStatus);
 }
 

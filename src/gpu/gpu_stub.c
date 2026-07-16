@@ -52,6 +52,8 @@
 #pragma weak hasNormal
 #pragma weak set_up_wake
 #pragma weak set_up_trwake
+#pragma weak set_up_impedance
+#pragma weak set_up_cwake
 #pragma weak track_through_lscdrift
 #pragma weak computeTimeCoordinatesOnly
 #pragma weak binTimeDistribution
@@ -74,6 +76,10 @@ extern void set_up_wake(WAKE *wakeData, RUN *run, long pass, long particles,
                         CHARGE *charge);
 extern void set_up_trwake(TRWAKE *wakeData, RUN *run, long pass,
                           long particles, CHARGE *charge);
+extern void set_up_impedance(IMPEDANCE *impedanceData, RUN *run, long pass,
+                             long particles, CHARGE *charge);
+extern void set_up_cwake(CWAKE *wakeData, RUN *run, long pass,
+                         long particles, CHARGE *charge);
 extern void computeTimeCoordinatesOnly(double *time, double Po,
                                        double **part, long np);
 extern long binTimeDistribution(double *Itime, long *pbin, double tmin,
@@ -294,6 +300,10 @@ extern int gpuCudaLongMinMax(void *coord, long nParticles, int stride,
                              int coordinateIndex,
                              GPU_LONG_MIN_MAX_DATA *result,
                              float *milliseconds);
+extern int gpuCudaSortedBunchRanges(
+  void *coord, long nParticles, int stride, int coordinateIndex,
+  long minBunch, long nBuckets, long *start, long *count, long *sorted,
+  float *milliseconds);
 extern int gpuCudaDoubleMinMax(void *coord, long nParticles, int stride,
                                int coordinateIndex,
                                GPU_DOUBLE_MIN_MAX_DATA *result,
@@ -482,6 +492,13 @@ extern int gpuCudaTrwakeTrackFromHistogram(
   const double *posItimeXInput, const double *posItimeYInput,
   long *binnedCount, double *vtimeXReturn, double *vtimeYReturn,
   float *milliseconds);
+extern int gpuCudaCombinedWakeTrack(
+  void *coord, long nParticles, int stride,
+  const GPU_COMBINED_WAKE_DATA *wake,
+  const double *const *tables, long *binnedCount,
+  double *histogramReturn, double *voltageReturn,
+  float *milliseconds);
+extern void gpuCudaCombinedWakeRelease(void);
 extern int gpuCudaLscBin(void *coord, long nParticles, int stride,
                          const GPU_LSC_DATA *lsc, long *binnedCount,
                          double *itimeReturn, void *deviceItimeScratch,
@@ -619,6 +636,19 @@ typedef struct GPU_RFCA_SCRATCH {
   void *matchEnergy;
 } GPU_RFCA_SCRATCH;
 
+typedef struct GPU_BUNCH_RANGE_CACHE {
+  const void *deviceCoord;
+  long particles;
+  long stride;
+  long coordinateIndex;
+  long minBunch;
+  long maxBunch;
+  long nBuckets;
+  long *start;
+  long *count;
+  long valid;
+} GPU_BUNCH_RANGE_CACHE;
+
 static GPU_BASE gpuBase;
 static GPU_CSR_SCRATCH gpuCsrScratch;
 static GPU_APERTURE_SCRATCH gpuApertureScratch;
@@ -628,6 +658,7 @@ static GPU_RFCW_KICK_SCRATCH gpuRfcwKickScratch;
 static GPU_LSC_SCRATCH gpuLscScratch;
 static GPU_BEAM_SUMS_SCRATCH gpuBeamSumsScratch;
 static GPU_RFCA_SCRATCH gpuRfcaScratch;
+static GPU_BUNCH_RANGE_CACHE gpuBunchRangeCache;
 static long gpuVerbose = 0;
 static long gpuEnableExactDrift = 0;
 static long gpuExactDriftExplicit = 0;
@@ -649,6 +680,10 @@ static long gpuEnableScmult = 0;
 static long gpuScmultExplicit = 0;
 static long gpuEnableWakeTrackingDrift = 0;
 static long gpuWakeTrackingDriftExplicit = 0;
+static long gpuEnableCombinedWake = 0;
+static long gpuCombinedWakeExplicit = 0;
+static long gpuEnableCombinedWakeMultibunch = 0;
+static long gpuEnableCombinedWakeFft = 0;
 static long gpuEnableLscTracking = 0;
 static long gpuLscTrackingExplicit = 0;
 static long gpuEnableRfcwTrackingDrift = 0;
@@ -696,6 +731,7 @@ static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr);
 static long gpuCsbendElementSupported(ELEMENT_LIST *eptr);
 static long gpuWakeElementSupported(ELEMENT_LIST *eptr);
 static long gpuTrwakeElementSupported(ELEMENT_LIST *eptr);
+static long gpuCombinedWakeElementSupported(ELEMENT_LIST *eptr);
 static long gpuLscElementSupported(ELEMENT_LIST *eptr);
 long gpu_csr_csbend_resident_available(void *csbend0, long nParticles,
                                        long nBins);
@@ -1045,6 +1081,20 @@ static const char *gpuWakeTrackingStatus(void) {
   return gpuWakeTrackingDriftExplicit ?
          "; wake tracking drift paths explicitly disabled" :
          "; wake tracking drift paths disabled by default";
+}
+
+static const char *gpuCombinedWakeStatus(void) {
+  if (gpuEnableCombinedWake)
+    return gpuEnableCombinedWakeMultibunch ?
+           (gpuEnableCombinedWakeFft ?
+            "; IMPEDANCE/CWAKE explicitly enabled; multibunch and CWAKE FFT enabled" :
+            "; IMPEDANCE/CWAKE explicitly enabled; multibunch enabled") :
+           (gpuEnableCombinedWakeFft ?
+            "; IMPEDANCE/CWAKE explicitly enabled; CWAKE FFT enabled" :
+            "; IMPEDANCE/CWAKE explicitly enabled");
+  return gpuCombinedWakeExplicit ?
+         "; IMPEDANCE/CWAKE explicitly disabled" :
+         "; IMPEDANCE/CWAKE disabled by default";
 }
 
 static const char *gpuLscTrackingStatus(void) {
@@ -1899,6 +1949,35 @@ static long gpuTrwakeElementSupported(ELEMENT_LIST *eptr) {
   return gpuTrwakeDataSupported((TRWAKE *)eptr->p_elem);
 }
 
+static long gpuCombinedWakeElementSupported(ELEMENT_LIST *eptr) {
+  if (!gpuEnableCombinedWake || !eptr || !eptr->p_elem)
+    return 0;
+#if USE_MPI
+  if (distributedBeam)
+    return 0;
+#endif
+  if (eptr->type == T_IMPEDANCE) {
+    IMPEDANCE *imp = (IMPEDANCE *)eptr->p_elem;
+    if (imp->smoothing || imp->area_weight || imp->reverseTimeOrder ||
+        gpuStringSet(imp->wakes))
+      return 0;
+    if (imp->interpolate != 0 && imp->interpolate != 1)
+      return 0;
+    return 1;
+  }
+  if (eptr->type == T_CWAKE) {
+    CWAKE *wake = (CWAKE *)eptr->p_elem;
+    if (wake->smoothing || wake->tilt || gpuBase.backtrack)
+      return 0;
+    if (wake->n_bins != 0 && wake->n_bins < 2)
+      return 0;
+    if (wake->interpolate != 0 && wake->interpolate != 1)
+      return 0;
+    return 1;
+  }
+  return 0;
+}
+
 static long gpuLscDataSupported(LSCDRIFT *lsc) {
   if (!lsc)
     return 0;
@@ -2111,6 +2190,8 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuTrwakeElementSupported(eptr))
+    return gpuWakeParticleCountAllowed(nParticles);
+  if (gpuCombinedWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuLscElementSupported(eptr))
     return gpuParticleCountAllowed(nParticles, gpuBase.lscMinParticles);
@@ -2763,6 +2844,9 @@ static void gpuEnsureDeviceBuffer(long nParticles) {
   if (gpuBase.deviceCoord && gpuBase.deviceCapacity >= nParticles && gpuBase.deviceStride == stride)
     return;
   gpuReleaseDeviceBuffer();
+  free(gpuBunchRangeCache.start);
+  free(gpuBunchRangeCache.count);
+  memset(&gpuBunchRangeCache, 0, sizeof(gpuBunchRangeCache));
   count = (unsigned long)nParticles * (unsigned long)stride;
   status = gpuCudaMallocDouble(&gpuBase.deviceCoord, count);
   if (status != 0)
@@ -3719,6 +3803,19 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnableWakeTrackingDrift =
     gpuWakeTrackingDriftExplicit &&
     gpuEnvFlag("ELEGANT_GPU_ENABLE_WAKE_TRACKING_DRIFT");
+  gpuCombinedWakeExplicit =
+    gpuEnvSet("ELEGANT_GPU_ENABLE_COMBINED_WAKE");
+  gpuEnableCombinedWake =
+    gpuCombinedWakeExplicit &&
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_COMBINED_WAKE");
+  gpuEnableCombinedWakeMultibunch =
+    gpuEnableCombinedWake &&
+    gpuEnvSet("ELEGANT_GPU_ENABLE_COMBINED_WAKE_MULTIBUNCH") &&
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_COMBINED_WAKE_MULTIBUNCH");
+  gpuEnableCombinedWakeFft =
+    gpuEnableCombinedWake &&
+    gpuEnvSet("ELEGANT_GPU_ENABLE_COMBINED_WAKE_FFT") &&
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_COMBINED_WAKE_FFT");
   gpuLscTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_LSC");
   gpuEnableLscTracking = !gpuLscTrackingExplicit ||
                          gpuEnvFlag("ELEGANT_GPU_ENABLE_LSC");
@@ -3807,7 +3904,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     status = gpuCudaRuntimeGetDeviceName((int)gpuBase.activeDevice, deviceName, sizeof(deviceName));
 #if USE_MPI
     fprintf(stderr,
-              "elegant CUDA: selected device %ld%s%s on MPI rank %d; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
+              "elegant CUDA: selected device %ld%s%s on MPI rank %d; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
             gpuBase.activeDevice,
             status == 0 ? " " : "",
             status == 0 ? deviceName : "",
@@ -3836,12 +3933,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuCsrResidentStatus(),
             gpuScmultStatus(),
             gpuWakeTrackingStatus(),
+            gpuCombinedWakeStatus(),
             gpuLscTrackingStatus(),
             gpuRfcwTrackingDriftStatus(),
             gpuRfcaChangeP0DriftStatus());
 #else
     fprintf(stderr,
-            "elegant CUDA: selected device %ld%s%s; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
+            "elegant CUDA: selected device %ld%s%s; thresholds matrix=%ld helper=%ld reduction=%ld aperture=%ld magnet=%ld wake=%ld lsc=%ld csr=%ld particles csrBins=%ld scmult=%ld exactDrift=%ld particles%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n",
             gpuBase.activeDevice,
             status == 0 ? " " : "",
             status == 0 ? deviceName : "",
@@ -3869,6 +3967,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuCsrResidentStatus(),
             gpuScmultStatus(),
             gpuWakeTrackingStatus(),
+            gpuCombinedWakeStatus(),
             gpuLscTrackingStatus(),
             gpuRfcwTrackingDriftStatus(),
             gpuRfcaChangeP0DriftStatus());
@@ -3906,6 +4005,10 @@ void gpuBaseDealloc(void) {
   gpuReleaseRfcaScratch();
   gpuReleaseApertureScratch();
   gpuReleaseCsrScratch();
+  gpuCudaCombinedWakeRelease();
+  free(gpuBunchRangeCache.start);
+  free(gpuBunchRangeCache.count);
+  memset(&gpuBunchRangeCache, 0, sizeof(gpuBunchRangeCache));
   gpuBase.elementOnGpu = 0;
   gpuBase.element = NULL;
 }
@@ -8369,12 +8472,16 @@ static void gpuSmoothWakeHistogram(double *data, long nb, long order,
 #ifdef GPU_VERIFY
 static long gpuWakeVerificationSuppressed = 0;
 
-static void gpuCompareWakeArray(const char *label, const char *arrayName,
-                                const double *cpu, const double *gpu, long n) {
+static void gpuCompareWakeArrayWithTolerance(
+  const char *label, const char *arrayName,
+  const double *cpu, const double *gpu, long n,
+  double defaultAbsTol, double defaultRelTol) {
   double absTol = gpuEnvDouble("ELEGANT_GPU_WAKE_COMPARE_ABS",
-                               gpuEnvDouble("ELEGANT_GPU_COMPARE_ABS", 1e-9));
+                               gpuEnvDouble("ELEGANT_GPU_COMPARE_ABS",
+                                            defaultAbsTol));
   double relTol = gpuEnvDouble("ELEGANT_GPU_WAKE_COMPARE_REL",
-                               gpuEnvDouble("ELEGANT_GPU_COMPARE_REL", 1e-10));
+                               gpuEnvDouble("ELEGANT_GPU_COMPARE_REL",
+                                            defaultRelTol));
   double maxAbs = 0, maxRel = 0;
   long mismatches = 0, i;
 
@@ -8406,6 +8513,12 @@ static void gpuCompareWakeArray(const char *label, const char *arrayName,
             "elegant CUDA VERIFY wake passed for %s %s: maxAbs=%.3e maxRel=%.3e\n",
             label ? label : "unknown", arrayName ? arrayName : "array",
             maxAbs, maxRel);
+}
+
+static void gpuCompareWakeArray(const char *label, const char *arrayName,
+                                const double *cpu, const double *gpu, long n) {
+  gpuCompareWakeArrayWithTolerance(label, arrayName, cpu, gpu, n,
+                                   1e-9, 1e-10);
 }
 
 static void gpuVerifyWakeLongitudinal(WAKE *wakeData, long np, double Po,
@@ -8464,7 +8577,21 @@ typedef struct GPU_BUNCHED_WAKE_PLAN {
   long lastRelativeBunch;
   long selectedBunch;
   long selectedRelativeBunch;
+  long selectedStart;
+  long selectedCount;
+  const long *bucketStart;
+  const long *bucketCount;
 } GPU_BUNCHED_WAKE_PLAN;
+
+typedef struct GPU_BUNCHED_WAKE_PLAN_CACHE {
+  const void *owner;
+  long particles;
+  long valid;
+  GPU_BUNCHED_WAKE_PLAN plan;
+} GPU_BUNCHED_WAKE_PLAN_CACHE;
+
+static GPU_BUNCHED_WAKE_PLAN_CACHE gpuImpedancePlanCache;
+static GPU_BUNCHED_WAKE_PLAN_CACHE gpuCwakePlanCache;
 
 static long gpuBunchedWakePlan(long np, long bunchedBeamMode,
                                long startBunch, long endBunch,
@@ -8472,11 +8599,11 @@ static long gpuBunchedWakePlan(long np, long bunchedBeamMode,
                                const char *operation,
                                GPU_BUNCHED_WAKE_PLAN *plan) {
   GPU_LONG_MIN_MAX_DATA range;
-  long firstBucket, lastBucket;
+  long firstBucket, lastBucket, sorted = 0;
+  long *newStart, *newCount;
   float milliseconds = 0;
   int status;
 
-  (void)operation;
   if (!plan)
     return GPU_BUNCHED_WAKE_UNSUPPORTED;
   memset(plan, 0, sizeof(*plan));
@@ -8514,6 +8641,53 @@ static long gpuBunchedWakePlan(long np, long bunchedBeamMode,
     plan->nBuckets = range.max - range.min + 1;
   }
 
+  if (gpuEnableCombinedWakeMultibunch && plan->nBuckets > 1 &&
+      operation &&
+      (strcmp(operation, "IMPEDANCE") == 0 || strcmp(operation, "CWAKE") == 0)) {
+    if (plan->nBuckets > np)
+      return GPU_BUNCHED_WAKE_UNSUPPORTED;
+    if (!gpuBunchRangeCache.valid ||
+        gpuBunchRangeCache.deviceCoord != gpuBase.deviceCoord ||
+        gpuBunchRangeCache.particles != np ||
+        gpuBunchRangeCache.stride != gpuBase.deviceStride ||
+        gpuBunchRangeCache.coordinateIndex != bunchIndex ||
+        gpuBunchRangeCache.minBunch != plan->minBunch ||
+        gpuBunchRangeCache.maxBunch != plan->maxBunch) {
+      newStart = (long *)malloc(plan->nBuckets * sizeof(*newStart));
+      newCount = (long *)malloc(plan->nBuckets * sizeof(*newCount));
+      if (!newStart || !newCount) {
+        free(newStart);
+        free(newCount);
+        return GPU_BUNCHED_WAKE_UNSUPPORTED;
+      }
+      free(gpuBunchRangeCache.start);
+      free(gpuBunchRangeCache.count);
+      memset(&gpuBunchRangeCache, 0, sizeof(gpuBunchRangeCache));
+      gpuBunchRangeCache.start = newStart;
+      gpuBunchRangeCache.count = newCount;
+      milliseconds = 0;
+      status = gpuCudaSortedBunchRanges(
+        gpuBase.deviceCoord, np, (int)gpuBase.deviceStride, bunchIndex,
+        plan->minBunch, plan->nBuckets, gpuBunchRangeCache.start,
+        gpuBunchRangeCache.count, &sorted, &milliseconds);
+      if (status != 0)
+        gpuFatalStatus("wake sorted bunch-range kernel", status);
+      gpuRecordReductionKernel(milliseconds);
+      if (!sorted)
+        return GPU_BUNCHED_WAKE_UNSUPPORTED;
+      gpuBunchRangeCache.deviceCoord = gpuBase.deviceCoord;
+      gpuBunchRangeCache.particles = np;
+      gpuBunchRangeCache.stride = gpuBase.deviceStride;
+      gpuBunchRangeCache.coordinateIndex = bunchIndex;
+      gpuBunchRangeCache.minBunch = plan->minBunch;
+      gpuBunchRangeCache.maxBunch = plan->maxBunch;
+      gpuBunchRangeCache.nBuckets = plan->nBuckets;
+      gpuBunchRangeCache.valid = 1;
+    }
+    plan->bucketStart = gpuBunchRangeCache.start;
+    plan->bucketCount = gpuBunchRangeCache.count;
+  }
+
   firstBucket = startBunch >= 0 ? startBunch : 0;
   lastBucket = endBunch >= 0 ? endBunch : plan->nBuckets - 1;
   if (firstBucket > plan->nBuckets - 1 || lastBucket < firstBucket) {
@@ -8527,6 +8701,13 @@ static long gpuBunchedWakePlan(long np, long bunchedBeamMode,
   plan->selectedRelativeBunch = firstBucket;
   plan->selectedBunch = plan->minBunch + firstBucket;
   plan->useBunchFilter = plan->nBuckets > 1;
+  if (plan->bucketStart && plan->bucketCount) {
+    plan->selectedStart = plan->bucketStart[firstBucket];
+    plan->selectedCount = plan->bucketCount[firstBucket];
+  } else {
+    plan->selectedStart = 0;
+    plan->selectedCount = np;
+  }
   plan->action = GPU_BUNCHED_WAKE_TRACK;
   return GPU_BUNCHED_WAKE_TRACK;
 }
@@ -8567,6 +8748,57 @@ long gpu_trwake_bunched_mode_supported(long np, void *wakeData0, void *charge0) 
          GPU_BUNCHED_WAKE_UNSUPPORTED;
 }
 
+long gpu_impedance_bunched_mode_action(long np, void *impedanceData0,
+                                       void *charge0) {
+  IMPEDANCE *impedanceData = (IMPEDANCE *)impedanceData0;
+  GPU_BUNCHED_WAKE_PLAN plan;
+  long action;
+
+  if (!impedanceData)
+    return GPU_BUNCHED_WAKE_UNSUPPORTED;
+  gpuImpedancePlanCache.valid = 0;
+  action = gpuBunchedWakePlan(
+    np, impedanceData->bunchedBeamMode, impedanceData->startBunch,
+    impedanceData->endBunch, (CHARGE *)charge0, "IMPEDANCE", &plan);
+  /* Multiple bunches are enabled as a separately measured follow-on stage. */
+  if (!gpuEnableCombinedWakeMultibunch &&
+      action != GPU_BUNCHED_WAKE_UNSUPPORTED && plan.nBuckets > 1)
+    return GPU_BUNCHED_WAKE_UNSUPPORTED;
+  if (action != GPU_BUNCHED_WAKE_UNSUPPORTED) {
+    gpuImpedancePlanCache.owner = impedanceData;
+    gpuImpedancePlanCache.particles = np;
+    gpuImpedancePlanCache.plan = plan;
+    gpuImpedancePlanCache.valid = 1;
+  }
+  return action;
+}
+
+long gpu_cwake_bunched_mode_action(long np, void *wakeData0, void *charge0) {
+  CWAKE *wakeData = (CWAKE *)wakeData0;
+  GPU_BUNCHED_WAKE_PLAN plan;
+  long action;
+
+  if (!wakeData)
+    return GPU_BUNCHED_WAKE_UNSUPPORTED;
+  gpuCwakePlanCache.valid = 0;
+  action = gpuBunchedWakePlan(
+    np, wakeData->bunchedBeamMode, wakeData->startBunch,
+    wakeData->endBunch, (CHARGE *)charge0, "CWAKE", &plan);
+  /* Multiple bunches are enabled as a separately measured follow-on stage. */
+  if (!gpuEnableCombinedWakeMultibunch &&
+      action != GPU_BUNCHED_WAKE_UNSUPPORTED && plan.nBuckets > 1)
+    return GPU_BUNCHED_WAKE_UNSUPPORTED;
+  if (action != GPU_BUNCHED_WAKE_UNSUPPORTED) {
+    gpuCwakePlanCache.owner = wakeData;
+    gpuCwakePlanCache.particles = np;
+    gpuCwakePlanCache.plan = plan;
+    gpuCwakePlanCache.valid = 1;
+  }
+  if (wakeData->change_p0 && action == GPU_BUNCHED_WAKE_SKIP)
+    return GPU_BUNCHED_WAKE_MATCH_ONLY;
+  return action;
+}
+
 static long gpuWakeTimeSums(long np, double Po,
                             const GPU_BUNCHED_WAKE_PLAN *plan,
                             GPU_BEAM_SUM_DATA *sums,
@@ -8575,7 +8807,14 @@ static long gpuWakeTimeSums(long np, double Po,
   int status;
 
   memset(sums, 0, sizeof(*sums));
-  if (plan && plan->useBunchFilter) {
+  if (plan && plan->useBunchFilter && plan->bucketStart &&
+      plan->selectedCount > 0) {
+    status = gpuCudaBeamSums(
+      ((double *)gpuBase.deviceCoord) +
+        plan->selectedStart * gpuBase.deviceStride,
+      plan->selectedCount, (int)gpuBase.deviceStride,
+      Po, c_mks, sums, &milliseconds);
+  } else if (plan && plan->useBunchFilter) {
     status = gpuCudaSelectedTimeSums(gpuBase.deviceCoord, np,
                                      (int)gpuBase.deviceStride,
                                      Po, c_mks, bunchIndex,
@@ -8590,6 +8829,491 @@ static long gpuWakeTimeSums(long np, double Po,
     gpuFatalStatus(operation, status);
   gpuRecordReductionKernel(milliseconds);
   return sums->count;
+}
+
+static const int gpuImpedanceDriver[IMPEDANCE_N_WAKES] = {0, 1, 2, 0, 0};
+static const int gpuImpedanceKickPlane[IMPEDANCE_N_WAKES] = {0, 1, 2, 1, 2};
+static const long gpuImpedanceProbeExponent[IMPEDANCE_N_WAKES] = {0, 0, 0, 1, 1};
+static const int gpuCwakeDriver[CWAKE_N_WAKES] = {0, 1, 2, 0, 0, 0, 0};
+static const int gpuCwakeKickPlane[CWAKE_N_WAKES] = {0, 1, 2, 1, 2, 1, 2};
+static const long gpuCwakeProbeExponent[CWAKE_N_WAKES] = {0, 0, 0, 1, 1, 0, 0};
+
+static double gpuImpedanceChannelFactor(const IMPEDANCE *imp, long channel) {
+  switch (channel) {
+  case IMPEDANCE_ZL:  return imp->zFactor;
+  case IMPEDANCE_ZXD: return imp->xFactor;
+  case IMPEDANCE_ZYD: return imp->yFactor;
+  case IMPEDANCE_ZXQ: return imp->qxFactor;
+  case IMPEDANCE_ZYQ: return imp->qyFactor;
+  default:            return 1;
+  }
+}
+
+static double gpuCwakeChannelFactor(const CWAKE *wake, long channel) {
+  switch (channel) {
+  case CWAKE_WZ: return wake->zFactor;
+  case CWAKE_WX: return wake->xFactor;
+  case CWAKE_WY: return wake->yFactor;
+  case CWAKE_QX: return wake->qxFactor;
+  case CWAKE_QY: return wake->qyFactor;
+  case CWAKE_CX: return wake->cxFactor;
+  case CWAKE_CY: return wake->cyFactor;
+  default:       return 1;
+  }
+}
+
+#ifdef GPU_VERIFY
+static void gpuVerifyCombinedHistogram(
+  const GPU_COMBINED_WAKE_DATA *data, double **coord, long np,
+  const double *gpuHistogram, double **cpuHistogramReturn,
+  long **cpuPbinReturn, double **cpuTimeReturn) {
+  double *cpuHistogram, *cpuTime;
+  long *cpuPbin;
+  long ip, ib;
+
+  cpuHistogram = (double *)calloc(3 * data->bins, sizeof(*cpuHistogram));
+  cpuTime = (double *)malloc(np * sizeof(*cpuTime));
+  cpuPbin = (long *)malloc(np * sizeof(*cpuPbin));
+  if (!cpuHistogram || !cpuTime || !cpuPbin)
+    gpuRequiredFailure("unable to allocate combined-wake verification buffers");
+  computeTimeCoordinatesOnly(cpuTime, data->pCentral, coord, np);
+  for (ip = 0; ip < np; ip++) {
+    cpuPbin[ip] = -1;
+    if (data->useBunchFilter &&
+        (long)coord[ip][data->bunchIndexColumn] != data->selectedBunch)
+      continue;
+    ib = (long)((cpuTime[ip] - data->tmin) / data->dt + 0.5);
+    if (ib < 0 || ib >= data->bins)
+      continue;
+    cpuPbin[ip] = ib;
+    cpuHistogram[ib] += 1;
+    cpuHistogram[data->bins + ib] += coord[ip][0] - data->offset[0];
+    cpuHistogram[2 * data->bins + ib] += coord[ip][2] - data->offset[1];
+  }
+  gpuCompareWakeArray("combined wake", "Itime", cpuHistogram,
+                      gpuHistogram, data->bins);
+  gpuCompareWakeArray("combined wake", "xItime",
+                      cpuHistogram + data->bins,
+                      gpuHistogram + data->bins, data->bins);
+  gpuCompareWakeArray("combined wake", "yItime",
+                      cpuHistogram + 2 * data->bins,
+                      gpuHistogram + 2 * data->bins, data->bins);
+  *cpuHistogramReturn = cpuHistogram;
+  *cpuPbinReturn = cpuPbin;
+  *cpuTimeReturn = cpuTime;
+}
+
+static void gpuVerifyCwakeIntermediate(
+  CWAKE *wake, const GPU_COMBINED_WAKE_DATA *data, double **coord, long np,
+  const double *gpuHistogram, const double *gpuVoltage) {
+  double *cpuHistogram, *cpuTime, *cpuVoltage;
+  long *cpuPbin;
+
+  gpuVerifyCombinedHistogram(data, coord, np, gpuHistogram, &cpuHistogram,
+                             &cpuPbin, &cpuTime);
+  cpuVoltage = (double *)malloc(data->bins * sizeof(*cpuVoltage));
+  if (!cpuVoltage)
+    gpuRequiredFailure("unable to allocate CWAKE voltage verification buffer");
+  for (long channel = 0; channel < CWAKE_N_WAKES; channel++) {
+    if (!wake->enabled[channel])
+      continue;
+    convolveArrays(cpuVoltage, data->bins,
+                   cpuHistogram + data->driver[channel] * data->bins,
+                   data->bins, wake->W[channel], wake->wakePoints, wake->i0);
+    for (long ib = 0; ib < data->bins; ib++)
+      cpuVoltage[ib] *= data->factor[channel];
+    if (data->allowTimeFft)
+      gpuCompareWakeArrayWithTolerance(
+        "track_through_cwake FFT", "Vtime", cpuVoltage,
+        gpuVoltage + channel * data->bins, data->bins, 1e-6, 1e-8);
+    else
+      gpuCompareWakeArray("track_through_cwake", "Vtime", cpuVoltage,
+                          gpuVoltage + channel * data->bins, data->bins);
+  }
+  free(cpuVoltage);
+  free(cpuHistogram);
+  free(cpuPbin);
+  free(cpuTime);
+}
+
+static void gpuApplyImpedanceMultiplication(
+  const double *ifreq, const double *impedance, double *vfreq,
+  long bins, double factor) {
+  long frequencyPoints = bins / 2 + 1;
+  vfreq[0] = ifreq[0] * impedance[0] * factor;
+  if (!(bins % 2))
+    vfreq[bins - 1] = ifreq[bins - 1] * impedance[bins - 1] * factor;
+  for (long frequency = 1; frequency < frequencyPoints - 1; frequency++) {
+    long realIndex = 2 * frequency - 1;
+    long imagIndex = realIndex + 1;
+    vfreq[realIndex] =
+      (ifreq[realIndex] * impedance[realIndex] -
+       ifreq[imagIndex] * impedance[imagIndex]) * factor;
+    vfreq[imagIndex] =
+      (ifreq[realIndex] * impedance[imagIndex] +
+       ifreq[imagIndex] * impedance[realIndex]) * factor;
+  }
+}
+
+static void gpuVerifyImpedanceIntermediate(
+  IMPEDANCE *imp, const GPU_COMBINED_WAKE_DATA *data, double **coord, long np,
+  const double *gpuHistogram, const double *gpuVoltage) {
+  double *cpuHistogram, *cpuTime, *ifreq, *cpuVoltage;
+  long *cpuPbin;
+
+  gpuVerifyCombinedHistogram(data, coord, np, gpuHistogram, &cpuHistogram,
+                             &cpuPbin, &cpuTime);
+  ifreq = (double *)calloc(2 * data->bins, sizeof(*ifreq));
+  cpuVoltage = (double *)calloc(2 * (data->bins + 1), sizeof(*cpuVoltage));
+  if (!ifreq || !cpuVoltage)
+    gpuRequiredFailure("unable to allocate IMPEDANCE voltage verification buffers");
+  for (long channel = 0; channel < IMPEDANCE_N_WAKES; channel++) {
+    if (!imp->enabled[channel])
+      continue;
+    memset(ifreq, 0, 2 * data->bins * sizeof(*ifreq));
+    memcpy(ifreq, cpuHistogram + data->driver[channel] * data->bins,
+           data->bins * sizeof(*ifreq));
+    realFFT(ifreq, data->bins, 0);
+    memset(cpuVoltage, 0, 2 * (data->bins + 1) * sizeof(*cpuVoltage));
+    gpuApplyImpedanceMultiplication(ifreq, imp->Z[channel], cpuVoltage,
+                                    data->bins, data->factor[channel]);
+    realFFT(cpuVoltage, data->bins, INVERSE_FFT);
+    gpuCompareWakeArray("track_through_impedance", "Vtime", cpuVoltage,
+                        gpuVoltage + channel * data->bins, data->bins);
+  }
+  free(ifreq);
+  free(cpuVoltage);
+  free(cpuHistogram);
+  free(cpuPbin);
+  free(cpuTime);
+}
+#endif
+
+static long gpuTrackImpedanceBucket(
+  long np, IMPEDANCE *imp, double Po, double rampFactor,
+  const GPU_BUNCHED_WAKE_PLAN *plan) {
+  GPU_BEAM_SUM_DATA sums;
+  GPU_COMBINED_WAKE_DATA data;
+  const double *tables[GPU_COMBINED_WAKE_CHANNELS] = {NULL};
+  long expectedParticles, binnedCount = 0, trackedParticles, startParticle;
+  double *deviceCoord;
+  double beamSpan, tmin, tmax;
+  float milliseconds = 0;
+  int status;
+#ifdef GPU_VERIFY
+  double *gpuHistogram = NULL, *gpuVoltage = NULL;
+  double **hostCoord;
+#endif
+
+  startParticle = plan->useBunchFilter && plan->bucketStart ?
+                  plan->selectedStart : 0;
+  trackedParticles = plan->useBunchFilter && plan->bucketStart ?
+                     plan->selectedCount : np;
+  if (trackedParticles <= 0)
+    return 0;
+  deviceCoord = ((double *)gpuBase.deviceCoord) +
+                startParticle * gpuBase.deviceStride;
+#ifdef GPU_VERIFY
+  hostCoord = gpuBase.coord + startParticle;
+#endif
+  expectedParticles = gpuWakeTimeSums(
+    np, Po, plan, &sums, "IMPEDANCE time-coordinate reduction kernel");
+  if (expectedParticles <= 0)
+    return 0;
+  tmin = sums.min[6];
+  tmax = sums.max[6];
+  tmin -= imp->bin_size;
+  tmax += imp->bin_size;
+  beamSpan = tmax - tmin;
+  if (beamSpan * 2 > imp->n_bins * imp->bin_size && !imp->allowLongBeam) {
+    fprintf(stderr,
+            "IMPEDANCE: time span %21.15le s exceeds half the total time span %21.15le s.\n",
+            beamSpan, imp->n_bins * imp->bin_size);
+    exit(1);
+  }
+
+  memset(&data, 0, sizeof(data));
+  data.bins = imp->n_bins;
+  data.tablePoints = imp->n_bins;
+  data.mode = GPU_COMBINED_WAKE_MODE_IMPEDANCE;
+  data.interpolate = (int)imp->interpolate;
+  data.useBunchFilter =
+    (int)(plan->useBunchFilter && !plan->bucketStart);
+  data.bunchIndexColumn = bunchIndex;
+  data.selectedBunch = plan->selectedBunch;
+  data.tmin = tmin;
+  data.dt = imp->bin_size;
+  data.pCentral = Po;
+  data.offset[0] = imp->dx;
+  data.offset[1] = imp->dy;
+  data.particleMassMV = particleMassMV;
+  data.particleRelSign = particleRelSign;
+  data.cMks = c_mks;
+  for (long channel = 0; channel < IMPEDANCE_N_WAKES; channel++) {
+    data.enabled[channel] = imp->enabled[channel] ? 1 : 0;
+    data.driver[channel] = gpuImpedanceDriver[channel];
+    data.kickPlane[channel] = gpuImpedanceKickPlane[channel];
+    data.probeExponent[channel] = gpuImpedanceProbeExponent[channel];
+    data.factor[channel] =
+      imp->macroParticleCharge * particleRelSign / imp->bin_size *
+      imp->factor * gpuImpedanceChannelFactor(imp, channel) * rampFactor;
+    tables[channel] = imp->Z[channel];
+  }
+#ifdef GPU_VERIFY
+  gpuHistogram = (double *)malloc(3 * data.bins * sizeof(*gpuHistogram));
+  gpuVoltage = (double *)malloc(GPU_COMBINED_WAKE_CHANNELS * data.bins *
+                                sizeof(*gpuVoltage));
+  if (!gpuHistogram || !gpuVoltage)
+    gpuRequiredFailure("unable to allocate IMPEDANCE GPU verification returns");
+#endif
+  status = gpuCudaCombinedWakeTrack(
+    deviceCoord, trackedParticles, (int)gpuBase.deviceStride, &data, tables,
+    &binnedCount,
+#ifdef GPU_VERIFY
+    gpuHistogram, gpuVoltage,
+#else
+    NULL, NULL,
+#endif
+    &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("IMPEDANCE combined CUDA kernel", status);
+  gpuRecordWakeKernel(milliseconds);
+  if (binnedCount != expectedParticles)
+    gpuWakeTrackingWarning("Some particles were not binned in IMPEDANCE.",
+                           "Reduce impedance frequency spacing or enable ALLOW_LONG_BEAM.");
+#ifdef GPU_VERIFY
+  gpuVerifyImpedanceIntermediate(imp, &data, hostCoord, trackedParticles,
+                                 gpuHistogram, gpuVoltage);
+  free(gpuHistogram);
+  free(gpuVoltage);
+#endif
+  return 1;
+}
+
+static long gpuTrackCwakeBucket(
+  long np, CWAKE *wake, double Po, double rampFactor,
+  const GPU_BUNCHED_WAKE_PLAN *plan) {
+  GPU_BEAM_SUM_DATA sums;
+  GPU_COMBINED_WAKE_DATA data;
+  const double *tables[GPU_COMBINED_WAKE_CHANNELS] = {NULL};
+  long expectedParticles, binnedCount = 0, bins, trackedParticles, startParticle;
+  double *deviceCoord;
+  double beamSpan, wakeSpan, tmin, tmax;
+  float milliseconds = 0;
+  int status;
+#ifdef GPU_VERIFY
+  double *gpuHistogram = NULL, *gpuVoltage = NULL;
+  double **hostCoord;
+#endif
+
+  startParticle = plan->useBunchFilter && plan->bucketStart ?
+                  plan->selectedStart : 0;
+  trackedParticles = plan->useBunchFilter && plan->bucketStart ?
+                     plan->selectedCount : np;
+  if (trackedParticles <= 0)
+    return 0;
+  deviceCoord = ((double *)gpuBase.deviceCoord) +
+                startParticle * gpuBase.deviceStride;
+#ifdef GPU_VERIFY
+  hostCoord = gpuBase.coord + startParticle;
+#endif
+  expectedParticles = gpuWakeTimeSums(
+    np, Po, plan, &sums, "CWAKE time-coordinate reduction kernel");
+  if (expectedParticles <= 0)
+    return 0;
+  tmin = sums.min[6];
+  tmax = sums.max[6];
+  beamSpan = tmax - tmin;
+  wakeSpan = wake->t[wake->wakePoints - 1] - wake->t[0];
+  if (beamSpan > wakeSpan && !wake->allowLongBeam) {
+    fprintf(stderr,
+            "CWAKE: beam length %le s exceeds wake length %le s.\n",
+            beamSpan, wakeSpan);
+    exit(1);
+  }
+  if (wake->n_bins) {
+    bins = wake->n_bins;
+    tmin = sums.centroidSum[6] / sums.count - wake->dt * bins / 2.0;
+  } else {
+    bins = beamSpan / wake->dt + 3;
+    tmin -= wake->dt;
+  }
+  if (bins <= 0)
+    return 0;
+
+  memset(&data, 0, sizeof(data));
+  data.bins = bins;
+  data.tablePoints = wake->wakePoints;
+  data.i0 = wake->i0;
+  data.mode = GPU_COMBINED_WAKE_MODE_TIME;
+  data.interpolate = (int)wake->interpolate;
+  data.allowTimeFft = (int)gpuEnableCombinedWakeFft;
+  data.useBunchFilter =
+    (int)(plan->useBunchFilter && !plan->bucketStart);
+  data.bunchIndexColumn = bunchIndex;
+  data.selectedBunch = plan->selectedBunch;
+  data.tmin = tmin;
+  data.dt = wake->dt;
+  data.pCentral = Po;
+  data.offset[0] = wake->dx;
+  data.offset[1] = wake->dy;
+  data.particleMassMV = particleMassMV;
+  data.particleRelSign = particleRelSign;
+  data.cMks = c_mks;
+  for (long channel = 0; channel < CWAKE_N_WAKES; channel++) {
+    data.enabled[channel] = wake->enabled[channel] ? 1 : 0;
+    data.driver[channel] = gpuCwakeDriver[channel];
+    data.kickPlane[channel] = gpuCwakeKickPlane[channel];
+    data.probeExponent[channel] = gpuCwakeProbeExponent[channel];
+    data.factor[channel] =
+      wake->macroParticleCharge * particleRelSign * wake->factor *
+      gpuCwakeChannelFactor(wake, channel) * rampFactor;
+    tables[channel] = wake->W[channel];
+  }
+#ifdef GPU_VERIFY
+  gpuHistogram = (double *)malloc(3 * bins * sizeof(*gpuHistogram));
+  gpuVoltage = (double *)malloc(GPU_COMBINED_WAKE_CHANNELS * bins *
+                                sizeof(*gpuVoltage));
+  if (!gpuHistogram || !gpuVoltage)
+    gpuRequiredFailure("unable to allocate CWAKE GPU verification returns");
+#endif
+  status = gpuCudaCombinedWakeTrack(
+    deviceCoord, trackedParticles, (int)gpuBase.deviceStride, &data, tables,
+    &binnedCount,
+#ifdef GPU_VERIFY
+    gpuHistogram, gpuVoltage,
+#else
+    NULL, NULL,
+#endif
+    &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("CWAKE combined CUDA kernel", status);
+  gpuRecordWakeKernel(milliseconds);
+  if (binnedCount != expectedParticles)
+    gpuWakeTrackingWarning("Some particles were not binned in CWAKE.",
+                           "Set N_BINS=0 to invoke autoscaling.");
+#ifdef GPU_VERIFY
+  gpuVerifyCwakeIntermediate(wake, &data, hostCoord, trackedParticles,
+                             gpuHistogram, gpuVoltage);
+  free(gpuHistogram);
+  free(gpuVoltage);
+#endif
+  return 1;
+}
+
+void gpu_track_through_impedance(long np, void *impedanceData0, double Po,
+                                 void *run0, long iPass, void *charge0) {
+  IMPEDANCE *imp = (IMPEDANCE *)impedanceData0;
+  RUN *run = (RUN *)run0;
+  CHARGE *charge = (CHARGE *)charge0;
+  GPU_BUNCHED_WAKE_PLAN plan, bucketPlan;
+  long adjustedPass, first, last, tracked = 0;
+  double rampFactor;
+
+  if (np <= 0 || !imp)
+    return;
+  adjustedPass = iPass - imp->startOnPass;
+  if (adjustedPass < 0 || imp->factor == 0) {
+    gpuRecordWallSeconds();
+    return;
+  }
+  if (!set_up_impedance)
+    gpuRequiredFailure("IMPEDANCE setup routine is unavailable");
+  set_up_impedance(imp, run, adjustedPass, np, charge);
+  if (imp->n_bins < 2)
+    gpuRequiredFailure("IMPEDANCE data was not initialized for CUDA tracking");
+  if (gpuImpedancePlanCache.valid &&
+      gpuImpedancePlanCache.owner == imp &&
+      gpuImpedancePlanCache.particles == np) {
+    plan = gpuImpedancePlanCache.plan;
+    gpuImpedancePlanCache.valid = 0;
+  } else if (gpuBunchedWakePlan(np, imp->bunchedBeamMode, imp->startBunch,
+                                imp->endBunch, charge, "IMPEDANCE", &plan) ==
+             GPU_BUNCHED_WAKE_UNSUPPORTED) {
+    gpuRequiredFailure("unsupported IMPEDANCE bunch layout reached CUDA path");
+  }
+  if (plan.action == GPU_BUNCHED_WAKE_SKIP) {
+    gpuRecordWallSeconds();
+    return;
+  }
+  rampFactor = imp->rampPasses <= 1 ||
+               adjustedPass >= imp->rampPasses - 1 ?
+               1 : (adjustedPass + 1.0) / imp->rampPasses;
+  gpuCopyHostToDevice(np);
+  first = plan.useBunchFilter ? plan.firstRelativeBunch : 0;
+  last = plan.useBunchFilter ? plan.lastRelativeBunch : 0;
+  for (long relative = first; relative <= last; relative++) {
+    bucketPlan = plan;
+    if (bucketPlan.useBunchFilter) {
+      bucketPlan.selectedRelativeBunch = relative;
+      bucketPlan.selectedBunch = bucketPlan.minBunch + relative;
+      if (bucketPlan.bucketStart && bucketPlan.bucketCount) {
+        bucketPlan.selectedStart = bucketPlan.bucketStart[relative];
+        bucketPlan.selectedCount = bucketPlan.bucketCount[relative];
+      }
+    }
+    if (gpuTrackImpedanceBucket(np, imp, Po, rampFactor, &bucketPlan) > 0)
+      tracked++;
+  }
+  if (tracked)
+    gpuMarkDeviceChanged(np);
+  gpuRecordWallSeconds();
+}
+
+void gpu_track_through_cwake(long np, void *wakeData0, double *PoInput,
+                             void *run0, long iPass, void *charge0) {
+  CWAKE *wake = (CWAKE *)wakeData0;
+  RUN *run = (RUN *)run0;
+  CHARGE *charge = (CHARGE *)charge0;
+  GPU_BUNCHED_WAKE_PLAN plan, bucketPlan;
+  long first, last, tracked = 0;
+  double rampFactor, Po;
+
+  if (np <= 0 || !wake || !PoInput)
+    return;
+  if (!set_up_cwake)
+    gpuRequiredFailure("CWAKE setup routine is unavailable");
+  set_up_cwake(wake, run, iPass, np, charge);
+  if (gpuCwakePlanCache.valid &&
+      gpuCwakePlanCache.owner == wake &&
+      gpuCwakePlanCache.particles == np) {
+    plan = gpuCwakePlanCache.plan;
+    gpuCwakePlanCache.valid = 0;
+  } else if (gpuBunchedWakePlan(np, wake->bunchedBeamMode, wake->startBunch,
+                                wake->endBunch, charge, "CWAKE", &plan) ==
+             GPU_BUNCHED_WAKE_UNSUPPORTED) {
+    gpuRequiredFailure("unsupported CWAKE bunch layout reached CUDA path");
+  }
+  if (plan.action == GPU_BUNCHED_WAKE_SKIP) {
+    if (wake->change_p0)
+      gpu_do_match_energy(np, PoInput, 0);
+    gpuRecordWallSeconds();
+    return;
+  }
+  rampFactor = wake->rampPasses <= 1 || iPass >= wake->rampPasses - 1 ?
+               1 : (iPass + 1.0) / wake->rampPasses;
+  Po = *PoInput;
+  gpuCopyHostToDevice(np);
+  first = plan.useBunchFilter ? plan.firstRelativeBunch : 0;
+  last = plan.useBunchFilter ? plan.lastRelativeBunch : 0;
+  for (long relative = first; relative <= last; relative++) {
+    bucketPlan = plan;
+    if (bucketPlan.useBunchFilter) {
+      bucketPlan.selectedRelativeBunch = relative;
+      bucketPlan.selectedBunch = bucketPlan.minBunch + relative;
+      if (bucketPlan.bucketStart && bucketPlan.bucketCount) {
+        bucketPlan.selectedStart = bucketPlan.bucketStart[relative];
+        bucketPlan.selectedCount = bucketPlan.bucketCount[relative];
+      }
+    }
+    if (gpuTrackCwakeBucket(np, wake, Po, rampFactor, &bucketPlan) > 0)
+      tracked++;
+  }
+  if (tracked)
+    gpuMarkDeviceChanged(np);
+  if (wake->change_p0 && wake->enabled[CWAKE_WZ])
+    gpu_do_match_energy(np, PoInput, 0);
+  gpuRecordWallSeconds();
 }
 
 static long gpuTrackWakeBucket(long np0, WAKE *wakeData, double Po,

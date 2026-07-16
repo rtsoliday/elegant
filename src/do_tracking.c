@@ -5869,6 +5869,9 @@ long do_tracking(
         case T_WAKE:
           return !((WAKE *)eptr->p_elem)->change_p0;
           break;
+        case T_CWAKE:
+          return !((CWAKE *)eptr->p_elem)->change_p0;
+          break;
         case T_CORGPIPE:
           return !((CORGPIPE *)eptr->p_elem)->change_p0;
           break;

@@ -219,6 +219,34 @@ typedef struct GPU_TRWAKE_DATA {
   double cMks;
 } GPU_TRWAKE_DATA;
 
+#define GPU_COMBINED_WAKE_CHANNELS 7
+#define GPU_COMBINED_WAKE_MODE_TIME 0
+#define GPU_COMBINED_WAKE_MODE_IMPEDANCE 1
+
+typedef struct GPU_COMBINED_WAKE_DATA {
+  long bins;
+  long tablePoints;
+  long i0;
+  int mode;
+  int interpolate;
+  int allowTimeFft;
+  int useBunchFilter;
+  int bunchIndexColumn;
+  long selectedBunch;
+  int enabled[GPU_COMBINED_WAKE_CHANNELS];
+  int driver[GPU_COMBINED_WAKE_CHANNELS];
+  int kickPlane[GPU_COMBINED_WAKE_CHANNELS];
+  long probeExponent[GPU_COMBINED_WAKE_CHANNELS];
+  double factor[GPU_COMBINED_WAKE_CHANNELS];
+  double tmin;
+  double dt;
+  double pCentral;
+  double offset[2];
+  double particleMassMV;
+  double particleRelSign;
+  double cMks;
+} GPU_COMBINED_WAKE_DATA;
+
 typedef struct GPU_LSC_DATA {
   long bins;
   int interpolate;

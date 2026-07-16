@@ -29,6 +29,9 @@
 #include "mdb.h"
 #include "track.h"
 #include "table.h"
+#ifdef HAVE_GPU
+#  include "gpu_cwake.h"
+#endif
 
 typedef struct {
   long driveX, driveY;
@@ -187,6 +190,40 @@ void track_through_cwake(double **part0, long np0, CWAKE *cw, double *PoInput,
   long needI = 0, needXI = 0, needYI = 0, needTransverse = 0;
 #if USE_MPI
   double *buffer;
+#endif
+
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    double gpuPoInput = *PoInput;
+    long action = gpu_cwake_bunched_mode_action(np0, cw, charge);
+    if (action == GPU_BUNCHED_WAKE_UNSUPPORTED) {
+      part0 = forceParticlesToCpu("CWAKE option CPU fallback");
+    } else if (action == GPU_BUNCHED_WAKE_SKIP) {
+      return;
+    } else {
+      startGpuTimer();
+      gpu_track_through_cwake(np0, cw, &gpuPoInput, run, i_pass, charge);
+#  ifdef GPU_VERIFY
+      double cpuPoInput = *PoInput;
+      startCpuTimer();
+      track_through_cwake(part0, np0, cw, &cpuPoInput, run, i_pass, charge);
+      if (cw->change_p0) {
+        double diff = fabs(cpuPoInput - gpuPoInput);
+        double scale = fabs(cpuPoInput) > fabs(gpuPoInput) ?
+                       fabs(cpuPoInput) : fabs(gpuPoInput);
+        if (diff > 1e-12 && diff > 1e-12 * scale) {
+          fprintf(stderr,
+                  "elegant CUDA VERIFY CWAKE P_central mismatch cpu=%21.15e gpu=%21.15e\n",
+                  cpuPoInput, gpuPoInput);
+          exit(1);
+        }
+      }
+      compareGpuCpu(np0, "track_through_cwake");
+#  endif
+      *PoInput = gpuPoInput;
+      return;
+    }
+  }
 #endif
 
   /* Load wake file and populate enabled[] before we make allocation decisions. */

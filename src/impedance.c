@@ -27,6 +27,9 @@
 #include "track.h"
 #include "table.h"
 #include "fftpackC.h"
+#ifdef HAVE_GPU
+#  include "gpu_impedance.h"
+#endif
 
 typedef struct {
   long driveX, driveY;   /* drive exponents */
@@ -249,6 +252,26 @@ void track_through_impedance(double **part0, long np0, IMPEDANCE *imp,
   long offset = 0, length = 0;
   double tmin_part, tmax_part;
   double *buffer;
+#endif
+
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    long action = gpu_impedance_bunched_mode_action(np0, imp, charge);
+    if (action == GPU_BUNCHED_WAKE_UNSUPPORTED) {
+      part0 = forceParticlesToCpu("IMPEDANCE option CPU fallback");
+    } else if (action == GPU_BUNCHED_WAKE_SKIP) {
+      return;
+    } else {
+      startGpuTimer();
+      gpu_track_through_impedance(np0, imp, Po, run, i_pass, charge);
+#  ifdef GPU_VERIFY
+      startCpuTimer();
+      track_through_impedance(part0, np0, imp, Po, run, i_pass, charge);
+      compareGpuCpu(np0, "track_through_impedance");
+#  endif
+      return;
+    }
+  }
 #endif
 
   if ((i_pass -= imp->startOnPass) < 0 || imp->factor == 0)
