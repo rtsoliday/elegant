@@ -56,6 +56,87 @@ typedef struct GPU_COMBINED_WAKE_SCRATCH {
 
 static GPU_COMBINED_WAKE_SCRATCH gpuCombinedWakeScratch;
 
+typedef struct GPU_POLYNOMIAL_SERIES_SCRATCH {
+  double *coefficient;
+  int32_t *exponent;
+  double *backup;
+  unsigned long long *invalidCount;
+  long termCapacity;
+  long particleCapacity;
+  long stride;
+  const void *owner;
+  long ownerTerms;
+} GPU_POLYNOMIAL_SERIES_SCRATCH;
+
+static GPU_POLYNOMIAL_SERIES_SCRATCH gpuPolynomialSeriesScratch;
+
+static void releasePolynomialSeriesScratch(void) {
+  if (gpuPolynomialSeriesScratch.coefficient)
+    cudaFree(gpuPolynomialSeriesScratch.coefficient);
+  if (gpuPolynomialSeriesScratch.exponent)
+    cudaFree(gpuPolynomialSeriesScratch.exponent);
+  if (gpuPolynomialSeriesScratch.backup)
+    cudaFree(gpuPolynomialSeriesScratch.backup);
+  if (gpuPolynomialSeriesScratch.invalidCount)
+    cudaFree(gpuPolynomialSeriesScratch.invalidCount);
+  std::memset(&gpuPolynomialSeriesScratch, 0,
+              sizeof(gpuPolynomialSeriesScratch));
+}
+
+extern "C" void gpuCudaPolynomialSeriesRelease(void) {
+  releasePolynomialSeriesScratch();
+}
+
+static int ensurePolynomialSeriesScratch(long nParticles, int stride,
+                                         long totalTerms) {
+  cudaError_t status;
+  long particleCapacity = gpuPolynomialSeriesScratch.particleCapacity;
+  long termCapacity = gpuPolynomialSeriesScratch.termCapacity;
+
+  if (nParticles <= 0 || stride < 6 || totalTerms <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  if (particleCapacity >= nParticles && termCapacity >= totalTerms &&
+      gpuPolynomialSeriesScratch.stride == stride &&
+      gpuPolynomialSeriesScratch.coefficient &&
+      gpuPolynomialSeriesScratch.exponent &&
+      gpuPolynomialSeriesScratch.backup &&
+      gpuPolynomialSeriesScratch.invalidCount)
+    return static_cast<int>(cudaSuccess);
+  if (particleCapacity < nParticles)
+    particleCapacity = nParticles;
+  if (termCapacity < totalTerms)
+    termCapacity = totalTerms;
+  releasePolynomialSeriesScratch();
+  gpuPolynomialSeriesScratch.particleCapacity = particleCapacity;
+  gpuPolynomialSeriesScratch.termCapacity = termCapacity;
+  gpuPolynomialSeriesScratch.stride = stride;
+  status = cudaMalloc(
+    &gpuPolynomialSeriesScratch.coefficient,
+    termCapacity * sizeof(*gpuPolynomialSeriesScratch.coefficient));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(
+    &gpuPolynomialSeriesScratch.exponent,
+    6 * termCapacity * sizeof(*gpuPolynomialSeriesScratch.exponent));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(
+    &gpuPolynomialSeriesScratch.backup,
+    particleCapacity * stride * sizeof(*gpuPolynomialSeriesScratch.backup));
+  if (status != cudaSuccess)
+    goto fail;
+  status = cudaMalloc(
+    &gpuPolynomialSeriesScratch.invalidCount,
+    sizeof(*gpuPolynomialSeriesScratch.invalidCount));
+  if (status != cudaSuccess)
+    goto fail;
+  return static_cast<int>(cudaSuccess);
+
+fail:
+  releasePolynomialSeriesScratch();
+  return static_cast<int>(status);
+}
+
 static void releaseCombinedWakeScratch(void) {
   cudaFree(gpuCombinedWakeScratch.time);
   cudaFree(gpuCombinedWakeScratch.pz);
@@ -3040,6 +3121,103 @@ __global__ void gpuCombinedWakePrepareKernel(
   pz[ip] = wake.pCentral * (1 + part[5]) /
            sqrt(1 + part[1] * part[1] + part[3] * part[3]);
   atomicAdd(binnedCount, 1ULL);
+}
+
+__device__ __forceinline__ double gpuPolynomialIntegerPower(double value,
+                                                            int32_t exponent) {
+  double result = 1;
+  for (int32_t i = 0; i < exponent; i++)
+    result *= value;
+  return result;
+}
+
+__global__ void gpuPolynomialSeriesKernel(
+  double *coord, long nParticles, int stride,
+  GPU_POLYNOMIAL_SERIES_DATA data, const double *coefficient,
+  const int32_t *exponent, unsigned long long *invalidCount) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double input[6], output[6], power;
+  double *part;
+  double cosTilt, sinTilt, x, xp, y, yp, qx, qy;
+  double denom, dp, p, beta0;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  cosTilt = cos(data.tilt);
+  sinTilt = sin(data.tilt);
+
+  part[4] += data.dz * sqrt(1 + part[1] * part[1] +
+                            part[3] * part[3]);
+  part[0] += -data.dx + data.dz * part[1];
+  part[2] += -data.dy + data.dz * part[3];
+  x = cosTilt * part[0] + sinTilt * part[2];
+  y = -sinTilt * part[0] + cosTilt * part[2];
+  xp = cosTilt * part[1] + sinTilt * part[3];
+  yp = -sinTilt * part[1] + cosTilt * part[3];
+  if (!isfinite(x) || !isfinite(xp) || !isfinite(y) || !isfinite(yp) ||
+      fabs(x) > data.coordinateLimit || fabs(y) > data.coordinateLimit ||
+      fabs(xp) > data.slopeLimit || fabs(yp) > data.slopeLimit) {
+    atomicAdd(invalidCount, 1ULL);
+    return;
+  }
+
+  dp = part[5];
+  p = data.pCentral * (1 + dp);
+  denom = sqrt(1 + xp * xp + yp * yp);
+  qx = (1 + dp) * xp / denom;
+  qy = (1 + dp) * yp / denom;
+  beta0 = p / sqrt(p * p + 1);
+  input[0] = x;
+  input[1] = qx;
+  input[2] = y;
+  input[3] = qy;
+  input[4] = 0;
+  input[5] = dp;
+
+  for (long coordinate = 0; coordinate < 6; coordinate++) {
+    output[coordinate] = 0;
+    for (long term = data.coordinateOffset[coordinate];
+         term < data.coordinateOffset[coordinate + 1]; term++) {
+      power = coefficient[term];
+      power *= gpuPolynomialIntegerPower(input[0], exponent[6 * term + 0]);
+      power *= gpuPolynomialIntegerPower(input[1], exponent[6 * term + 1]);
+      power *= gpuPolynomialIntegerPower(input[2], exponent[6 * term + 2]);
+      power *= gpuPolynomialIntegerPower(input[3], exponent[6 * term + 3]);
+      power *= gpuPolynomialIntegerPower(input[4], exponent[6 * term + 4]);
+      power *= gpuPolynomialIntegerPower(input[5], exponent[6 * term + 5]);
+      output[coordinate] += power;
+    }
+  }
+  x = output[0];
+  qx = output[1];
+  y = output[2];
+  qy = output[3];
+  dp = output[5];
+  denom = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
+  if (!(denom > 0) || !isfinite(denom)) {
+    atomicAdd(invalidCount, 1ULL);
+    return;
+  }
+  denom = sqrt(denom);
+  xp = qx / denom;
+  yp = qy / denom;
+  if (!isfinite(x) || !isfinite(xp) || !isfinite(y) || !isfinite(yp) ||
+      !isfinite(output[4]) || !isfinite(dp)) {
+    atomicAdd(invalidCount, 1ULL);
+    return;
+  }
+
+  part[0] = cosTilt * x - sinTilt * y;
+  part[1] = cosTilt * xp - sinTilt * yp;
+  part[2] = sinTilt * x + cosTilt * y;
+  part[3] = sinTilt * xp + cosTilt * yp;
+  part[4] += output[4] * beta0;
+  part[5] = dp;
+  part[0] += data.dx - part[1] * data.dz;
+  part[2] += data.dy - part[3] * data.dz;
+  part[4] -= data.dz * sqrt(1 + part[1] * part[1] +
+                            part[3] * part[3]);
 }
 
 __global__ void gpuCombinedWakeHistogramPartialKernel(
@@ -6069,6 +6247,79 @@ extern "C" int gpuCudaCombinedWakeTrack(
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))
     *binnedCount = static_cast<long>(hostBinnedCount);
+  return status;
+}
+
+extern "C" int gpuCudaPolynomialSeriesTrack(
+  void *coord, long nParticles, int stride,
+  const GPU_POLYNOMIAL_SERIES_DATA *data, const double *coefficient,
+  const int32_t *exponent, const void *owner, long *invalidCount,
+  float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  unsigned long long hostInvalidCount = 0;
+  unsigned long count;
+  int threads = 256, blocks, status;
+
+  if (!coord || !data || !coefficient || !exponent || !owner ||
+      !invalidCount || nParticles <= 0 || stride < 6 ||
+      data->totalTerms <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *invalidCount = 0;
+  status = ensurePolynomialSeriesScratch(nParticles, stride,
+                                         data->totalTerms);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+
+  if (gpuPolynomialSeriesScratch.owner != owner ||
+      gpuPolynomialSeriesScratch.ownerTerms != data->totalTerms) {
+    cudaStatus = cudaMemcpy(
+      gpuPolynomialSeriesScratch.coefficient, coefficient,
+      data->totalTerms * sizeof(*coefficient), cudaMemcpyHostToDevice);
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = cudaMemcpy(
+        gpuPolynomialSeriesScratch.exponent, exponent,
+        6 * data->totalTerms * sizeof(*exponent), cudaMemcpyHostToDevice);
+    if (cudaStatus == cudaSuccess) {
+      gpuPolynomialSeriesScratch.owner = owner;
+      gpuPolynomialSeriesScratch.ownerTerms = data->totalTerms;
+    }
+  } else {
+    cudaStatus = cudaSuccess;
+  }
+  count = (unsigned long)nParticles * (unsigned long)stride;
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(
+      gpuPolynomialSeriesScratch.backup, coord,
+      count * sizeof(*gpuPolynomialSeriesScratch.backup),
+      cudaMemcpyDeviceToDevice);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemset(gpuPolynomialSeriesScratch.invalidCount, 0,
+                            sizeof(*gpuPolynomialSeriesScratch.invalidCount));
+  blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  if (cudaStatus == cudaSuccess) {
+    gpuPolynomialSeriesKernel<<<blocks, threads>>>(
+      static_cast<double *>(coord), nParticles, stride, *data,
+      gpuPolynomialSeriesScratch.coefficient,
+      gpuPolynomialSeriesScratch.exponent,
+      gpuPolynomialSeriesScratch.invalidCount);
+    cudaStatus = cudaGetLastError();
+  }
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(
+      &hostInvalidCount, gpuPolynomialSeriesScratch.invalidCount,
+      sizeof(hostInvalidCount), cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess && hostInvalidCount)
+    cudaStatus = cudaMemcpy(
+      coord, gpuPolynomialSeriesScratch.backup,
+      count * sizeof(*gpuPolynomialSeriesScratch.backup),
+      cudaMemcpyDeviceToDevice);
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  if (status == static_cast<int>(cudaSuccess))
+    *invalidCount = static_cast<long>(hostInvalidCount);
   return status;
 }
 

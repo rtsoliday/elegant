@@ -16,6 +16,9 @@
 #include "mdb.h"
 #include "track.h"
 #include "tuneFootprint.h"
+#if defined(HAVE_GPU) && !USE_MPI
+#  include "gpu_tune.h"
+#endif
 
 static SDDS_DATASET sddsOut_delta;
 static SDDS_DATASET sddsOut_xy;
@@ -400,6 +403,273 @@ void setupTuneFootprintDataTypes() {
 
 static short tuneFootprintOn = 0;
 
+#if defined(HAVE_GPU) && !USE_MPI
+static long batchTuneFootprintDelta(RUN *run, double *referenceCoord,
+                                    LINE_LIST *beamline, long turns,
+                                    DELTA_TF_DATA *deltaTfData) {
+  double **startingCoord, **endingCoord, **secondEndingCoord;
+  double *firstTune, *secondTune, *firstAmplitude, *secondAmplitude;
+  double *xAmplitude, *yAmplitude, *deltaOffset;
+  long *firstValid, *secondValid;
+  long idelta;
+  double ddelta;
+
+  if (!ndelta || turns <= 1 || quadratic_spacing || !compute_diffusion ||
+      separate_xy_for_delta ||
+      !gpu_batched_tune_tracking_enabled(ndelta) ||
+      !gpu_batched_tune_beamline_supported(beamline))
+    return 0;
+  startingCoord = (double **)czarray_2d(
+    sizeof(**startingCoord), ndelta, totalPropertiesPerParticle);
+  endingCoord = (double **)czarray_2d(
+    sizeof(**endingCoord), ndelta, totalPropertiesPerParticle);
+  secondEndingCoord = compute_diffusion ?
+    (double **)czarray_2d(sizeof(**secondEndingCoord), ndelta,
+                         totalPropertiesPerParticle) : NULL;
+  firstTune = (double *)calloc(2 * ndelta, sizeof(*firstTune));
+  secondTune = compute_diffusion ?
+    (double *)calloc(2 * ndelta, sizeof(*secondTune)) : NULL;
+  firstAmplitude = (double *)calloc(2 * ndelta, sizeof(*firstAmplitude));
+  secondAmplitude = compute_diffusion ?
+    (double *)calloc(2 * ndelta, sizeof(*secondAmplitude)) : NULL;
+  xAmplitude = (double *)calloc(ndelta, sizeof(*xAmplitude));
+  yAmplitude = (double *)calloc(ndelta, sizeof(*yAmplitude));
+  deltaOffset = (double *)calloc(ndelta, sizeof(*deltaOffset));
+  firstValid = (long *)calloc(ndelta, sizeof(*firstValid));
+  secondValid = compute_diffusion ?
+    (long *)calloc(ndelta, sizeof(*secondValid)) : NULL;
+  if (!startingCoord || !endingCoord || !firstTune || !firstAmplitude ||
+      !xAmplitude || !yAmplitude || !deltaOffset || !firstValid ||
+      (compute_diffusion &&
+       (!secondEndingCoord || !secondTune || !secondAmplitude ||
+        !secondValid)))
+    bombElegant("memory allocation failure (batchTuneFootprintDelta)", NULL);
+
+  ddelta = ndelta > 1 ? (delta_max - delta_min) / (ndelta - 1) : 0;
+  for (idelta = 0; idelta < ndelta; idelta++) {
+    memcpy(startingCoord[idelta], referenceCoord,
+           6 * sizeof(**startingCoord));
+    xAmplitude[idelta] = x_for_delta;
+    yAmplitude[idelta] = y_for_delta;
+    if (!quadratic_spacing)
+      deltaOffset[idelta] = delta_min + idelta * ddelta;
+    else if (idelta < (ndelta - 1.) / 2)
+      deltaOffset[idelta] =
+        -((delta_max - delta_min) *
+            sqrt(fabs((idelta - (ndelta - 1) / 2.) /
+                      ((ndelta - 1) / 2.))) +
+          delta_min);
+    else
+      deltaOffset[idelta] =
+        (delta_max - delta_min) *
+          sqrt(fabs((idelta - (ndelta - 1) / 2.) /
+                    ((ndelta - 1) / 2.))) +
+        delta_min;
+  }
+  computeTunesFromTrackingBatch(
+    firstTune, firstAmplitude, beamline->matrix, beamline, run,
+    startingCoord, xAmplitude, yAmplitude, deltaOffset, ndelta, turns, 0,
+    endingCoord, firstValid, NULL, NULL, 1, 1,
+    CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
+  if (compute_diffusion) {
+    memset(xAmplitude, 0, ndelta * sizeof(*xAmplitude));
+    memset(yAmplitude, 0, ndelta * sizeof(*yAmplitude));
+    memset(deltaOffset, 0, ndelta * sizeof(*deltaOffset));
+    computeTunesFromTrackingBatch(
+      secondTune, secondAmplitude, beamline->matrix, beamline, run,
+      endingCoord, xAmplitude, yAmplitude, deltaOffset, ndelta, turns, turns,
+      secondEndingCoord, secondValid, NULL, NULL, 1, 1,
+      CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
+  }
+
+  for (idelta = 0; idelta < ndelta; idelta++) {
+    deltaTfData[idelta].idelta = idelta;
+    deltaTfData[idelta].delta = !quadratic_spacing ?
+      delta_min + idelta * ddelta :
+      (idelta < (ndelta - 1.) / 2 ?
+        -((delta_max - delta_min) *
+            sqrt(fabs((idelta - (ndelta - 1) / 2.) /
+                      ((ndelta - 1) / 2.))) +
+          delta_min) :
+        (delta_max - delta_min) *
+            sqrt(fabs((idelta - (ndelta - 1) / 2.) /
+                      ((ndelta - 1) / 2.))) +
+          delta_min);
+    deltaTfData[idelta].used = 1;
+    if (!firstValid[idelta] ||
+        (compute_diffusion && !secondValid[idelta])) {
+      deltaTfData[idelta].nu[0] = deltaTfData[idelta].nu[1] = -2;
+      deltaTfData[idelta].diffusionRate = DBL_MAX;
+    } else {
+      deltaTfData[idelta].nu[0] = firstTune[2 * idelta];
+      deltaTfData[idelta].nu[1] = firstTune[2 * idelta + 1];
+      deltaTfData[idelta].diffusionRate = compute_diffusion ?
+        log10((sqr(secondTune[2 * idelta] - firstTune[2 * idelta]) +
+               sqr(secondTune[2 * idelta + 1] -
+                   firstTune[2 * idelta + 1])) /
+              turns) :
+        -DBL_MAX;
+    }
+  }
+
+  free(firstTune);
+  free(secondTune);
+  free(firstAmplitude);
+  free(secondAmplitude);
+  free(xAmplitude);
+  free(yAmplitude);
+  free(deltaOffset);
+  free(firstValid);
+  free(secondValid);
+  free_czarray_2d((void **)startingCoord, ndelta,
+                  totalPropertiesPerParticle);
+  free_czarray_2d((void **)endingCoord, ndelta,
+                  totalPropertiesPerParticle);
+  if (secondEndingCoord)
+    free_czarray_2d((void **)secondEndingCoord, ndelta,
+                    totalPropertiesPerParticle);
+  return 1;
+}
+
+static long batchTuneFootprintXy(RUN *run, double *referenceCoord,
+                                 LINE_LIST *beamline, long turns,
+                                 XY_TF_DATA *xyTfData) {
+  double **startingCoord, **endingCoord, **secondEndingCoord;
+  double *firstTune, *secondTune, *firstAmplitude, *secondAmplitude;
+  double *xAmplitude, *yAmplitude, *deltaOffset;
+  long *firstValid, *secondValid;
+  long ix, iy, ip, points;
+  double dx = 0, dy = 0, x, y;
+
+  points = nx * ny;
+  if (!points || turns <= 1 || quadratic_spacing || !compute_diffusion ||
+      !gpu_batched_tune_tracking_enabled(points) ||
+      !gpu_batched_tune_beamline_supported(beamline))
+    return 0;
+  startingCoord = (double **)czarray_2d(
+    sizeof(**startingCoord), points, totalPropertiesPerParticle);
+  endingCoord = (double **)czarray_2d(
+    sizeof(**endingCoord), points, totalPropertiesPerParticle);
+  secondEndingCoord = compute_diffusion ?
+    (double **)czarray_2d(sizeof(**secondEndingCoord), points,
+                         totalPropertiesPerParticle) : NULL;
+  firstTune = (double *)calloc(2 * points, sizeof(*firstTune));
+  secondTune = compute_diffusion ?
+    (double *)calloc(2 * points, sizeof(*secondTune)) : NULL;
+  firstAmplitude = (double *)calloc(2 * points, sizeof(*firstAmplitude));
+  secondAmplitude = compute_diffusion ?
+    (double *)calloc(2 * points, sizeof(*secondAmplitude)) : NULL;
+  xAmplitude = (double *)calloc(points, sizeof(*xAmplitude));
+  yAmplitude = (double *)calloc(points, sizeof(*yAmplitude));
+  deltaOffset = (double *)calloc(points, sizeof(*deltaOffset));
+  firstValid = (long *)calloc(points, sizeof(*firstValid));
+  secondValid = compute_diffusion ?
+    (long *)calloc(points, sizeof(*secondValid)) : NULL;
+  if (!startingCoord || !endingCoord || !firstTune || !firstAmplitude ||
+      !xAmplitude || !yAmplitude || !deltaOffset || !firstValid ||
+      (compute_diffusion &&
+       (!secondEndingCoord || !secondTune || !secondAmplitude ||
+        !secondValid)))
+    bombElegant("memory allocation failure (batchTuneFootprintXy)", NULL);
+
+  if (!quadratic_spacing) {
+    if (nx > 1)
+      dx = (xmax - xmin) / (nx - 1);
+    if (ny > 1)
+      dy = (ymax - ymin) / (ny - 1);
+  }
+  ip = 0;
+  for (ix = 0; ix < nx; ix++) {
+    x = quadratic_spacing ?
+      (ix < nx / 2 ?
+        -((xmax - xmin) *
+            sqrt(fabs((ix - (nx - 1) / 2.) / ((nx - 1) / 2.))) +
+          xmin) :
+        (xmax - xmin) *
+            sqrt(fabs((ix - (nx - 1) / 2.) / ((nx - 1) / 2.))) +
+          xmin) :
+      xmin + ix * dx;
+    for (iy = 0; iy < ny; iy++, ip++) {
+      y = quadratic_spacing ?
+        (ymax - ymin) * sqrt(iy / (ny - 1.)) + ymin :
+        ymin + iy * dy;
+      memcpy(startingCoord[ip], referenceCoord,
+             6 * sizeof(**startingCoord));
+      xAmplitude[ip] = x;
+      yAmplitude[ip] = y;
+    }
+  }
+  computeTunesFromTrackingBatch(
+    firstTune, firstAmplitude, beamline->matrix, beamline, run,
+    startingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, 0,
+    endingCoord, firstValid, NULL, NULL, 1, 1,
+    CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
+  if (compute_diffusion) {
+    memset(xAmplitude, 0, points * sizeof(*xAmplitude));
+    memset(yAmplitude, 0, points * sizeof(*yAmplitude));
+    computeTunesFromTrackingBatch(
+      secondTune, secondAmplitude, beamline->matrix, beamline, run,
+      endingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, turns,
+      secondEndingCoord, secondValid, NULL, NULL, 1, 1,
+      CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
+  }
+
+  ip = 0;
+  for (ix = 0; ix < nx; ix++) {
+    x = quadratic_spacing ?
+      (ix < nx / 2 ?
+        -((xmax - xmin) *
+            sqrt(fabs((ix - (nx - 1) / 2.) / ((nx - 1) / 2.))) +
+          xmin) :
+        (xmax - xmin) *
+            sqrt(fabs((ix - (nx - 1) / 2.) / ((nx - 1) / 2.))) +
+          xmin) :
+      xmin + ix * dx;
+    for (iy = 0; iy < ny; iy++, ip++) {
+      y = quadratic_spacing ?
+        (ymax - ymin) * sqrt(iy / (ny - 1.)) + ymin :
+        ymin + iy * dy;
+      xyTfData[ip].ix = ix;
+      xyTfData[ip].iy = iy;
+      xyTfData[ip].position[0] = x;
+      xyTfData[ip].position[1] = y;
+      xyTfData[ip].used = 1;
+      if (!firstValid[ip] || (compute_diffusion && !secondValid[ip])) {
+        xyTfData[ip].nu[0] = xyTfData[ip].nu[1] = -2;
+        xyTfData[ip].diffusionRate = DBL_MAX;
+      } else {
+        xyTfData[ip].nu[0] = firstTune[2 * ip];
+        xyTfData[ip].nu[1] = firstTune[2 * ip + 1];
+        xyTfData[ip].diffusionRate = compute_diffusion ?
+          log10((sqr(secondTune[2 * ip] - firstTune[2 * ip]) +
+                 sqr(secondTune[2 * ip + 1] -
+                     firstTune[2 * ip + 1])) /
+                turns) :
+          -DBL_MAX;
+      }
+    }
+  }
+
+  free(firstTune);
+  free(secondTune);
+  free(firstAmplitude);
+  free(secondAmplitude);
+  free(xAmplitude);
+  free(yAmplitude);
+  free(deltaOffset);
+  free(firstValid);
+  free(secondValid);
+  free_czarray_2d((void **)startingCoord, points,
+                  totalPropertiesPerParticle);
+  free_czarray_2d((void **)endingCoord, points,
+                  totalPropertiesPerParticle);
+  if (secondEndingCoord)
+    free_czarray_2d((void **)secondEndingCoord, points,
+                    totalPropertiesPerParticle);
+  return 1;
+}
+#endif
+
 long setupTuneFootprint(
   NAMELIST_TEXT *nltext,
   RUN *run,
@@ -587,6 +857,13 @@ long doTuneFootprint(
       ddelta = (delta_max - delta_min) / (ndelta - 1);
     else
       ddelta = 0;
+#if defined(HAVE_GPU) && !USE_MPI
+    if (batchTuneFootprintDelta(run, referenceCoord, beamline, turns,
+                                deltaTfData)) {
+      my_idelta = ndelta;
+      goto deltaTuneTrackingDone;
+    }
+#endif
     for (idelta = my_idelta = 0; idelta < ndelta; idelta++) {
       deltaTfData[my_idelta].used = 0;
       if (!quadratic_spacing)
@@ -681,6 +958,9 @@ long doTuneFootprint(
 #endif
     }
 
+#if defined(HAVE_GPU) && !USE_MPI
+deltaTuneTrackingDone:
+#endif
 #if USE_MPI
     /* Collect data onto the master */
     MPI_Barrier(MPI_COMM_WORLD);
@@ -770,6 +1050,13 @@ long doTuneFootprint(
 #if USE_MPI
     oldPercentage = 0;
 #endif
+#if defined(HAVE_GPU) && !USE_MPI
+    if (batchTuneFootprintXy(run, referenceCoord, beamline, turns,
+                             xyTfData)) {
+      my_ixy = nx * ny;
+      goto xyTuneTrackingDone;
+    }
+#endif
     for (ix = 0; ix < nx; ix++) {
       if (quadratic_spacing) {
         if (ix < nx / 2)
@@ -846,6 +1133,9 @@ long doTuneFootprint(
       }
     }
 
+#if defined(HAVE_GPU) && !USE_MPI
+xyTuneTrackingDone:
+#endif
 #if USE_MPI
     /* Collect data onto the master */
     MPI_Barrier(MPI_COMM_WORLD);

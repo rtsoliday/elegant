@@ -65,6 +65,8 @@
 #pragma weak printWarningForTracking
 #pragma weak SavitzkyGolaySmooth
 #pragma weak rotateBeamCoordinatesForMisalignment
+#pragma weak initialize_polynomialSeries
+#pragma weak polynomialSeries_tracking
 
 extern unsigned long multipoleKicksDone;
 extern double **Fx_xy;
@@ -107,6 +109,10 @@ extern long SavitzkyGolaySmooth(double *data, long rows, long order,
                                 long derivativeOrder);
 extern void rotateBeamCoordinatesForMisalignment(double **part, long np,
                                                  double angle);
+extern void initialize_polynomialSeries(POLYNOMIALSERIES *polynomialSeries);
+extern long polynomialSeries_tracking(
+  double **particle, long nPart, POLYNOMIALSERIES *polynomialSeries,
+  double pError, double pCentral, double **accepted, double zStart);
 extern long trackRfCavityWithWakes(double **part, long np, RFCA *rfca,
                                    double **accepted, double *P_central,
                                    double zEnd, long iPass, RUN *run,
@@ -516,6 +522,12 @@ extern int gpuCudaScmultLinearKick(void *coord, long nParticles, int stride,
 extern int gpuCudaScmultNonlinearKick(void *coord, long nParticles, int stride,
                                       const GPU_SCMULT_LINEAR_DATA *data,
                                       float *milliseconds);
+extern int gpuCudaPolynomialSeriesTrack(
+  void *coord, long nParticles, int stride,
+  const GPU_POLYNOMIAL_SERIES_DATA *data, const double *coefficient,
+  const int32_t *exponent, const void *owner, long *invalidCount,
+  float *milliseconds);
+extern void gpuCudaPolynomialSeriesRelease(void);
 extern int gpuCudaCsrCsbendWake(const double *ctHist,
                                 const double *ctHistDeriv,
                                 const double *denom,
@@ -659,6 +671,13 @@ static GPU_LSC_SCRATCH gpuLscScratch;
 static GPU_BEAM_SUMS_SCRATCH gpuBeamSumsScratch;
 static GPU_RFCA_SCRATCH gpuRfcaScratch;
 static GPU_BUNCH_RANGE_CACHE gpuBunchRangeCache;
+typedef struct GPU_POLYNOMIAL_SERIES_CACHE {
+  POLYNOMIALSERIES *owner;
+  double *coefficient;
+  int32_t *exponent;
+  long totalTerms;
+} GPU_POLYNOMIAL_SERIES_CACHE;
+static GPU_POLYNOMIAL_SERIES_CACHE gpuPolynomialSeriesCache;
 static long gpuVerbose = 0;
 static long gpuEnableExactDrift = 0;
 static long gpuExactDriftExplicit = 0;
@@ -684,6 +703,9 @@ static long gpuEnableCombinedWake = 0;
 static long gpuCombinedWakeExplicit = 0;
 static long gpuEnableCombinedWakeMultibunch = 0;
 static long gpuEnableCombinedWakeFft = 0;
+static long gpuEnableBatchedTuneTracking = 0;
+static long gpuBatchedTuneMinParticles = 32;
+static long gpuEnablePolynomialSeries = 0;
 static long gpuEnableLscTracking = 0;
 static long gpuLscTrackingExplicit = 0;
 static long gpuEnableRfcwTrackingDrift = 0;
@@ -720,6 +742,7 @@ static void gpuEnsureRfcwKickScratch(long nParticles);
 static void gpuEnsureLscScratch(long bins);
 static void gpuEnsureBeamSumsScratch(void);
 static void gpuEnsureRfcaScratch(void);
+static void gpuReleasePolynomialSeriesCache(void);
 static void gpuRfcwApplyCoordinateOffset(long np, int index, double value,
                                          const char *operation);
 static long gpuPassiveElementSupported(ELEMENT_LIST *eptr, long nParticles);
@@ -1978,6 +2001,14 @@ static long gpuCombinedWakeElementSupported(ELEMENT_LIST *eptr) {
   return 0;
 }
 
+static long gpuPolynomialSeriesElementSupported(ELEMENT_LIST *eptr) {
+  if (!gpuEnablePolynomialSeries || gpuBase.backtrack)
+    return 0;
+  if (!eptr || eptr->type != T_POLYNOMIALSERIES || !eptr->p_elem)
+    return 0;
+  return 1;
+}
+
 static long gpuLscDataSupported(LSCDRIFT *lsc) {
   if (!lsc)
     return 0;
@@ -2187,6 +2218,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
     return gpuMagnetParticleCountAllowed(nParticles);
   if (gpuMultipoleElementSupported(eptr))
     return gpuMagnetParticleCountAllowed(nParticles);
+  if (gpuPolynomialSeriesElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuBase.magnetMinParticles);
   if (gpuWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuTrwakeElementSupported(eptr))
@@ -2389,6 +2423,12 @@ static void gpuReleaseRfcaScratch(void) {
       gpuFatalStatus("cudaFree(RFCA match-energy scratch)", status);
   }
   memset(&gpuRfcaScratch, 0, sizeof(gpuRfcaScratch));
+}
+
+static void gpuReleasePolynomialSeriesCache(void) {
+  free(gpuPolynomialSeriesCache.coefficient);
+  free(gpuPolynomialSeriesCache.exponent);
+  memset(&gpuPolynomialSeriesCache, 0, sizeof(gpuPolynomialSeriesCache));
 }
 
 static void gpuReleaseApertureScratch(void) {
@@ -3816,6 +3856,16 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnableCombinedWake &&
     gpuEnvSet("ELEGANT_GPU_ENABLE_COMBINED_WAKE_FFT") &&
     gpuEnvFlag("ELEGANT_GPU_ENABLE_COMBINED_WAKE_FFT");
+  gpuEnableBatchedTuneTracking =
+    gpuEnvSet("ELEGANT_GPU_ENABLE_BATCHED_TUNE_TRACKING") &&
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_BATCHED_TUNE_TRACKING");
+  gpuBatchedTuneMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_BATCHED_TUNE_PARTICLES", 32);
+  if (gpuBatchedTuneMinParticles < 1)
+    gpuBatchedTuneMinParticles = 1;
+  gpuEnablePolynomialSeries =
+    gpuEnvSet("ELEGANT_GPU_ENABLE_POLYNOMIAL_SERIES") &&
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_POLYNOMIAL_SERIES");
   gpuLscTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_LSC");
   gpuEnableLscTracking = !gpuLscTrackingExplicit ||
                          gpuEnvFlag("ELEGANT_GPU_ENABLE_LSC");
@@ -3832,6 +3882,8 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
 #if USE_MPI
   if (!gpuScmultExplicit)
     gpuEnableScmult = 0;
+  gpuEnableBatchedTuneTracking = 0;
+  gpuEnablePolynomialSeries = 0;
 #endif
   gpuAvoidShortGpuIslands = !gpuEnvSet("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS") ||
                             gpuEnvFlag("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS");
@@ -4003,6 +4055,8 @@ void gpuBaseDealloc(void) {
   gpuReleaseLscScratch();
   gpuReleaseBeamSumsScratch();
   gpuReleaseRfcaScratch();
+  gpuReleasePolynomialSeriesCache();
+  gpuCudaPolynomialSeriesRelease();
   gpuReleaseApertureScratch();
   gpuReleaseCsrScratch();
   gpuCudaCombinedWakeRelease();
@@ -4054,6 +4108,47 @@ void setElementGpuData(void *eptr0, long nParticles) {
 
 long getElementOnGpu(void) {
   return gpuBase.elementOnGpu;
+}
+
+long gpu_batched_tune_tracking_enabled(long particles) {
+#if USE_MPI
+  (void)particles;
+  return 0;
+#else
+  return gpuEnableBatchedTuneTracking &&
+         particles >= gpuBatchedTuneMinParticles;
+#endif
+}
+
+long gpu_batched_tune_beamline_supported(void *beamline0) {
+#if USE_MPI
+  (void)beamline0;
+  return 0;
+#else
+  LINE_LIST *beamline = (LINE_LIST *)beamline0;
+  ELEMENT_LIST *eptr;
+  long trackedElements = 0;
+
+  if (!gpuEnableBatchedTuneTracking || !beamline)
+    return 0;
+  for (eptr = beamline->elem; eptr; eptr = eptr->succ) {
+    if (eptr->ignore)
+      continue;
+    switch (eptr->type) {
+    case T_MARK:
+    case T_RECIRC:
+      break;
+    case T_POLYNOMIALSERIES:
+      if (!gpuPolynomialSeriesElementSupported(eptr))
+        return 0;
+      trackedElements++;
+      break;
+    default:
+      return 0;
+    }
+  }
+  return trackedElements > 0;
+#endif
 }
 
 void gpuSetCpuParticleArray(double **coord, long nParticles) {
@@ -6966,6 +7061,115 @@ void gpu_track_through_scmult_nonlinear(long nParticles, double charge,
   gpuBase.gpuElementCount++;
   gpuMarkDeviceChanged(nParticles);
   gpuRecordWallSeconds();
+}
+
+static void gpuPreparePolynomialSeriesCache(POLYNOMIALSERIES *polynomialSeries,
+                                            GPU_POLYNOMIAL_SERIES_DATA *data) {
+  long coordinate, term, totalTerms;
+
+  if (!polynomialSeries || !data)
+    gpuRequiredFailure("NULL POLYNOMIALSERIES CUDA setup pointer");
+  if (!polynomialSeries->elementInitialized) {
+    if (!initialize_polynomialSeries)
+      gpuRequiredFailure("POLYNOMIALSERIES initialization routine unavailable");
+    initialize_polynomialSeries(polynomialSeries);
+  }
+  memset(data, 0, sizeof(*data));
+  totalTerms = 0;
+  for (coordinate = 0; coordinate < 6; coordinate++) {
+    data->coordinateOffset[coordinate] = totalTerms;
+    totalTerms += polynomialSeries->coord[coordinate].terms;
+  }
+  data->coordinateOffset[6] = totalTerms;
+  data->totalTerms = totalTerms;
+  if (gpuPolynomialSeriesCache.owner == polynomialSeries &&
+      gpuPolynomialSeriesCache.totalTerms == totalTerms)
+    return;
+
+  gpuReleasePolynomialSeriesCache();
+  gpuPolynomialSeriesCache.coefficient =
+    (double *)malloc(totalTerms * sizeof(*gpuPolynomialSeriesCache.coefficient));
+  gpuPolynomialSeriesCache.exponent =
+    (int32_t *)malloc(6 * totalTerms *
+                      sizeof(*gpuPolynomialSeriesCache.exponent));
+  if (!gpuPolynomialSeriesCache.coefficient ||
+      !gpuPolynomialSeriesCache.exponent)
+    gpuRequiredFailure("unable to allocate POLYNOMIALSERIES CUDA map cache");
+  totalTerms = 0;
+  for (coordinate = 0; coordinate < 6; coordinate++) {
+    POLYNOMIALSERIES_DATA *map = &polynomialSeries->coord[coordinate];
+    for (term = 0; term < map->terms; term++, totalTerms++) {
+      gpuPolynomialSeriesCache.coefficient[totalTerms] =
+        map->Coefficient[term];
+      gpuPolynomialSeriesCache.exponent[6 * totalTerms + 0] = map->Ix[term];
+      gpuPolynomialSeriesCache.exponent[6 * totalTerms + 1] = map->Iqx[term];
+      gpuPolynomialSeriesCache.exponent[6 * totalTerms + 2] = map->Iy[term];
+      gpuPolynomialSeriesCache.exponent[6 * totalTerms + 3] = map->Iqy[term];
+      gpuPolynomialSeriesCache.exponent[6 * totalTerms + 4] = map->Is[term];
+      gpuPolynomialSeriesCache.exponent[6 * totalTerms + 5] =
+        map->Idelta[term];
+    }
+  }
+  gpuPolynomialSeriesCache.owner = polynomialSeries;
+  gpuPolynomialSeriesCache.totalTerms = totalTerms;
+}
+
+long gpu_polynomial_series_tracking(long nParticles, void *polynomialSeries0,
+                                    double pError, double pCentral,
+                                    double **accepted, double zStart) {
+  POLYNOMIALSERIES *polynomialSeries =
+    (POLYNOMIALSERIES *)polynomialSeries0;
+  GPU_POLYNOMIAL_SERIES_DATA data;
+  long invalidCount = 0;
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0)
+    return 0;
+  if (!polynomialSeries)
+    gpuRequiredFailure("NULL POLYNOMIALSERIES pointer in CUDA path");
+  if (!gpuEnablePolynomialSeries || gpuBase.backtrack ||
+      !gpuParticleCountMeetsThreshold(nParticles,
+                                      gpuBase.magnetMinParticles)) {
+    double **coord =
+      forceParticlesToCpu("POLYNOMIALSERIES option CPU fallback");
+    return polynomialSeries_tracking(
+      coord, nParticles, polynomialSeries, pError, pCentral, accepted, zStart);
+  }
+
+  gpuPreparePolynomialSeriesCache(polynomialSeries, &data);
+  data.tilt = polynomialSeries->tilt;
+  data.dx = polynomialSeries->dx;
+  data.dy = polynomialSeries->dy;
+  data.dz = polynomialSeries->dz;
+  data.pCentral = pCentral;
+  data.coordinateLimit = coordLimit;
+  data.slopeLimit = slopeLimit;
+
+  startGpuTimer();
+  gpuCopyHostToDevice(nParticles);
+  status = gpuCudaPolynomialSeriesTrack(
+    gpuBase.deviceCoord, nParticles, (int)gpuBase.deviceStride, &data,
+    gpuPolynomialSeriesCache.coefficient,
+    gpuPolynomialSeriesCache.exponent, polynomialSeries, &invalidCount,
+    &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("POLYNOMIALSERIES tracking CUDA kernel", status);
+  gpuRecordMagnetKernel(milliseconds);
+  if (invalidCount) {
+#ifdef GPU_VERIFY
+    gpuRequiredFailure(
+      "POLYNOMIALSERIES CUDA verification encountered particle loss");
+#else
+    double **coord =
+      forceParticlesToCpu("POLYNOMIALSERIES particle loss fallback");
+    return polynomialSeries_tracking(
+      coord, nParticles, polynomialSeries, pError, pCentral, accepted, zStart);
+#endif
+  }
+  gpuMarkDeviceChanged(nParticles);
+  gpuRecordWallSeconds();
+  return nParticles;
 }
 
 static double gpuLscVarianceFromSums(const GPU_BEAM_SUM_DATA *sums, long coordinate) {

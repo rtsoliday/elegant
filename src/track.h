@@ -4554,6 +4554,17 @@ long computeTunesFromTracking(double *tune, double *amp, VMATRIX *M, LINE_LIST *
 			      double xAmplitude, double yAmplitude, double deltaOffset, long turns, long turnOffset,
                               double *endingCoord, double *lowerLimit, double *upperLimit,
 			      long allowLosses, long nPeriods, unsigned long flags);
+long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
+                                   LINE_LIST *beamline, RUN *run,
+                                   double **startingCoord,
+                                   const double *xAmplitude,
+                                   const double *yAmplitude,
+                                   const double *deltaOffset,
+                                   long particles, long turns,
+                                   long turnOffset, double **endingCoord,
+                                   long *valid, double *lowerLimit,
+                                   double *upperLimit, long allowLosses,
+                                   long nPeriods, unsigned long flags);
 double adjustTuneHalfPlane(double frequency, double phase0, double phase1);
 int lsf2dPolyUnweighted(double *x[2], double *y, long points, int32_t *order[2],
                         long nOrders, double *coef, double *chi, double *condition, 

@@ -18,7 +18,10 @@
 #    include "mpe.h" /* Defines the MPE library */
 #  endif
 #endif
+#include <atomic>
 #include <complex>
+#include <thread>
+#include <vector>
 #if defined(__APPLE__)
 #  include <cmath>
 #  define isnan(x) std::isnan(x)
@@ -4177,6 +4180,237 @@ long computeTunesFromTracking(double *tune, double *amp, VMATRIX *M, LINE_LIST *
     M->C[i] = CSave[i];
   }
   return 1;
+}
+
+static long computeTunesFromHistory(double *tune, double *amp,
+                                    const double *x, const double *xp,
+                                    const double *y, const double *yp,
+                                    long turns, double *tuneLowerLimit,
+                                    double *tuneUpperLimit,
+                                    unsigned long flags) {
+  double frequency[4] = {0, 0, 0, 0};
+  double amplitude[4] = {0, 0, 0, 0};
+  double phase[4] = {0, 0, 0, 0};
+  double dummy;
+
+  if (flags & CTFT_INCLUDE_X &&
+      PerformNAFF(&frequency[0], &amplitude[0], &phase[0],
+                  &dummy, 0.0, 1.0, const_cast<double *>(x), turns,
+                  NAFF_MAX_FREQUENCIES | NAFF_FREQ_CYCLE_LIMIT |
+                    NAFF_FREQ_ACCURACY_LIMIT,
+                  0.0, 1, 200, 1e-12,
+                  tuneLowerLimit ?
+                    (tuneLowerLimit[0] > 0.5 ?
+                       1 - tuneLowerLimit[0] : tuneLowerLimit[0]) : 0,
+                  tuneUpperLimit ?
+                    (tuneUpperLimit[0] > 0.5 ?
+                       1 - tuneUpperLimit[0] : tuneUpperLimit[0]) : 0) != 1)
+    return 0;
+  if (flags & CTFT_INCLUDE_X &&
+      PerformNAFF(&frequency[1], &amplitude[1], &phase[1],
+                  &dummy, 0.0, 1.0, const_cast<double *>(xp), turns,
+                  NAFF_MAX_FREQUENCIES | NAFF_FREQ_CYCLE_LIMIT |
+                    NAFF_FREQ_ACCURACY_LIMIT,
+                  0.0, 1, 200, 1e-12,
+                  tuneLowerLimit ?
+                    (tuneLowerLimit[0] > 0.5 ?
+                       1 - tuneLowerLimit[0] : tuneLowerLimit[0]) : 0,
+                  tuneUpperLimit ?
+                    (tuneUpperLimit[0] > 0.5 ?
+                       1 - tuneUpperLimit[0] : tuneUpperLimit[0]) : 0) != 1)
+    return 0;
+  if (flags & CTFT_INCLUDE_Y &&
+      PerformNAFF(&frequency[2], &amplitude[2], &phase[2],
+                  &dummy, 0.0, 1.0, const_cast<double *>(y), turns,
+                  NAFF_MAX_FREQUENCIES | NAFF_FREQ_CYCLE_LIMIT |
+                    NAFF_FREQ_ACCURACY_LIMIT,
+                  0.0, 1, 200, 1e-12,
+                  tuneLowerLimit ?
+                    (tuneLowerLimit[1] > 0.5 ?
+                       1 - tuneLowerLimit[1] : tuneLowerLimit[1]) : 0,
+                  tuneUpperLimit ?
+                    (tuneUpperLimit[1] > 0.5 ?
+                       1 - tuneUpperLimit[1] : tuneUpperLimit[1]) : 0) != 1)
+    return 0;
+  if (flags & CTFT_INCLUDE_Y &&
+      PerformNAFF(&frequency[3], &amplitude[3], &phase[3],
+                  &dummy, 0.0, 1.0, const_cast<double *>(yp), turns,
+                  NAFF_MAX_FREQUENCIES | NAFF_FREQ_CYCLE_LIMIT |
+                    NAFF_FREQ_ACCURACY_LIMIT,
+                  0.0, 1, 200, 1e-12,
+                  tuneLowerLimit ?
+                    (tuneLowerLimit[1] > 0.5 ?
+                       1 - tuneLowerLimit[1] : tuneLowerLimit[1]) : 0,
+                  tuneUpperLimit ?
+                    (tuneUpperLimit[1] > 0.5 ?
+                       1 - tuneUpperLimit[1] : tuneUpperLimit[1]) : 0) != 1)
+    return 0;
+
+  if (flags & CTFT_INCLUDE_X)
+    tune[0] = adjustTuneHalfPlane(frequency[0], phase[0], phase[1]);
+  if (flags & CTFT_INCLUDE_Y)
+    tune[1] = adjustTuneHalfPlane(frequency[2], phase[2], phase[3]);
+  if (amp) {
+    if (flags & CTFT_INCLUDE_X)
+      amp[0] = amplitude[0];
+    if (flags & CTFT_INCLUDE_Y)
+      amp[1] = amplitude[2];
+  }
+  return 1;
+}
+
+long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
+                                   LINE_LIST *beamline, RUN *run,
+                                   double **startingCoord,
+                                   const double *xAmplitude,
+                                   const double *yAmplitude,
+                                   const double *deltaOffset,
+                                   long particles, long turns,
+                                   long turnOffset, double **endingCoord,
+                                   long *valid, double *tuneLowerLimit,
+                                   double *tuneUpperLimit, long allowLosses,
+                                   long nPeriods, unsigned long flags) {
+  double **particle = NULL;
+  double *history = NULL, *x, *xp, *y, *yp;
+  double CSave[6], p;
+  unsigned char *seen = NULL;
+  long i, ip, id, nActive, nValid;
+
+  if (!tune || !beamline || !run || !valid || particles <= 0 || turns <= 1)
+    return 0;
+  particle = (double **)czarray_2d(sizeof(**particle), particles,
+                                  totalPropertiesPerParticle);
+  history = (double *)calloc(4 * particles * turns, sizeof(*history));
+  seen = (unsigned char *)calloc(particles, sizeof(*seen));
+  if (!particle || !history || !seen)
+    bombElegant((char *)"memory allocation failure "
+                "(computeTunesFromTrackingBatch)", NULL);
+  x = history;
+  xp = x + particles * turns;
+  y = xp + particles * turns;
+  yp = y + particles * turns;
+
+  if (flags & CTFT_USE_MATRIX) {
+    for (i = 0; i < 6; i++) {
+      CSave[i] = M->C[i];
+      M->C[i] = 0;
+    }
+  }
+
+  for (ip = 0; ip < particles; ip++) {
+    if (startingCoord && startingCoord[ip])
+      memcpy(particle[ip], startingCoord[ip],
+             6 * sizeof(**particle));
+    particle[ip][particleIDIndex] = ip + 1;
+    if (flags & CTFT_INCLUDE_X)
+      particle[ip][0] += xAmplitude ? xAmplitude[ip] : 0;
+    if (flags & CTFT_INCLUDE_Y)
+      particle[ip][2] += yAmplitude ? yAmplitude[ip] : 0;
+    particle[ip][5] += deltaOffset ? deltaOffset[ip] : 0;
+    if (endingCoord && endingCoord[ip])
+      memcpy(endingCoord[ip], particle[ip], 6 * sizeof(**endingCoord));
+    valid[ip] = 1;
+    x[ip * turns] = particle[ip][0];
+    xp[ip * turns] = particle[ip][1];
+    y[ip * turns] = particle[ip][2];
+    yp[ip * turns] = particle[ip][3];
+  }
+
+  p = run->p_central;
+  nActive = particles;
+  for (i = 1; i < turns && nActive > 0; i++) {
+    if (flags & CTFT_USE_MATRIX) {
+      long period;
+      for (period = 0; period < nPeriods; period++)
+        track_particles(particle, M, particle, nActive);
+    } else {
+      nActive = do_tracking(
+        NULL, particle, nActive, NULL, beamline, &p, (double **)NULL,
+        (BEAM_SUMS **)NULL, (long *)NULL, (TRAJECTORY *)NULL, run, 0,
+        TEST_PARTICLES + (allowLosses ? TEST_PARTICLE_LOSSES : 0) +
+          TIME_DEPENDENCE_OFF,
+        nPeriods, i - 1 + turnOffset, NULL, NULL, NULL, NULL, NULL);
+    }
+    memset(seen, 0, particles * sizeof(*seen));
+    for (ip = 0; ip < nActive; ip++) {
+      id = (long)particle[ip][particleIDIndex] - 1;
+      if (id < 0 || id >= particles || seen[id])
+        bombElegant((char *)"invalid or duplicate particle ID in batched "
+                    "tune tracking", NULL);
+      seen[id] = 1;
+      x[id * turns + i] = particle[ip][0];
+      xp[id * turns + i] = particle[ip][1];
+      y[id * turns + i] = particle[ip][2];
+      yp[id * turns + i] = particle[ip][3];
+    }
+    for (id = 0; id < particles; id++)
+      if (valid[id] && !seen[id])
+        valid[id] = 0;
+  }
+
+  if (endingCoord) {
+    for (ip = 0; ip < nActive; ip++) {
+      id = (long)particle[ip][particleIDIndex] - 1;
+      if (id >= 0 && id < particles && endingCoord[id])
+        memcpy(endingCoord[id], particle[ip], 6 * sizeof(**endingCoord));
+    }
+  }
+
+  {
+    std::atomic<long> nextParticle(0), validCount(0);
+    std::vector<std::thread> workers;
+    unsigned long workerCount = std::thread::hardware_concurrency();
+    const char *threadSetting = getenv("ELEGANT_GPU_BATCHED_TUNE_THREADS");
+
+    if (threadSetting && threadSetting[0]) {
+      char *endptr = NULL;
+      unsigned long requested = strtoul(threadSetting, &endptr, 10);
+      if (endptr && !endptr[0] && requested)
+        workerCount = requested;
+    }
+    if (!workerCount)
+      workerCount = 1;
+    if (workerCount > 16)
+      workerCount = 16;
+    if ((long)workerCount > particles)
+      workerCount = particles;
+    if (particles < 32)
+      workerCount = 1;
+
+    auto analyzeHistory = [&]() {
+      long particleIndex;
+      while ((particleIndex = nextParticle.fetch_add(1)) < particles) {
+        if (!valid[particleIndex])
+          continue;
+        if (!computeTunesFromHistory(
+              tune + 2 * particleIndex,
+              amp ? amp + 2 * particleIndex : NULL,
+              x + particleIndex * turns, xp + particleIndex * turns,
+              y + particleIndex * turns, yp + particleIndex * turns, turns,
+              tuneLowerLimit, tuneUpperLimit, flags)) {
+          valid[particleIndex] = 0;
+          continue;
+        }
+        validCount.fetch_add(1);
+      }
+    };
+
+    for (unsigned long worker = 1; worker < workerCount; worker++)
+      workers.emplace_back(analyzeHistory);
+    analyzeHistory();
+    for (auto &worker : workers)
+      worker.join();
+    nValid = validCount.load();
+  }
+
+  if (flags & CTFT_USE_MATRIX)
+    for (i = 0; i < 6; i++)
+      M->C[i] = CSave[i];
+  free(seen);
+  free(history);
+  free_czarray_2d((void **)particle, particles,
+                  totalPropertiesPerParticle);
+  return nValid;
 }
 
 double adjustTuneHalfPlane(double frequency, double phase0, double phase1) {

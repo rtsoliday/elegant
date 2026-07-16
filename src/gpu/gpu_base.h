@@ -275,6 +275,18 @@ typedef struct GPU_SCMULT_LINEAR_DATA {
   double betay;
 } GPU_SCMULT_LINEAR_DATA;
 
+typedef struct GPU_POLYNOMIAL_SERIES_DATA {
+  long coordinateOffset[7];
+  long totalTerms;
+  double tilt;
+  double dx;
+  double dy;
+  double dz;
+  double pCentral;
+  double coordinateLimit;
+  double slopeLimit;
+} GPU_POLYNOMIAL_SERIES_DATA;
+
 typedef struct GPU_KICKMAP_DATA {
   int undulator;
   long nKicks;

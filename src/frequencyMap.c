@@ -16,6 +16,9 @@
 #include "mdb.h"
 #include "track.h"
 #include "frequencyMap.h"
+#if defined(HAVE_GPU) && !USE_MPI
+#  include "gpu_tune.h"
+#endif
 
 #define IC_X 0
 #define IC_Y 1
@@ -55,6 +58,167 @@ static SDDS_DEFINITION parameter_definition[N_PARAMETERS] = {
 };
 
 static SDDS_DATASET SDDS_fmap;
+
+#if defined(HAVE_GPU) && !USE_MPI
+static long doFrequencyMapBatched(RUN *run, VARY *control,
+                                  double *referenceCoord,
+                                  LINE_LIST *beamline, long turns) {
+  double **startingCoord, **endingCoord, **secondEndingCoord;
+  double *firstTune, *secondTune, *firstAmplitude, *secondAmplitude;
+  double *xAmplitude, *yAmplitude, *deltaOffset;
+  double *gridX, *gridY, *gridDelta;
+  double dx = 0, dy = 0, ddelta = 0, diffusion;
+  long *firstValid, *secondValid;
+  long idelta, ix, iy, ip, points, row;
+
+  points = ndelta * nx * ny;
+  if (turns <= 1 || quadratic_spacing || include_changes ||
+      !full_grid_output ||
+      !gpu_batched_tune_tracking_enabled(points) ||
+      !gpu_batched_tune_beamline_supported(beamline))
+    return 0;
+  startingCoord = (double **)czarray_2d(
+    sizeof(**startingCoord), points, totalPropertiesPerParticle);
+  endingCoord = (double **)czarray_2d(
+    sizeof(**endingCoord), points, totalPropertiesPerParticle);
+  secondEndingCoord = include_changes ?
+    (double **)czarray_2d(sizeof(**secondEndingCoord), points,
+                         totalPropertiesPerParticle) : NULL;
+  firstTune = (double *)calloc(2 * points, sizeof(*firstTune));
+  secondTune = include_changes ?
+    (double *)calloc(2 * points, sizeof(*secondTune)) : NULL;
+  firstAmplitude = (double *)calloc(2 * points, sizeof(*firstAmplitude));
+  secondAmplitude = include_changes ?
+    (double *)calloc(2 * points, sizeof(*secondAmplitude)) : NULL;
+  xAmplitude = (double *)calloc(points, sizeof(*xAmplitude));
+  yAmplitude = (double *)calloc(points, sizeof(*yAmplitude));
+  deltaOffset = (double *)calloc(points, sizeof(*deltaOffset));
+  gridX = (double *)calloc(points, sizeof(*gridX));
+  gridY = (double *)calloc(points, sizeof(*gridY));
+  gridDelta = (double *)calloc(points, sizeof(*gridDelta));
+  firstValid = (long *)calloc(points, sizeof(*firstValid));
+  secondValid = include_changes ?
+    (long *)calloc(points, sizeof(*secondValid)) : NULL;
+  if (!startingCoord || !endingCoord || !firstTune || !firstAmplitude ||
+      !xAmplitude || !yAmplitude || !deltaOffset ||
+      !gridX || !gridY || !gridDelta || !firstValid ||
+      (include_changes &&
+       (!secondEndingCoord || !secondTune || !secondAmplitude ||
+        !secondValid)))
+    bombElegant("memory allocation failure (doFrequencyMapBatched)", NULL);
+
+  if (!quadratic_spacing) {
+    if (nx > 1)
+      dx = (xmax - xmin) / (nx - 1);
+    if (ny > 1)
+      dy = (ymax - ymin) / (ny - 1);
+  }
+  if (ndelta > 1)
+    ddelta = (delta_max - delta_min) / (ndelta - 1);
+
+  ip = 0;
+  for (idelta = 0; idelta < ndelta; idelta++) {
+    for (ix = 0; ix < nx; ix++) {
+      for (iy = 0; iy < ny; iy++, ip++) {
+        memcpy(startingCoord[ip], referenceCoord,
+               6 * sizeof(**startingCoord));
+        gridX[ip] = xAmplitude[ip] = quadratic_spacing ?
+          xmin + (xmax - xmin) * sqrt((ix + 1.) / nx) :
+          xmin + ix * dx;
+        gridY[ip] = yAmplitude[ip] = quadratic_spacing ?
+          ymin + (ymax - ymin) * sqrt((iy + 1.) / ny) :
+          ymin + iy * dy;
+        gridDelta[ip] = deltaOffset[ip] = delta_min + idelta * ddelta;
+      }
+    }
+  }
+  computeTunesFromTrackingBatch(
+    firstTune, firstAmplitude, beamline->matrix, beamline, run,
+    startingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, 0,
+    endingCoord, firstValid, NULL, NULL, 1, 1,
+    CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
+
+  if (include_changes) {
+    memset(xAmplitude, 0, points * sizeof(*xAmplitude));
+    memset(yAmplitude, 0, points * sizeof(*yAmplitude));
+    memset(deltaOffset, 0, points * sizeof(*deltaOffset));
+    computeTunesFromTrackingBatch(
+      secondTune, secondAmplitude, beamline->matrix, beamline, run,
+      endingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, turns,
+      secondEndingCoord, secondValid, NULL, NULL, 1, 1,
+      CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
+  }
+
+  for (ip = row = 0; ip < points; ip++) {
+    if (!firstValid[ip] && !full_grid_output)
+      continue;
+    if (!SDDS_SetRowValues(
+          &SDDS_fmap, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row,
+          IC_X, gridX[ip], IC_Y, gridY[ip], IC_DELTA, gridDelta[ip],
+          IC_NUX, firstValid[ip] ? firstTune[2 * ip] : -1.0,
+          IC_NUY, firstValid[ip] ? firstTune[2 * ip + 1] : -1.0,
+          IC_S, firstValid[ip] ? endingCoord[ip][4] / turns : 0.0,
+          -1)) {
+      SDDS_SetError("Problem setting SDDS row values "
+                    "(doFrequencyMapBatched)");
+      SDDS_PrintErrors(stderr,
+                       SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    }
+    if (include_changes) {
+      diffusion = 0;
+      if (firstValid[ip] && secondValid[ip])
+        diffusion = log10(
+          sqr(secondTune[2 * ip] - firstTune[2 * ip]) +
+          sqr(secondTune[2 * ip + 1] - firstTune[2 * ip + 1]));
+      if (!SDDS_SetRowValues(
+            &SDDS_fmap, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row,
+            IC_DNUX, firstValid[ip] && secondValid[ip] ?
+              fabs(secondTune[2 * ip] - firstTune[2 * ip]) : 0.0,
+            IC_DNUY, firstValid[ip] && secondValid[ip] ?
+              fabs(secondTune[2 * ip + 1] - firstTune[2 * ip + 1]) : 0.0,
+            IC_DNU, firstValid[ip] && secondValid[ip] ?
+              sqrt(sqr(secondTune[2 * ip] - firstTune[2 * ip]) +
+                   sqr(secondTune[2 * ip + 1] -
+                       firstTune[2 * ip + 1])) : 0.0,
+            IC_DX, firstValid[ip] && secondValid[ip] ?
+              fabs(firstAmplitude[2 * ip] - secondAmplitude[2 * ip]) : 0.0,
+            IC_DY, firstValid[ip] && secondValid[ip] ?
+              fabs(firstAmplitude[2 * ip + 1] -
+                   secondAmplitude[2 * ip + 1]) : 0.0,
+            IC_DIFFUSION, diffusion,
+            IC_DIFFUSION_RATE,
+            diffusion == 0 ? 0 : diffusion / 2 - log10(turns),
+            -1)) {
+        SDDS_SetError("Problem setting batched frequency-map changes");
+        SDDS_PrintErrors(stderr,
+                         SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+      }
+    }
+    row++;
+  }
+
+  free(firstTune);
+  free(secondTune);
+  free(firstAmplitude);
+  free(secondAmplitude);
+  free(xAmplitude);
+  free(yAmplitude);
+  free(deltaOffset);
+  free(gridX);
+  free(gridY);
+  free(gridDelta);
+  free(firstValid);
+  free(secondValid);
+  free_czarray_2d((void **)startingCoord, points,
+                  totalPropertiesPerParticle);
+  free_czarray_2d((void **)endingCoord, points,
+                  totalPropertiesPerParticle);
+  if (secondEndingCoord)
+    free_czarray_2d((void **)secondEndingCoord, points,
+                    totalPropertiesPerParticle);
+  return 1;
+}
+#endif
 
 void setupFrequencyMap(
   NAMELIST_TEXT *nltext,
@@ -211,6 +375,10 @@ long doFrequencyMap(
     turns = control->n_passes;
   else
     turns = control->n_passes / 2;
+#if defined(HAVE_GPU) && !USE_MPI
+  if (doFrequencyMapBatched(run, control, referenceCoord, beamline, turns))
+    goto frequencyMapTrackingDone;
+#endif
   for (idelta = 0; idelta < ndelta; idelta++) {
     delta = delta_min + idelta * ddelta;
     for (ix = 0; ix < nx; ix++) {
@@ -336,6 +504,9 @@ long doFrequencyMap(
     }
   }
 
+#if defined(HAVE_GPU) && !USE_MPI
+frequencyMapTrackingDone:
+#endif
 #if USE_MPI
   if (fpd) {
     fprintf(fpd, "*** Completed work for processor.\n");

@@ -22,6 +22,7 @@
 #  include <gpu_funcs.h>
 #  include <gpu_kickmap.h>
 #  include <gpu_limit_amplitudes.h>
+#  include <gpu_polynomial_series.h>
 #  include <gpu_space_charge.h>
 #endif /* HAVE_GPU */
 
@@ -1964,8 +1965,22 @@ long do_tracking(
                                               *P_central, accepted, last_z);
                   break;
                 case T_POLYNOMIALSERIES:
-                  nLeft = polynomialSeries_tracking(coord, nToTrack, (POLYNOMIALSERIES *)eptr->p_elem, 0.0,
-                                                    *P_central, accepted, z);
+#ifdef HAVE_GPU
+                  if (getElementOnGpu()) {
+                    nLeft = gpu_polynomial_series_tracking(
+                      nToTrack, eptr->p_elem, 0.0, *P_central, accepted, z);
+#  ifdef GPU_VERIFY
+                    startCpuTimer();
+                    polynomialSeries_tracking(
+                      coord, nToTrack, (POLYNOMIALSERIES *)eptr->p_elem, 0.0,
+                      *P_central, accepted, z);
+                    compareGpuCpu(nLeft, "polynomialSeries_tracking");
+#  endif
+                  } else
+#endif
+                    nLeft = polynomialSeries_tracking(
+                      coord, nToTrack, (POLYNOMIALSERIES *)eptr->p_elem, 0.0,
+                      *P_central, accepted, z);
                   break;
                 case T_KICKER:
                   if (flags & TIME_DEPENDENCE_OFF)
