@@ -92,6 +92,8 @@
 
 #namelist rf_setup,struct
         STRING filename = NULL;
+        STRING bucket_filename = NULL;
+        long bucket_points = 200;
         STRING name = NULL;
         long start_occurence = -1;
         long end_occurence = -1;
