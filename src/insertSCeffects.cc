@@ -162,7 +162,7 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
                                         sc.horizontal, sc.vertical)) {
 #  ifdef GPU_VERIFY
     if (getElementOnGpu())
-      part0 = forceParticlesToCpu("trackThroughSCMULT linear verification");
+      part0 = forceParticlesToCpu("trackThroughSCMULT verification");
 #  endif
     if (gpu_scmult_compute_centroid_sigma(np0, Po,
                                           sc.bunchData[0].center,
@@ -176,20 +176,48 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
       }
       for (int j = 0; j < 3; j++)
         ((SCMULT *)eptr->p_elem)->lastSigma[j] = sc.bunchData[0].sigma[j];
-      gpu_track_through_scmult_linear(np0, totalCharge, sc.c1,
-                                      sc.horizontal, sc.vertical,
-                                      sc.uniform,
-                                      sc.bunchData[0].center,
-                                      sc.bunchData[0].sigma,
-                                      sc.bunchData[0].dmux,
-                                      sc.bunchData[0].dmuy,
-                                      eptr->twiss->betax,
-                                      eptr->twiss->betay);
+      if (sc.nonlinear)
+        gpu_track_through_scmult_nonlinear(np0, totalCharge, sc.c1,
+                                           sc.horizontal, sc.vertical,
+                                           sc.uniform,
+                                           sc.bunchData[0].center,
+                                           sc.bunchData[0].sigma,
+                                           sc.bunchData[0].dmux,
+                                           sc.bunchData[0].dmuy,
+                                           eptr->twiss->betax,
+                                           eptr->twiss->betay);
+      else
+        gpu_track_through_scmult_linear(np0, totalCharge, sc.c1,
+                                        sc.horizontal, sc.vertical,
+                                        sc.uniform,
+                                        sc.bunchData[0].center,
+                                        sc.bunchData[0].sigma,
+                                        sc.bunchData[0].dmux,
+                                        sc.bunchData[0].dmuy,
+                                        eptr->twiss->betax,
+                                        eptr->twiss->betay);
 #  ifdef GPU_VERIFY
-      for (i = 0; i < np0; i++)
-        linearSCKick(part0[i], eptr, sc.bunchData[0].center,
-                     sc.bunchData[0].sigma, totalCharge, 0);
-      compareGpuCpu(np0, "trackThroughSCMULT linear resident");
+      for (i = 0; i < np0; i++) {
+        if (sc.nonlinear) {
+          flag = nonlinearSCKick(part0[i], eptr,
+                                 sc.bunchData[0].center,
+                                 sc.bunchData[0].sigma, kick,
+                                 totalCharge, 0);
+          if (flag) {
+            part0[i][1] += kick[0];
+            part0[i][3] += kick[1];
+          } else {
+            linearSCKick(part0[i], eptr, sc.bunchData[0].center,
+                         sc.bunchData[0].sigma, totalCharge, 0);
+          }
+        } else {
+          linearSCKick(part0[i], eptr, sc.bunchData[0].center,
+                       sc.bunchData[0].sigma, totalCharge, 0);
+        }
+      }
+      compareGpuCpu(np0, sc.nonlinear ?
+                    "trackThroughSCMULT nonlinear resident" :
+                    "trackThroughSCMULT linear resident");
 #  endif
       sc.bunchData[0].dmux = sc.bunchData[0].dmuy = 0.0;
       return;
@@ -291,8 +319,22 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 	      scmultOnGpu = 0;
 	      if (gpu_scmult_linear_supported(np, nBuckets, sc.nonlinear,
 	                                      sc.sliceDuration, sc.horizontal,
-	                                      sc.vertical)) {
-		gpu_track_through_scmult_linear(np, totalCharge, sc.c1,
+	                                      sc.vertical) ||
+	          gpu_scmult_nonlinear_supported(np, nBuckets, sc.nonlinear,
+	                                         sc.sliceDuration, sc.horizontal,
+	                                         sc.vertical)) {
+		if (sc.nonlinear)
+		  gpu_track_through_scmult_nonlinear(np, totalCharge, sc.c1,
+		                                   sc.horizontal, sc.vertical,
+		                                   sc.uniform,
+		                                   sc.bunchData[iBucket].center,
+		                                   sc.bunchData[iBucket].sigma,
+		                                   sc.bunchData[iBucket].dmux,
+		                                   sc.bunchData[iBucket].dmuy,
+		                                   eptr->twiss->betax,
+		                                   eptr->twiss->betay);
+		else
+		  gpu_track_through_scmult_linear(np, totalCharge, sc.c1,
 		                                sc.horizontal, sc.vertical,
 		                                sc.uniform,
 		                                sc.bunchData[iBucket].center,
@@ -302,11 +344,31 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 		                                eptr->twiss->betax,
 		                                eptr->twiss->betay);
 #  ifdef GPU_VERIFY
-		for (i = 0; i < np; i++)
-		  linearSCKick(part[i], eptr, sc.bunchData[iBucket].center,
-		               sc.bunchData[iBucket].sigma, totalCharge,
-		               iBucket);
-		compareGpuCpu(np, "trackThroughSCMULT linear");
+		for (i = 0; i < np; i++) {
+		  if (sc.nonlinear) {
+		    flag = nonlinearSCKick(part[i], eptr,
+		                           sc.bunchData[iBucket].center,
+		                           sc.bunchData[iBucket].sigma, kick,
+		                           totalCharge, iBucket);
+		    if (flag) {
+		      part[i][1] += kick[0];
+		      part[i][3] += kick[1];
+		    } else {
+		      linearSCKick(part[i], eptr,
+		                   sc.bunchData[iBucket].center,
+		                   sc.bunchData[iBucket].sigma,
+		                   totalCharge, iBucket);
+		    }
+		  } else {
+		    linearSCKick(part[i], eptr,
+		                 sc.bunchData[iBucket].center,
+		                 sc.bunchData[iBucket].sigma,
+		                 totalCharge, iBucket);
+		  }
+		}
+		compareGpuCpu(np, sc.nonlinear ?
+		              "trackThroughSCMULT nonlinear" :
+		              "trackThroughSCMULT linear");
 #  endif
 		scmultOnGpu = 1;
 	      }

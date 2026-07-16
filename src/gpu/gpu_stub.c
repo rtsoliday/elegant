@@ -496,6 +496,9 @@ extern int gpuCudaLscApplyKickAndDrift(void *coord, long nParticles,
 extern int gpuCudaScmultLinearKick(void *coord, long nParticles, int stride,
                                    const GPU_SCMULT_LINEAR_DATA *data,
                                    float *milliseconds);
+extern int gpuCudaScmultNonlinearKick(void *coord, long nParticles, int stride,
+                                      const GPU_SCMULT_LINEAR_DATA *data,
+                                      float *milliseconds);
 extern int gpuCudaCsrCsbendWake(const double *ctHist,
                                 const double *ctHistDeriv,
                                 const double *denom,
@@ -6635,11 +6638,26 @@ long gpu_scmult_linear_supported(long nParticles, long nBuckets, long nonlinear,
   return 1;
 }
 
+long gpu_scmult_nonlinear_supported(long nParticles, long nBuckets,
+                                     long nonlinear, double sliceDuration,
+                                     long horizontal, long vertical) {
+  if (!gpuScmultAllowed(nParticles))
+    return 0;
+  if (nBuckets != 1 || !nonlinear || sliceDuration > 0)
+    return 0;
+  if (!horizontal && !vertical)
+    return 0;
+  return 1;
+}
+
 long gpu_scmult_single_bunch_supported(long nParticles, long idSlotsPerBunch,
                                         long nonlinear, double sliceDuration,
                                         long horizontal, long vertical) {
   (void)idSlotsPerBunch;
-  return gpu_scmult_linear_supported(nParticles, 1, nonlinear, sliceDuration,
+  if (nonlinear)
+    return gpu_scmult_nonlinear_supported(nParticles, 1, nonlinear,
+                                          sliceDuration, horizontal, vertical);
+  return gpu_scmult_linear_supported(nParticles, 1, 0, sliceDuration,
                                      horizontal, vertical);
 }
 
@@ -6790,6 +6808,56 @@ void gpu_track_through_scmult_linear(long nParticles, double charge, double c1,
                                    &milliseconds);
   if (status != 0)
     gpuFatalStatus("SCMULT linear kick kernel", status);
+  gpuRecordScmultKernel(milliseconds);
+  gpuBase.elementOnGpu = 1;
+  gpuBase.gpuElementCount++;
+  gpuMarkDeviceChanged(nParticles);
+  gpuRecordWallSeconds();
+}
+
+void gpu_track_through_scmult_nonlinear(long nParticles, double charge,
+                                        double c1, long horizontal,
+                                        long vertical,
+                                        long uniformDistribution,
+                                        const double *center,
+                                        const double *sigma, double dmux,
+                                        double dmuy, double betax,
+                                        double betay) {
+  GPU_SCMULT_LINEAR_DATA data;
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0)
+    return;
+  if (!center || !sigma)
+    gpuRequiredFailure("NULL SCMULT centroid/sigma pointer in nonlinear CUDA path");
+  if (sigma[0] <= 0 || sigma[1] <= 0 || sigma[2] == 0)
+    gpuRequiredFailure("invalid beam size in nonlinear CUDA SCMULT path");
+  if (horizontal && betax == 0)
+    gpuRequiredFailure("zero betax in nonlinear CUDA SCMULT path");
+  if (vertical && betay == 0)
+    gpuRequiredFailure("zero betay in nonlinear CUDA SCMULT path");
+
+  memset(&data, 0, sizeof(data));
+  data.horizontal = horizontal ? 1 : 0;
+  data.vertical = vertical ? 1 : 0;
+  data.uniformDistribution = uniformDistribution ? 1 : 0;
+  data.charge = charge;
+  data.c1 = c1;
+  memcpy(data.center, center, 3 * sizeof(*center));
+  memcpy(data.sigma, sigma, 3 * sizeof(*sigma));
+  data.dmux = dmux;
+  data.dmuy = dmuy;
+  data.betax = betax;
+  data.betay = betay;
+
+  startGpuTimer();
+  gpuCopyHostToDevice(nParticles);
+  status = gpuCudaScmultNonlinearKick(gpuBase.deviceCoord, nParticles,
+                                      (int)gpuBase.deviceStride, &data,
+                                      &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("SCMULT nonlinear kick kernel", status);
   gpuRecordScmultKernel(milliseconds);
   gpuBase.elementOnGpu = 1;
   gpuBase.gpuElementCount++;

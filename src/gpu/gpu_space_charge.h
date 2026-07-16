@@ -10,6 +10,9 @@ extern "C" {
 long gpu_scmult_linear_supported(long nParticles, long nBuckets, long nonlinear,
                                   double sliceDuration, long horizontal,
                                   long vertical);
+long gpu_scmult_nonlinear_supported(long nParticles, long nBuckets,
+                                     long nonlinear, double sliceDuration,
+                                     long horizontal, long vertical);
 long gpu_scmult_single_bunch_supported(long nParticles, long idSlotsPerBunch,
                                         long nonlinear, double sliceDuration,
                                         long horizontal, long vertical);
@@ -25,6 +28,14 @@ void gpu_track_through_scmult_linear(long nParticles, double charge, double c1,
                                      const double *center, const double *sigma,
                                      double dmux, double dmuy, double betax,
                                      double betay);
+void gpu_track_through_scmult_nonlinear(long nParticles, double charge,
+                                        double c1, long horizontal,
+                                        long vertical,
+                                        long uniformDistribution,
+                                        const double *center,
+                                        const double *sigma, double dmux,
+                                        double dmuy, double betax,
+                                        double betay);
 
 #ifdef __cplusplus
 }

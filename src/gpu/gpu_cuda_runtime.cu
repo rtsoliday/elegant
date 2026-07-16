@@ -2410,6 +2410,234 @@ __global__ void gpuScmultLinearKickKernel(double *coord, long nParticles,
     part[3] += k0 * data.dmuy / data.betay * (part[2] - data.center[1]);
 }
 
+/* Algorithm 680 (Poppe and Wijers), matching the CPU wofz implementation
+ * used by nonlinearSCKick.  Nonlinear SCMULT only calls this with yi >= 0,
+ * but the quadrant handling is retained so the implementation stays complete.
+ */
+__device__ __forceinline__ long gpuScmultNearestInteger(double value) {
+  return static_cast<long>(value >= 0 ? floor(value + 0.5) :
+                                      -floor(0.5 - value));
+}
+
+__device__ __forceinline__ bool gpuScmultWofz(double xi, double yi,
+                                               double *u, double *v) {
+  long kapn = 0, n, nu, np1;
+  double xabs = fabs(xi), yabs = fabs(yi);
+  double x, y, qrho, xabsq, xquad, yquad;
+  double xsum, ysum, xaux, u1, v1, u2 = 0, v2 = 0, daux;
+  double h = 0, h2 = 0, qlambda = 0;
+  double rx = 0, ry = 0, sx = 0, sy = 0, tx, ty, c;
+  bool usePowerSeries, useTaylor;
+
+  if (!u || !v || xabs > 5e153 || yabs > 5e153)
+    return false;
+
+  x = xabs / (float)6.3;
+  y = yabs / (float)4.4;
+  qrho = x * x + y * y;
+  xabsq = xabs * xabs;
+  xquad = xabsq - yabs * yabs;
+  yquad = 2 * xabs * yabs;
+  usePowerSeries = qrho < 0.085264;
+
+  if (usePowerSeries) {
+    long j;
+
+    qrho = (1 - y * (float)0.85) * sqrt(qrho);
+    n = gpuScmultNearestInteger(qrho * 72 + 6);
+    j = 2 * n + 1;
+    xsum = (float)1.0 / j;
+    ysum = 0;
+    for (long i = n; i >= 1; --i) {
+      j -= 2;
+      xaux = (xsum * xquad - ysum * yquad) / i;
+      ysum = (xsum * yquad + ysum * xquad) / i;
+      xsum = xaux + (float)1.0 / j;
+    }
+    u1 = (xsum * yabs + ysum * xabs) * -1.12837916709551257388 +
+         (float)1.0;
+    v1 = (xsum * xabs - ysum * yabs) * 1.12837916709551257388;
+    daux = exp(-xquad);
+    u2 = daux * cos(yquad);
+    v2 = -daux * sin(yquad);
+    *u = u1 * u2 - v1 * v2;
+    *v = u1 * v2 + v1 * u2;
+  } else {
+    if (qrho > (float)1.0) {
+      qrho = sqrt(qrho);
+      nu = static_cast<long>(1442 / (qrho * 26 + 77) + 3);
+    } else {
+      qrho = (1 - y) * sqrt(1 - qrho);
+      h = qrho * (float)1.88;
+      h2 = 2 * h;
+      kapn = gpuScmultNearestInteger(qrho * 34 + 7);
+      nu = gpuScmultNearestInteger(qrho * 26 + 16);
+    }
+    useTaylor = h > (float)0.0;
+    if (useTaylor)
+      qlambda = gpuIntegerPower(h2, kapn);
+
+    for (n = nu; n >= 0; --n) {
+      np1 = n + 1;
+      tx = yabs + h + np1 * rx;
+      ty = xabs - np1 * ry;
+      c = (float)0.5 / (tx * tx + ty * ty);
+      rx = c * tx;
+      ry = c * ty;
+      if (useTaylor && n <= kapn) {
+        tx = qlambda + sx;
+        sx = rx * tx - ry * sy;
+        sy = ry * tx + rx * sy;
+        qlambda /= h2;
+      }
+    }
+
+    if (h == (float)0.0) {
+      *u = rx * 1.12837916709551257388;
+      *v = ry * 1.12837916709551257388;
+    } else {
+      *u = sx * 1.12837916709551257388;
+      *v = sy * 1.12837916709551257388;
+    }
+    if (yabs == (float)0.0)
+      *u = exp(-xabs * xabs);
+  }
+
+  if (yi < (float)0.0) {
+    double w1;
+
+    if (usePowerSeries) {
+      u2 *= 2;
+      v2 *= 2;
+    } else {
+      xquad = -xquad;
+      if (yquad > 3537118876014220.0 || xquad > 708.503061461606)
+        return false;
+      w1 = exp(xquad) * 2;
+      u2 = w1 * cos(yquad);
+      v2 = -w1 * sin(yquad);
+    }
+    *u = u2 - *u;
+    *v = v2 - *v;
+    if (xi > (float)0.0)
+      *v = -*v;
+  } else if (xi < (float)0.0) {
+    *v = -*v;
+  }
+  return true;
+}
+
+__device__ __forceinline__ void gpuScmultLinearFallback(
+  double *part, const GPU_SCMULT_LINEAR_DATA *data) {
+  double k0;
+
+  if (data->uniformDistribution) {
+    k0 = data->c1 / data->sigma[2] * data->charge *
+         sqrt(3.141592653589793238462643383279502884 / 6.0);
+  } else {
+    double dz = part[4] - data->center[2];
+    k0 = data->c1 / data->sigma[2] * data->charge *
+         exp(-0.5 * dz * dz / (data->sigma[2] * data->sigma[2]));
+  }
+  if (data->horizontal)
+    part[1] += k0 * data->dmux / data->betax *
+               (part[0] - data->center[0]);
+  if (data->vertical)
+    part[3] += k0 * data->dmuy / data->betay *
+               (part[2] - data->center[1]);
+}
+
+__global__ void gpuScmultNonlinearKickKernel(double *coord, long nParticles,
+                                             int stride,
+                                             GPU_SCMULT_LINEAR_DATA data) {
+  const double pi = 3.141592653589793238462643383279502884;
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+  double x, y, z, k0, kickX, kickY;
+  double sigmaX = data.sigma[0], sigmaY = data.sigma[1];
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  x = part[0] - data.center[0];
+  y = part[2] - data.center[1];
+  z = part[4] - data.center[2];
+
+  if (data.uniformDistribution) {
+    k0 = data.c1 / data.sigma[2] * data.charge * pi / 12.0;
+  } else {
+    double normalizedZ = z / data.sigma[2];
+    k0 = data.c1 / data.sigma[2] * data.charge *
+         exp(-0.5 * normalizedZ * normalizedZ) * sqrt(pi / 2.0);
+  }
+
+  if (fabs(sigmaX - sigmaY) / sigmaX < 1e-6) {
+    double sig = (sigmaX + sigmaY) / 2;
+    double r = sqrt(x * x + y * y);
+    double dp = 0, theta = 0;
+
+    if (r > 0) {
+      double normalizedR = r / sig;
+      dp = (1 - exp(-0.5 * normalizedR * normalizedR)) / r;
+      theta = atan2(y, x);
+    }
+    k0 *= sqrt(2.0 / pi);
+    part[1] += dp * cos(theta) * k0;
+    part[3] += dp * sin(theta) * k0;
+    return;
+  }
+
+  {
+    bool swapXY = false;
+    double ay, sd, w1Real, w1Imag, w2Real, w2Imag;
+    double waReal, waImag, wbReal, wbImag, c3, wReal, wImag;
+    double kx, ky;
+
+    if (sigmaX < sigmaY) {
+      double tmp = sigmaX;
+      sigmaX = sigmaY;
+      sigmaY = tmp;
+      tmp = x;
+      x = y;
+      y = -tmp;
+      swapXY = true;
+    }
+
+    ay = fabs(y);
+    sd = sqrt(2.0 * (sigmaX * sigmaX - sigmaY * sigmaY));
+    w1Real = x / sd;
+    w1Imag = ay / sd;
+    w2Real = w1Real * sigmaY / sigmaX;
+    w2Imag = w1Imag * sigmaX / sigmaY;
+    if (!gpuScmultWofz(w1Real, w1Imag, &waReal, &waImag) ||
+        !gpuScmultWofz(w2Real, w2Imag, &wbReal, &wbImag)) {
+      gpuScmultLinearFallback(part, &data);
+      return;
+    }
+
+    c3 = exp(-x * x / (2 * sigmaX * sigmaX) -
+             y * y / (2 * sigmaY * sigmaY));
+    wReal = waReal - c3 * wbReal;
+    wImag = waImag - c3 * wbImag;
+    kx = k0 * data.dmux * data.sigma[0] *
+         sqrt((data.sigma[0] + data.sigma[1]) /
+              fabs(data.sigma[0] - data.sigma[1])) / data.betax;
+    ky = k0 * data.dmuy * data.sigma[1] *
+         sqrt((data.sigma[0] + data.sigma[1]) /
+              fabs(data.sigma[0] - data.sigma[1])) / data.betay;
+
+    if (swapXY) {
+      kickX = -kx * wReal * (y > 0 ? 1 : -1);
+      kickY = ky * wImag;
+    } else {
+      kickX = kx * wImag;
+      kickY = ky * wReal * (y > 0 ? 1 : -1);
+    }
+    part[1] += kickX;
+    part[3] += kickY;
+  }
+}
+
 __device__ __forceinline__ double gpuTrwakeDriveValue(double coordinate,
                                                       double offset,
                                                       long exponent) {
@@ -5998,6 +6226,33 @@ extern "C" int gpuCudaScmultLinearKick(void *coord, long nParticles, int stride,
     return status;
   blocks = static_cast<int>((nParticles + threads - 1) / threads);
   gpuScmultLinearKickKernel<<<blocks, threads>>>(
+    static_cast<double *>(coord), nParticles, stride, *data);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaScmultNonlinearKick(
+  void *coord, long nParticles, int stride,
+  const GPU_SCMULT_LINEAR_DATA *data, float *milliseconds) {
+  cudaEvent_t start, stop;
+  int threads = 256;
+  int blocks;
+  int status;
+
+  if (!coord || !data || stride < 6 || data->sigma[0] <= 0 ||
+      data->sigma[1] <= 0 || data->sigma[2] == 0 ||
+      (data->horizontal && data->betax == 0) ||
+      (data->vertical && data->betay == 0))
+    return static_cast<int>(cudaErrorInvalidValue);
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  gpuScmultNonlinearKickKernel<<<blocks, threads>>>(
     static_cast<double *>(coord), nParticles, stride, *data);
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
