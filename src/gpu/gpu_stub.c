@@ -183,16 +183,24 @@ extern int gpuCudaMatchEnergyAndAverage(void *coord, long nParticles,
                                         int stride, double oldP,
                                         int changeBeam,
                                         GPU_BEAM_SUM_DATA *result,
+                                        void *deviceScratch,
                                         float *milliseconds);
+extern unsigned long gpuCudaMatchEnergyScratchBytes(void);
 extern int gpuCudaCenteredBeamSums(void *coord, long nParticles, int stride,
                                    double pCentral, double cMks,
                                    const double *centroid,
                                    GPU_BEAM_SUM_DATA *result,
                                    float *milliseconds);
-extern int gpuCudaLscCpuOrderTransverseSums(void *coord, long nParticles,
-                                            int stride,
-                                            GPU_BEAM_SUM_DATA *result,
-                                            float *milliseconds);
+extern int gpuCudaLscStatistics(void *coord, long nParticles, int stride,
+                                double pCentral, double cMks,
+                                GPU_BEAM_SUM_DATA *result,
+                                void *deviceResultScratch,
+                                float *milliseconds);
+extern int gpuCudaLscTransverseSums(void *coord, long nParticles, int stride,
+                                    double xCentroid, double yCentroid,
+                                    GPU_BEAM_SUM_DATA *result,
+                                    void *deviceResultScratch,
+                                    float *milliseconds);
 extern int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
                                double pCentral, double volt, double omega,
                                double phase, double cMks,
@@ -203,6 +211,11 @@ extern int gpuCudaRfcwRfOnlyMatrix(void *coord, long nParticles, int stride,
                                    int end1Focus, int end2Focus,
                                    double dx, double dy, double cMks,
                                    float *milliseconds);
+extern int gpuCudaRfcwRfOnlyMatrixChecked(
+  void *coord, long nParticles, int stride, double pCentral, double length,
+  double volt, double omega, double phase, int end1Focus, int end2Focus,
+  double dx, double dy, double cMks, void *deviceLostCount,
+  long *lostCount, float *milliseconds);
 extern int gpuCudaRfcwKickInitial(void *coord, void *inverseF,
                                   long nParticles, int stride,
                                   double pCentral, double length,
@@ -271,6 +284,12 @@ extern int gpuCudaCentroidTimeSums(void *coord, long nParticles, int stride,
 extern int gpuCudaBeamSums(void *coord, long nParticles, int stride,
                            double pCentral, double cMks,
                            GPU_BEAM_SUM_DATA *result, float *milliseconds);
+extern unsigned long gpuCudaBeamSums2ScratchBytes(void);
+extern int gpuCudaBeamSums2(void *coord, long nParticles, int stride,
+                            double pCentral, double cMks,
+                            GPU_BEAM_SUM_DATA *result,
+                            GPU_BEAM_SUM_DATA *centeredResult,
+                            void *deviceScratch, float *milliseconds);
 extern int gpuCudaLongMinMax(void *coord, long nParticles, int stride,
                              int coordinateIndex,
                              GPU_LONG_MIN_MAX_DATA *result,
@@ -465,11 +484,14 @@ extern int gpuCudaTrwakeTrackFromHistogram(
   float *milliseconds);
 extern int gpuCudaLscBin(void *coord, long nParticles, int stride,
                          const GPU_LSC_DATA *lsc, long *binnedCount,
-                         double *itimeReturn, float *milliseconds);
+                         double *itimeReturn, void *deviceItimeScratch,
+                         void *deviceBinnedCountScratch,
+                         float *milliseconds);
 extern int gpuCudaLscApplyKickAndDrift(void *coord, long nParticles,
                                        int stride,
                                        const GPU_LSC_DATA *lsc,
                                        const double *vtime,
+                                       void *deviceVtimeScratch,
                                        float *milliseconds);
 extern int gpuCudaScmultLinearKick(void *coord, long nParticles, int stride,
                                    const GPU_SCMULT_LINEAR_DATA *data,
@@ -577,12 +599,32 @@ typedef struct GPU_RFCW_KICK_SCRATCH {
   long capacity;
 } GPU_RFCW_KICK_SCRATCH;
 
+typedef struct GPU_LSC_SCRATCH {
+  void *result;
+  void *itime;
+  void *binnedCount;
+  void *vtime;
+  long binsCapacity;
+} GPU_LSC_SCRATCH;
+
+typedef struct GPU_BEAM_SUMS_SCRATCH {
+  void *data;
+} GPU_BEAM_SUMS_SCRATCH;
+
+typedef struct GPU_RFCA_SCRATCH {
+  void *lostCount;
+  void *matchEnergy;
+} GPU_RFCA_SCRATCH;
+
 static GPU_BASE gpuBase;
 static GPU_CSR_SCRATCH gpuCsrScratch;
 static GPU_APERTURE_SCRATCH gpuApertureScratch;
 static GPU_ACCEPTED_BUFFER gpuAcceptedBuffer;
 static GPU_KICKMAP_CACHE gpuKickMapCache;
 static GPU_RFCW_KICK_SCRATCH gpuRfcwKickScratch;
+static GPU_LSC_SCRATCH gpuLscScratch;
+static GPU_BEAM_SUMS_SCRATCH gpuBeamSumsScratch;
+static GPU_RFCA_SCRATCH gpuRfcaScratch;
 static long gpuVerbose = 0;
 static long gpuEnableExactDrift = 0;
 static long gpuExactDriftExplicit = 0;
@@ -637,6 +679,9 @@ static long gpuPackMatrix(GPU_MATRIX_DATA *packed, VMATRIX *M);
 static long gpuMatrixSupported(VMATRIX *M);
 static void gpuReleaseKickMapCache(void);
 static void gpuEnsureRfcwKickScratch(long nParticles);
+static void gpuEnsureLscScratch(long bins);
+static void gpuEnsureBeamSumsScratch(void);
+static void gpuEnsureRfcaScratch(void);
 static void gpuRfcwApplyCoordinateOffset(long np, int index, double value,
                                          const char *operation);
 static long gpuPassiveElementSupported(ELEMENT_LIST *eptr, long nParticles);
@@ -2209,6 +2254,59 @@ static void gpuReleaseRfcwKickScratch(void) {
   memset(&gpuRfcwKickScratch, 0, sizeof(gpuRfcwKickScratch));
 }
 
+static void gpuReleaseLscScratch(void) {
+  int status;
+
+  if (gpuLscScratch.result) {
+    status = gpuCudaFree(gpuLscScratch.result);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(LSC reduction scratch)", status);
+  }
+  if (gpuLscScratch.itime) {
+    status = gpuCudaFree(gpuLscScratch.itime);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(LSC histogram scratch)", status);
+  }
+  if (gpuLscScratch.binnedCount) {
+    status = gpuCudaFree(gpuLscScratch.binnedCount);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(LSC bin-count scratch)", status);
+  }
+  if (gpuLscScratch.vtime) {
+    status = gpuCudaFree(gpuLscScratch.vtime);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(LSC voltage scratch)", status);
+  }
+  memset(&gpuLscScratch, 0, sizeof(gpuLscScratch));
+}
+
+static void gpuReleaseBeamSumsScratch(void) {
+  int status;
+
+  if (gpuBeamSumsScratch.data) {
+    status = gpuCudaFree(gpuBeamSumsScratch.data);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(beam-sums reduction scratch)", status);
+  }
+  memset(&gpuBeamSumsScratch, 0, sizeof(gpuBeamSumsScratch));
+}
+
+static void gpuReleaseRfcaScratch(void) {
+  int status;
+
+  if (gpuRfcaScratch.lostCount) {
+    status = gpuCudaFree(gpuRfcaScratch.lostCount);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(RFCA loss-count scratch)", status);
+  }
+  if (gpuRfcaScratch.matchEnergy) {
+    status = gpuCudaFree(gpuRfcaScratch.matchEnergy);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(RFCA match-energy scratch)", status);
+  }
+  memset(&gpuRfcaScratch, 0, sizeof(gpuRfcaScratch));
+}
+
 static void gpuReleaseApertureScratch(void) {
   int status;
 
@@ -2321,6 +2419,61 @@ static void gpuEnsureRfcwKickScratch(long nParticles) {
   if (status != 0)
     gpuFatalStatus("cudaMalloc(RFCW kick inverseF scratch)", status);
   gpuRfcwKickScratch.capacity = nParticles;
+}
+
+static void gpuEnsureLscScratch(long bins) {
+  int status;
+
+  if (bins <= 0)
+    return;
+  if (gpuLscScratch.result && gpuLscScratch.itime &&
+      gpuLscScratch.binnedCount && gpuLscScratch.vtime &&
+      gpuLscScratch.binsCapacity >= bins)
+    return;
+  gpuReleaseLscScratch();
+  status = gpuCudaMallocBytes(&gpuLscScratch.result,
+                              (unsigned long)sizeof(GPU_BEAM_SUM_DATA));
+  if (status != 0)
+    gpuFatalStatus("cudaMalloc(LSC reduction scratch)", status);
+  status = gpuCudaMallocDouble(&gpuLscScratch.itime, (unsigned long)bins);
+  if (status != 0)
+    gpuFatalStatus("cudaMalloc(LSC histogram scratch)", status);
+  status = gpuCudaMallocBytes(&gpuLscScratch.binnedCount,
+                              (unsigned long)sizeof(unsigned long long));
+  if (status != 0)
+    gpuFatalStatus("cudaMalloc(LSC bin-count scratch)", status);
+  status = gpuCudaMallocDouble(&gpuLscScratch.vtime,
+                               (unsigned long)(bins + 1));
+  if (status != 0)
+    gpuFatalStatus("cudaMalloc(LSC voltage scratch)", status);
+  gpuLscScratch.binsCapacity = bins;
+}
+
+static void gpuEnsureBeamSumsScratch(void) {
+  int status;
+
+  if (gpuBeamSumsScratch.data)
+    return;
+  status = gpuCudaMallocBytes(&gpuBeamSumsScratch.data,
+                              gpuCudaBeamSums2ScratchBytes());
+  if (status != 0)
+    gpuFatalStatus("cudaMalloc(beam-sums reduction scratch)", status);
+}
+
+static void gpuEnsureRfcaScratch(void) {
+  int status;
+
+  if (!gpuRfcaScratch.lostCount) {
+    status = gpuCudaMallocBytes(&gpuRfcaScratch.lostCount, sizeof(long));
+    if (status != 0)
+      gpuFatalStatus("cudaMalloc(RFCA loss-count scratch)", status);
+  }
+  if (!gpuRfcaScratch.matchEnergy) {
+    status = gpuCudaMallocBytes(&gpuRfcaScratch.matchEnergy,
+                                gpuCudaMatchEnergyScratchBytes());
+    if (status != 0)
+      gpuFatalStatus("cudaMalloc(RFCA match-energy scratch)", status);
+  }
 }
 
 #ifndef GPU_VERIFY
@@ -3745,6 +3898,9 @@ void gpuBaseDealloc(void) {
   gpuReleaseAcceptedBuffer();
   gpuReleaseKickMapCache();
   gpuReleaseRfcwKickScratch();
+  gpuReleaseLscScratch();
+  gpuReleaseBeamSumsScratch();
+  gpuReleaseRfcaScratch();
   gpuReleaseApertureScratch();
   gpuReleaseCsrScratch();
   gpuBase.elementOnGpu = 0;
@@ -4215,10 +4371,12 @@ void gpu_do_match_energy(long np, double *P_central, long change_beam) {
 
   oldP = *P_central;
   gpuCopyHostToDevice(np);
+  gpuEnsureRfcaScratch();
   status = gpuCudaMatchEnergyAndAverage(gpuBase.deviceCoord, np,
                                         (int)gpuBase.deviceStride,
                                         oldP, (int)change_beam,
-                                        &result, &milliseconds);
+                                        &result, gpuRfcaScratch.matchEnergy,
+                                        &milliseconds);
   if (status != 0)
     gpuFatalStatus("match energy reduction/update kernel", status);
   gpuRecordHelperKernel(milliseconds);
@@ -5301,10 +5459,19 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
   }
 
   gpuCopyHostToDevice(n_part);
-  status = gpuCudaBeamSums(gpuBase.deviceCoord, n_part, (int)gpuBase.deviceStride,
-                           p_central, c_mks, &result, &milliseconds);
+  if (beamSums->beamSums2) {
+    gpuEnsureBeamSumsScratch();
+    status = gpuCudaBeamSums2(gpuBase.deviceCoord, n_part,
+                              (int)gpuBase.deviceStride,
+                              p_central, c_mks, &result, &centeredResult,
+                              gpuBeamSumsScratch.data, &milliseconds);
+  } else {
+    status = gpuCudaBeamSums(gpuBase.deviceCoord, n_part,
+                             (int)gpuBase.deviceStride,
+                             p_central, c_mks, &result, &milliseconds);
+  }
   if (status != 0)
-    gpuFatalStatus("beam sums reduction kernel", status);
+    gpuFatalStatus("compound beam sums reduction kernel", status);
   gpuRecordReductionKernel(milliseconds);
 
   if (result.count <= 0) {
@@ -5321,13 +5488,6 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
   }
 
   if (beamSums->beamSums2) {
-    memset(&centeredResult, 0, sizeof(centeredResult));
-    status = gpuCudaCenteredBeamSums(gpuBase.deviceCoord, n_part, (int)gpuBase.deviceStride,
-                                     p_central, c_mks, centroid,
-                                     &centeredResult, &milliseconds);
-    if (status != 0)
-      gpuFatalStatus("centered beam sums reduction kernel", status);
-    gpuRecordReductionKernel(milliseconds);
     if (centeredResult.count != result.count)
       gpuRequiredFailure("centered beam sums particle count mismatch");
   }
@@ -6652,6 +6812,7 @@ static void gpuLscCenteredVariances(const GPU_BEAM_SUM_DATA *sums,
                                     long nParticles, double pCentral,
                                     double *S11, double *S33) {
   GPU_BEAM_SUM_DATA centeredSums;
+  double xCentroid, yCentroid;
   float milliseconds = 0;
   int status;
 
@@ -6662,12 +6823,15 @@ static void gpuLscCenteredVariances(const GPU_BEAM_SUM_DATA *sums,
   if (!sums || sums->count <= 0 || nParticles <= 0)
     return;
 
+  xCentroid = sums->centroidSum[0] / sums->count;
+  yCentroid = sums->centroidSum[2] / sums->count;
   memset(&centeredSums, 0, sizeof(centeredSums));
-  status = gpuCudaLscCpuOrderTransverseSums(gpuBase.deviceCoord, nParticles,
-                                            (int)gpuBase.deviceStride,
-                                            &centeredSums, &milliseconds);
+  status = gpuCudaLscTransverseSums(gpuBase.deviceCoord, nParticles,
+                                    (int)gpuBase.deviceStride,
+                                    xCentroid, yCentroid, &centeredSums,
+                                    gpuLscScratch.result, &milliseconds);
   if (status != 0)
-    gpuFatalStatus("LSC CPU-order beam-size reduction kernel", status);
+    gpuFatalStatus("LSC parallel beam-size reduction kernel", status);
   gpuRecordReductionKernel(milliseconds);
   if (centeredSums.count <= 0)
     return;
@@ -6933,6 +7097,7 @@ void gpu_track_through_lscdrift(long np0, void *lsc0, double Po, void *charge0) 
   gpuBase.gpuStandaloneLscCount++;
 
   nb = lsc->bins;
+  gpuEnsureLscScratch(nb);
   if (nb > maxBins) {
     maxBins = nb;
     Itime = trealloc(Itime, 2 * sizeof(*Itime) * (maxBins + 1));
@@ -6969,9 +7134,10 @@ void gpu_track_through_lscdrift(long np0, void *lsc0, double Po, void *charge0) 
   while (lengthLeft > 0) {
     memset(&sums, 0, sizeof(sums));
     milliseconds = 0;
-    status = gpuCudaBeamSums(gpuBase.deviceCoord, np0,
-                             (int)gpuBase.deviceStride, Po, c_mks,
-                             &sums, &milliseconds);
+    status = gpuCudaLscStatistics(gpuBase.deviceCoord, np0,
+                                  (int)gpuBase.deviceStride, Po, c_mks,
+                                  &sums, gpuLscScratch.result,
+                                  &milliseconds);
     if (status != 0)
       gpuFatalStatus("LSCDRIFT time-coordinate reduction kernel", status);
     gpuRecordReductionKernel(milliseconds);
@@ -6993,7 +7159,8 @@ void gpu_track_through_lscdrift(long np0, void *lsc0, double Po, void *charge0) 
     milliseconds = 0;
     status = gpuCudaLscBin(gpuBase.deviceCoord, np0,
                            (int)gpuBase.deviceStride, &data,
-                           &binnedCount, Itime, &milliseconds);
+                           &binnedCount, Itime, gpuLscScratch.itime,
+                           gpuLscScratch.binnedCount, &milliseconds);
     if (status != 0)
       gpuFatalStatus("LSCDRIFT CUDA binning kernel", status);
     gpuRecordLscKernel(milliseconds);
@@ -7072,7 +7239,8 @@ void gpu_track_through_lscdrift(long np0, void *lsc0, double Po, void *charge0) 
     milliseconds = 0;
     status = gpuCudaLscApplyKickAndDrift(gpuBase.deviceCoord, np0,
                                          (int)gpuBase.deviceStride,
-                                         &data, Vtime, &milliseconds);
+                                         &data, Vtime, gpuLscScratch.vtime,
+                                         &milliseconds);
     if (status != 0)
       gpuFatalStatus("LSCDRIFT CUDA kick/drift kernel", status);
     gpuRecordLscKernel(milliseconds);
@@ -8964,7 +9132,7 @@ static long gpuRfcaRfOnlyMatrixOnDevice(long np, RFCA *rfca,
   double omega, volt;
   float milliseconds = 0;
   int status;
-  long remaining;
+  long lostCount = 0, remaining;
 
   if (np <= 0)
     return np;
@@ -8975,19 +9143,20 @@ static long gpuRfcaRfOnlyMatrixOnDevice(long np, RFCA *rfca,
   volt = rfca->volt / (1e6 * particleMassMV * particleRelSign);
   startGpuTimer();
   gpuCopyHostToDevice(np);
-  status = gpuCudaRfcwRfOnlyMatrix(gpuBase.deviceCoord, np,
-                                   (int)gpuBase.deviceStride, *P_central,
-                                   rfca->length, volt, omega, phase,
-                                   (int)rfca->end1Focus,
-                                   (int)rfca->end2Focus, rfca->dx, rfca->dy,
-                                   c_mks,
-                                   &milliseconds);
+  gpuEnsureRfcaScratch();
+  status = gpuCudaRfcwRfOnlyMatrixChecked(
+    gpuBase.deviceCoord, np, (int)gpuBase.deviceStride, *P_central,
+    rfca->length, volt, omega, phase, (int)rfca->end1Focus,
+    (int)rfca->end2Focus, rfca->dx, rfca->dy, c_mks,
+    gpuRfcaScratch.lostCount, &lostCount, &milliseconds);
   if (status != 0)
     gpuFatalStatus("RFCA RF-only matrix kernel", status);
   gpuRecordHelperKernel(milliseconds);
   gpuMarkDeviceChanged(np);
   gpuRecordWallSeconds();
-  remaining = gpu_removeInvalidParticles(np, accepted, zEnd, *P_central);
+  remaining = lostCount ?
+                gpu_removeInvalidParticles(np, accepted, zEnd, *P_central) :
+                np;
   if (rfca->change_p0)
     gpu_do_match_energy(remaining, P_central, 0);
   return remaining;
@@ -9373,6 +9542,7 @@ static void gpuTrackRfcwLscKickOnDevice(long np, LSCKICK *lsc, double Po,
   nb = lsc->bins;
   if (nb < 2 || (nb % 2))
     gpuRequiredFailure("unsupported RFCW LSC bin count reached CUDA path");
+  gpuEnsureLscScratch(nb);
   if (nb > maxBins) {
     maxBins = nb;
     Itime = trealloc(Itime, 2 * sizeof(*Itime) * (maxBins + 1));
@@ -9406,9 +9576,10 @@ static void gpuTrackRfcwLscKickOnDevice(long np, LSCKICK *lsc, double Po,
 #endif
   memset(&sums, 0, sizeof(sums));
   milliseconds = 0;
-  status = gpuCudaBeamSums(gpuBase.deviceCoord, np,
-                           (int)gpuBase.deviceStride, Po, c_mks,
-                           &sums, &milliseconds);
+  status = gpuCudaLscStatistics(gpuBase.deviceCoord, np,
+                                (int)gpuBase.deviceStride, Po, c_mks,
+                                &sums, gpuLscScratch.result,
+                                &milliseconds);
   if (status != 0)
     gpuFatalStatus("RFCW LSC time-coordinate reduction kernel", status);
   gpuRecordReductionKernel(milliseconds);
@@ -9431,7 +9602,8 @@ static void gpuTrackRfcwLscKickOnDevice(long np, LSCKICK *lsc, double Po,
   milliseconds = 0;
   status = gpuCudaLscBin(gpuBase.deviceCoord, np,
                          (int)gpuBase.deviceStride, &data,
-                         &binnedCount, Itime, &milliseconds);
+                         &binnedCount, Itime, gpuLscScratch.itime,
+                         gpuLscScratch.binnedCount, &milliseconds);
   if (status != 0)
     gpuFatalStatus("RFCW LSC CUDA binning kernel", status);
   gpuRecordLscKernel(milliseconds);
@@ -9552,7 +9724,8 @@ static void gpuTrackRfcwLscKickOnDevice(long np, LSCKICK *lsc, double Po,
   milliseconds = 0;
   status = gpuCudaLscApplyKickAndDrift(gpuBase.deviceCoord, np,
                                        (int)gpuBase.deviceStride,
-                                       &data, Vtime, &milliseconds);
+                                       &data, Vtime, gpuLscScratch.vtime,
+                                       &milliseconds);
   if (status != 0)
     gpuFatalStatus("RFCW LSC CUDA kick kernel", status);
   gpuRecordLscKernel(milliseconds);
