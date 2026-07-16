@@ -220,6 +220,10 @@ extern int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
 extern int gpuCudaRfdfTrack(void *coord, long nParticles, int stride,
                             const GPU_RFDF_DATA *data,
                             int particleIdIndex, float *milliseconds);
+extern int gpuCudaBggexpTrack(void *coord, long nParticles, int stride,
+                              const GPU_BGGEXP_DATA *data,
+                              float *milliseconds);
+extern void gpuCudaBggexpRelease(void);
 extern int gpuCudaRfcwRfOnlyMatrix(void *coord, long nParticles, int stride,
                                    double pCentral, double length,
                                    double volt, double omega, double phase,
@@ -711,6 +715,8 @@ static long gpuBatchedTuneMinParticles = 32;
 static long gpuEnablePolynomialSeries = 0;
 static long gpuEnableRfdf = 0;
 static long gpuRfdfMinParticles = 64;
+static long gpuEnableBggexp = 0;
+static long gpuBggexpMinParticles = 64;
 static long gpuEnableLscTracking = 0;
 static long gpuLscTrackingExplicit = 0;
 static long gpuEnableRfcwTrackingDrift = 0;
@@ -2033,6 +2039,30 @@ static long gpuRfdfElementSupported(ELEMENT_LIST *eptr) {
   return 1;
 }
 
+static long gpuBggexpElementSupported(ELEMENT_LIST *eptr) {
+  BGGEXP *bgg;
+
+  if (!gpuEnableBggexp || gpuBase.backtrack)
+    return 0;
+  if (!eptr || eptr->type != T_BGGEXP || !eptr->p_elem)
+    return 0;
+  bgg = (BGGEXP *)eptr->p_elem;
+  if (bgg->symplectic || bgg->synchRad || bgg->isr ||
+      bgg->particleOutputFile || bgg->isBend ||
+      bgg->dx || bgg->dy || bgg->dz || bgg->tilt ||
+      bgg->zInterval != 1)
+    return 0;
+  if (bgg->skewFilename && bgg->skewFilename[0])
+    return 0;
+  if ((!bgg->filename || !bgg->filename[0]) &&
+      (!bgg->normalFilename || !bgg->normalFilename[0]))
+    return 0;
+  if (bgg->filename && bgg->filename[0] &&
+      bgg->normalFilename && bgg->normalFilename[0])
+    return 0;
+  return 1;
+}
+
 static long gpuLscDataSupported(LSCDRIFT *lsc) {
   if (!lsc)
     return 0;
@@ -2248,6 +2278,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuRfdfElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuRfdfMinParticles);
+  if (gpuBggexpElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuBggexpMinParticles);
   if (gpuWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuTrwakeElementSupported(eptr))
@@ -3900,6 +3933,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_RFDF_PARTICLES", 64);
   if (gpuRfdfMinParticles < 1)
     gpuRfdfMinParticles = 1;
+  gpuEnableBggexp =
+    gpuEnvSet("ELEGANT_GPU_ENABLE_BGGEXP") &&
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_BGGEXP");
+  gpuBggexpMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_BGGEXP_PARTICLES", 64);
+  if (gpuBggexpMinParticles < 1)
+    gpuBggexpMinParticles = 1;
   gpuLscTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_LSC");
   gpuEnableLscTracking = !gpuLscTrackingExplicit ||
                          gpuEnvFlag("ELEGANT_GPU_ENABLE_LSC");
@@ -3919,6 +3959,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnableBatchedTuneTracking = 0;
   gpuEnablePolynomialSeries = 0;
   gpuEnableRfdf = 0;
+  gpuEnableBggexp = 0;
 #endif
   gpuAvoidShortGpuIslands = !gpuEnvSet("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS") ||
                             gpuEnvFlag("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS");
@@ -4092,6 +4133,7 @@ void gpuBaseDealloc(void) {
   gpuReleaseRfcaScratch();
   gpuReleasePolynomialSeriesCache();
   gpuCudaPolynomialSeriesRelease();
+  gpuCudaBggexpRelease();
   gpuReleaseApertureScratch();
   gpuReleaseCsrScratch();
   gpuCudaCombinedWakeRelease();
@@ -7223,6 +7265,26 @@ void gpu_apply_rfdf(long nParticles, const GPU_RFDF_DATA *data) {
   if (status != 0)
     gpuFatalStatus("RFDF tracking CUDA kernel", status);
   gpuRecordHelperKernel(milliseconds);
+  gpuMarkDeviceChanged(nParticles);
+  gpuRecordWallSeconds();
+}
+
+void gpu_track_bggexp(long nParticles, const GPU_BGGEXP_DATA *data) {
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0)
+    return;
+  if (!data)
+    gpuRequiredFailure("NULL BGGEXP CUDA tracking data");
+  startGpuTimer();
+  gpuCopyHostToDevice(nParticles);
+  status = gpuCudaBggexpTrack(gpuBase.deviceCoord, nParticles,
+                              (int)gpuBase.deviceStride, data,
+                              &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("BGGEXP tracking CUDA kernel", status);
+  gpuRecordMagnetKernel(milliseconds);
   gpuMarkDeviceChanged(nParticles);
   gpuRecordWallSeconds();
 }

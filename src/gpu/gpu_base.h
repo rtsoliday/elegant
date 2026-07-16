@@ -304,6 +304,36 @@ typedef struct GPU_RFDF_DATA {
   double cMks;
 } GPU_RFDF_DATA;
 
+typedef struct GPU_BGGEXP_DATA {
+  const void *tableOwner;
+  unsigned long long tableSignature;
+  long nz;
+  long termCount;
+  const int *m;
+  const int *gradient;
+  const int *radialPower;
+  const double *coefficient;
+  const double *multipoleFactor;
+  const double *const *Cmn;
+  const double *const *dCmnDz;
+  double dz;
+  double zMin;
+  double zMax;
+  double xCenter;
+  double yCenter;
+  double length;
+  double dxExpansion;
+  double pCentral;
+  double strength;
+  double Bx;
+  double By;
+  double BFactor[3];
+  double particleCharge;
+  double particleRelSign;
+  double particleMass;
+  double cMks;
+} GPU_BGGEXP_DATA;
+
 typedef struct GPU_KICKMAP_DATA {
   int undulator;
   long nKicks;

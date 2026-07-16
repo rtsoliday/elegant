@@ -4,6 +4,10 @@
 #include "mdb.h"
 #include "SDDS.h"
 #include "track.h"
+#ifdef HAVE_GPU
+#  include "gpu/gpu_base.h"
+#  include "gpu/gpu_bggexp.h"
+#endif
 
 typedef struct {
   short skew;              /* if non-zero, these are skew terms */
@@ -32,6 +36,114 @@ long computeGGEVectorPotential(double *Ax, double *dAx_dx, double *dAx_dy,
                                double *dAz_dx, double *dAz_dy,
                                double x, double y, long iz,
                                BGGEXP *bgg, STORED_BGGEXP_DATA *bggData[2], long igLimit[2]);
+
+#ifdef HAVE_GPU
+static long trackBGGExpansionOnGpu(long np, BGGEXP *bgg, double pCentral,
+                                   STORED_BGGEXP_DATA *bggData[2],
+                                   long igLimit[2]) {
+  GPU_BGGEXP_DATA data;
+  const double **Cmn = NULL, **dCmnDz = NULL;
+  double *coefficient = NULL, *multipoleFactor = NULL;
+  int *m = NULL, *gradient = NULL, *radialPower = NULL;
+  long im, ig, iterm, termCount;
+  unsigned long long tableSignature = 1469598103934665603ULL;
+
+  if (!bggData[0] || bggData[1] || igLimit[0] <= 0 ||
+      bggData[0]->nz <= 1 ||
+      bggData[0]->xMax > 0 || bggData[0]->yMax > 0)
+    return 0;
+
+  termCount = bggData[0]->nm * igLimit[0];
+  if (termCount <= 0)
+    return 0;
+  m = malloc(sizeof(*m) * termCount);
+  gradient = malloc(sizeof(*gradient) * termCount);
+  radialPower = malloc(sizeof(*radialPower) * termCount);
+  coefficient = malloc(sizeof(*coefficient) * termCount);
+  multipoleFactor = malloc(sizeof(*multipoleFactor) * termCount);
+  Cmn = malloc(sizeof(*Cmn) * termCount);
+  dCmnDz = malloc(sizeof(*dCmnDz) * termCount);
+  if (!m || !gradient || !radialPower || !coefficient ||
+      !multipoleFactor || !Cmn || !dCmnDz)
+    bombElegant("memory allocation failure preparing BGGEXP CUDA data", NULL);
+
+  for (im = iterm = 0; im < bggData[0]->nm; im++) {
+    long harmonic = bggData[0]->m[im];
+    double mfact = dfactorial(harmonic);
+    double harmonicFactor =
+      harmonic < 5 ? bgg->multipoleFactor[harmonic] : 1;
+
+    if (bgg->mMaximum > 0 && harmonic > bgg->mMaximum)
+      continue;
+    for (ig = 0; ig < igLimit[0]; ig++, iterm++) {
+      m[iterm] = harmonic;
+      gradient[iterm] = ig;
+      radialPower[iterm] = 2 * ig + harmonic - 1;
+      tableSignature ^= (unsigned long long)(unsigned int)harmonic;
+      tableSignature *= 1099511628211ULL;
+      tableSignature ^= (unsigned long long)(unsigned int)ig;
+      tableSignature *= 1099511628211ULL;
+      coefficient[iterm] =
+        ipow(-1, ig) * mfact /
+        (ipow(2, 2 * ig) * factorial(ig) * factorial(ig + harmonic));
+      multipoleFactor[iterm] = harmonicFactor;
+      Cmn[iterm] = bggData[0]->Cmn[im][ig];
+      dCmnDz[iterm] = bggData[0]->dCmn_dz[im][ig];
+    }
+  }
+  termCount = iterm;
+  if (!termCount) {
+    free(m);
+    free(gradient);
+    free(radialPower);
+    free(coefficient);
+    free(multipoleFactor);
+    free(Cmn);
+    free(dCmnDz);
+    return 0;
+  }
+
+  memset(&data, 0, sizeof(data));
+  data.tableOwner = bggData[0];
+  data.tableSignature = tableSignature;
+  data.nz = bggData[0]->nz;
+  data.termCount = termCount;
+  data.m = m;
+  data.gradient = gradient;
+  data.radialPower = radialPower;
+  data.coefficient = coefficient;
+  data.multipoleFactor = multipoleFactor;
+  data.Cmn = Cmn;
+  data.dCmnDz = dCmnDz;
+  data.dz = bggData[0]->dz;
+  data.zMin = bggData[0]->zMin;
+  data.zMax = bggData[0]->zMax;
+  data.xCenter = bggData[0]->xCenter;
+  data.yCenter = bggData[0]->yCenter;
+  data.length = bgg->length;
+  data.dxExpansion = bgg->dxExpansion;
+  data.pCentral = pCentral;
+  data.strength = bgg->strength;
+  data.Bx = bgg->Bx;
+  data.By = bgg->By;
+  memcpy(data.BFactor, bgg->BFactor, sizeof(data.BFactor));
+  data.particleCharge = particleCharge;
+  data.particleRelSign = particleRelSign;
+  data.particleMass = particleMass;
+  data.cMks = c_mks;
+
+  gpu_track_bggexp(np, &data);
+
+  free(m);
+  free(gradient);
+  free(radialPower);
+  free(coefficient);
+  free(multipoleFactor);
+  free(Cmn);
+  free(dCmnDz);
+  return 1;
+}
+#endif
 
 #define BUFSIZE 16834
 
@@ -208,6 +320,9 @@ long trackBGGExpansion(double **part, long np, BGGEXP *bgg, double pCentral, dou
   double radCoef = 0, isrCoef = 0;
   double zMin, zMax, xVertex, zVertex, xEntry, zEntry, xExit, zExit;
   short isLost;
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  long gpuTracked = 0;
+#endif
 
 #ifdef DEBUG
   static FILE *fpdebug = NULL;
@@ -396,6 +511,21 @@ long trackBGGExpansion(double **part, long np, BGGEXP *bgg, double pCentral, dou
   if (bgg->zInterval <= 0)
     bombElegantVA("zInterval %ld is invalid for BGGEXP %s #%ld\n", bgg->zInterval, tcontext.elementName, tcontext.elementOccurrence);
   /* izLast = nz-bgg->zInterval; */
+
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    if (trackBGGExpansionOnGpu(np, bgg, pCentral, bggData, igLimit)) {
+#  ifdef GPU_VERIFY
+      startCpuTimer();
+      gpuTracked = 1;
+#  else
+      return np;
+#  endif
+    } else {
+      part = forceParticlesToCpu("unsupported BGGEXP field table");
+    }
+  }
+#endif
 
   if (bgg->symplectic) {
     long iImpLoop;
@@ -953,6 +1083,10 @@ long trackBGGExpansion(double **part, long np, BGGEXP *bgg, double pCentral, dou
   fflush(fpdebug);
 #endif
 
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  if (gpuTracked)
+    compareGpuCpu(np, "trackBGGExpansion");
+#endif
   return np;
 }
 

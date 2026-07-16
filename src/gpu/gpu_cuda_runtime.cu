@@ -70,6 +70,154 @@ typedef struct GPU_POLYNOMIAL_SERIES_SCRATCH {
 
 static GPU_POLYNOMIAL_SERIES_SCRATCH gpuPolynomialSeriesScratch;
 
+typedef struct GPU_BGGEXP_SCRATCH {
+  double *Cmn;
+  double *dCmnDz;
+  double *coefficient;
+  double *multipoleFactor;
+  int *m;
+  int *gradient;
+  int *radialPower;
+  long tableCapacity;
+  long termCapacity;
+  long tableNz;
+  long tableTerms;
+  const void *tableOwner;
+  unsigned long long tableSignature;
+} GPU_BGGEXP_SCRATCH;
+
+static GPU_BGGEXP_SCRATCH gpuBggexpScratch;
+
+static void releaseBggexpScratch(void) {
+  cudaFree(gpuBggexpScratch.Cmn);
+  cudaFree(gpuBggexpScratch.dCmnDz);
+  cudaFree(gpuBggexpScratch.coefficient);
+  cudaFree(gpuBggexpScratch.multipoleFactor);
+  cudaFree(gpuBggexpScratch.m);
+  cudaFree(gpuBggexpScratch.gradient);
+  cudaFree(gpuBggexpScratch.radialPower);
+  std::memset(&gpuBggexpScratch, 0, sizeof(gpuBggexpScratch));
+}
+
+extern "C" void gpuCudaBggexpRelease(void) {
+  releaseBggexpScratch();
+}
+
+static int ensureBggexpScratch(const GPU_BGGEXP_DATA *data) {
+  cudaError_t status;
+  long tableValues;
+
+  if (!data || !data->tableOwner || data->nz <= 1 ||
+      data->termCount <= 0 || !data->m || !data->gradient ||
+      !data->radialPower || !data->coefficient ||
+      !data->multipoleFactor || !data->Cmn || !data->dCmnDz)
+    return static_cast<int>(cudaErrorInvalidValue);
+  tableValues = data->nz * data->termCount;
+  if (tableValues <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+
+  if (gpuBggexpScratch.tableCapacity < tableValues ||
+      gpuBggexpScratch.termCapacity < data->termCount ||
+      !gpuBggexpScratch.Cmn || !gpuBggexpScratch.dCmnDz ||
+      !gpuBggexpScratch.coefficient || !gpuBggexpScratch.multipoleFactor ||
+      !gpuBggexpScratch.m || !gpuBggexpScratch.gradient ||
+      !gpuBggexpScratch.radialPower) {
+    long tableCapacity = gpuBggexpScratch.tableCapacity;
+    long termCapacity = gpuBggexpScratch.termCapacity;
+    if (tableCapacity < tableValues)
+      tableCapacity = tableValues;
+    if (termCapacity < data->termCount)
+      termCapacity = data->termCount;
+    releaseBggexpScratch();
+    gpuBggexpScratch.tableCapacity = tableCapacity;
+    gpuBggexpScratch.termCapacity = termCapacity;
+    status = cudaMalloc(&gpuBggexpScratch.Cmn,
+                        tableCapacity * sizeof(*gpuBggexpScratch.Cmn));
+    if (status != cudaSuccess)
+      goto fail;
+    status = cudaMalloc(&gpuBggexpScratch.dCmnDz,
+                        tableCapacity * sizeof(*gpuBggexpScratch.dCmnDz));
+    if (status != cudaSuccess)
+      goto fail;
+    status = cudaMalloc(&gpuBggexpScratch.coefficient,
+                        termCapacity * sizeof(*gpuBggexpScratch.coefficient));
+    if (status != cudaSuccess)
+      goto fail;
+    status = cudaMalloc(&gpuBggexpScratch.multipoleFactor,
+                        termCapacity * sizeof(*gpuBggexpScratch.multipoleFactor));
+    if (status != cudaSuccess)
+      goto fail;
+    status = cudaMalloc(&gpuBggexpScratch.m,
+                        termCapacity * sizeof(*gpuBggexpScratch.m));
+    if (status != cudaSuccess)
+      goto fail;
+    status = cudaMalloc(&gpuBggexpScratch.gradient,
+                        termCapacity * sizeof(*gpuBggexpScratch.gradient));
+    if (status != cudaSuccess)
+      goto fail;
+    status = cudaMalloc(&gpuBggexpScratch.radialPower,
+                        termCapacity * sizeof(*gpuBggexpScratch.radialPower));
+    if (status != cudaSuccess)
+      goto fail;
+  }
+
+  status = cudaMemcpy(gpuBggexpScratch.m, data->m,
+                      data->termCount * sizeof(*data->m),
+                      cudaMemcpyHostToDevice);
+  if (status != cudaSuccess)
+    return static_cast<int>(status);
+  status = cudaMemcpy(gpuBggexpScratch.gradient, data->gradient,
+                      data->termCount * sizeof(*data->gradient),
+                      cudaMemcpyHostToDevice);
+  if (status != cudaSuccess)
+    return static_cast<int>(status);
+  status = cudaMemcpy(gpuBggexpScratch.radialPower, data->radialPower,
+                      data->termCount * sizeof(*data->radialPower),
+                      cudaMemcpyHostToDevice);
+  if (status != cudaSuccess)
+    return static_cast<int>(status);
+  status = cudaMemcpy(gpuBggexpScratch.coefficient, data->coefficient,
+                      data->termCount * sizeof(*data->coefficient),
+                      cudaMemcpyHostToDevice);
+  if (status != cudaSuccess)
+    return static_cast<int>(status);
+  status = cudaMemcpy(gpuBggexpScratch.multipoleFactor,
+                      data->multipoleFactor,
+                      data->termCount * sizeof(*data->multipoleFactor),
+                      cudaMemcpyHostToDevice);
+  if (status != cudaSuccess)
+    return static_cast<int>(status);
+
+  if (gpuBggexpScratch.tableOwner != data->tableOwner ||
+      gpuBggexpScratch.tableSignature != data->tableSignature ||
+      gpuBggexpScratch.tableNz != data->nz ||
+      gpuBggexpScratch.tableTerms != data->termCount) {
+    for (long term = 0; term < data->termCount; term++) {
+      status = cudaMemcpy(gpuBggexpScratch.Cmn + term * data->nz,
+                          data->Cmn[term],
+                          data->nz * sizeof(*gpuBggexpScratch.Cmn),
+                          cudaMemcpyHostToDevice);
+      if (status != cudaSuccess)
+        return static_cast<int>(status);
+      status = cudaMemcpy(gpuBggexpScratch.dCmnDz + term * data->nz,
+                          data->dCmnDz[term],
+                          data->nz * sizeof(*gpuBggexpScratch.dCmnDz),
+                          cudaMemcpyHostToDevice);
+      if (status != cudaSuccess)
+        return static_cast<int>(status);
+    }
+    gpuBggexpScratch.tableOwner = data->tableOwner;
+    gpuBggexpScratch.tableSignature = data->tableSignature;
+    gpuBggexpScratch.tableNz = data->nz;
+    gpuBggexpScratch.tableTerms = data->termCount;
+  }
+  return static_cast<int>(cudaSuccess);
+
+fail:
+  releaseBggexpScratch();
+  return static_cast<int>(status);
+}
+
 static void releasePolynomialSeriesScratch(void) {
   if (gpuPolynomialSeriesScratch.coefficient)
     cudaFree(gpuPolynomialSeriesScratch.coefficient);
@@ -1407,6 +1555,219 @@ __global__ void gpuRfdfKernel(double *coord, long nParticles, int stride,
   part[3] = yp;
   part[4] = tPart * data.cMks * beta;
   part[5] = (pc - data.pCentral) / data.pCentral;
+}
+
+typedef struct GPU_BGGEXP_DEVICE_DATA {
+  long nz;
+  long termCount;
+  const int *m;
+  const int *gradient;
+  const int *radialPower;
+  const double *coefficient;
+  const double *multipoleFactor;
+  const double *Cmn;
+  const double *dCmnDz;
+  double dz;
+  double zMin;
+  double zMax;
+  double xCenter;
+  double yCenter;
+  double length;
+  double dxExpansion;
+  double pCentral;
+  double strength;
+  double Bx;
+  double By;
+  double BFactor[3];
+  double particleCharge;
+  double particleRelSign;
+  double particleMass;
+  double cMks;
+} GPU_BGGEXP_DEVICE_DATA;
+
+__device__ double gpuBggexpIntegerPower(double value, int exponent) {
+  double power;
+  int exponentStack[32];
+  int depth = 0;
+
+  if (value == 0)
+    return exponent == 0 ? 1.0 : 0.0;
+  while (exponent > 8) {
+    exponentStack[depth++] = exponent;
+    exponent /= 2;
+  }
+  switch (exponent) {
+  case 0:
+    power = 1.0;
+    break;
+  case 1:
+    power = value;
+    break;
+  case 2:
+    power = value * value;
+    break;
+  case 3:
+    power = value * value;
+    power *= value;
+    break;
+  case 4:
+    power = value * value;
+    power *= power;
+    break;
+  case 5:
+    power = value * value;
+    power = power * power * value;
+    break;
+  case 6:
+    power = value * value;
+    power = power * power * power;
+    break;
+  case 7:
+    power = value * value * value;
+    power = power * power * value;
+    break;
+  case 8:
+    power = value * value;
+    power = power * power;
+    power *= power;
+    break;
+  default:
+    power = 0;
+    break;
+  }
+  while (depth) {
+    exponent = exponentStack[--depth];
+    power = exponent % 2 ? power * power * value : power * power;
+  }
+  return power;
+}
+
+__device__ __forceinline__ void gpuBggexpFields(
+  double *Bx, double *By, double *Bz, double x, double y, long iz,
+  const GPU_BGGEXP_DEVICE_DATA &data) {
+  double Br = 0, Bphi = 0;
+  double r = sqrt(x * x + y * y);
+  double phi = atan2(y, x);
+  double sinPhi = sin(phi);
+  double cosPhi = cos(phi);
+  double sinMphi = 0, cosMphi = 0;
+  int previousM = INT_MIN;
+
+  *Bz = 0;
+  for (long termIndex = 0; termIndex < data.termCount; termIndex++) {
+    int m = data.m[termIndex];
+    int ig = data.gradient[termIndex];
+    double term;
+    long tableIndex = termIndex * data.nz + iz;
+
+    if (m != previousM) {
+      sinMphi = sin(m * phi);
+      cosMphi = cos(m * phi);
+      previousM = m;
+    }
+    term = data.coefficient[termIndex] *
+           gpuBggexpIntegerPower(r, data.radialPower[termIndex]);
+    *Bz += term * data.dCmnDz[tableIndex] * r * sinMphi *
+           data.multipoleFactor[termIndex];
+    term *= data.Cmn[tableIndex];
+    Br += term * (2 * ig + m) * sinMphi *
+          data.multipoleFactor[termIndex];
+    Bphi += m * term * cosMphi * data.multipoleFactor[termIndex];
+  }
+  *Bx = ((data.Bx + (Br * cosPhi - Bphi * sinPhi)) * data.strength) *
+        data.BFactor[0];
+  *By = ((data.By + (Br * sinPhi + Bphi * cosPhi)) * data.strength) *
+        data.BFactor[1];
+  *Bz *= data.strength * data.BFactor[2];
+}
+
+__global__ void gpuBggexpKernel(double *coord, long nParticles, int stride,
+                                GPU_BGGEXP_DEVICE_DATA data) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+  double Bx, By, Bz;
+  double x, xp, y, yp, s, delta;
+  double xTemp, yTemp, xpTemp, ypTemp;
+  double xNew, yNew, xpNew, ypNew;
+  double ds, denom, preFactorDz;
+  double zVertex, zEntry, zExit;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  x = part[0];
+  xp = part[1];
+  y = part[2];
+  yp = part[3];
+  s = part[4];
+  delta = part[5];
+
+  zVertex = (data.zMax + data.zMin) / 2;
+  zEntry = zVertex - data.length / 2;
+  zExit = zVertex + data.length / 2;
+  x -= data.dxExpansion;
+  x -= data.xCenter;
+  y -= data.yCenter;
+  x -= (zEntry - data.zMin) * xp;
+  y -= (zEntry - data.zMin) * yp;
+  s -= (zEntry - data.zMin) * sqrt(1.0 + xp * xp + yp * yp);
+
+  for (long iz = 0; iz < data.nz - 1; iz++) {
+    gpuBggexpFields(&Bx, &By, &Bz, x, y, iz, data);
+    denom = sqrt(1.0 + xp * xp + yp * yp);
+    preFactorDz =
+      -data.dz * data.particleCharge * data.particleRelSign /
+      (data.pCentral * data.particleMass * data.cMks * (1.0 + delta));
+    preFactorDz *= denom;
+    xTemp = x + data.dz * xp;
+    yTemp = y + data.dz * yp;
+    xpTemp =
+      xp + preFactorDz *
+             ((yp * Bz - (1.0 + xp * xp) * By) + xp * yp * Bx);
+    ypTemp =
+      yp + preFactorDz *
+             (((1.0 + yp * yp) * Bx - xp * Bz) - xp * yp * By);
+    ds = data.dz * denom;
+
+    gpuBggexpFields(&Bx, &By, &Bz, xTemp, yTemp, iz + 1, data);
+    preFactorDz =
+      -data.dz * data.particleCharge * data.particleRelSign /
+      (data.pCentral * data.particleMass * data.cMks * (1.0 + delta));
+    preFactorDz *= sqrt(1.0 + xpTemp * xpTemp + ypTemp * ypTemp);
+    xNew = 0.5 * (x + xTemp + data.dz * xpTemp);
+    yNew = 0.5 * (y + yTemp + data.dz * ypTemp);
+    xpNew =
+      0.5 * (xp + xpTemp +
+             preFactorDz *
+               ((ypTemp * Bz - (1.0 + xpTemp * xpTemp) * By) +
+                xpTemp * ypTemp * Bx));
+    ypNew =
+      0.5 * (yp + ypTemp +
+             preFactorDz *
+               (((1.0 + ypTemp * ypTemp) * Bx - xpTemp * Bz) -
+                xpTemp * ypTemp * By));
+    ds = 0.5 *
+         (ds + data.dz *
+                 sqrt(1.0 + xpTemp * xpTemp + ypTemp * ypTemp));
+    x = xNew;
+    y = yNew;
+    xp = xpNew;
+    yp = ypNew;
+    s += ds;
+  }
+
+  x -= (data.zMax - zExit) * xp;
+  y -= (data.zMax - zExit) * yp;
+  s -= (data.zMax - zExit) * sqrt(1.0 + xp * xp + yp * yp);
+  x += data.xCenter;
+  y += data.yCenter;
+  x += data.dxExpansion;
+
+  part[0] = x;
+  part[1] = xp;
+  part[2] = y;
+  part[3] = yp;
+  part[4] = s;
 }
 
 __global__ void gpuRfcwRfOnlyMatrixKernel(double *coord, long nParticles, int stride,
@@ -7612,6 +7973,56 @@ extern "C" int gpuCudaRfdfTrack(void *coord, long nParticles, int stride,
   gpuRfdfKernel<<<blocks, threads>>>(static_cast<double *>(coord),
                                      nParticles, stride, *data,
                                      particleIdIndex);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaBggexpTrack(void *coord, long nParticles, int stride,
+                                  const GPU_BGGEXP_DATA *data,
+                                  float *milliseconds) {
+  GPU_BGGEXP_DEVICE_DATA deviceData;
+  cudaEvent_t start, stop;
+  int threads = 128;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  if (!coord || !data || nParticles <= 0 || stride < 7)
+    return static_cast<int>(cudaErrorInvalidValue);
+  status = ensureBggexpScratch(data);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  std::memset(&deviceData, 0, sizeof(deviceData));
+  deviceData.nz = data->nz;
+  deviceData.termCount = data->termCount;
+  deviceData.m = gpuBggexpScratch.m;
+  deviceData.gradient = gpuBggexpScratch.gradient;
+  deviceData.radialPower = gpuBggexpScratch.radialPower;
+  deviceData.coefficient = gpuBggexpScratch.coefficient;
+  deviceData.multipoleFactor = gpuBggexpScratch.multipoleFactor;
+  deviceData.Cmn = gpuBggexpScratch.Cmn;
+  deviceData.dCmnDz = gpuBggexpScratch.dCmnDz;
+  deviceData.dz = data->dz;
+  deviceData.zMin = data->zMin;
+  deviceData.zMax = data->zMax;
+  deviceData.xCenter = data->xCenter;
+  deviceData.yCenter = data->yCenter;
+  deviceData.length = data->length;
+  deviceData.dxExpansion = data->dxExpansion;
+  deviceData.pCentral = data->pCentral;
+  deviceData.strength = data->strength;
+  deviceData.Bx = data->Bx;
+  deviceData.By = data->By;
+  std::memcpy(deviceData.BFactor, data->BFactor,
+              sizeof(deviceData.BFactor));
+  deviceData.particleCharge = data->particleCharge;
+  deviceData.particleRelSign = data->particleRelSign;
+  deviceData.particleMass = data->particleMass;
+  deviceData.cMks = data->cMks;
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuBggexpKernel<<<blocks, threads>>>(static_cast<double *>(coord),
+                                      nParticles, stride, deviceData);
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
 
