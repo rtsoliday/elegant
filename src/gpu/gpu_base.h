@@ -126,6 +126,7 @@ typedef struct GPU_MULTIPOLE_DATA {
   int radiationBlock;
   double drift;
   double Po;
+  double radCoef;
   double coordLimit;
   double slopeLimit;
   double KnL[3];
@@ -150,6 +151,8 @@ typedef struct GPU_CSBEND_DATA {
   double length;
   double rho0;
   double rhoActual;
+  double Po;
+  double radCoef;
   double cosTilt;
   double sinTilt;
   int hasMisalignment;
@@ -346,6 +349,9 @@ typedef struct GPU_KICKMAP_DATA {
   double dxg;
   double dyg;
   double kickScale;
+  double pRef;
+  double radCoef;
+  double radiationKick;
 } GPU_KICKMAP_DATA;
 
 GPU_BASE *getGpuBase(void);

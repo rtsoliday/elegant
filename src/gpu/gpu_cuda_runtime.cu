@@ -706,7 +706,7 @@ __device__ __forceinline__ int gpuKickMapTrackParticle(
   double yp = part[3];
   double s = part[4];
   double dp = part[5];
-  double dxp, dyp;
+  double dxp, dyp, kickXp, kickYp;
 
   for (long ik = 0; ik < map->nKicks; ik++) {
     x = gpuAddRn(x, gpuDivRn(gpuMulRn(xp, map->length), 2.0));
@@ -719,12 +719,44 @@ __device__ __forceinline__ int gpuKickMapTrackParticle(
     if (map->undulator) {
       double dp1 = gpuAddRn(1.0, dp);
       double scale = gpuDivRn(map->kickScale, gpuMulRn(dp1, dp1));
-      xp = gpuAddRn(xp, gpuMulRn(dxp, scale));
-      yp = gpuAddRn(yp, gpuMulRn(dyp, scale));
+      kickXp = gpuMulRn(dxp, scale);
+      kickYp = gpuMulRn(dyp, scale);
+      xp = gpuAddRn(xp, kickXp);
+      yp = gpuAddRn(yp, kickYp);
     } else {
       double scale = gpuDivRn(map->kickScale, gpuAddRn(1.0, dp));
-      xp = gpuAddRn(xp, gpuMulRn(dxp, scale));
-      yp = gpuAddRn(yp, gpuMulRn(dyp, scale));
+      kickXp = gpuMulRn(dxp, scale);
+      kickYp = gpuMulRn(dyp, scale);
+      xp = gpuAddRn(xp, kickXp);
+      yp = gpuAddRn(yp, kickYp);
+    }
+
+    if (map->undulator) {
+      if (map->radiationKick) {
+        double deltaFactor = gpuAddRn(1.0, dp);
+        dp = gpuSubRn(
+          dp, gpuMulRn(map->radiationKick,
+                       gpuMulRn(deltaFactor, deltaFactor)));
+      }
+    } else if (map->radCoef && map->length) {
+      double oldDp = dp;
+      double deltaFactor = 1 + oldDp;
+      double kick2 = kickXp * kickXp + kickYp * kickYp;
+      double F2 =
+        deltaFactor * deltaFactor * kick2 / (map->length * map->length);
+      double p = map->pRef * deltaFactor;
+      double beta0 = p / sqrt(p * p + 1);
+      double pathFactor = sqrt(1 + xp * xp + yp * yp);
+
+      dp -= map->radCoef * deltaFactor * deltaFactor * F2 *
+            map->length * pathFactor;
+      p = map->pRef * (1 + dp);
+      xp *= deltaFactor / (1 + dp);
+      yp *= deltaFactor / (1 + dp);
+      {
+        double beta1 = p / sqrt(p * p + 1);
+        s = beta1 * s / beta0;
+      }
     }
 
     x = gpuAddRn(x, gpuDivRn(gpuMulRn(xp, map->length), 2.0));
@@ -896,7 +928,9 @@ __device__ __forceinline__ void gpuMultipoleApplyKick(double *qx, double *qy,
   *deltaQy += KnL * sumFx;
 }
 
-__device__ int gpuMultipoleTrackParticle(double *part, int stride, int writeOutput) {
+template <bool Radiation>
+__device__ int gpuMultipoleTrackParticle(double *part, int stride,
+                                         int writeOutput) {
   const GPU_MULTIPOLE_DATA *data = &gpuMultipoleData;
   double driftFrac[8];
   double kickFrac[8];
@@ -908,13 +942,22 @@ __device__ int gpuMultipoleTrackParticle(double *part, int stride, int writeOutp
   double yp = part[3];
   double dp = part[5];
   double qx, qy, s = 0;
+  double timeCoordinate = part[4];
+  double beta0 = 0;
   double drift, xkick, ykick;
   int nSubsteps = 0;
   int maxOrder = 0;
 
   (void)stride;
+  if (Radiation) {
+    double p = data->Po * (1 + dp);
+    beta0 = p / sqrt(p * p + 1);
+  }
   if (data->dx || data->dy || data->dz) {
-    s += data->dz * sqrt(1 + xp * xp + yp * yp);
+    if (Radiation)
+      timeCoordinate += data->dz * sqrt(1 + xp * xp + yp * yp);
+    else
+      s += data->dz * sqrt(1 + xp * xp + yp * yp);
     x = x - data->dx + data->dz * xp;
     y = y - data->dy + data->dz * yp;
   }
@@ -1043,8 +1086,24 @@ __device__ int gpuMultipoleTrackParticle(double *part, int stride, int writeOutp
         return 0;
 
       if (data->radiationBlock && drift) {
+        double onePlusDp = 1 + dp;
+
         qx /= (1 + dp);
         qy /= (1 + dp);
+        if (Radiation) {
+          double deltaFactor = onePlusDp * onePlusDp;
+          double normalizedDeltaQx = deltaQx / kickFrac[step];
+          double normalizedDeltaQy = deltaQy / kickFrac[step];
+          double F2 =
+            (normalizedDeltaQx / drift - xkick / drift) *
+              (normalizedDeltaQx / drift - xkick / drift) +
+            (normalizedDeltaQy / drift + ykick / drift) *
+              (normalizedDeltaQy / drift + ykick / drift);
+          double dsFactor =
+            sqrt(1 + xp * xp + yp * yp) * drift * kickFrac[step];
+
+          dp -= data->radCoef * deltaFactor * F2 * dsFactor;
+        }
         qx *= (1 + dp);
         qy *= (1 + dp);
         if (!gpuMultipoleConvertMomentaToSlopes(&xp, &yp, qx, qy, dp,
@@ -1057,6 +1116,14 @@ __device__ int gpuMultipoleTrackParticle(double *part, int stride, int writeOutp
   if (!gpuMultipoleConvertMomentaToSlopes(&xp, &yp, qx, qy, dp,
                                           data->expandHamiltonian))
     return 0;
+
+  if (Radiation) {
+    double p = data->Po * (1 + dp);
+    double beta1 = p / sqrt(p * p + 1);
+
+    timeCoordinate =
+      beta1 * (timeCoordinate / beta0 + 2 * s / (beta0 + beta1));
+  }
 
   if (!isfinite(x) || !isfinite(xp) || !isfinite(y) || !isfinite(yp))
     return 0;
@@ -1075,7 +1142,10 @@ __device__ int gpuMultipoleTrackParticle(double *part, int stride, int writeOutp
     yp = xp0 * data->sinTilt + yp0 * data->cosTilt;
   }
   if (data->dx || data->dy || data->dz) {
-    s -= data->dz * sqrt(1 + xp * xp + yp * yp);
+    if (Radiation)
+      timeCoordinate -= data->dz * sqrt(1 + xp * xp + yp * yp);
+    else
+      s -= data->dz * sqrt(1 + xp * xp + yp * yp);
     x = x + data->dx - data->dz * xp;
     y = y + data->dy - data->dz * yp;
   }
@@ -1085,12 +1155,16 @@ __device__ int gpuMultipoleTrackParticle(double *part, int stride, int writeOutp
     part[1] = xp;
     part[2] = y;
     part[3] = yp;
-    part[4] += s;
+    if (Radiation)
+      part[4] = timeCoordinate;
+    else
+      part[4] += s;
     part[5] = dp;
   }
   return 1;
 }
 
+template <bool Radiation>
 __global__ void gpuMultipolePredicateKernel(double *coord, long nParticles,
                                             int stride, long *lostCount) {
   __shared__ long partial[GPU_REDUCTION_THREADS];
@@ -1099,7 +1173,7 @@ __global__ void gpuMultipolePredicateKernel(double *coord, long nParticles,
 
   for (long ip = thread; ip < nParticles; ip += blockDim.x) {
     double *part = coord + ip * stride;
-    if (!gpuMultipoleTrackParticle(part, stride, 0))
+    if (!gpuMultipoleTrackParticle<Radiation>(part, stride, 0))
       localCount++;
   }
 
@@ -1114,24 +1188,27 @@ __global__ void gpuMultipolePredicateKernel(double *coord, long nParticles,
     *lostCount = partial[0];
 }
 
+template <bool Radiation>
 __global__ void gpuMultipoleTrackKernel(double *coord, long nParticles,
                                         int stride) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
-  gpuMultipoleTrackParticle(coord + ip * stride, stride, 1);
+  gpuMultipoleTrackParticle<Radiation>(coord + ip * stride, stride, 1);
 }
 
-__global__ void gpuMultipoleTrackCheckedKernel(double *coord, long nParticles,
-                                               int stride,
-                                               unsigned long long *lostCount) {
+template <bool Radiation>
+__global__ void gpuMultipoleTrackCheckedKernel(
+  double *coord, long nParticles, int stride,
+  unsigned long long *lostCount) {
   extern __shared__ unsigned long long partial[];
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long localCount = 0;
 
   if (ip < nParticles) {
-    if (!gpuMultipoleTrackParticle(coord + ip * stride, stride, 1))
+    if (!gpuMultipoleTrackParticle<Radiation>(
+          coord + ip * stride, stride, 1))
       localCount = 1;
   }
   partial[threadIdx.x] = localCount;
@@ -1146,17 +1223,19 @@ __global__ void gpuMultipoleTrackCheckedKernel(double *coord, long nParticles,
     atomicAdd(lostCount, partial[0]);
 }
 
-__global__ void gpuMultipoleSurvivorFlagKernel(double *coord, long nParticles,
-                                               int stride,
-                                               long *survivorPrefix) {
+template <bool Radiation>
+__global__ void gpuMultipoleSurvivorFlagKernel(
+  double *coord, long nParticles, int stride, long *survivorPrefix) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
   survivorPrefix[ip] =
-    gpuMultipoleTrackParticle(coord + ip * stride, stride, 0) ? 1 : 0;
+    gpuMultipoleTrackParticle<Radiation>(
+      coord + ip * stride, stride, 0) ? 1 : 0;
 }
 
+template <bool Radiation>
 __global__ void gpuMultipoleStableTrackScatterKernel(
   double *coord, double *scratch, const long *survivorPrefix,
   long nParticles, int stride, long survivors) {
@@ -1176,7 +1255,7 @@ __global__ void gpuMultipoleStableTrackScatterKernel(
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
   if (survives)
-    gpuMultipoleTrackParticle(target, stride, 1);
+    gpuMultipoleTrackParticle<Radiation>(target, stride, 1);
 }
 
 __global__ void gpuAddCoordinateKernel(double *coord, long nParticles, int stride,
@@ -5269,13 +5348,21 @@ extern "C" int gpuCudaMultipoleTrack(void *coord, long nParticles, int stride,
       cudaFree(deviceLostCount);
     return status;
   }
-  if (writeOutput)
-    gpuMultipoleTrackKernel<<<blocks, threads>>>(static_cast<double *>(coord),
-                                                 nParticles, stride);
-  else
-    gpuMultipolePredicateKernel<<<blocks, threads>>>(static_cast<double *>(coord),
-                                                     nParticles, stride,
-                                                     deviceLostCount);
+  if (writeOutput) {
+    if (multipole->radCoef)
+      gpuMultipoleTrackKernel<true><<<blocks, threads>>>(
+        static_cast<double *>(coord), nParticles, stride);
+    else
+      gpuMultipoleTrackKernel<false><<<blocks, threads>>>(
+        static_cast<double *>(coord), nParticles, stride);
+  } else {
+    if (multipole->radCoef)
+      gpuMultipolePredicateKernel<true><<<blocks, threads>>>(
+        static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+    else
+      gpuMultipolePredicateKernel<false><<<blocks, threads>>>(
+        static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+  }
   status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
   if (status != static_cast<int>(cudaSuccess)) {
     if (deviceLostCount)
@@ -5348,9 +5435,14 @@ extern "C" int gpuCudaMultipoleTrackChecked(void *coord, long nParticles,
     cudaFree(deviceLostCount);
     return static_cast<int>(cudaStatus);
   }
-  gpuMultipoleTrackCheckedKernel<<<blocks, threads,
-                                   threads * sizeof(unsigned long long)>>>(
-    static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+  if (multipole->radCoef)
+    gpuMultipoleTrackCheckedKernel<true>
+      <<<blocks, threads, threads * sizeof(unsigned long long)>>>(
+        static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+  else
+    gpuMultipoleTrackCheckedKernel<false>
+      <<<blocks, threads, threads * sizeof(unsigned long long)>>>(
+        static_cast<double *>(coord), nParticles, stride, deviceLostCount);
   status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
   if (status != static_cast<int>(cudaSuccess)) {
     cudaFree(backup);
@@ -5404,8 +5496,12 @@ extern "C" int gpuCudaMultipoleTrackStableCompact(
   if (status != static_cast<int>(cudaSuccess))
     return status;
 
-  gpuMultipoleSurvivorFlagKernel<<<gridSize, blockSize>>>(
-    static_cast<double *>(coord), nParticles, stride, devicePrefix);
+  if (multipole->radCoef)
+    gpuMultipoleSurvivorFlagKernel<true><<<gridSize, blockSize>>>(
+      static_cast<double *>(coord), nParticles, stride, devicePrefix);
+  else
+    gpuMultipoleSurvivorFlagKernel<false><<<gridSize, blockSize>>>(
+      static_cast<double *>(coord), nParticles, stride, devicePrefix);
   cudaStatus = cudaGetLastError();
   if (cudaStatus == cudaSuccess) {
     survivors = thrust::reduce(flags, flags + nParticles, 0L,
@@ -5416,9 +5512,14 @@ extern "C" int gpuCudaMultipoleTrackStableCompact(
     survivors = nParticles;
   }
   if (cudaStatus == cudaSuccess) {
-    gpuMultipoleStableTrackScatterKernel<<<gridSize, blockSize>>>(
-      static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-      devicePrefix, nParticles, stride, survivors);
+    if (multipole->radCoef)
+      gpuMultipoleStableTrackScatterKernel<true><<<gridSize, blockSize>>>(
+        static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+        devicePrefix, nParticles, stride, survivors);
+    else
+      gpuMultipoleStableTrackScatterKernel<false><<<gridSize, blockSize>>>(
+        static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+        devicePrefix, nParticles, stride, survivors);
     cudaStatus = cudaGetLastError();
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
@@ -5635,7 +5736,9 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
   double yp0 = part[3];
   double s0 = part[4];
   double dp = part[5];
+  double dp0 = dp;
   double x, xp, y, yp, qx, qy, dist;
+  double trackedS;
   double onePlusDp = 1 + dp;
   double dsSlice;
   int nSubsteps = 0;
@@ -5668,6 +5771,20 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
                                     data->he1, data->psi1,
                                     data->edgeKickLimit1, -1))
     return 0;
+
+  if (data->radCoef && data->edge1 && data->e1 != 0) {
+    double Fx, Fy, dpPrime;
+    double onePlusXh = 1 + x / data->rho0;
+
+    gpuCsbendFields(&Fx, &Fy, x, y);
+    dpPrime =
+      -data->radCoef * (Fx * Fx + Fy * Fy) * (1 + dp) * (1 + dp) *
+      sqrt(onePlusXh * onePlusXh + xp * xp + yp * yp);
+    dp -= dpPrime * x * tan(data->e1);
+    onePlusDp = 1 + dp;
+    if (onePlusDp == 0)
+      return 0;
+  }
 
   if (!gpuMultipoleConvertSlopesToMomenta(&qx, &qy, xp, yp, dp,
                                           data->expandHamiltonian))
@@ -5721,12 +5838,57 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
       gpuCsbendFields(&Fx, &Fy, x, y);
       qx += -ds * (1 + x / data->rho0) * Fy / data->rhoActual;
       qy += ds * (1 + x / data->rho0) * Fx / data->rhoActual;
+      if (data->radCoef) {
+        double momentum2 = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
+        double factor, radXp, radYp, dsFactor, F2, deltaFactor;
+
+        if (momentum2 <= 0)
+          return 0;
+        factor = (1 + x / data->rho0) / sqrt(momentum2);
+        radXp = qx * factor;
+        radYp = qy * factor;
+        dsFactor =
+          sqrt((1 + x / data->rho0) * (1 + x / data->rho0) +
+               radXp * radXp + radYp * radYp);
+        F2 = Fx * Fx + Fy * Fy;
+        deltaFactor = (1 + dp) * (1 + dp);
+        qx /= (1 + dp);
+        qy /= (1 + dp);
+        dp -= data->radCoef * deltaFactor * F2 * ds * dsFactor;
+        onePlusDp = 1 + dp;
+        if (onePlusDp == 0)
+          return 0;
+        qx *= onePlusDp;
+        qy *= onePlusDp;
+      }
     }
   }
 
   if (!gpuMultipoleConvertMomentaToSlopes(&xp, &yp, qx, qy, dp,
                                           data->expandHamiltonian))
     return 0;
+
+  if (data->radCoef && data->edge2 && data->e2 != 0) {
+    double Fx, Fy, dpPrime;
+    double onePlusXh = 1 + x / data->rho0;
+
+    gpuCsbendFields(&Fx, &Fy, x, y);
+    dpPrime =
+      -data->radCoef * (Fx * Fx + Fy * Fy) * (1 + dp) * (1 + dp) *
+      sqrt(onePlusXh * onePlusXh + xp * xp + yp * yp);
+    dp -= dpPrime * x * tan(data->e2);
+  }
+
+  if (data->radCoef) {
+    double p0 = data->Po * (1 + dp0);
+    double p1 = data->Po * (1 + dp);
+    double beta0 = p0 / sqrt(p0 * p0 + 1);
+    double beta1 = p1 / sqrt(p1 * p1 + 1);
+
+    trackedS = beta1 * s0 / beta0 + dist;
+  } else {
+    trackedS = s0 + dist;
+  }
 
   if (data->edge2 &&
       !gpuCsbendApplyConfiguredEdge(&x, &xp, &y, &yp, dp, data->e2,
@@ -5749,7 +5911,7 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
                    data->dcoordEtilt[1];
     double ypOut = xp * data->sinTilt + yp * data->cosTilt +
                    data->dcoordEtilt[3];
-    double sOut = s0 + dist + data->dcoordEtilt[4];
+    double sOut = trackedS + data->dcoordEtilt[4];
 
     if (data->hasMisalignment) {
       xOut += data->dxf + data->dzf * xpOut;

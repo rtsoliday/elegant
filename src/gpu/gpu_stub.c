@@ -27,6 +27,7 @@
 #pragma weak trackUndulatorKickMap
 #pragma weak initializeKickMap
 #pragma weak initializeUndulatorKickMap
+#pragma weak AddWigglerRadiationIntegrals
 #pragma weak get_phase_reference
 #pragma weak unused_phase_reference
 #pragma weak set_phase_reference
@@ -132,6 +133,12 @@ extern long trackUndulatorKickMap(double **particle, double **accepted,
                                   UKICKMAP *map, double zStart);
 extern void initializeKickMap(KICKMAP *map);
 extern void initializeUndulatorKickMap(UKICKMAP *map);
+extern void AddWigglerRadiationIntegrals(double length, long periods,
+                                         double radius, double eta,
+                                         double etap, double beta,
+                                         double alpha, double *I1,
+                                         double *I2, double *I3,
+                                         double *I4, double *I5);
 extern long get_phase_reference(double *phase, long phase_ref_number);
 extern void computeCSBENDFieldCoefficients(double *b, double *c,
                                            double h1, long nonlinear,
@@ -1713,7 +1720,7 @@ static long gpuKickMapElementSupported(ELEMENT_LIST *eptr) {
       return 0;
     if (map->nKicks < 1 || map->length == 0)
       return 0;
-    if (map->synchRad || map->isr)
+    if (map->isr)
       return 0;
     if (map->tilt || map->dx || map->dy || map->dz || map->yaw)
       return 0;
@@ -1722,13 +1729,15 @@ static long gpuKickMapElementSupported(ELEMENT_LIST *eptr) {
   case T_UKICKMAP: {
     UKICKMAP *map = (UKICKMAP *)eptr->p_elem;
 
-    if (gpuBase.orderSensitiveOutputNeeded)
+    if (gpuBase.orderSensitiveOutputNeeded && !map->synchRad)
       return 0;
     if (!map->inputFile || !*map->inputFile)
       return 0;
     if (map->nKicks < 1 || map->length == 0)
       return 0;
-    if (map->synchRad || map->isr)
+    if (map->isr)
+      return 0;
+    if (map->synchRad && map->nKicks != map->periods)
       return 0;
     if (map->tilt || map->dx || map->dy || map->dz || map->yaw)
       return 0;
@@ -1756,10 +1765,11 @@ static long gpuMultipoleCommonSupported(long nSlices, long nKicks,
                                         short malignMethod,
                                         short expandHamiltonian) {
   (void)expandHamiltonian;
+  (void)synchRad;
 
   if (spinCoordOffset)
     return 0;
-  if (synchRad || isr)
+  if (isr)
     return 0;
   (void)tilt;
   (void)dx;
@@ -1784,6 +1794,8 @@ static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr) {
   case T_MULT: {
     MULT *multipole = (MULT *)eptr->p_elem;
 
+    if (multipole->synch_rad)
+      return 0;
     if (!gpuMultipoleCommonSupported(multipole->nSlices, 0, 2,
                                      multipole->synch_rad, 0,
                                      multipole->tilt, 0, 0,
@@ -1804,6 +1816,8 @@ static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr) {
   case T_KQUAD: {
     KQUAD *kquad = (KQUAD *)eptr->p_elem;
 
+    if (kquad->synch_rad && kquad->length < 1e-6)
+      return 0;
     if (!gpuMultipoleCommonSupported(kquad->nSlices, kquad->n_kicks,
                                      kquad->integration_order,
                                      kquad->synch_rad, kquad->isr,
@@ -1832,6 +1846,8 @@ static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr) {
   case T_KSEXT: {
     KSEXT *ksext = (KSEXT *)eptr->p_elem;
 
+    if (ksext->synch_rad)
+      return 0;
     if (!gpuMultipoleCommonSupported(ksext->nSlices, ksext->n_kicks,
                                      ksext->integration_order,
                                      ksext->synch_rad, ksext->isr,
@@ -1856,6 +1872,8 @@ static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr) {
   case T_KOCT: {
     KOCT *koct = (KOCT *)eptr->p_elem;
 
+    if (koct->synch_rad)
+      return 0;
     if (!gpuMultipoleCommonSupported(koct->nSlices, koct->n_kicks,
                                      koct->integration_order,
                                      koct->synch_rad, koct->isr,
@@ -1876,6 +1894,8 @@ static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr) {
   case T_DQCOR: {
     DQCOR *dqcor = (DQCOR *)eptr->p_elem;
 
+    if (dqcor->synch_rad)
+      return 0;
     if (!gpuMultipoleCommonSupported(dqcor->nSlices, 0,
                                      dqcor->integration_order,
                                      dqcor->synch_rad, dqcor->isr,
@@ -1909,7 +1929,7 @@ static long gpuCsbendCommonSupported(CSBEND *csbend) {
     return 0;
   if (spinCoordOffset)
     return 0;
-  if (csbend->synch_rad || csbend->isr ||
+  if (csbend->isr ||
       csbend->distributionBasedRadiation ||
       gpuStringSet(csbend->photonOutputFile))
     return 0;
@@ -7848,6 +7868,10 @@ static long gpuPackMultipoleTracking(GPU_MULTIPOLE_DATA *data,
     data->dx = kquad->dx;
     data->dy = kquad->dy;
     data->dz = kquad->dz;
+    if (kquad->synch_rad)
+      data->radCoef =
+        sqr(particleCharge) * pow3(Po) /
+        (6 * PI * epsilon_o * sqr(c_mks) * particleMass);
     gpuCsbendTiltSinCos(kquad->tilt, &data->cosTilt, &data->sinTilt);
     return 1;
   }
@@ -8219,7 +8243,8 @@ static void gpuComputeEtiltCentroidOffset(double *dcoordEtilt, double rho0,
   gpuCsbendRotateCoordinatesForMisalignment(dcoordEtilt, -tilt);
 }
 
-static long gpuPackCsbendTracking(GPU_CSBEND_DATA *data, CSBEND *csbend) {
+static long gpuPackCsbendTracking(GPU_CSBEND_DATA *data, CSBEND *csbend,
+                                  double Po) {
   double b[9], c[9], f[8], g[8];
   double rho, h, fse, tilt, term, e1, e2, psi1, psi2, angle;
   long i;
@@ -8329,6 +8354,11 @@ static long gpuPackCsbendTracking(GPU_CSBEND_DATA *data, CSBEND *csbend) {
   data->length = csbend->length;
   data->rho0 = rho;
   data->rhoActual = 1 / ((1 + fse) * h);
+  data->Po = Po;
+  if (csbend->synch_rad)
+    data->radCoef =
+      sqr(particleCharge) * pow3(Po) * sqr(1 + fse) /
+      (6 * PI * epsilon_o * sqr(c_mks) * particleMass * sqr(rho));
   psi1 = 2 * csbend->hgap *
          (csbend->fint[csbend->e1Index] >= 0 ?
             csbend->fint[csbend->e1Index] : csbend->fintBoth) *
@@ -8442,7 +8472,7 @@ long gpu_track_through_csbend(long n_part, void *csbend0, double p_error,
     return gpuCsbendOnCpu(n_part, csbend, p_error, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour, apFileData,
                           iSlice, eptr, "track_through_csbend radiation sigma fallback");
-  if (!gpuPackCsbendTracking(&data, csbend))
+  if (!gpuPackCsbendTracking(&data, csbend, Po))
     return gpuCsbendOnCpu(n_part, csbend, p_error, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour, apFileData,
                           iSlice, eptr, "track_through_csbend unsupported option");
@@ -8534,7 +8564,8 @@ static void gpuEnsureKickMapCache(const double *xpFactor, const double *ypFactor
   gpuKickMapCache.points = points;
 }
 
-static long gpuPackKickMapTracking(GPU_KICKMAP_DATA *data, KICKMAP *map) {
+static long gpuPackKickMapTracking(GPU_KICKMAP_DATA *data, KICKMAP *map,
+                                   double pRef) {
   long kickSign;
 
   if (!data || !map)
@@ -8547,7 +8578,7 @@ static long gpuPackKickMapTracking(GPU_KICKMAP_DATA *data, KICKMAP *map) {
   if (!gpuKickMapArraysReady(map->points, map->nx, map->ny, map->dxg,
                              map->dyg, map->xpFactor, map->ypFactor))
     return 0;
-  if (map->nKicks < 1 || map->length == 0 || map->synchRad || map->isr ||
+  if (map->nKicks < 1 || map->length == 0 || map->isr ||
       map->tilt || map->dx || map->dy || map->dz || map->yaw)
     return 0;
   kickSign = map->flipSign ? -1 : 1;
@@ -8563,13 +8594,18 @@ static long gpuPackKickMapTracking(GPU_KICKMAP_DATA *data, KICKMAP *map) {
   data->dxg = map->dxg;
   data->dyg = map->dyg;
   data->kickScale = map->factor * kickSign / map->nKicks;
+  data->pRef = pRef;
+  if (map->synchRad)
+    data->radCoef =
+      sqr(particleCharge) * pow3(pRef) /
+      (6 * PI * epsilon_o * sqr(c_mks) * particleMass);
   return 1;
 }
 
 static long gpuPackUndulatorKickMapTracking(GPU_KICKMAP_DATA *data,
                                             UKICKMAP *map, double pRef) {
   long kickSign;
-  double eomc;
+  double eomc, K;
 
   if (!data || !map || pRef == 0)
     return 0;
@@ -8581,8 +8617,12 @@ static long gpuPackUndulatorKickMapTracking(GPU_KICKMAP_DATA *data,
   if (!gpuKickMapArraysReady(map->points, map->nx, map->ny, map->dxg,
                              map->dyg, map->xpFactor, map->ypFactor))
     return 0;
-  if (map->nKicks < 1 || map->length == 0 || map->synchRad || map->isr ||
+  if (map->nKicks < 1 || map->length == 0 || map->isr ||
       map->tilt || map->dx || map->dy || map->dz || map->yaw)
+    return 0;
+  if (map->synchRad && map->nKicks != map->periods)
+    return 0;
+  if (map->Kreference && map->Kactual)
     return 0;
   kickSign = map->flipSign ? -1 : 1;
   eomc = particleCharge / particleMass / c_mks;
@@ -8600,6 +8640,25 @@ static long gpuPackUndulatorKickMapTracking(GPU_KICKMAP_DATA *data,
   data->kickScale = sqr(map->fieldFactor * eomc / pRef) * kickSign;
   if (!map->singlePeriodMap)
     data->kickScale /= map->nKicks;
+  data->pRef = pRef;
+  if (map->synchRad) {
+    double I1 = 0, I2 = 0, I3 = 0, I4 = 0, I5 = 0;
+    double radCoef = 2. / 3 * particleRadius * ipow3(pRef);
+
+    K = map->Kreference ? map->Kreference * map->fieldFactor : map->Kactual;
+    if (map->periods && K) {
+      double radius;
+
+      if (!AddWigglerRadiationIntegrals)
+        return 0;
+      radius =
+        sqrt(sqr(pRef) + 1) * (map->length / map->periods) / (PIx2 * K);
+      AddWigglerRadiationIntegrals(
+        map->length / map->periods, 2, radius, 0.0, 0.0, 1.0, 0.0,
+        &I1, &I2, &I3, &I4, &I5);
+    }
+    data->radiationKick = radCoef * I2;
+  }
   return 1;
 }
 
@@ -8658,7 +8717,7 @@ long gpu_track_kickmap(double **particle, double **accepted, long nParticles,
   if (sigmaDelta2)
     return gpuKickMapOnCpu(particle, accepted, nParticles, pRef, map, zStart,
                            sigmaDelta2, "KICKMAP radiation sigma fallback");
-  if (!gpuPackKickMapTracking(&data, map))
+  if (!gpuPackKickMapTracking(&data, map, pRef))
     return gpuKickMapOnCpu(particle, accepted, nParticles, pRef, map, zStart,
                            sigmaDelta2, "KICKMAP unsupported CUDA option");
   gpuEnsureKickMapCache(map->xpFactor, map->ypFactor, map->points);
