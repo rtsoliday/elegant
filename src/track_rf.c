@@ -14,30 +14,29 @@
  */
 #include "mdb.h"
 #include "track.h"
+#include "gpu/gpu_base.h"
+#ifdef HAVE_GPU
+#  include "gpu_rfdf.h"
+#endif
 
 void set_up_rftm110(RFTM110 *rf_param, double **initial, long n_particles, double pc_central);
 void set_up_rfdf(RFDF *rf_param, double **initial, long n_particles, double pc_central, double zEnd);
 void set_up_mrfdf(MRFDF *rf_param, double **initial, long n_particles, double pc_central);
 
-void track_through_rf_deflector(
-  double **final,
-  RFDF *rf_param,
-  double **initial,
-  long n_particles,
-  double pc_central,
-  double L_central,
-  double zEnd,
-  long pass) {
-  double t_first;   /* time when first particle crosses cavity center */
-  double t_part;    /* time at which a particle enters cavity */
-  double Estrength; /* |e.V.L/nSections|/(gap.m.c^2) */
-  double x, xp, y, yp;
-  double beta, px, py, pz, pc, gamma;
-  double omega, k, Ephase, voltFactor, t0;
-  double dtLight, tLight;
-  double length;
-  long ip, is, n_kicks;
+static long prepare_rf_deflector(RFDF *rf_param, double **initial,
+                                 long n_particles, double pc_central,
+                                 double L_central, double zEnd, long pass,
+                                 GPU_RFDF_DATA *data) {
+  double beta, gamma, omega, k, voltFactor, t0;
+  double dtLight, length;
+  long n_kicks;
 
+  if (!rf_param || !data)
+    bombElegant("NULL input to prepare_rf_deflector", NULL);
+  memset(data, 0, sizeof(*data));
+
+  if (rf_param->frequency == 0)
+    bombElegant("RFDF cannot have frequency=0", NULL);
   omega = 2 * PI * rf_param->frequency;
   k = omega / c_mks;
 
@@ -52,15 +51,10 @@ void track_through_rf_deflector(
   if (n_kicks % 2 == 0)
     n_kicks += 1;
 
-  if (rf_param->frequency == 0)
-    bombElegant("RFDF cannot have frequency=0", NULL);
   if (rf_param->voltage == 0 ||
       (rf_param->startPass >= 0 && pass < rf_param->startPass) ||
-      (rf_param->endPass >= 0 && pass > rf_param->endPass)) {
-    if (isSlave || !distributedBeam)
-      exactDrift(initial, n_particles, rf_param->length);
-    return;
-  }
+      (rf_param->endPass >= 0 && pass > rf_param->endPass))
+    return 1;
 
   if (!rf_param->initialized || !rf_param->fiducial_seen)
     set_up_rfdf(rf_param, initial, n_particles, pc_central, zEnd);
@@ -78,119 +72,214 @@ void track_through_rf_deflector(
   if (rf_param->n_Vpts) {
     long i_volt;
     if (rf_param->voltageIsPeriodic && t0 > rf_param->V_tFinal)
-      t0 = fmod(t0 - rf_param->V_tInitial, rf_param->V_tFinal - rf_param->V_tInitial) + rf_param->V_tInitial;
-
-    /* find position within voltage waveform array */
+      t0 = fmod(t0 - rf_param->V_tInitial,
+                rf_param->V_tFinal - rf_param->V_tInitial) +
+           rf_param->V_tInitial;
     i_volt = find_nearby_array_entry(rf_param->t_Vf, rf_param->n_Vpts, t0);
-    voltFactor = linear_interpolation(rf_param->Vfactor, rf_param->t_Vf, rf_param->n_Vpts, t0, i_volt);
+    voltFactor = linear_interpolation(rf_param->Vfactor, rf_param->t_Vf,
+                                      rf_param->n_Vpts, t0, i_volt);
   } else {
     voltFactor = 1;
   }
 
   voltFactor *= (1 + rf_param->fse);
+  voltFactor *=
+    (gauss_rn_lim(1.0, rf_param->voltageNoise, 2, random_3) +
+     (rf_param->voltageNoiseGroup ?
+        rf_param->groupVoltageNoise *
+          GetNoiseGroupValue(rf_param->voltageNoiseGroup) :
+        0));
+  if (voltFactor == 0)
+    return 1;
 
-  voltFactor *= (gauss_rn_lim(1.0, rf_param->voltageNoise, 2, random_3) +
-                 (rf_param->voltageNoiseGroup
-                    ? rf_param->groupVoltageNoise * GetNoiseGroupValue(rf_param->voltageNoiseGroup)
-                    : 0));
-
-  if (voltFactor == 0) {
-    exactDrift(initial, n_particles, rf_param->length);
-    return;
-  }
-
-  t_first = rf_param->t_first_particle;
   length = rf_param->length / n_kicks;
-  Ephase = (rf_param->phase + gauss_rn_lim(0.0, rf_param->phaseNoise, 2, random_3) + (rf_param->phaseNoiseGroup ? rf_param->groupPhaseNoise * GetNoiseGroupValue(rf_param->phaseNoiseGroup) : 0)) * PI / 180.0 + omega * (rf_param->time_offset - t_first);
-#ifdef DEBUG
-  fprintf(stdout, "t_first = %21.15e s, Ephase = %21.15e deg\n", t_first, Ephase * 180 / PI);
-#endif
   if (!rf_param->standingWave) {
     dtLight = length / c_mks / 2;
   } else {
     dtLight = 0;
-    Ephase -= omega * rf_param->length / 2 / c_mks;
   }
-#ifdef DEBUG
-  fprintf(stdout, "dtLight=%21.15e, length=%21.15e, omega*dtLight=%21.15e, Ephase = %21.15e deg\n", dtLight, length, omega * dtLight * 180 / PI, Ephase * 180 / PI);
-#endif
 
-  Estrength = voltFactor * (particleCharge * rf_param->voltage / n_kicks) / (particleMass * sqr(c_mks));
+  data->nKicks = n_kicks;
+  data->startPID = rf_param->startPID;
+  data->endPID = rf_param->endPID;
+  data->standingWave = rf_param->standingWave;
+  data->magneticDeflection = rf_param->magneticDeflection;
+  data->length = length;
+  data->pCentral = pc_central;
+  data->omega = omega;
+  data->k = k;
+  data->ePhase =
+    (rf_param->phase +
+     gauss_rn_lim(0.0, rf_param->phaseNoise, 2, random_3) +
+     (rf_param->phaseNoiseGroup ?
+        rf_param->groupPhaseNoise *
+          GetNoiseGroupValue(rf_param->phaseNoiseGroup) :
+        0)) *
+      PI / 180.0 +
+    omega * (rf_param->time_offset - rf_param->t_first_particle);
+  if (rf_param->standingWave)
+    data->ePhase -= omega * rf_param->length / 2 / c_mks;
+  data->dtLight = dtLight;
+  data->eStrength =
+    voltFactor * (particleCharge * rf_param->voltage / n_kicks) /
+    (particleMass * sqr(c_mks));
+  data->b2 = rf_param->b2;
+  data->cMks = c_mks;
+#ifdef DEBUG
+  fprintf(stdout, "t_first = %21.15e s, Ephase = %21.15e deg\n",
+          rf_param->t_first_particle, data->ePhase * 180 / PI);
+  fprintf(stdout,
+          "dtLight=%21.15e, length=%21.15e, omega*dtLight=%21.15e, Ephase = %21.15e deg\n",
+          data->dtLight, data->length,
+          data->omega * data->dtLight * 180 / PI,
+          data->ePhase * 180 / PI);
+#endif
+  return 2;
+}
 
-  if (isSlave || !distributedBeam) {
-    if (rf_param->dx || rf_param->dy || rf_param->dz)
-      offsetBeamCoordinatesForMisalignment(initial, n_particles, rf_param->dx, rf_param->dy, rf_param->dz);
-    if (rf_param->tilt)
-      rotateBeamCoordinatesForMisalignment(initial, n_particles, rf_param->tilt);
-    for (ip = 0; ip < n_particles; ip++) {
-      x = initial[ip][0];
-      xp = initial[ip][1];
-      y = initial[ip][2];
-      yp = initial[ip][3];
-      pc = pc_central * (1 + initial[ip][5]);
-      pz = pc / sqrt(1 + sqr(xp) + sqr(yp));
-      px = xp * pz;
-      py = yp * pz;
-      beta = pc / sqrt(1 + sqr(pc));
-      t_part = initial[ip][4] / (c_mks * beta);
-      tLight = 0;
+static void apply_rf_deflector_cpu(double **final, RFDF *rf_param,
+                                   double **initial, long n_particles,
+                                   const GPU_RFDF_DATA *data) {
+  double t_part, x, xp, y, yp;
+  double beta, px, py, pz, pc;
+  long ip, is;
+
+  if (!(isSlave || !distributedBeam))
+    return;
+  if (rf_param->dx || rf_param->dy || rf_param->dz)
+    offsetBeamCoordinatesForMisalignment(initial, n_particles, rf_param->dx,
+                                         rf_param->dy, rf_param->dz);
+  if (rf_param->tilt)
+    rotateBeamCoordinatesForMisalignment(initial, n_particles,
+                                         rf_param->tilt);
+  for (ip = 0; ip < n_particles; ip++) {
+    double tLight = 0;
+    x = initial[ip][0];
+    xp = initial[ip][1];
+    y = initial[ip][2];
+    yp = initial[ip][3];
+    pc = data->pCentral * (1 + initial[ip][5]);
+    pz = pc / sqrt(1 + sqr(xp) + sqr(yp));
+    px = xp * pz;
+    py = yp * pz;
+    beta = pc / sqrt(1 + sqr(pc));
+    t_part = initial[ip][4] / (data->cMks * beta);
 #ifdef DEBUG
-      fprintf(stdout, "start coord[%ld] = %21.15e, %21.15e, %21.15e, %21.15e, %21.15e, %21.15e\n",
-              ip, x, xp, y, yp, initial[ip][4], initial[ip][5]);
+    fprintf(stdout,
+            "start coord[%ld] = %21.15e, %21.15e, %21.15e, %21.15e, %21.15e, %21.15e\n",
+            ip, x, xp, y, yp, initial[ip][4], initial[ip][5]);
 #endif
-      for (is = 0; is <= n_kicks; is++) {
-        double cos_phase;
-        if (is == 0 || is == n_kicks) {
-          /* first half-drift and last half-drift */
-          t_part += (length * sqrt(1 + sqr(xp) + sqr(yp)) / (2 * c_mks * beta));
-          tLight = dtLight;
-          x += xp * length / 2;
-          y += yp * length / 2;
-          if (is == n_kicks)
-            break;
-        } else {
-          t_part += (length * sqrt(1 + sqr(xp) + sqr(yp)) / (c_mks * beta));
-          tLight += 2 * dtLight;
-          x += xp * length;
-          y += yp * length;
-        }
-#ifdef DEBUG
-        printf("ip=%ld  is=%ld  dphase=%21.15e, phase=%21.15e\n",
-               ip, is, omega * (t_part - tLight) * 180 / PI, fmod((t_part - tLight) * omega + Ephase, PIx2) * 180 / PI);
-#endif
-        if (!((rf_param->startPID>=0 && initial[ip][particleIDIndex]<rf_param->startPID) ||
-              (rf_param->endPID>=0 && initial[ip][particleIDIndex]>rf_param->endPID))) {
-          cos_phase = cos((t_part - tLight) * omega + Ephase);
-          px += Estrength * cos_phase * (1 + rf_param->b2 * (x * x - y * y) / 2.0);
-          if (rf_param->b2)
-            py -= Estrength * cos_phase * rf_param->b2 * x * y;
-          if (rf_param->magneticDeflection)
-            pz = sqrt(sqr(pc) - sqr(px) - sqr(py));
-          pz += Estrength * k * x * (1 + rf_param->b2 * (x * x - 3 * y * y) / 6) * sin((t_part - tLight) * omega + Ephase);
-          xp = px / pz;
-          yp = py / pz;
-          pc = sqrt(sqr(px) + sqr(py) + sqr(pz));
-        }
+    for (is = 0; is <= data->nKicks; is++) {
+      double cos_phase;
+      if (is == 0 || is == data->nKicks) {
+        t_part += data->length * sqrt(1 + sqr(xp) + sqr(yp)) /
+                  (2 * data->cMks * beta);
+        tLight = data->dtLight;
+        x += xp * data->length / 2;
+        y += yp * data->length / 2;
+        if (is == data->nKicks)
+          break;
+      } else {
+        t_part += data->length * sqrt(1 + sqr(xp) + sqr(yp)) /
+                  (data->cMks * beta);
+        tLight += 2 * data->dtLight;
+        x += xp * data->length;
+        y += yp * data->length;
       }
-      beta = pc / sqrt(1 + sqr(pc));
-      final[ip][0] = x;
-      final[ip][1] = xp;
-      final[ip][2] = y;
-      final[ip][3] = yp;
-      final[ip][4] = t_part * c_mks * beta;
-      final[ip][5] = (pc - pc_central) / pc_central;
-      final[ip][6] = initial[ip][6];
 #ifdef DEBUG
-      fprintf(stdout, "stop  coord[%ld] = %21.15e, %21.15e, %21.15e, %21.15e, %21.15e, %21.15e\n",
-              ip, final[ip][0], final[ip][1], final[ip][2], final[ip][3],
-              final[ip][4], final[ip][5]);
+      printf("ip=%ld  is=%ld  dphase=%21.15e, phase=%21.15e\n",
+             ip, is,
+             data->omega * (t_part - tLight) * 180 / PI,
+             fmod((t_part - tLight) * data->omega + data->ePhase,
+                  PIx2) *
+               180 / PI);
 #endif
+      if (!((data->startPID >= 0 &&
+             initial[ip][particleIDIndex] < data->startPID) ||
+            (data->endPID >= 0 &&
+             initial[ip][particleIDIndex] > data->endPID))) {
+        cos_phase = cos((t_part - tLight) * data->omega + data->ePhase);
+        px += data->eStrength * cos_phase *
+              (1 + data->b2 * (x * x - y * y) / 2.0);
+        if (data->b2)
+          py -= data->eStrength * cos_phase * data->b2 * x * y;
+        if (data->magneticDeflection)
+          pz = sqrt(sqr(pc) - sqr(px) - sqr(py));
+        pz += data->eStrength * data->k * x *
+              (1 + data->b2 * (x * x - 3 * y * y) / 6) *
+              sin((t_part - tLight) * data->omega + data->ePhase);
+        xp = px / pz;
+        yp = py / pz;
+        pc = sqrt(sqr(px) + sqr(py) + sqr(pz));
+      }
     }
-    if (rf_param->tilt)
-      rotateBeamCoordinatesForMisalignment(final, n_particles, -rf_param->tilt);
-    if (rf_param->dx || rf_param->dy || rf_param->dz)
-      offsetBeamCoordinatesForMisalignment(final, n_particles, -rf_param->dx, -rf_param->dy, -rf_param->dz);
+    beta = pc / sqrt(1 + sqr(pc));
+    final[ip][0] = x;
+    final[ip][1] = xp;
+    final[ip][2] = y;
+    final[ip][3] = yp;
+    final[ip][4] = t_part * data->cMks * beta;
+    final[ip][5] = (pc - data->pCentral) / data->pCentral;
+    final[ip][6] = initial[ip][6];
+#ifdef DEBUG
+    fprintf(stdout,
+            "stop  coord[%ld] = %21.15e, %21.15e, %21.15e, %21.15e, %21.15e, %21.15e\n",
+            ip, final[ip][0], final[ip][1], final[ip][2], final[ip][3],
+            final[ip][4], final[ip][5]);
+#endif
   }
+  if (rf_param->tilt)
+    rotateBeamCoordinatesForMisalignment(final, n_particles,
+                                         -rf_param->tilt);
+  if (rf_param->dx || rf_param->dy || rf_param->dz)
+    offsetBeamCoordinatesForMisalignment(final, n_particles, -rf_param->dx,
+                                         -rf_param->dy, -rf_param->dz);
+}
+
+void track_through_rf_deflector(
+  double **final,
+  RFDF *rf_param,
+  double **initial,
+  long n_particles,
+  double pc_central,
+  double L_central,
+  double zEnd,
+  long pass) {
+  GPU_RFDF_DATA gpuData;
+  long action;
+
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    double **setupCoordinates = initial;
+    if (!rf_param->initialized || !rf_param->fiducial_seen)
+      setupCoordinates =
+        copyParticlesToCpuReadOnly("RFDF host phase-reference setup");
+    action = prepare_rf_deflector(rf_param, setupCoordinates, n_particles,
+                                  pc_central, L_central, zEnd, pass,
+                                  &gpuData);
+    if (action == 1) {
+      initial = forceParticlesToCpu("inactive RFDF CPU drift");
+      exactDrift(initial, n_particles, rf_param->length);
+      return;
+    }
+    gpu_apply_rfdf(n_particles, &gpuData);
+#  ifdef GPU_VERIFY
+    startCpuTimer();
+    apply_rf_deflector_cpu(final, rf_param, initial, n_particles, &gpuData);
+    compareGpuCpu(n_particles, "track_through_rf_deflector");
+#  endif
+    return;
+  }
+#endif
+
+  action = prepare_rf_deflector(rf_param, initial, n_particles, pc_central,
+                                L_central, zEnd, pass, &gpuData);
+  if (action == 1) {
+    if (isSlave || !distributedBeam)
+      exactDrift(initial, n_particles, rf_param->length);
+    return;
+  }
+  apply_rf_deflector_cpu(final, rf_param, initial, n_particles, &gpuData);
 }
 
 /* routine: track_through_rftm110_deflector()

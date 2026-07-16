@@ -217,6 +217,9 @@ extern int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
                                double pCentral, double volt, double omega,
                                double phase, double cMks,
                                float *milliseconds);
+extern int gpuCudaRfdfTrack(void *coord, long nParticles, int stride,
+                            const GPU_RFDF_DATA *data,
+                            int particleIdIndex, float *milliseconds);
 extern int gpuCudaRfcwRfOnlyMatrix(void *coord, long nParticles, int stride,
                                    double pCentral, double length,
                                    double volt, double omega, double phase,
@@ -706,6 +709,8 @@ static long gpuEnableCombinedWakeFft = 0;
 static long gpuEnableBatchedTuneTracking = 0;
 static long gpuBatchedTuneMinParticles = 32;
 static long gpuEnablePolynomialSeries = 0;
+static long gpuEnableRfdf = 0;
+static long gpuRfdfMinParticles = 64;
 static long gpuEnableLscTracking = 0;
 static long gpuLscTrackingExplicit = 0;
 static long gpuEnableRfcwTrackingDrift = 0;
@@ -2009,6 +2014,25 @@ static long gpuPolynomialSeriesElementSupported(ELEMENT_LIST *eptr) {
   return 1;
 }
 
+static long gpuRfdfElementSupported(ELEMENT_LIST *eptr) {
+  RFDF *rfdf;
+
+  if (!gpuEnableRfdf || gpuBase.backtrack)
+    return 0;
+  if (!eptr || eptr->type != T_RFDF || !eptr->p_elem)
+    return 0;
+  rfdf = (RFDF *)eptr->p_elem;
+  if (rfdf->frequency == 0 || rfdf->voltage == 0 ||
+      rfdf->voltageNoise ||
+      rfdf->phaseNoise || rfdf->groupVoltageNoise ||
+      rfdf->groupPhaseNoise || rfdf->voltageNoiseGroup ||
+      rfdf->phaseNoiseGroup)
+    return 0;
+  if (rfdf->dx || rfdf->dy || rfdf->dz || rfdf->tilt)
+    return 0;
+  return 1;
+}
+
 static long gpuLscDataSupported(LSCDRIFT *lsc) {
   if (!lsc)
     return 0;
@@ -2221,6 +2245,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuPolynomialSeriesElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuBase.magnetMinParticles);
+  if (gpuRfdfElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuRfdfMinParticles);
   if (gpuWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuTrwakeElementSupported(eptr))
@@ -3866,6 +3893,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnablePolynomialSeries =
     gpuEnvSet("ELEGANT_GPU_ENABLE_POLYNOMIAL_SERIES") &&
     gpuEnvFlag("ELEGANT_GPU_ENABLE_POLYNOMIAL_SERIES");
+  gpuEnableRfdf =
+    gpuEnvSet("ELEGANT_GPU_ENABLE_RFDF") &&
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_RFDF");
+  gpuRfdfMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_RFDF_PARTICLES", 64);
+  if (gpuRfdfMinParticles < 1)
+    gpuRfdfMinParticles = 1;
   gpuLscTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_LSC");
   gpuEnableLscTracking = !gpuLscTrackingExplicit ||
                          gpuEnvFlag("ELEGANT_GPU_ENABLE_LSC");
@@ -3884,6 +3918,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnableScmult = 0;
   gpuEnableBatchedTuneTracking = 0;
   gpuEnablePolynomialSeries = 0;
+  gpuEnableRfdf = 0;
 #endif
   gpuAvoidShortGpuIslands = !gpuEnvSet("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS") ||
                             gpuEnvFlag("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS");
@@ -7170,6 +7205,26 @@ long gpu_polynomial_series_tracking(long nParticles, void *polynomialSeries0,
   gpuMarkDeviceChanged(nParticles);
   gpuRecordWallSeconds();
   return nParticles;
+}
+
+void gpu_apply_rfdf(long nParticles, const GPU_RFDF_DATA *data) {
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0)
+    return;
+  if (!data)
+    gpuRequiredFailure("NULL RFDF CUDA tracking data");
+  startGpuTimer();
+  gpuCopyHostToDevice(nParticles);
+  status = gpuCudaRfdfTrack(gpuBase.deviceCoord, nParticles,
+                            (int)gpuBase.deviceStride, data,
+                            particleIDIndex, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("RFDF tracking CUDA kernel", status);
+  gpuRecordHelperKernel(milliseconds);
+  gpuMarkDeviceChanged(nParticles);
+  gpuRecordWallSeconds();
 }
 
 static double gpuLscVarianceFromSums(const GPU_BEAM_SUM_DATA *sums, long coordinate) {

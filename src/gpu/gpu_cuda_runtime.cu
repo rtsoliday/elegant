@@ -1342,6 +1342,73 @@ __global__ void gpuRfcaThinKickKernel(double *coord, long nParticles, int stride
     part[5] = -1;
 }
 
+__global__ void gpuRfdfKernel(double *coord, long nParticles, int stride,
+                              GPU_RFDF_DATA data, int particleIdIndex) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+  double tPart, tLight = 0;
+  double x, xp, y, yp, beta, px, py, pz, pc;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  x = part[0];
+  xp = part[1];
+  y = part[2];
+  yp = part[3];
+  pc = data.pCentral * (1 + part[5]);
+  pz = pc / sqrt(1 + xp * xp + yp * yp);
+  px = xp * pz;
+  py = yp * pz;
+  beta = pc / sqrt(1 + pc * pc);
+  tPart = part[4] / (data.cMks * beta);
+
+  for (long is = 0; is <= data.nKicks; is++) {
+    double cosPhase;
+    if (is == 0 || is == data.nKicks) {
+      tPart += data.length * sqrt(1 + xp * xp + yp * yp) /
+               (2 * data.cMks * beta);
+      tLight = data.dtLight;
+      x += xp * data.length / 2;
+      y += yp * data.length / 2;
+      if (is == data.nKicks)
+        break;
+    } else {
+      tPart += data.length * sqrt(1 + xp * xp + yp * yp) /
+               (data.cMks * beta);
+      tLight += 2 * data.dtLight;
+      x += xp * data.length;
+      y += yp * data.length;
+    }
+    if (!((data.startPID >= 0 &&
+           part[particleIdIndex] < data.startPID) ||
+          (data.endPID >= 0 &&
+           part[particleIdIndex] > data.endPID))) {
+      double phase = (tPart - tLight) * data.omega + data.ePhase;
+      cosPhase = cos(phase);
+      px += data.eStrength * cosPhase *
+            (1 + data.b2 * (x * x - y * y) / 2.0);
+      if (data.b2)
+        py -= data.eStrength * cosPhase * data.b2 * x * y;
+      if (data.magneticDeflection)
+        pz = sqrt(pc * pc - px * px - py * py);
+      pz += data.eStrength * data.k * x *
+            (1 + data.b2 * (x * x - 3 * y * y) / 6) * sin(phase);
+      xp = px / pz;
+      yp = py / pz;
+      pc = sqrt(px * px + py * py + pz * pz);
+    }
+  }
+
+  beta = pc / sqrt(1 + pc * pc);
+  part[0] = x;
+  part[1] = xp;
+  part[2] = y;
+  part[3] = yp;
+  part[4] = tPart * data.cMks * beta;
+  part[5] = (pc - data.pCentral) / data.pCentral;
+}
+
 __global__ void gpuRfcwRfOnlyMatrixKernel(double *coord, long nParticles, int stride,
                                           double pCentral, double length,
                                           double volt, double omega,
@@ -7525,6 +7592,26 @@ extern "C" int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
   gpuRfcaThinKickKernel<<<blocks, threads>>>(static_cast<double *>(coord), nParticles,
                                              stride, pCentral, volt, omega,
                                              phase, cMks);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaRfdfTrack(void *coord, long nParticles, int stride,
+                                const GPU_RFDF_DATA *data,
+                                int particleIdIndex, float *milliseconds) {
+  cudaEvent_t start, stop;
+  int threads = 256;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  if (!coord || !data || nParticles <= 0 || stride < 7 ||
+      particleIdIndex < 0 || particleIdIndex >= stride)
+    return static_cast<int>(cudaErrorInvalidValue);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuRfdfKernel<<<blocks, threads>>>(static_cast<double *>(coord),
+                                     nParticles, stride, *data,
+                                     particleIdIndex);
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
 

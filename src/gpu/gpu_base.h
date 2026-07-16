@@ -287,6 +287,23 @@ typedef struct GPU_POLYNOMIAL_SERIES_DATA {
   double slopeLimit;
 } GPU_POLYNOMIAL_SERIES_DATA;
 
+typedef struct GPU_RFDF_DATA {
+  long nKicks;
+  long startPID;
+  long endPID;
+  int standingWave;
+  int magneticDeflection;
+  double length;
+  double pCentral;
+  double omega;
+  double k;
+  double ePhase;
+  double dtLight;
+  double eStrength;
+  double b2;
+  double cMks;
+} GPU_RFDF_DATA;
+
 typedef struct GPU_KICKMAP_DATA {
   int undulator;
   long nKicks;
