@@ -163,16 +163,19 @@ ICONV_LIB = $(firstword $(wildcard \
           $(addsuffix /libiconv.so, $(LIB_DIRS)) \
           $(addsuffix /libiconv.a, $(LIB_DIRS))))
 
-ifneq ($(wildcard /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/aocc-4.1.0),)
+IOMP5_LIB = -liomp5
+ifneq ($(wildcard /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0),)
   IMPROV_BUILD=1
-  LZMA_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/aocc-4.1.0/xz-5.4.1-gju4bpk/lib/liblzma.so
-  HDF5_LIB = -Wl,-rpath,/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-11.4.0/hdf5-1.14.2-l6qnsjk/lib
-  HDF5_LIB += /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-11.4.0/hdf5-1.14.2-l6qnsjk/lib/libhdf5.so
-  TIFF_LIB = -Wl,-rpath,/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-11.4.0/libtiff-4.5.1-bzputfw/lib64
-  TIFF_LIB += /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-11.4.0/libtiff-4.5.1-bzputfw/lib64/libtiff.so
+  LZMA_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/xz-5.4.6-3zhah5p/lib/liblzma.so
+  HDF5_LIB = -Wl,-rpath,/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/hdf5-1.14.3-o6prqns/lib
+  HDF5_LIB += /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/hdf5-1.14.3-o6prqns/lib/libhdf5.so
+  TIFF_LIB = -Wl,-rpath,/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libtiff-4.5.1-hmstscv/lib64
+  TIFF_LIB += /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libtiff-4.5.1-hmstscv/lib64/libtiff.so
   GD_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libgd-2.3.3-enxppnl/lib/libgd.so
-  JPEG_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-11.4.0/libjpeg-turbo-3.0.0-hbvbijw/lib64/libjpeg.so
-  FFTW3_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/aocc-4.1.0/amdfftw-4.1-dd3vgn3/lib/libfftw3.so.3.6.10
+  JPEG_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libjpeg-turbo-3.0.0-v7a5c5g/lib64/libjpeg.so
+  FFTW3_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/fftw-3.3.10-x5237xr/lib/libfftw3.so
+  IOMP5_LIB_DIR = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/intel-oneapi-mkl-2024.2.2-ueuijm5/compiler/2024.2/lib
+  IOMP5_LIB = -Wl,-rpath,$(IOMP5_LIB_DIR) $(IOMP5_LIB_DIR)/libiomp5.so
 endif
 
 
@@ -194,7 +197,7 @@ else
            -Wl,-rpath,$(MKLROOT)/lib/intel64/../../../../compiler/latest/linux/compiler/lib/intel64_lin \
            -L$(MKLROOT)/lib/intel64/../../../compiler/lib/intel64 \
            -L$(MKLROOT)/lib/intel64/../../../../compiler/latest/linux/compiler/lib/intel64_lin \
-           -liomp5 -ldl
+           $(IOMP5_LIB) -ldl
 endif
 else
  LAPACK_CFLAG = -DLAPACK
@@ -307,6 +310,10 @@ ifeq ($(OS), Linux)
   LDFLAGS += -rdynamic -m64
   LIBRARY_SYS_LIBS = -lpthread -lm -lrt -ldl -lgcc
   PROD_SYS_LIBS = -lpthread -lm -lrt -ldl -lgcc
+  ifeq ($(IMPROV_BUILD),1)
+    LIBRARY_SYS_LIBS += $(IOMP5_LIB)
+    PROD_SYS_LIBS += $(IOMP5_LIB)
+  endif
   OBJEXT = o
   LIBEXT = a
   LIBPRE = lib
