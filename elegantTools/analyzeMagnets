@@ -37,14 +37,27 @@ foreach ext {param paramOpt} {
     }
 }
 if !$found {
-    return -code error "param and paramOpt files not found"
+    return -code error "param and paramOpt files not found. Need at least one."
 }
 
-if ![file exists $rootname.twi] {
-    return -code error "twi file not found"
+set found 0
+foreach ext {twi cen} pCentralParam {1 0} {
+    if [file exists $rootname.$ext] {
+	set found 1
+	set pCentralFile $rootname.$ext
+	break
+    }
 }
+if !$found {
+    return -code error "twi and cen files not found. Need at least one."
+}
+
 if [expr $H==0] {
-    set pCentral [exec sdds2stream -parameter=pCentral $rootname.twi]
+    if $pCentralParam {
+	set pCentral [exec sdds2stream -parameter=pCentral $pCentralFile]
+    } else {
+	set pCentral [lindex [exec sdds2stream -column=pCentral $pCentralFile] end]
+    }	
     set H [expr -$pCentral*0.51099906e6/2.99792458e+08]
 } else {
     set pCentral [expr -$H/(0.51099906e6/2.99792458e+08)]
@@ -131,7 +144,7 @@ eval exec sddsprocess $paramFile.tmp1 -pipe=out -match=col,ElementType=*BEN* \
   -print=parameter,ElementTag,%s.%.0lf,ElementName,ElementOccurence \
   -convert=parameter,Length,m,,1 \
   | sddscollapse -pipe \
-  | sddsxref -pipe $rootname.twi -match=ElementName -take=s \
+  | sddsxref -pipe $pCentralFile -match=ElementName -take=s \
   | sddssort -pipe=in -column=s $paramFile.1 
 
 exec sddsprocess $paramFile.tmp1 $rootname-B-K1 -match=col,ElementType=*BEN* \

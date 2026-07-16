@@ -74,6 +74,7 @@ Here is a summary of what's changed since release 2026.3.  Historical change log
 \begin{itemize}
 \item The \verb|save_lattice| command now has a \verb|comment| parameter that can be used to provide a text that
   will be placed into the saved lattice file as a comment.
+\item The \verb|rf_setup| command can now generate a file with the rf separatrix.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -6134,6 +6135,8 @@ Note that $i=0$ on the first pass.
 \begin{verbatim}
 &rf_setup
     STRING filename = NULL;
+    STRING bucket_filename = NULL;
+    long bucket_points = 200;
     STRING name = NULL;
     long start_occurence = -1;
     long end_occurence = -1;
@@ -6203,6 +6206,15 @@ in a sequence like the following
 
 \begin{itemize}
 \item \verb|filename| --- Name of a file to which data related to the rf settings will be written.
+\item \verb|bucket_filename| --- If given, the name of an SDDS file to which the rf-bucket separatrix is
+  written in $(t,p)$ coordinates.  The file has columns \verb|t| (time relative to the synchronous particle, in
+  seconds), \verb|p| (total momentum $\beta\gamma$ on the separatrix), and \verb|delta| (the fractional momentum
+  deviation $(p-p_{\rm central})/p_{\rm central}$).  The scalar parameters \verb|Frequency|, \verb|Harmonic|,
+  \verb|Voltage|, \verb|PhiSynch|, and \verb|BucketHalfHeight| are also stored.  One page is written each time the
+  rf is set up (i.e., one page per step when \verb|set_for_each_step| is nonzero).  If there is no stable bucket, a zero-length page
+  is written.
+\item \verb|bucket_points| --- The number of points used for each of the two (upper and lower) branches of the
+  separatrix, so that each page contains \verb|2*bucket_points| rows.
 \item \verb|name| --- A possibly-wildcard-containing string giving the names of the
         elements to set.  If not given, all RFCA elements are selected.
 \item \verb|start_occurence|, \verb|end_occurence| --- If nonzero, these give the starting and
