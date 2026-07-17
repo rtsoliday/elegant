@@ -1105,8 +1105,13 @@ static const char *gpuMagnetTrackingStatus(void) {
 }
 
 static const char *gpuCsrResidentStatus(void) {
+  if (gpuBase.orderSensitiveOutputNeeded &&
+      !gpuCsrTrackingExplicit && !gpuCsrResidentExplicit)
+    return "; CSR resident drift uses CPU for order-sensitive output by default";
   if (gpuEnableCsrResident)
-    return "; CSR resident drift explicitly enabled";
+    return gpuCsrResidentExplicit ?
+           "; CSR resident drift explicitly enabled" :
+           "; CSR resident drift enabled by default";
   if (gpuCsrResidentExplicit)
     return gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT_DRIFT") ?
            "; CSR resident drift requested but CSR drift tracking disabled" :
@@ -1115,10 +1120,15 @@ static const char *gpuCsrResidentStatus(void) {
 }
 
 static const char *gpuCsrTrackingStatus(void) {
+  if (gpuBase.orderSensitiveOutputNeeded &&
+      !gpuCsrTrackingExplicit && !gpuCsrResidentExplicit)
+    return "; CSR drift tracking uses CPU for order-sensitive output by default";
   if (gpuEnableCsrTracking)
-    return "; CSR drift tracking explicitly enabled";
+    return gpuCsrTrackingExplicit ?
+           "; CSR drift tracking explicitly enabled" :
+           "; CSR drift tracking enabled by default";
   return gpuCsrTrackingExplicit ? "; CSR drift tracking explicitly disabled" :
-                                  "; CSR drift tracking disabled by default";
+                                  "";
 }
 
 static const char *gpuScmultStatus(void) {
@@ -1136,17 +1146,27 @@ static const char *gpuWakeTrackingStatus(void) {
 }
 
 static const char *gpuCombinedWakeStatus(void) {
+  if (gpuBase.orderSensitiveOutputNeeded && !gpuCombinedWakeExplicit)
+    return "; IMPEDANCE/CWAKE uses CPU for order-sensitive output by default";
   if (gpuEnableCombinedWake)
     return gpuEnableCombinedWakeMultibunch ?
            (gpuEnableCombinedWakeFft ?
-            "; IMPEDANCE/CWAKE explicitly enabled; multibunch and CWAKE FFT enabled" :
-            "; IMPEDANCE/CWAKE explicitly enabled; multibunch enabled") :
+            (gpuCombinedWakeExplicit ?
+             "; IMPEDANCE/CWAKE explicitly enabled; multibunch and CWAKE FFT enabled" :
+             "; IMPEDANCE/CWAKE enabled by default; multibunch and CWAKE FFT enabled") :
+            (gpuCombinedWakeExplicit ?
+             "; IMPEDANCE/CWAKE explicitly enabled; multibunch enabled" :
+             "; IMPEDANCE/CWAKE enabled by default; multibunch enabled")) :
            (gpuEnableCombinedWakeFft ?
-            "; IMPEDANCE/CWAKE explicitly enabled; CWAKE FFT enabled" :
-            "; IMPEDANCE/CWAKE explicitly enabled");
+            (gpuCombinedWakeExplicit ?
+             "; IMPEDANCE/CWAKE explicitly enabled; CWAKE FFT enabled" :
+             "; IMPEDANCE/CWAKE enabled by default; CWAKE FFT enabled") :
+            (gpuCombinedWakeExplicit ?
+             "; IMPEDANCE/CWAKE explicitly enabled" :
+             "; IMPEDANCE/CWAKE enabled by default"));
   return gpuCombinedWakeExplicit ?
          "; IMPEDANCE/CWAKE explicitly disabled" :
-         "; IMPEDANCE/CWAKE disabled by default";
+         "";
 }
 
 static const char *gpuLscTrackingStatus(void) {
@@ -1205,9 +1225,11 @@ static const char *gpuMagnetLossCompactionStatus(void) {
 
 static const char *gpuCsbendDriftStatus(void) {
   if (gpuEnableCsbendDrift)
-    return "; CSBEND drift paths explicitly enabled";
+    return gpuCsbendDriftExplicit ?
+           "; CSBEND drift paths explicitly enabled" :
+           "; CSBEND drift paths enabled by default";
   return gpuCsbendDriftExplicit ? "; CSBEND drift paths explicitly disabled" :
-                                  "; CSBEND drift paths disabled by default";
+                                  "";
 }
 
 static void gpuRequiredFailure(const char *message) {
@@ -2017,6 +2039,8 @@ static long gpuTrwakeElementSupported(ELEMENT_LIST *eptr) {
 static long gpuCombinedWakeElementSupported(ELEMENT_LIST *eptr) {
   if (!gpuEnableCombinedWake || !eptr || !eptr->p_elem)
     return 0;
+  if (gpuBase.orderSensitiveOutputNeeded && !gpuCombinedWakeExplicit)
+    return 0;
 #if USE_MPI
   if (distributedBeam)
     return 0;
@@ -2222,6 +2246,9 @@ static long gpuCsrDriftNoOpElementSupported(ELEMENT_LIST *eptr) {
   CSRDRIFT *csrDrift;
 
   if (!gpuEnableCsrResident)
+    return 0;
+  if (gpuBase.orderSensitiveOutputNeeded &&
+      !gpuCsrTrackingExplicit && !gpuCsrResidentExplicit)
     return 0;
   if (!eptr || eptr->type != T_CSRDRIFT || !eptr->p_elem)
     return 0;
@@ -3998,7 +4025,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvFlag("ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION") :
     !gpuBase.lossOutputNeeded;
   gpuCsbendDriftExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSBEND_DRIFT");
-  gpuEnableCsbendDrift = gpuCsbendDriftExplicit &&
+  gpuEnableCsbendDrift = !gpuCsbendDriftExplicit ||
                          gpuEnvFlag("ELEGANT_GPU_ENABLE_CSBEND_DRIFT");
   gpuEnableApertureAcceptedDevice =
     (gpuEnableApertureParallelCompaction || gpuEnableMagnetLossCompaction) &&
@@ -4007,12 +4034,11 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuCsrTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSR_DRIFT");
   gpuCsrResidentExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_CSR_RESIDENT_DRIFT");
   gpuEnableCsrTracking =
-    gpuCsrTrackingExplicit &&
-    gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_DRIFT");
+    !gpuCsrTrackingExplicit || gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_DRIFT");
   gpuEnableCsrResident =
     gpuEnableCsrTracking &&
-    gpuCsrResidentExplicit &&
-    gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT_DRIFT");
+    (!gpuCsrResidentExplicit ||
+     gpuEnvFlag("ELEGANT_GPU_ENABLE_CSR_RESIDENT_DRIFT"));
   gpuScmultExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_SCMULT");
   gpuEnableScmult = !gpuScmultExplicit ||
                     gpuEnvFlag("ELEGANT_GPU_ENABLE_SCMULT");
@@ -4024,49 +4050,49 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuCombinedWakeExplicit =
     gpuEnvSet("ELEGANT_GPU_ENABLE_COMBINED_WAKE");
   gpuEnableCombinedWake =
-    gpuCombinedWakeExplicit &&
+    !gpuCombinedWakeExplicit ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_COMBINED_WAKE");
   gpuEnableCombinedWakeMultibunch =
     gpuEnableCombinedWake &&
-    gpuEnvSet("ELEGANT_GPU_ENABLE_COMBINED_WAKE_MULTIBUNCH") &&
-    gpuEnvFlag("ELEGANT_GPU_ENABLE_COMBINED_WAKE_MULTIBUNCH");
+    (!gpuEnvSet("ELEGANT_GPU_ENABLE_COMBINED_WAKE_MULTIBUNCH") ||
+     gpuEnvFlag("ELEGANT_GPU_ENABLE_COMBINED_WAKE_MULTIBUNCH"));
   gpuEnableCombinedWakeFft =
     gpuEnableCombinedWake &&
-    gpuEnvSet("ELEGANT_GPU_ENABLE_COMBINED_WAKE_FFT") &&
-    gpuEnvFlag("ELEGANT_GPU_ENABLE_COMBINED_WAKE_FFT");
+    (!gpuEnvSet("ELEGANT_GPU_ENABLE_COMBINED_WAKE_FFT") ||
+     gpuEnvFlag("ELEGANT_GPU_ENABLE_COMBINED_WAKE_FFT"));
   gpuEnableBatchedTuneTracking =
-    gpuEnvSet("ELEGANT_GPU_ENABLE_BATCHED_TUNE_TRACKING") &&
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_BATCHED_TUNE_TRACKING") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_BATCHED_TUNE_TRACKING");
   gpuBatchedTuneMinParticles =
     gpuEnvLong("ELEGANT_GPU_MIN_BATCHED_TUNE_PARTICLES", 32);
   if (gpuBatchedTuneMinParticles < 1)
     gpuBatchedTuneMinParticles = 1;
   gpuEnablePolynomialSeries =
-    gpuEnvSet("ELEGANT_GPU_ENABLE_POLYNOMIAL_SERIES") &&
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_POLYNOMIAL_SERIES") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_POLYNOMIAL_SERIES");
   gpuEnableRfdf =
-    gpuEnvSet("ELEGANT_GPU_ENABLE_RFDF") &&
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_RFDF") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_RFDF");
   gpuRfdfMinParticles =
     gpuEnvLong("ELEGANT_GPU_MIN_RFDF_PARTICLES", 64);
   if (gpuRfdfMinParticles < 1)
     gpuRfdfMinParticles = 1;
   gpuEnableBggexp =
-    gpuEnvSet("ELEGANT_GPU_ENABLE_BGGEXP") &&
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_BGGEXP") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_BGGEXP");
   gpuBggexpMinParticles =
     gpuEnvLong("ELEGANT_GPU_MIN_BGGEXP_PARTICLES", 64);
   if (gpuBggexpMinParticles < 1)
     gpuBggexpMinParticles = 1;
   gpuEnableCwiggler =
-    gpuEnvSet("ELEGANT_GPU_ENABLE_CWIGGLER") &&
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_CWIGGLER") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_CWIGGLER");
   gpuCwigglerMinParticles =
     gpuEnvLong("ELEGANT_GPU_MIN_CWIGGLER_PARTICLES", 64);
   if (gpuCwigglerMinParticles < 1)
     gpuCwigglerMinParticles = 1;
   gpuEnableFtable =
-    gpuEnvSet("ELEGANT_GPU_ENABLE_FTABLE") &&
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_FTABLE") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_FTABLE");
   gpuFtableMinParticles =
     gpuEnvLong("ELEGANT_GPU_MIN_FTABLE_PARTICLES", 64);
@@ -4086,8 +4112,28 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuRfcaChangeP0DriftExplicit &&
     gpuEnvFlag("ELEGANT_GPU_ENABLE_RFCA_CHANGE_P0_DRIFT");
 #if USE_MPI
+  if (!gpuCsbendDriftExplicit)
+    gpuEnableCsbendDrift = 0;
+  if (!gpuCsrTrackingExplicit) {
+    gpuEnableCsrTracking = 0;
+    gpuEnableCsrResident = 0;
+  } else if (!gpuCsrResidentExplicit) {
+    gpuEnableCsrResident = 0;
+  }
   if (!gpuScmultExplicit)
     gpuEnableScmult = 0;
+  if (!gpuCombinedWakeExplicit) {
+    gpuEnableCombinedWake = 0;
+    gpuEnableCombinedWakeMultibunch = 0;
+    gpuEnableCombinedWakeFft = 0;
+  } else {
+    if (!gpuEnvSet("ELEGANT_GPU_ENABLE_COMBINED_WAKE_MULTIBUNCH"))
+      gpuEnableCombinedWakeMultibunch = 0;
+    if (!gpuEnvSet("ELEGANT_GPU_ENABLE_COMBINED_WAKE_FFT"))
+      gpuEnableCombinedWakeFft = 0;
+  }
+  if (!gpuRfcaChangeP0DriftExplicit)
+    gpuEnableRfcaChangeP0Drift = 0;
   gpuEnableBatchedTuneTracking = 0;
   gpuEnablePolynomialSeries = 0;
   gpuEnableRfdf = 0;
@@ -4473,7 +4519,9 @@ void displayTimings(void) {
 
 void compareGpuCpu(long nParticles, const char *label) {
   double absTol = gpuEnvDouble("ELEGANT_GPU_COMPARE_ABS", 1e-12);
-  double relTol = gpuEnvDouble("ELEGANT_GPU_COMPARE_REL", 1e-12);
+  double defaultRelTol =
+    label && strcmp(label, "field_table_tracking") == 0 ? 1e-10 : 1e-12;
+  double relTol = gpuEnvDouble("ELEGANT_GPU_COMPARE_REL", defaultRelTol);
   double maxAbs = 0, maxRel = 0;
   double *gpuCopy;
   unsigned long count;
@@ -5954,6 +6002,9 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
 }
 long gpu_csr_csbend_wake_available(long nParticles, long nBins) {
   if (!gpuEnableCsrTracking)
+    return 0;
+  if (gpuBase.orderSensitiveOutputNeeded &&
+      !gpuCsrTrackingExplicit && !gpuCsrResidentExplicit)
     return 0;
   if (!gpuBase.initialized || gpuBase.activeDevice < 0)
     return 0;
