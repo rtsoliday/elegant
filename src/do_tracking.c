@@ -115,8 +115,17 @@ void setTrackingWedgeFunction(void (*wedgeFunc)(double **part, long np, long pas
  */
 
 static void (*trackingOmniWedgeFunction)(double **part, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral);
+static long (*trackingOmniWedgeGpuFunction)(long np, long pass, long i_elem,
+                                           long n_elem, ELEMENT_LIST *eptr,
+                                           double *pCentral) = NULL;
 void setTrackingOmniWedgeFunction(void (*wedgeFunc)(double **part, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral)) {
   trackingOmniWedgeFunction = wedgeFunc;
+}
+void setTrackingOmniWedgeGpuFunction(long (*wedgeFunc)(long np, long pass,
+                                                       long i_elem, long n_elem,
+                                                       ELEMENT_LIST *eptr,
+                                                       double *pCentral)) {
+  trackingOmniWedgeGpuFunction = wedgeFunc;
 }
 
 static double timeCounter[N_TYPES], tStart;
@@ -869,9 +878,20 @@ long do_tracking(
 #endif
           if (trackingOmniWedgeFunction) {
 #ifdef HAVE_GPU
-            coord = forceParticlesToCpu("trackingOmniWedgeFunction");
+            if (trackingOmniWedgeGpuFunction &&
+                (*trackingOmniWedgeGpuFunction)(nToTrack, i_pass, i_elem,
+                                                beamline->n_elems, eptr,
+                                                P_central)) {
+              /* Device callback handled the wedge and kept coordinates resident. */
+            } else {
+              coord = forceParticlesToCpu("trackingOmniWedgeFunction");
+              (*trackingOmniWedgeFunction)(coord, nToTrack, i_pass, i_elem,
+                                           beamline->n_elems, eptr, P_central);
+            }
+#else
+            (*trackingOmniWedgeFunction)(coord, nToTrack, i_pass, i_elem,
+                                         beamline->n_elems, eptr, P_central);
 #endif
-            (*trackingOmniWedgeFunction)(coord, nToTrack, i_pass, i_elem, beamline->n_elems, eptr, P_central);
           }
           if (trackingWedgeFunction && eptr == trackingWedgeElement) {
 #ifdef HAVE_GPU

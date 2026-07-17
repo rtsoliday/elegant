@@ -1381,6 +1381,44 @@ __global__ void gpuOffsetBeamKernel(double *coord, long nParticles, int stride,
   }
 }
 
+__global__ void gpuBatchedMomentumSearchKernel(
+  double *coord, long nParticles, int stride, const double *searchData,
+  long searchParticles, long target, long pass, long firePass,
+  double *history, double *historyCount, long turns,
+  double dx, double dy, double pCentral, double cMks) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long id, turn;
+  double *part, pc, beta, t;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  id = (long)part[6] - 1;
+  if (id < 0 || id >= searchParticles ||
+      (long)searchData[2 * id] != target)
+    return;
+  if (pass == firePass) {
+    part[0] += dx;
+    part[2] += dy;
+    pc = pCentral * (1 + part[5]);
+    beta = pc / sqrt(1 + pc * pc);
+    t = part[4] / (beta * cMks);
+    part[5] += searchData[2 * id + 1];
+    pc = pCentral * (1 + part[5]);
+    beta = pc / sqrt(1 + pc * pc);
+    part[4] = t * beta * cMks;
+  }
+  turn = pass - firePass;
+  if (turn < 0 || turn >= turns)
+    return;
+  history[(id * 5 + 0) * turns + turn] = part[0];
+  history[(id * 5 + 1) * turns + turn] = part[1];
+  history[(id * 5 + 2) * turns + turn] = part[2];
+  history[(id * 5 + 3) * turns + turn] = part[3];
+  history[(id * 5 + 4) * turns + turn] = part[5];
+  historyCount[id] = turn + 1;
+}
+
 __global__ void gpuSetCentralMomentumKernel(double *coord, long nParticles, int stride,
                                             double oldP, double newP) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
@@ -8468,6 +8506,39 @@ extern "C" int gpuCudaOffsetBeam(void *coord, long nParticles, int stride,
                                            dx, dxp, dy, dyp, dz, dt, dp, de,
                                            pCentral, startPID, endPID,
                                            allParticles, cMks);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaClearBatchedSearchHistory(
+  void *history, unsigned long historyCount, void *turnCount,
+  unsigned long particles) {
+  cudaError_t status;
+  status = cudaMemset(history, 0, historyCount * sizeof(double));
+  if (status == cudaSuccess)
+    status = cudaMemset(turnCount, 0, particles * sizeof(double));
+  return static_cast<int>(status);
+}
+
+extern "C" int gpuCudaApplyBatchedMomentumSearch(
+  void *coord, long nParticles, int stride, const void *searchData,
+  long searchParticles, long target, long pass, long firePass,
+  void *history, void *historyCount, long turns,
+  double dx, double dy, double pCentral, double cMks,
+  float *milliseconds) {
+  cudaEvent_t start, stop;
+  int threads = 256;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuBatchedMomentumSearchKernel<<<blocks, threads>>>(
+    static_cast<double *>(coord), nParticles, stride,
+    static_cast<const double *>(searchData), searchParticles,
+    target, pass, firePass, static_cast<double *>(history),
+    static_cast<double *>(historyCount), turns,
+    dx, dy, pCentral, cMks);
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
 

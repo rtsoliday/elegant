@@ -403,6 +403,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
                  long alwaysChangeP0, long backtrack);
 void gpuBaseDealloc(void);
 void gpuDisableForRun(const char *reason);
+void gpuSetTrackingSuppressed(long suppressed);
 void setElementGpuData(void *eptr, long nParticles);
 long getElementOnGpu(void);
 void gpuSetCpuParticleArray(double **coord, long nParticles);

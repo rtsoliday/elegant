@@ -17,6 +17,9 @@
 #include "mdb.h"
 #include "track.h"
 #include "momentumAperture.h"
+#if defined(HAVE_GPU) && !USE_MPI
+#  include "gpu_search.h"
+#endif
 
 static SDDS_DATASET SDDSma;
 static double momentumOffsetValue = 0;
@@ -32,6 +35,102 @@ long determineTunesFromTrackingData(double *tune, double **turnByTurnCoord, long
 long multiparticleLocalMomentumAcceptance(RUN *run, VARY *control, ERRORVAL *errcon, LINE_LIST *beamline, double *startingCoord);
 
 #define MOMENTUM_APERTURE_TRACKING_FLAGS LOSS_COORDINATES_NEEDED
+
+#if defined(HAVE_GPU) && !USE_MPI
+typedef struct BATCHED_MOMENTUM_TASK {
+  ELEMENT_LIST *element;
+  long elementIndex;
+  long side;
+  long row;
+  long slot;
+  long firstCandidate;
+  long candidates;
+  long done;
+  double interval;
+  double deltaLost;
+} BATCHED_MOMENTUM_TASK;
+
+static ELEMENT_LIST **batchedMomentumTargetElement = NULL;
+static long batchedMomentumTargets = 0;
+static const long *batchedMomentumTargetById = NULL;
+static const double *batchedMomentumDeltaById = NULL;
+static double *batchedMomentumHistory = NULL;
+static double *batchedMomentumHistoryCount = NULL;
+static long batchedMomentumParticles = 0;
+static long batchedMomentumTurns = 0;
+
+static long batchedMomentumTargetToken(ELEMENT_LIST *eptr) {
+  long target;
+  for (target = 0; target < batchedMomentumTargets; target++)
+    if (batchedMomentumTargetElement[target] == eptr)
+      return target;
+  return -1;
+}
+
+static void momentumOffsetFunctionBatched(
+  double **coord, long np, long pass, long i_elem, long n_elem,
+  ELEMENT_LIST *eptr, double *pCentral) {
+  MALIGN mal;
+  long id, ip, target, turn;
+  (void)i_elem;
+  (void)n_elem;
+
+  target = batchedMomentumTargetToken(eptr);
+  if (target < 0)
+    return;
+  turn = pass - fireOnPass;
+  memset(&mal, 0, sizeof(mal));
+  mal.dx = x_initial;
+  mal.dy = y_initial;
+  mal.startPID = mal.endPID = -1;
+  for (ip = 0; ip < np; ip++) {
+    id = (long)coord[ip][particleIDIndex] - 1;
+    if (id < 0 || id >= batchedMomentumParticles ||
+        batchedMomentumTargetById[id] != target)
+      continue;
+    if (pass == fireOnPass) {
+      mal.dp = batchedMomentumDeltaById[id];
+      offset_beam(coord + ip, 1, &mal, *pCentral);
+    }
+    if (turn >= 0 && turn < batchedMomentumTurns) {
+      double *history = batchedMomentumHistory +
+                        (size_t)id * 5 * batchedMomentumTurns;
+      history[0 * batchedMomentumTurns + turn] = coord[ip][0];
+      history[1 * batchedMomentumTurns + turn] = coord[ip][1];
+      history[2 * batchedMomentumTurns + turn] = coord[ip][2];
+      history[3 * batchedMomentumTurns + turn] = coord[ip][3];
+      history[4 * batchedMomentumTurns + turn] = coord[ip][5];
+      batchedMomentumHistoryCount[id] = turn + 1;
+    }
+  }
+}
+
+static long momentumOffsetFunctionBatchedGpu(
+  long np, long pass, long i_elem, long n_elem,
+  ELEMENT_LIST *eptr, double *pCentral) {
+  long target;
+  (void)i_elem;
+  (void)n_elem;
+
+  target = batchedMomentumTargetToken(eptr);
+  if (target < 0)
+    return 1;
+  return gpu_apply_batched_momentum_search(np, pass, target,
+                                           x_initial, y_initial,
+                                           *pCentral);
+}
+
+static void clearBatchedMomentumCallbackState(void) {
+  batchedMomentumTargetElement = NULL;
+  batchedMomentumTargets = 0;
+  batchedMomentumTargetById = NULL;
+  batchedMomentumDeltaById = NULL;
+  batchedMomentumHistory = NULL;
+  batchedMomentumHistoryCount = NULL;
+  batchedMomentumParticles = 0;
+  batchedMomentumTurns = 0;
+}
+#endif
 
 static void momentumOffsetFunction(double **coord, long np, long pass, double *pCentral) {
   MALIGN mal;
@@ -60,6 +159,325 @@ static void momentumOffsetFunction(double **coord, long np, long pass, double *p
 
 static long nElements;
 static ELEMENT_LIST **elementArray = NULL;
+
+#if defined(HAVE_GPU) && !USE_MPI
+static long doMomentumApertureSearchBatched(
+  RUN *run, VARY *control, LINE_LIST *beamline, double *startingCoord,
+  ELEMENT_LIST *elem0, long nElem,
+  int32_t **lostOnPass, short **loserFound, short **survivorFound,
+  double **deltaSurvived, double **xTuneSurvived,
+  double **yTuneSurvived, double **xLost, double **yLost,
+  double **deltaWhenLost, double **sLost,
+  double *sStart, char **ElementName, char **ElementType,
+  int32_t *ElementOccurence, short *direction) {
+  BATCHED_MOMENTUM_TASK *task;
+  double **coord = NULL, **resultCoord = NULL;
+  double *candidateDelta = NULL, *history = NULL, *historyCount = NULL;
+  long *candidateTarget = NULL;
+  unsigned char *seen = NULL, *candidateSurvived = NULL;
+  ELEMENT_LIST **targetElement = NULL;
+  long tasks, itask, ie, side, split, total, id, ip, nLeft;
+  long initialParticles = 0, outputRow, maxInitialPerTask = 0;
+  double pCentral, start, limit, interval, delta;
+
+  if (!fiducialize || forbid_resonance_crossing || allow_watch_file_output ||
+      output_mode > 1 || nElem <= 0 || split_step_divisor <= 0 ||
+      !gpu_batched_search_beamline_supported(beamline))
+    return -1;
+  for (side = 0; side < 2; side++) {
+    long count = 0;
+    interval = side == 0 ? -delta_step_size : delta_step_size;
+    for (delta = side == 0 ? delta_negative_start : delta_positive_start;
+         fabs(delta) <= fabs(side == 0 ? delta_negative_limit :
+                                             delta_positive_limit);
+         delta += interval)
+      count++;
+    if (count > maxInitialPerTask)
+      maxInitialPerTask = count;
+  }
+  initialParticles = 2 * nElem * maxInitialPerTask;
+  if (!gpu_batched_search_tracking_enabled(initialParticles))
+    return -1;
+
+  tasks = 2 * nElem;
+  task = (BATCHED_MOMENTUM_TASK *)calloc((size_t)tasks, sizeof(*task));
+  targetElement = (ELEMENT_LIST **)calloc((size_t)nElem,
+                                           sizeof(*targetElement));
+  if (!task || !targetElement)
+    bombElegant("memory allocation failure (batched momentum tasks)", NULL);
+  for (ie = 0; ie < nElem; ie++) {
+    ELEMENT_LIST *element = elementArray[ie];
+    long row = output_mode == 0 ? ie : 2 * ie;
+    targetElement[ie] = element->succ ? element->succ : elem0;
+    for (side = 0; side < 2; side++) {
+      itask = 2 * ie + side;
+      task[itask].element = element;
+      task[itask].elementIndex = ie;
+      task[itask].side = side;
+      task[itask].row = output_mode == 0 ? row : row + side;
+      task[itask].slot = output_mode == 0 ? side : 0;
+      task[itask].interval = side == 0 ? -delta_step_size : delta_step_size;
+      task[itask].deltaLost = (side == 0 ? -1 : 1) * DBL_MAX / 2;
+      if (output_mode == 1)
+        direction[task[itask].row] = side == 0 ? -1 : 1;
+      ElementName[task[itask].row] = element->name;
+      ElementType[task[itask].row] = entity_name[element->type];
+      ElementOccurence[task[itask].row] = element->occurence;
+      sStart[task[itask].row] = element->end_pos;
+      lostOnPass[task[itask].slot][task[itask].row] = -1;
+    }
+  }
+  outputRow = (output_mode == 0 ? nElem : 2 * nElem) - 1;
+
+  if (verbosity > 0) {
+    printf("Batched momentum aperture search: %ld locations, %ld task sides\n",
+           nElem, tasks);
+    fflush(stdout);
+  }
+
+  for (split = 0; split <= splits; split++) {
+    total = 0;
+    for (itask = 0; itask < tasks; itask++) {
+      long count = 0;
+      if (task[itask].done) {
+        task[itask].firstCandidate = total;
+        task[itask].candidates = 0;
+        continue;
+      }
+      side = task[itask].side;
+      if (split == 0) {
+        start = side == 0 ? delta_negative_start : delta_positive_start;
+        limit = side == 0 ? delta_negative_limit : delta_positive_limit;
+      } else {
+        interval = task[itask].interval / split_step_divisor;
+        start = deltaSurvived[task[itask].slot][task[itask].row] -
+                steps_back * task[itask].interval + interval;
+        limit = task[itask].deltaLost;
+        task[itask].interval = interval;
+        if ((start < 0 && side == 1) || (start > 0 && side == 0))
+          start = 0;
+      }
+      interval = task[itask].interval;
+      for (delta = start; fabs(delta) <= fabs(limit); delta += interval)
+        count++;
+      task[itask].firstCandidate = total;
+      task[itask].candidates = count;
+      total += count;
+    }
+    if (!total)
+      break;
+
+    coord = (double **)czarray_2d(sizeof(**coord), total,
+                                  totalPropertiesPerParticle);
+    resultCoord = (double **)czarray_2d(sizeof(**resultCoord), total,
+                                        totalPropertiesPerParticle);
+    candidateDelta = (double *)malloc((size_t)total * sizeof(*candidateDelta));
+    candidateTarget = (long *)malloc((size_t)total * sizeof(*candidateTarget));
+    history = (double *)calloc((size_t)total * 5 * control->n_passes,
+                               sizeof(*history));
+    historyCount = (double *)calloc((size_t)total, sizeof(*historyCount));
+    seen = (unsigned char *)calloc((size_t)total, sizeof(*seen));
+    candidateSurvived = (unsigned char *)calloc((size_t)total,
+                                                sizeof(*candidateSurvived));
+    if (!coord || !resultCoord || !candidateDelta || !candidateTarget ||
+        !history || !historyCount || !seen || !candidateSurvived)
+      bombElegant("memory allocation failure (batched momentum candidates)",
+                  NULL);
+
+    for (itask = 0; itask < tasks; itask++) {
+      if (!task[itask].candidates)
+        continue;
+      side = task[itask].side;
+      if (split == 0)
+        start = side == 0 ? delta_negative_start : delta_positive_start;
+      else
+        start = deltaSurvived[task[itask].slot][task[itask].row] -
+                steps_back * (task[itask].interval * split_step_divisor) +
+                task[itask].interval;
+      if ((start < 0 && side == 1) || (start > 0 && side == 0))
+        start = 0;
+      for (ip = 0; ip < task[itask].candidates; ip++) {
+        id = task[itask].firstCandidate + ip;
+        if (startingCoord)
+          memcpy(coord[id], startingCoord, 6 * sizeof(**coord));
+        else
+          memset(coord[id], 0, 6 * sizeof(**coord));
+        coord[id][particleIDIndex] = id + 1;
+        candidateDelta[id] = start + ip * task[itask].interval;
+        candidateTarget[id] = task[itask].elementIndex;
+      }
+    }
+
+    batchedMomentumTargetElement = targetElement;
+    batchedMomentumTargets = nElem;
+    batchedMomentumTargetById = candidateTarget;
+    batchedMomentumDeltaById = candidateDelta;
+    batchedMomentumHistory = history;
+    batchedMomentumHistoryCount = historyCount;
+    batchedMomentumParticles = total;
+    batchedMomentumTurns = control->n_passes;
+    gpu_configure_batched_momentum_search(candidateDelta, candidateTarget,
+                                           total, control->n_passes,
+                                           fireOnPass, history, historyCount);
+    setTrackingOmniWedgeFunction(momentumOffsetFunctionBatched);
+    setTrackingOmniWedgeGpuFunction(momentumOffsetFunctionBatchedGpu);
+    pCentral = run->p_central;
+    nLeft = do_tracking(
+      NULL, coord, total, NULL, beamline, &pCentral,
+      NULL, NULL, NULL, NULL, run, control->i_step,
+      FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL + SILENT_RUNNING +
+        INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
+      control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+    setTrackingOmniWedgeGpuFunction(NULL);
+    setTrackingOmniWedgeFunction(NULL);
+    gpu_clear_batched_momentum_search();
+    clearBatchedMomentumCallbackState();
+
+    for (ip = 0; ip < total; ip++) {
+      id = (long)coord[ip][particleIDIndex] - 1;
+      if (id < 0 || id >= total || seen[id])
+        bombElegant("invalid or duplicate search ID in batched momentum search",
+                    NULL);
+      seen[id] = 1;
+      candidateSurvived[id] = ip < nLeft;
+      memcpy(resultCoord[id], coord[ip],
+             (size_t)totalPropertiesPerParticle * sizeof(**resultCoord));
+    }
+    for (id = 0; id < total; id++)
+      if (!seen[id])
+        bombElegant("missing search ID in batched momentum search", NULL);
+
+    for (itask = 0; itask < tasks; itask++) {
+      long foundLoss = 0;
+      double tune[2] = {-1, -1};
+      double *turnCoord[5];
+      if (!task[itask].candidates)
+        continue;
+      for (ip = 0; ip < task[itask].candidates; ip++) {
+        id = task[itask].firstCandidate + ip;
+        if (!candidateSurvived[id]) {
+          lostOnPass[task[itask].slot][task[itask].row] =
+            (long)resultCoord[id][lossPassIndex];
+          xLost[task[itask].slot][task[itask].row] = resultCoord[id][0];
+          yLost[task[itask].slot][task[itask].row] = resultCoord[id][2];
+          sLost[task[itask].slot][task[itask].row] = resultCoord[id][4];
+          deltaWhenLost[task[itask].slot][task[itask].row] =
+            (resultCoord[id][5] - pCentral) / pCentral;
+          loserFound[task[itask].slot][task[itask].row] = 1;
+          task[itask].deltaLost = candidateDelta[id];
+          foundLoss = 1;
+          break;
+        }
+        tune[0] = tune[1] = -1;
+        if ((long)historyCount[id] > 2) {
+          long ic;
+          for (ic = 0; ic < 5; ic++)
+            turnCoord[ic] = history +
+              ((size_t)id * 5 + ic) * control->n_passes;
+          determineTunesFromTrackingData(tune, turnCoord,
+                                         (long)historyCount[id],
+                                         candidateDelta[id]);
+        }
+        deltaSurvived[task[itask].slot][task[itask].row] =
+          candidateDelta[id];
+        xTuneSurvived[task[itask].slot][task[itask].row] = tune[0];
+        yTuneSurvived[task[itask].slot][task[itask].row] = tune[1];
+        survivorFound[task[itask].slot][task[itask].row] = 1;
+      }
+      if (split == 0) {
+        if (!survivorFound[task[itask].slot][task[itask].row]) {
+          if (!soft_failure)
+            bombElegant("no survivor found for initial batched momentum scan",
+                        NULL);
+          deltaSurvived[task[itask].slot][task[itask].row] = 0;
+          survivorFound[task[itask].slot][task[itask].row] = 1;
+          task[itask].done = 1;
+        }
+        if (!foundLoss) {
+          if (!soft_failure)
+            bombElegant("no loss found for initial batched momentum scan",
+                        NULL);
+          loserFound[task[itask].slot][task[itask].row] = 1;
+          task[itask].done = 1;
+        }
+      }
+    }
+
+    free_czarray_2d((void **)coord, total, totalPropertiesPerParticle);
+    free_czarray_2d((void **)resultCoord, total,
+                    totalPropertiesPerParticle);
+    free(candidateDelta);
+    free(candidateTarget);
+    free(history);
+    free(historyCount);
+    free(seen);
+    free(candidateSurvived);
+    coord = resultCoord = NULL;
+    candidateDelta = history = historyCount = NULL;
+    candidateTarget = NULL;
+    seen = candidateSurvived = NULL;
+  }
+
+  if (verbosity > 0)
+    for (ie = 0; ie < nElem; ie++)
+      printf("Energy aperture for %s #%ld at s=%em is %e, %e\n",
+             elementArray[ie]->name, elementArray[ie]->occurence,
+             elementArray[ie]->end_pos,
+             deltaSurvived[0][output_mode == 0 ? ie : 2 * ie],
+             deltaSurvived[output_mode == 0 ? 1 : 0]
+                           [output_mode == 0 ? ie : 2 * ie + 1]);
+
+  /* Tune extraction is unusually sensitive to accumulated CPU/GPU phase
+   * roundoff.  Confirm only the final surviving point for each independent
+   * task with the CPU formulas.  This is O(tasks), compared with the
+   * O(tasks*candidates) search that remains batched on the GPU, and it keeps
+   * the long-standing momentum-aperture tune columns reproducible. */
+  gpuSetTrackingSuppressed(1);
+  coord = (double **)czarray_2d(sizeof(**coord), 1,
+                                totalPropertiesPerParticle);
+  for (itask = 0; itask < tasks; itask++) {
+    double tune[2] = {-1, -1};
+    long row = task[itask].row;
+    long slot = task[itask].slot;
+    long code;
+    if (!survivorFound[slot][row])
+      continue;
+    if (startingCoord)
+      memcpy(coord[0], startingCoord, 6 * sizeof(**coord));
+    else
+      memset(coord[0], 0, 6 * sizeof(**coord));
+    coord[0][particleIDIndex] = 1;
+    momentumOffsetValue = deltaSurvived[slot][row];
+    turnsStored = 0;
+    setTrackingWedgeFunction(momentumOffsetFunction,
+                             targetElement[task[itask].elementIndex]);
+    pCentral = run->p_central;
+    code = do_tracking(
+      NULL, coord, 1, NULL, beamline, &pCentral,
+      NULL, NULL, NULL, NULL, run, control->i_step,
+      FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL + SILENT_RUNNING +
+        INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
+      control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+    setTrackingWedgeFunction(NULL, NULL);
+    if (code && turnsStored > 2 &&
+        determineTunesFromTrackingData(tune, turnByTurnCoord,
+                                       turnsStored,
+                                       deltaSurvived[slot][row])) {
+      xTuneSurvived[slot][row] = tune[0];
+      yTuneSurvived[slot][row] = tune[1];
+    } else {
+      xTuneSurvived[slot][row] = -1;
+      yTuneSurvived[slot][row] = -1;
+    }
+  }
+  free_czarray_2d((void **)coord, 1, totalPropertiesPerParticle);
+  coord = NULL;
+  gpuSetTrackingSuppressed(0);
+  free(task);
+  free(targetElement);
+  return outputRow;
+}
+#endif
 
 void setupMomentumApertureSearch(
   NAMELIST_TEXT *nltext,
@@ -424,6 +842,17 @@ long doMomentumApertureSearch(
   verbosity = 0;
 #endif
 
+#if defined(HAVE_GPU) && !USE_MPI
+  outputRow = doMomentumApertureSearchBatched(
+    run, control, beamline, startingCoord, elem0, nElem,
+    lostOnPass, loserFound, survivorFound, deltaSurvived,
+    xTuneSurvived, yTuneSurvived, xLost, yLost, deltaWhenLost, sLost,
+    sStart, ElementName, ElementType, ElementOccurence, direction);
+  if (outputRow >= 0)
+    goto momentumSearchComplete;
+  outputRow = -1;
+#endif
+
   while (elem && processElements > 0) {
 #ifdef DEBUG
     printf("checking element %s#%ld\n", elem->name, elem->occurence);
@@ -669,6 +1098,9 @@ long doMomentumApertureSearch(
     elem = elem->succ;
   }
 
+#if defined(HAVE_GPU) && !USE_MPI
+momentumSearchComplete:
+#endif
   outputRow++;
 
 #if USE_MPI

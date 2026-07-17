@@ -16,6 +16,9 @@
 #include "mdb.h"
 #include "track.h"
 #include "aperture_search.h"
+#if defined(HAVE_GPU) && !USE_MPI
+#  include "gpu_search.h"
+#endif
 
 #define APERTURE_TRACKING_FLAGS (SILENT_RUNNING | INHIBIT_FILE_OUTPUT | LOSS_COORDINATES_NEEDED)
 
@@ -986,6 +989,281 @@ int comp_index(const void *idx1, const void *idx2) {
 
 /* line search routine */
 
+#if defined(HAVE_GPU) && !USE_MPI
+static long do_aperture_search_line_batched(
+  RUN *run, VARY *control, double *referenceCoord, LINE_LIST *beamline,
+  long lines, double *returnValue) {
+  double **coord;
+  double *dxFactor, *dyFactor, *dx, *dy, *x0, *y0;
+  double *xLimit, *yLimit, *xLost, *yLost, *sLost;
+  double *trialXLost, *trialYLost, *trialSLost;
+  long *trialLossPass;
+  unsigned char *survived, *seen;
+  double orbit[6] = {0, 0, 0, 0, 0, 0};
+  double pCentral, area = 0, dtheta;
+  long line, step, split, index, ip, id, nSteps, maxSteps;
+  long trials, nSurvived, effort = 0, originStable = 0;
+
+  maxSteps = (long)(1 / split_fraction - 0.5);
+  if (maxSteps < nx)
+    maxSteps = nx;
+  if (maxSteps < 1)
+    maxSteps = 1;
+  if (!gpu_batched_search_tracking_enabled(lines * nx) ||
+      !gpu_batched_search_beamline_supported(beamline))
+    return 0;
+
+  coord = (double **)czarray_2d(sizeof(**coord), lines * maxSteps,
+                                totalPropertiesPerParticle);
+  dxFactor = (double *)tmalloc(sizeof(*dxFactor) * lines);
+  dyFactor = (double *)tmalloc(sizeof(*dyFactor) * lines);
+  dx = (double *)tmalloc(sizeof(*dx) * lines);
+  dy = (double *)tmalloc(sizeof(*dy) * lines);
+  x0 = (double *)tmalloc(sizeof(*x0) * lines);
+  y0 = (double *)tmalloc(sizeof(*y0) * lines);
+  xLimit = (double *)calloc((size_t)lines, sizeof(*xLimit));
+  yLimit = (double *)calloc((size_t)lines, sizeof(*yLimit));
+  xLost = (double *)tmalloc(sizeof(*xLost) * lines);
+  yLost = (double *)tmalloc(sizeof(*yLost) * lines);
+  sLost = (double *)tmalloc(sizeof(*sLost) * lines);
+  survived = (unsigned char *)calloc((size_t)lines * maxSteps,
+                                     sizeof(*survived));
+  seen = (unsigned char *)calloc((size_t)lines * maxSteps, sizeof(*seen));
+  trialXLost = (double *)calloc((size_t)lines * maxSteps,
+                                sizeof(*trialXLost));
+  trialYLost = (double *)calloc((size_t)lines * maxSteps,
+                                sizeof(*trialYLost));
+  trialSLost = (double *)calloc((size_t)lines * maxSteps,
+                                sizeof(*trialSLost));
+  trialLossPass = (long *)calloc((size_t)lines * maxSteps,
+                                 sizeof(*trialLossPass));
+  if (!coord || !dxFactor || !dyFactor || !dx || !dy || !x0 || !y0 ||
+      !xLimit || !yLimit || !xLost || !yLost || !sLost || !survived ||
+      !seen || !trialXLost || !trialYLost || !trialSLost ||
+      !trialLossPass)
+    bombElegant("memory allocation failure (batched aperture search)", NULL);
+
+  switch (lines) {
+  case 1:
+    dxFactor[0] = dyFactor[0] = 1;
+    break;
+  case 2:
+    dxFactor[0] = -1;
+    dyFactor[0] = 1;
+    dxFactor[1] = dyFactor[1] = 1;
+    break;
+  case 3:
+    dxFactor[0] = 0;
+    dyFactor[0] = 1;
+    dxFactor[1] = dyFactor[1] = 1 / sqrt(2.0);
+    dxFactor[2] = 1;
+    dyFactor[2] = 0;
+    break;
+  default:
+    dtheta = full_plane == 0 ? PI / (lines - 1) : PIx2 / (lines - 1);
+    for (line = 0; line < lines; line++) {
+      dxFactor[line] = sin(-PI / 2 + dtheta * line);
+      dyFactor[line] = cos(-PI / 2 + dtheta * line);
+      if (fabs(dxFactor[line]) < 1e-6)
+        dxFactor[line] = 0;
+      if (fabs(dyFactor[line]) < 1e-6)
+        dyFactor[line] = 0;
+    }
+    break;
+  }
+  for (line = 0; line < lines; line++)
+    xLost[line] = yLost[line] = sLost[line] = DBL_MAX;
+  if (offset_by_orbit)
+    memcpy(orbit, referenceCoord, sizeof(orbit));
+
+  if (verbosity >= 1) {
+    printf("** Starting batched %ld-line aperture search\n", lines);
+    fflush(stdout);
+  }
+  if (output) {
+    SDDS_ClearErrors();
+    if (!SDDS_StartTable(&SDDS_aperture, lines)) {
+      SDDS_SetError("Unable to start SDDS table (batched aperture search)");
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    }
+    SDDS_SetParameters(&SDDS_aperture,
+                       SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE,
+                       IP_STEP, control->i_step, -1);
+    if (control->n_elements_to_vary) {
+      for (index = 0; index < control->n_elements_to_vary; index++)
+        if (!SDDS_SetParameters(
+              &SDDS_aperture, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE,
+              index + N_PARAMETERS, control->varied_quan_value[index], -1))
+          break;
+    }
+    if (SDDS_NumberOfErrors()) {
+      SDDS_SetError("Problem setting SDDS parameters (batched aperture search)");
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    }
+  }
+
+  for (split = 0; split <= n_splits; split++) {
+    nSteps = split == 0 ? nx : (long)(1 / split_fraction - 0.5);
+    if (nSteps < 1)
+      nSteps = 1;
+    trials = lines * nSteps;
+    memset(survived, 0, (size_t)trials * sizeof(*survived));
+    memset(seen, 0, (size_t)trials * sizeof(*seen));
+    for (line = 0; line < lines; line++) {
+      if (split == 0) {
+        if (!slope_mode) {
+          dx[line] = xmax / (nx - 1) * dxFactor[line];
+          dy[line] = ymax / (nx - 1) * dyFactor[line];
+        } else {
+          dx[line] = xpmax / (nx - 1) * dxFactor[line];
+          dy[line] = ypmax / (nx - 1) * dyFactor[line];
+        }
+        x0[line] = y0[line] = 0;
+      } else {
+        x0[line] = xLimit[line];
+        y0[line] = yLimit[line];
+        dx[line] *= split_fraction;
+        dy[line] *= split_fraction;
+        x0[line] += dx[line];
+        y0[line] += dy[line];
+      }
+      for (step = 0; step < nSteps; step++) {
+        id = line * nSteps + step;
+        memcpy(coord[id], orbit, sizeof(orbit));
+        if (!slope_mode) {
+          coord[id][0] = x0[line] + step * dx[line] + orbit[0];
+          coord[id][2] = y0[line] + step * dy[line] + orbit[2];
+        } else {
+          coord[id][1] = x0[line] + step * dx[line] + orbit[1];
+          coord[id][3] = y0[line] + step * dy[line] + orbit[3];
+        }
+        coord[id][particleIDIndex] = id + 1;
+      }
+    }
+    pCentral = run->p_central;
+    nSurvived = do_tracking(
+      NULL, coord, trials, &effort, beamline, &pCentral,
+      NULL, NULL, NULL, NULL, run, control->i_step,
+      APERTURE_TRACKING_FLAGS, control->n_passes, 0,
+      NULL, NULL, NULL, NULL, NULL);
+    for (ip = 0; ip < trials; ip++) {
+      id = (long)coord[ip][particleIDIndex] - 1;
+      if (id < 0 || id >= trials || seen[id])
+        bombElegant("invalid or duplicate search ID in batched aperture search",
+                    NULL);
+      seen[id] = 1;
+      survived[id] = ip < nSurvived;
+      trialXLost[id] = coord[ip][0];
+      trialYLost[id] = coord[ip][2];
+      trialSLost[id] = coord[ip][4];
+      trialLossPass[id] = (long)coord[ip][lossPassIndex];
+    }
+    for (id = 0; id < trials; id++)
+      if (!seen[id])
+        bombElegant("missing search ID in batched aperture search", NULL);
+
+    if (split == 0 && !survived[0]) {
+      *returnValue = 0;
+      goto batchedApertureCleanup;
+    }
+    originStable = 1;
+    for (line = 0; line < lines; line++) {
+      long firstLost = nSteps;
+      long lastSurvived;
+      for (step = 0; step < nSteps; step++) {
+        id = line * nSteps + step;
+        if (!survived[id]) {
+          firstLost = step;
+          break;
+        }
+      }
+      lastSurvived = firstLost - 1;
+      if (lastSurvived >= 0) {
+        double candidateX = x0[line] + lastSurvived * dx[line];
+        double candidateY = y0[line] + lastSurvived * dy[line];
+        if (split == 0 ||
+            (dx[line] > 0 && xLimit[line] < candidateX) ||
+            (dx[line] == 0 && yLimit[line] < candidateY) ||
+            (dx[line] < 0 && xLimit[line] > candidateX)) {
+          xLimit[line] = candidateX;
+          yLimit[line] = candidateY;
+        }
+      }
+      /* The legacy line search reports the first loss from the latest split,
+       * even when that split does not move the surviving boundary.  Keep the
+       * same metadata semantics while looking the particle up by its stable
+       * batched-search ID after loss compaction. */
+      if (firstLost < nSteps) {
+        id = line * nSteps + firstLost;
+        xLost[line] = trialXLost[id];
+        yLost[line] = trialYLost[id];
+        sLost[line] = trialSLost[id];
+        /* Retained by stable ID even though the legacy SDDS schema has no
+         * loss-pass column for dynamic aperture output. */
+        (void)trialLossPass[id];
+      }
+    }
+  }
+
+  if (output) {
+    /* Preserve the legacy schema semantics: x/y are the raw search limits,
+     * while xClipped/yClipped are populated only after island clipping. */
+    for (line = 0; line < lines; line++)
+      if (!SDDS_SetRowValues(
+            &SDDS_aperture, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, line,
+            IC_X, xLimit[line], IC_Y, yLimit[line],
+            IC_XLOST, xLost[line], IC_YLOST, yLost[line],
+            IC_SLOST, sLost[line], -1)) {
+        SDDS_SetError("Problem setting rows (batched aperture search)");
+        SDDS_PrintErrors(stderr,
+                         SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+      }
+  }
+  if (originStable && lines > 1)
+    area = trimApertureSearchResult(lines, xLimit, yLimit,
+                                    dxFactor, dyFactor, full_plane);
+  *returnValue = area;
+  if (output) {
+    if (!SDDS_SetColumn(&SDDS_aperture, SDDS_SET_BY_INDEX,
+                        xLimit, lines, IC_XC) ||
+        !SDDS_SetColumn(&SDDS_aperture, SDDS_SET_BY_INDEX,
+                        yLimit, lines, IC_YC) ||
+        !SDDS_SetParameters(&SDDS_aperture,
+                            SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
+                            "Area", area, NULL) ||
+        !SDDS_WriteTable(&SDDS_aperture)) {
+      SDDS_SetError("Problem writing batched aperture search output");
+      SDDS_PrintErrors(stderr,
+                       SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    }
+    if (!inhibitFileSync)
+      SDDS_DoFSync(&SDDS_aperture);
+  }
+
+batchedApertureCleanup:
+  free_czarray_2d((void **)coord, lines * maxSteps,
+                  totalPropertiesPerParticle);
+  free(dxFactor);
+  free(dyFactor);
+  free(dx);
+  free(dy);
+  free(x0);
+  free(y0);
+  free(xLimit);
+  free(yLimit);
+  free(xLost);
+  free(yLost);
+  free(sLost);
+  free(survived);
+  free(seen);
+  free(trialXLost);
+  free(trialYLost);
+  free(trialSLost);
+  free(trialLossPass);
+  return 1;
+}
+#endif
+
 long do_aperture_search_line(
   RUN *run,
   VARY *control,
@@ -1008,6 +1286,11 @@ long do_aperture_search_line(
 
 #if USE_MPI
   return do_aperture_search_line_p(run, control, referenceCoord, errcon, beamline, lines, returnValue);
+#endif
+#if defined(HAVE_GPU) && !USE_MPI
+  if (do_aperture_search_line_batched(run, control, referenceCoord,
+                                      beamline, lines, returnValue))
+    return 1;
 #endif
 
   coord = (double **)czarray_2d(sizeof(**coord), 1, totalPropertiesPerParticle);

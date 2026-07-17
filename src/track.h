@@ -4410,6 +4410,10 @@ void store_fitpoint_beam_parameters(MARK *fpt, char *name, long occurence, doubl
 void setTrackingWedgeFunction(void (*wedgeFunc)(double **part, long np, long pass, double *pCentral),
                               ELEMENT_LIST *eptr);
 void setTrackingOmniWedgeFunction(void (*wedgeFunc)(double **part, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral));
+void setTrackingOmniWedgeGpuFunction(long (*wedgeFunc)(long np, long pass,
+                                                      long i_elem, long n_elem,
+                                                      ELEMENT_LIST *eptr,
+                                                      double *pCentral));
 void gatherParticles(double ***coord, long *nToTrack, long *nLost, double ***accepted, long n_processors, int myid, double *round);
 long transformBeamWithScript(SCRIPT *script, double pCentral, CHARGE *charge, BEAM *beam, double **part, 
                              long np, char *mainRootname, long iPass, long driftOrder, double z, long forceSerial,

@@ -193,6 +193,16 @@ extern int gpuCudaOffsetBeam(void *coord, long nParticles, int stride,
                              double dz, double dt, double dp, double de,
                              double pCentral, long startPID, long endPID,
                              int allParticles, double cMks, float *milliseconds);
+extern int gpuCudaApplyBatchedMomentumSearch(
+  void *coord, long nParticles, int stride, const void *searchData,
+  long searchParticles, long target, long pass, long firePass,
+  void *history, void *historyCount, long turns,
+  double dx, double dy, double pCentral, double cMks,
+  float *milliseconds);
+extern int gpuCudaClearBatchedSearchHistory(void *history,
+                                            unsigned long historyCount,
+                                            void *turnCount,
+                                            unsigned long particles);
 extern int gpuCudaSetCentralMomentum(void *coord, long nParticles, int stride,
                                      double oldP, double newP, float *milliseconds);
 extern int gpuCudaMatchEnergy(void *coord, long nParticles, int stride,
@@ -683,6 +693,10 @@ typedef struct GPU_BUNCH_RANGE_CACHE {
 } GPU_BUNCH_RANGE_CACHE;
 
 static GPU_BASE gpuBase;
+/* Used for small deterministic CPU confirmation tracks after a GPU-batched
+ * search.  The surrounding do_tracking call still initializes normal GPU
+ * bookkeeping, but no element is dispatched to CUDA while this is set. */
+static long gpuTrackingSuppressed = 0;
 static GPU_CSR_SCRATCH gpuCsrScratch;
 static GPU_APERTURE_SCRATCH gpuApertureScratch;
 static GPU_ACCEPTED_BUFFER gpuAcceptedBuffer;
@@ -699,6 +713,22 @@ typedef struct GPU_POLYNOMIAL_SERIES_CACHE {
   long totalTerms;
 } GPU_POLYNOMIAL_SERIES_CACHE;
 static GPU_POLYNOMIAL_SERIES_CACHE gpuPolynomialSeriesCache;
+typedef struct GPU_BATCHED_SEARCH_SCRATCH {
+  double *deviceData;
+  double *deviceHistory;
+  double *deviceHistoryCount;
+  double *hostData;
+  double *hostHistory;
+  double *hostHistoryCount;
+  long capacity;
+  long historyCapacity;
+  long particles;
+  long turns;
+  long firePass;
+  long configured;
+  long uploaded;
+} GPU_BATCHED_SEARCH_SCRATCH;
+static GPU_BATCHED_SEARCH_SCRATCH gpuBatchedSearchScratch;
 static long gpuVerbose = 0;
 static long gpuEnableExactDrift = 0;
 static long gpuExactDriftExplicit = 0;
@@ -726,6 +756,8 @@ static long gpuEnableCombinedWakeMultibunch = 0;
 static long gpuEnableCombinedWakeFft = 0;
 static long gpuEnableBatchedTuneTracking = 0;
 static long gpuBatchedTuneMinParticles = 32;
+static long gpuEnableBatchedSearchTracking = 0;
+static long gpuBatchedSearchMinParticles = 32;
 static long gpuEnablePolynomialSeries = 0;
 static long gpuEnableRfdf = 0;
 static long gpuRfdfMinParticles = 64;
@@ -2375,7 +2407,8 @@ static long gpuPassiveElementSupported(ELEMENT_LIST *eptr, long nParticles) {
 }
 
 static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
-  if (!gpuBase.initialized || gpuBase.activeDevice < 0 || !eptr || nParticles <= 0)
+  if (gpuTrackingSuppressed || !gpuBase.initialized ||
+      gpuBase.activeDevice < 0 || !eptr || nParticles <= 0)
     return 0;
   if (gpuSpecialMatrixElementUsesCpuAfterTrack(eptr))
     return 0;
@@ -2443,6 +2476,10 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuExactDriftElement(eptr->type))
     return gpuCsbendDriftExactDriftParticleCountAllowed(nParticles);
   return 0;
+}
+
+void gpuSetTrackingSuppressed(long suppressed) {
+  gpuTrackingSuppressed = suppressed ? 1 : 0;
 }
 
 static long gpuCurrentElementEligible(void) {
@@ -2634,6 +2671,56 @@ static void gpuReleasePolynomialSeriesCache(void) {
   free(gpuPolynomialSeriesCache.coefficient);
   free(gpuPolynomialSeriesCache.exponent);
   memset(&gpuPolynomialSeriesCache, 0, sizeof(gpuPolynomialSeriesCache));
+}
+
+static void gpuReleaseBatchedSearchScratch(void) {
+  int status;
+
+  if (gpuBatchedSearchScratch.configured &&
+      gpuBatchedSearchScratch.uploaded) {
+    float milliseconds = 0;
+    unsigned long historyValues =
+      (unsigned long)gpuBatchedSearchScratch.particles * 5UL *
+      (unsigned long)gpuBatchedSearchScratch.turns;
+    if (gpuBatchedSearchScratch.hostHistory && historyValues) {
+      status = gpuCudaCopyDeviceToHost(gpuBatchedSearchScratch.hostHistory,
+                                       gpuBatchedSearchScratch.deviceHistory,
+                                       historyValues, &milliseconds);
+      if (status != 0)
+        gpuFatalStatus("cudaMemcpy(batched search history device to host)",
+                       status);
+      gpuRecordMilliseconds(&gpuBase.gpuTransferToHostSeconds, milliseconds);
+    }
+    if (gpuBatchedSearchScratch.hostHistoryCount &&
+        gpuBatchedSearchScratch.particles > 0) {
+      milliseconds = 0;
+      status = gpuCudaCopyDeviceToHost(
+        gpuBatchedSearchScratch.hostHistoryCount,
+        gpuBatchedSearchScratch.deviceHistoryCount,
+        (unsigned long)gpuBatchedSearchScratch.particles, &milliseconds);
+      if (status != 0)
+        gpuFatalStatus("cudaMemcpy(batched search turn counts device to host)",
+                       status);
+      gpuRecordMilliseconds(&gpuBase.gpuTransferToHostSeconds, milliseconds);
+    }
+  }
+  if (gpuBatchedSearchScratch.deviceData) {
+    status = gpuCudaFree(gpuBatchedSearchScratch.deviceData);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(batched search data)", status);
+  }
+  if (gpuBatchedSearchScratch.deviceHistory) {
+    status = gpuCudaFree(gpuBatchedSearchScratch.deviceHistory);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(batched search history)", status);
+  }
+  if (gpuBatchedSearchScratch.deviceHistoryCount) {
+    status = gpuCudaFree(gpuBatchedSearchScratch.deviceHistoryCount);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(batched search turn counts)", status);
+  }
+  free(gpuBatchedSearchScratch.hostData);
+  memset(&gpuBatchedSearchScratch, 0, sizeof(gpuBatchedSearchScratch));
 }
 
 static void gpuReleaseApertureScratch(void) {
@@ -4067,6 +4154,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_BATCHED_TUNE_PARTICLES", 32);
   if (gpuBatchedTuneMinParticles < 1)
     gpuBatchedTuneMinParticles = 1;
+  gpuEnableBatchedSearchTracking =
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_BATCHED_SEARCH_TRACKING") ||
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_BATCHED_SEARCH_TRACKING");
+  gpuBatchedSearchMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_BATCHED_SEARCH_PARTICLES", 32);
+  if (gpuBatchedSearchMinParticles < 1)
+    gpuBatchedSearchMinParticles = 1;
   gpuEnablePolynomialSeries =
     !gpuEnvSet("ELEGANT_GPU_ENABLE_POLYNOMIAL_SERIES") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_POLYNOMIAL_SERIES");
@@ -4135,6 +4229,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   if (!gpuRfcaChangeP0DriftExplicit)
     gpuEnableRfcaChangeP0Drift = 0;
   gpuEnableBatchedTuneTracking = 0;
+  gpuEnableBatchedSearchTracking = 0;
   gpuEnablePolynomialSeries = 0;
   gpuEnableRfdf = 0;
   gpuEnableBggexp = 0;
@@ -4316,6 +4411,7 @@ void gpuBaseDealloc(void) {
   gpuReleaseBeamSumsScratch();
   gpuReleaseRfcaScratch();
   gpuReleasePolynomialSeriesCache();
+  gpuReleaseBatchedSearchScratch();
   gpuCudaPolynomialSeriesRelease();
   gpuCudaBggexpRelease();
   gpuCudaFtableRelease();
@@ -4411,6 +4507,179 @@ long gpu_batched_tune_beamline_supported(void *beamline0) {
   }
   return trackedElements > 0;
 #endif
+}
+
+long gpu_batched_search_tracking_enabled(long particles) {
+#if USE_MPI
+  (void)particles;
+  return 0;
+#else
+  long enabled = gpuBase.initialized ? gpuEnableBatchedSearchTracking :
+    (!gpuEnvSet("ELEGANT_GPU_ENABLE_BATCHED_SEARCH_TRACKING") ||
+     gpuEnvFlag("ELEGANT_GPU_ENABLE_BATCHED_SEARCH_TRACKING"));
+  long threshold = gpuBase.initialized ? gpuBatchedSearchMinParticles :
+    gpuEnvLong("ELEGANT_GPU_MIN_BATCHED_SEARCH_PARTICLES", 32);
+  if (threshold < 1)
+    threshold = 1;
+  return enabled && particles >= threshold;
+#endif
+}
+
+long gpu_batched_search_beamline_supported(void *beamline0) {
+#if USE_MPI
+  (void)beamline0;
+  return 0;
+#else
+  LINE_LIST *beamline = (LINE_LIST *)beamline0;
+  ELEMENT_LIST *eptr;
+
+  if (!beamline)
+    return 0;
+  for (eptr = beamline->elem; eptr; eptr = eptr->succ) {
+    unsigned long flags;
+    if (eptr->ignore)
+      continue;
+    /* Search boundaries and turn-by-turn tunes amplify otherwise small GPU
+     * differences.  Keep the batched search on the validated deterministic
+     * subset until damping and high-order bend maps have dedicated search
+     * baselines.  The elements themselves may still use their normal CUDA
+     * paths outside a batched search. */
+    if (eptr->type == T_CSBEND) {
+      CSBEND *csbend = (CSBEND *)eptr->p_elem;
+      if (!csbend || csbend->synch_rad || csbend->k3 || csbend->k4 ||
+          csbend->k5 || csbend->k6 || csbend->k7 || csbend->k8)
+        return 0;
+    } else if (eptr->type == T_KQUAD) {
+      KQUAD *kquad = (KQUAD *)eptr->p_elem;
+      if (!kquad || kquad->synch_rad)
+        return 0;
+    }
+    flags = entity_description[eptr->type].flags;
+    if (flags & (COLLECTIVE_EFFECTS | UNIPROCESSOR))
+      return 0;
+    /* Reuse the actual CUDA option guards, rather than element metadata
+     * alone.  This excludes ISR/noise and unsupported option combinations
+     * whose point-by-point CPU execution may depend on RNG ordering. */
+    if (gpuElementEligible(eptr, LONG_MAX / 4) ||
+        gpuPassiveElementSupported(eptr, LONG_MAX / 4))
+      continue;
+    switch (eptr->type) {
+    case T_MARK:
+    case T_RECIRC:
+    case T_WATCH:
+      break;
+    default:
+      return 0;
+    }
+  }
+  return 1;
+#endif
+}
+
+void gpu_configure_batched_momentum_search(const double *deltaById,
+                                           const long *targetById,
+                                           long particles, long turns,
+                                           long firePass,
+                                           double *history,
+                                           double *historyCount) {
+  long ip;
+
+  gpuReleaseBatchedSearchScratch();
+  if (!deltaById || !targetById || particles <= 0 || turns <= 0 ||
+      !history || !historyCount)
+    return;
+  gpuBatchedSearchScratch.hostData =
+    (double *)malloc((size_t)(2 * particles) *
+                     sizeof(*gpuBatchedSearchScratch.hostData));
+  if (!gpuBatchedSearchScratch.hostData)
+    gpuRequiredFailure("unable to allocate batched search host data");
+  for (ip = 0; ip < particles; ip++) {
+    gpuBatchedSearchScratch.hostData[2 * ip] = targetById[ip];
+    gpuBatchedSearchScratch.hostData[2 * ip + 1] = deltaById[ip];
+  }
+  memset(history, 0,
+         (size_t)particles * 5 * (size_t)turns * sizeof(*history));
+  memset(historyCount, 0, (size_t)particles * sizeof(*historyCount));
+  gpuBatchedSearchScratch.hostHistory = history;
+  gpuBatchedSearchScratch.hostHistoryCount = historyCount;
+  gpuBatchedSearchScratch.particles = particles;
+  gpuBatchedSearchScratch.turns = turns;
+  gpuBatchedSearchScratch.firePass = firePass;
+  gpuBatchedSearchScratch.configured = 1;
+}
+
+long gpu_apply_batched_momentum_search(long particles, long pass,
+                                       long target, double dx, double dy,
+                                       double pCentral) {
+#if USE_MPI || defined(GPU_VERIFY)
+  (void)particles;
+  (void)pass;
+  (void)target;
+  (void)dx;
+  (void)dy;
+  (void)pCentral;
+  return 0;
+#else
+  float milliseconds = 0;
+  unsigned long historyValues;
+  int status;
+
+  if (!gpuBatchedSearchScratch.configured ||
+      !gpuBase.initialized || gpuBase.activeDevice < 0 || particles <= 0)
+    return 0;
+  if (!gpuBatchedSearchScratch.uploaded) {
+    historyValues =
+      (unsigned long)gpuBatchedSearchScratch.particles * 5UL *
+      (unsigned long)gpuBatchedSearchScratch.turns;
+    status = gpuCudaMallocDouble((void **)&gpuBatchedSearchScratch.deviceData,
+                                 (unsigned long)(2 * gpuBatchedSearchScratch.particles));
+    if (status != 0)
+      gpuFatalStatus("cudaMalloc(batched search data)", status);
+    status = gpuCudaMallocDouble((void **)&gpuBatchedSearchScratch.deviceHistory,
+                                 historyValues);
+    if (status != 0)
+      gpuFatalStatus("cudaMalloc(batched search history)", status);
+    status = gpuCudaMallocDouble((void **)&gpuBatchedSearchScratch.deviceHistoryCount,
+                                 (unsigned long)gpuBatchedSearchScratch.particles);
+    if (status != 0)
+      gpuFatalStatus("cudaMalloc(batched search turn counts)", status);
+    status = gpuCudaCopyHostToDevice(
+      gpuBatchedSearchScratch.deviceData,
+      gpuBatchedSearchScratch.hostData,
+      (unsigned long)(2 * gpuBatchedSearchScratch.particles), &milliseconds);
+    if (status != 0)
+      gpuFatalStatus("cudaMemcpy(batched search data host to device)", status);
+    gpuRecordMilliseconds(&gpuBase.gpuTransferToDeviceSeconds, milliseconds);
+    status = gpuCudaClearBatchedSearchHistory(
+      gpuBatchedSearchScratch.deviceHistory, historyValues,
+      gpuBatchedSearchScratch.deviceHistoryCount,
+      (unsigned long)gpuBatchedSearchScratch.particles);
+    if (status != 0)
+      gpuFatalStatus("cudaMemset(batched search history)", status);
+    gpuBatchedSearchScratch.uploaded = 1;
+  }
+  gpuCopyHostToDevice(particles);
+  milliseconds = 0;
+  status = gpuCudaApplyBatchedMomentumSearch(
+    gpuBase.deviceCoord, particles, (int)gpuBase.deviceStride,
+    gpuBatchedSearchScratch.deviceData,
+    gpuBatchedSearchScratch.particles, target, pass,
+    gpuBatchedSearchScratch.firePass,
+    gpuBatchedSearchScratch.deviceHistory,
+    gpuBatchedSearchScratch.deviceHistoryCount,
+    gpuBatchedSearchScratch.turns, dx, dy, pCentral, c_mks,
+    &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("batched momentum-search offset/history kernel", status);
+  gpuRecordHelperKernel(milliseconds);
+  gpuMarkDeviceChanged(particles);
+  gpuRecordWallSeconds();
+  return 1;
+#endif
+}
+
+void gpu_clear_batched_momentum_search(void) {
+  gpuReleaseBatchedSearchScratch();
 }
 
 void gpuSetCpuParticleArray(double **coord, long nParticles) {
