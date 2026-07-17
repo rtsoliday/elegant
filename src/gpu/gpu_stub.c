@@ -234,6 +234,10 @@ extern void gpuCudaBggexpRelease(void);
 extern int gpuCudaCwigglerTrack(void *coord, long nParticles, int stride,
                                 const GPU_CWIGGLER_DATA *data,
                                 float *milliseconds);
+extern int gpuCudaFtableTrack(void *coord, long nParticles, int stride,
+                              const GPU_FTABLE_DATA *data,
+                              float *milliseconds);
+extern void gpuCudaFtableRelease(void);
 extern int gpuCudaRfcwRfOnlyMatrix(void *coord, long nParticles, int stride,
                                    double pCentral, double length,
                                    double volt, double omega, double phase,
@@ -729,6 +733,8 @@ static long gpuEnableBggexp = 0;
 static long gpuBggexpMinParticles = 64;
 static long gpuEnableCwiggler = 0;
 static long gpuCwigglerMinParticles = 64;
+static long gpuEnableFtable = 0;
+static long gpuFtableMinParticles = 64;
 static long gpuEnableLscTracking = 0;
 static long gpuLscTrackingExplicit = 0;
 static long gpuEnableRfcwTrackingDrift = 0;
@@ -2119,6 +2125,56 @@ static long gpuCwigglerElementSupported(ELEMENT_LIST *eptr) {
   return 1;
 }
 
+static long gpuFtableElementSupported(ELEMENT_LIST *eptr) {
+  FTABLE *ftable;
+  ntuple *table[3];
+  long field, dimension;
+  long tableLength = 1;
+
+  if (!gpuEnableFtable || gpuBase.backtrack)
+    return 0;
+  if (!eptr || eptr->type != T_FTABLE || !eptr->p_elem)
+    return 0;
+  ftable = (FTABLE *)eptr->p_elem;
+  if (!ftable->initialized || ftable->verbose || ftable->nKicks != 1 ||
+      ftable->length <= 0 || !isfinite(ftable->factor) ||
+      !isfinite(ftable->threshold) || ftable->threshold < 0 ||
+      ftable->angle || ftable->e1 || ftable->e2 ||
+      ftable->l1 || ftable->l2 || ftable->tilt ||
+      ftable->dx || ftable->dy || ftable->dz)
+    return 0;
+  table[0] = ftable->Bx;
+  table[1] = ftable->By;
+  table[2] = ftable->Bz;
+  for (field = 0; field < 3; field++) {
+    if (!table[field] || table[field]->nD != 3 || !table[field]->value ||
+        !table[field]->xmin || !table[field]->xmax ||
+        !table[field]->dx || !table[field]->xbins)
+      return 0;
+  }
+  for (dimension = 0; dimension < 3; dimension++) {
+    if (table[0]->xbins[dimension] < 2 ||
+        table[0]->dx[dimension] <= 0 ||
+        table[0]->xmax[dimension] <= table[0]->xmin[dimension])
+      return 0;
+    if (tableLength > LONG_MAX / table[0]->xbins[dimension])
+      return 0;
+    tableLength *= table[0]->xbins[dimension];
+    for (field = 1; field < 3; field++) {
+      if (table[field]->xbins[dimension] != table[0]->xbins[dimension] ||
+          table[field]->xmin[dimension] != table[0]->xmin[dimension] ||
+          table[field]->xmax[dimension] != table[0]->xmax[dimension] ||
+          table[field]->dx[dimension] != table[0]->dx[dimension])
+        return 0;
+    }
+  }
+  for (field = 0; field < 3; field++) {
+    if (table[field]->length != tableLength)
+      return 0;
+  }
+  return 1;
+}
+
 static long gpuLscDataSupported(LSCDRIFT *lsc) {
   if (!lsc)
     return 0;
@@ -2340,6 +2396,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuCwigglerElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuCwigglerMinParticles);
+  if (gpuFtableElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuFtableMinParticles);
   if (gpuWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuTrwakeElementSupported(eptr))
@@ -4006,6 +4065,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_CWIGGLER_PARTICLES", 64);
   if (gpuCwigglerMinParticles < 1)
     gpuCwigglerMinParticles = 1;
+  gpuEnableFtable =
+    gpuEnvSet("ELEGANT_GPU_ENABLE_FTABLE") &&
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_FTABLE");
+  gpuFtableMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_FTABLE_PARTICLES", 64);
+  if (gpuFtableMinParticles < 1)
+    gpuFtableMinParticles = 1;
   gpuLscTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_LSC");
   gpuEnableLscTracking = !gpuLscTrackingExplicit ||
                          gpuEnvFlag("ELEGANT_GPU_ENABLE_LSC");
@@ -4027,6 +4093,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnableRfdf = 0;
   gpuEnableBggexp = 0;
   gpuEnableCwiggler = 0;
+  gpuEnableFtable = 0;
 #endif
   gpuAvoidShortGpuIslands = !gpuEnvSet("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS") ||
                             gpuEnvFlag("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS");
@@ -4167,6 +4234,10 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
             gpuRfcwTrackingDriftStatus(),
             gpuRfcaChangeP0DriftStatus());
 #endif
+    if (gpuEnableFtable)
+      fprintf(stderr,
+              "elegant CUDA: fixed-step FTABLE enabled at %ld particles.\n",
+              gpuFtableMinParticles);
   }
 
   gpuBase.initialized = 1;
@@ -4201,6 +4272,7 @@ void gpuBaseDealloc(void) {
   gpuReleasePolynomialSeriesCache();
   gpuCudaPolynomialSeriesRelease();
   gpuCudaBggexpRelease();
+  gpuCudaFtableRelease();
   gpuReleaseApertureScratch();
   gpuReleaseCsrScratch();
   gpuCudaCombinedWakeRelease();
@@ -7371,6 +7443,49 @@ void gpu_track_cwiggler(long nParticles, const GPU_CWIGGLER_DATA *data) {
                                 &milliseconds);
   if (status != 0)
     gpuFatalStatus("CWIGGLER tracking CUDA kernel", status);
+  gpuRecordMagnetKernel(milliseconds);
+  gpuMarkDeviceChanged(nParticles);
+  gpuRecordWallSeconds();
+}
+
+void gpu_track_ftable(long nParticles, FTABLE *ftable, double pCentral) {
+  GPU_FTABLE_DATA data;
+  ntuple *table[3];
+  float milliseconds = 0;
+  int status;
+  long field, dimension;
+
+  if (nParticles <= 0)
+    return;
+  if (!ftable || !ftable->Bx || !ftable->By || !ftable->Bz)
+    gpuRequiredFailure("NULL FTABLE CUDA tracking data");
+  table[0] = ftable->Bx;
+  table[1] = ftable->By;
+  table[2] = ftable->Bz;
+  memset(&data, 0, sizeof(data));
+  data.tableOwner = ftable->Bx;
+  for (field = 0; field < 3; field++)
+    data.field[field] = table[field]->value;
+  for (dimension = 0; dimension < 3; dimension++) {
+    data.dimensions[dimension] = table[0]->xbins[dimension];
+    data.minimum[dimension] = table[0]->xmin[dimension];
+    data.maximum[dimension] = table[0]->xmax[dimension];
+    data.spacing[dimension] = table[0]->dx[dimension];
+  }
+  data.nKicks = ftable->nKicks;
+  data.length = ftable->length;
+  data.factor = ftable->factor;
+  data.threshold = ftable->threshold;
+  data.pCentral = pCentral;
+  data.eomc = -particleCharge / particleMass / c_mks;
+
+  startGpuTimer();
+  gpuCopyHostToDevice(nParticles);
+  status = gpuCudaFtableTrack(gpuBase.deviceCoord, nParticles,
+                              (int)gpuBase.deviceStride, &data,
+                              &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("FTABLE tracking CUDA kernel", status);
   gpuRecordMagnetKernel(milliseconds);
   gpuMarkDeviceChanged(nParticles);
   gpuRecordWallSeconds();

@@ -363,6 +363,21 @@ typedef struct GPU_CWIGGLER_DATA {
   double z6;
 } GPU_CWIGGLER_DATA;
 
+typedef struct GPU_FTABLE_DATA {
+  const void *tableOwner;
+  long dimensions[3];
+  const double *field[3];
+  double minimum[3];
+  double maximum[3];
+  double spacing[3];
+  long nKicks;
+  double length;
+  double factor;
+  double threshold;
+  double pCentral;
+  double eomc;
+} GPU_FTABLE_DATA;
+
 typedef struct GPU_KICKMAP_DATA {
   int undulator;
   long nKicks;

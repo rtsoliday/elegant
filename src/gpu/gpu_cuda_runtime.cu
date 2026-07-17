@@ -88,6 +88,80 @@ typedef struct GPU_BGGEXP_SCRATCH {
 
 static GPU_BGGEXP_SCRATCH gpuBggexpScratch;
 
+typedef struct GPU_FTABLE_SCRATCH {
+  double *field[3];
+  long capacity;
+  long dimensions[3];
+  const void *tableOwner;
+} GPU_FTABLE_SCRATCH;
+
+static GPU_FTABLE_SCRATCH gpuFtableScratch;
+
+static void releaseFtableScratch(void) {
+  for (long field = 0; field < 3; field++)
+    cudaFree(gpuFtableScratch.field[field]);
+  std::memset(&gpuFtableScratch, 0, sizeof(gpuFtableScratch));
+}
+
+extern "C" void gpuCudaFtableRelease(void) {
+  releaseFtableScratch();
+}
+
+static int ensureFtableScratch(const GPU_FTABLE_DATA *data) {
+  cudaError_t status;
+  long tableValues = 1;
+  int upload = 0;
+
+  if (!data || !data->tableOwner)
+    return static_cast<int>(cudaErrorInvalidValue);
+  for (long dimension = 0; dimension < 3; dimension++) {
+    if (data->dimensions[dimension] < 2 ||
+        tableValues > LONG_MAX / data->dimensions[dimension])
+      return static_cast<int>(cudaErrorInvalidValue);
+    tableValues *= data->dimensions[dimension];
+  }
+  for (long field = 0; field < 3; field++) {
+    if (!data->field[field])
+      return static_cast<int>(cudaErrorInvalidValue);
+  }
+  if (gpuFtableScratch.capacity < tableValues ||
+      !gpuFtableScratch.field[0] || !gpuFtableScratch.field[1] ||
+      !gpuFtableScratch.field[2]) {
+    long capacity = tableValues;
+    releaseFtableScratch();
+    gpuFtableScratch.capacity = capacity;
+    for (long field = 0; field < 3; field++) {
+      status = cudaMalloc(&gpuFtableScratch.field[field],
+                          capacity * sizeof(*gpuFtableScratch.field[field]));
+      if (status != cudaSuccess) {
+        releaseFtableScratch();
+        return static_cast<int>(status);
+      }
+    }
+    upload = 1;
+  }
+  if (gpuFtableScratch.tableOwner != data->tableOwner)
+    upload = 1;
+  for (long dimension = 0; dimension < 3; dimension++) {
+    if (gpuFtableScratch.dimensions[dimension] !=
+        data->dimensions[dimension])
+      upload = 1;
+  }
+  if (upload) {
+    for (long field = 0; field < 3; field++) {
+      status = cudaMemcpy(gpuFtableScratch.field[field], data->field[field],
+                          tableValues * sizeof(*data->field[field]),
+                          cudaMemcpyHostToDevice);
+      if (status != cudaSuccess)
+        return static_cast<int>(status);
+    }
+    gpuFtableScratch.tableOwner = data->tableOwner;
+    std::memcpy(gpuFtableScratch.dimensions, data->dimensions,
+                sizeof(gpuFtableScratch.dimensions));
+  }
+  return static_cast<int>(cudaSuccess);
+}
+
 static void releaseBggexpScratch(void) {
   cudaFree(gpuBggexpScratch.Cmn);
   cudaFree(gpuBggexpScratch.dCmnDz);
@@ -1989,6 +2063,247 @@ __global__ void gpuCwigglerKernel(double *coord, long nParticles, int stride,
   part[3] = qy / denom;
   part[4] = s;
   part[5] = delta;
+}
+
+__device__ __forceinline__ void gpuFtableInterpolate(
+  double fieldValue[3], double x, double y, double z,
+  const GPU_FTABLE_DATA &data) {
+  double position[3] = {x, y, z};
+  double coefficient[3][2];
+  long grid[3][2];
+
+  fieldValue[0] = fieldValue[1] = fieldValue[2] = 0.0;
+  for (long dimension = 0; dimension < 3; dimension++) {
+    double normalized;
+    if (position[dimension] > data.maximum[dimension] ||
+        position[dimension] < data.minimum[dimension])
+      return;
+    normalized = (position[dimension] - data.minimum[dimension]) /
+                 (data.maximum[dimension] - data.minimum[dimension]);
+    grid[dimension][0] =
+      static_cast<long>(normalized * data.dimensions[dimension] - 0.5);
+    coefficient[dimension][1] =
+      (position[dimension] - data.minimum[dimension]) /
+        data.spacing[dimension] -
+      grid[dimension][0] - 0.5;
+    if (coefficient[dimension][1] < 0) {
+      grid[dimension][0]--;
+      coefficient[dimension][1]++;
+    }
+    coefficient[dimension][0] = 1.0 - coefficient[dimension][1];
+    grid[dimension][1] = grid[dimension][0] + 1;
+    if (grid[dimension][0] < 0)
+      grid[dimension][0] = 0;
+    if (grid[dimension][1] == data.dimensions[dimension])
+      grid[dimension][1]--;
+  }
+
+  for (long corner = 0; corner < 8; corner++) {
+    long bitX = (corner >> 2) & 1;
+    long bitY = (corner >> 1) & 1;
+    long bitZ = corner & 1;
+    long index =
+      grid[2][bitZ] +
+      data.dimensions[2] *
+        (grid[1][bitY] + data.dimensions[1] * grid[0][bitX]);
+    double weight = 1.0;
+    weight *= coefficient[2][bitZ];
+    weight *= coefficient[1][bitY];
+    weight *= coefficient[0][bitX];
+    for (long field = 0; field < 3; field++)
+      fieldValue[field] += weight * data.field[field][index];
+  }
+  for (long field = 0; field < 3; field++)
+    fieldValue[field] *= data.factor;
+}
+
+__device__ __forceinline__ void gpuFtableRotate(
+  const double matrix[9], double vector[3], int inverse) {
+  double result[3] = {0.0, 0.0, 0.0};
+  for (long row = 0; row < 3; row++) {
+    for (long column = 0; column < 3; column++) {
+      if (!inverse)
+        result[row] += matrix[row * 3 + column] * vector[column];
+      else
+        result[row] += matrix[column * 3 + row] * vector[column];
+    }
+  }
+  vector[0] = result[0];
+  vector[1] = result[1];
+  vector[2] = result[2];
+}
+
+__device__ __forceinline__ int gpuFtableSolveCubic(
+  double a, double b, double c, double *x0, double *x1, double *x2) {
+  double q = a * a - 3.0 * b;
+  double r = 2.0 * a * a * a - 9.0 * a * b + 27.0 * c;
+  double Q = q / 9.0;
+  double R = r / 54.0;
+  double Q3 = Q * Q * Q;
+  double R2 = R * R;
+  double CR2 = 729.0 * r * r;
+  double CQ3 = 2916.0 * q * q * q;
+  *x0 = *x1 = *x2 = 0.0;
+  if (R == 0.0 && Q == 0.0) {
+    *x0 = *x1 = *x2 = -a / 3.0;
+    return 3;
+  }
+  if (CR2 == CQ3) {
+    double sqrtQ = sqrt(Q);
+    if (R > 0.0) {
+      *x0 = -2.0 * sqrtQ - a / 3.0;
+      *x1 = *x2 = sqrtQ - a / 3.0;
+    } else {
+      *x0 = *x1 = -sqrtQ - a / 3.0;
+      *x2 = 2.0 * sqrtQ - a / 3.0;
+    }
+    return 3;
+  }
+  if (R2 < Q3) {
+    double sgnR = R >= 0.0 ? 1.0 : -1.0;
+    double ratio = sgnR * sqrt(R2 / Q3);
+    double theta = acos(ratio);
+    double norm = -2.0 * sqrt(Q);
+    double root0 = norm * cos(theta / 3.0) - a / 3.0;
+    double root1 =
+      norm * cos((theta + 2.0 * M_PI) / 3.0) - a / 3.0;
+    double root2 =
+      norm * cos((theta - 2.0 * M_PI) / 3.0) - a / 3.0;
+    if (root0 > root1) {
+      double swap = root0;
+      root0 = root1;
+      root1 = swap;
+    }
+    if (root1 > root2) {
+      double swap = root1;
+      root1 = root2;
+      root2 = swap;
+    }
+    if (root0 > root1) {
+      double swap = root0;
+      root0 = root1;
+      root1 = swap;
+    }
+    *x0 = root0;
+    *x1 = root1;
+    *x2 = root2;
+    return 3;
+  }
+  {
+    double sgnR = R >= 0.0 ? 1.0 : -1.0;
+    double A =
+      -sgnR * pow(fabs(R) + sqrt(R2 - Q3), 1.0 / 3.0);
+    double B = Q / A;
+    *x0 = A + B - a / 3.0;
+  }
+  return 1;
+}
+
+__device__ __forceinline__ double gpuFtableChooseTheta(
+  double rho, double x0, double x1, double x2) {
+  double theta;
+  if (rho < 0.0) {
+    theta = -DBL_MAX;
+    if (x0 < 0.0 && x0 > theta)
+      theta = x0;
+    if (x1 < 0.0 && x1 > theta)
+      theta = x1;
+    if (x2 < 0.0 && x2 > theta)
+      theta = x2;
+  } else {
+    theta = DBL_MAX;
+    if (x0 > 0.0 && x0 < theta)
+      theta = x0;
+    if (x1 > 0.0 && x1 < theta)
+      theta = x1;
+    if (x2 > 0.0 && x2 < theta)
+      theta = x2;
+  }
+  return theta;
+}
+
+__global__ void gpuFtableKernel(double *coord, long nParticles, int stride,
+                                GPU_FTABLE_DATA data) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+  double step, sLocation;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  step = data.length / data.nKicks;
+  sLocation = step / 2.0;
+
+  for (long kick = 0; kick < data.nKicks; kick++, sLocation += step) {
+    double factor = sqrt(1.0 + part[1] * part[1] + part[3] * part[3]);
+    double p0 = (1.0 + part[5]) * data.pCentral;
+    double p[3], B[3], matrix[9], pA, BA;
+    double xyz[3];
+
+    p[2] = p0 / factor;
+    p[0] = part[1] * p[2];
+    p[1] = part[3] * p[2];
+    gpuFtableInterpolate(B, part[0] + part[1] * step / 2.0,
+                         part[2] + part[3] * step / 2.0,
+                         sLocation, data);
+    BA = sqrt(B[0] * B[0] + B[1] * B[1] + B[2] * B[2]);
+    matrix[0] = -(p[1] * B[2] - p[2] * B[1]);
+    matrix[1] = -(p[2] * B[0] - p[0] * B[2]);
+    matrix[2] = -(p[0] * B[1] - p[1] * B[0]);
+    pA = sqrt(matrix[0] * matrix[0] +
+              matrix[1] * matrix[1] + matrix[2] * matrix[2]);
+    if (BA > data.threshold && pA != 0.0) {
+      double rho, theta0 = 0.0, theta1 = 0.0, theta2 = 0.0, theta;
+      double tmA, tmB, tmC;
+      matrix[0] /= pA;
+      matrix[1] /= pA;
+      matrix[2] /= pA;
+      matrix[3] = B[0] / BA;
+      matrix[4] = B[1] / BA;
+      matrix[5] = B[2] / BA;
+      matrix[6] = matrix[1] * matrix[5] - matrix[2] * matrix[4];
+      matrix[7] = matrix[2] * matrix[3] - matrix[0] * matrix[5];
+      matrix[8] = matrix[0] * matrix[4] - matrix[1] * matrix[3];
+      gpuFtableRotate(matrix, p, 0);
+      gpuFtableRotate(matrix, B, 0);
+      rho = p[2] / (data.eomc * B[1]);
+      if (matrix[8] != 0.0) {
+        tmA = 3.0 * matrix[2] / matrix[8];
+        tmB = -6.0 * matrix[5] * p[1] / p[2] / matrix[8] - 6.0;
+        tmC = 6.0 * step / rho / matrix[8];
+        gpuFtableSolveCubic(tmA, tmB, tmC,
+                            &theta0, &theta1, &theta2);
+      } else if (matrix[2] != 0.0) {
+        tmA = matrix[5] * p[1] / p[2] + matrix[8];
+        theta0 =
+          (tmA - sqrt(tmA * tmA - 2.0 * matrix[2] * step / rho)) /
+          matrix[2];
+        theta1 =
+          (tmA + sqrt(tmA * tmA - 2.0 * matrix[2] * step / rho)) /
+          matrix[2];
+      } else {
+        tmA = matrix[5] * p[1] / p[2] + matrix[8];
+        theta0 = step / rho / tmA;
+      }
+      theta = gpuFtableChooseTheta(rho, theta0, theta1, theta2);
+      p[0] = -p[2] * sin(theta);
+      p[2] *= cos(theta);
+      xyz[0] = rho * (cos(theta) - 1.0);
+      xyz[1] = (p[1] / p[2]) * rho * theta;
+      xyz[2] = rho * sin(theta);
+      gpuFtableRotate(matrix, xyz, 1);
+      gpuFtableRotate(matrix, p, 1);
+      part[0] += xyz[0];
+      part[2] += xyz[1];
+      part[4] += sqrt((rho * theta) * (rho * theta) + xyz[1] * xyz[1]);
+      part[1] = p[0] / p[2];
+      part[3] = p[1] / p[2];
+    } else {
+      part[0] += part[1] * step;
+      part[2] += part[3] * step;
+      part[4] += step * factor;
+    }
+  }
 }
 
 __global__ void gpuRfcwRfOnlyMatrixKernel(double *coord, long nParticles, int stride,
@@ -8348,6 +8663,33 @@ extern "C" int gpuCudaCwigglerTrack(void *coord, long nParticles, int stride,
     return status;
   gpuCwigglerKernel<<<blocks, threads>>>(static_cast<double *>(coord),
                                         nParticles, stride, *data);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaFtableTrack(void *coord, long nParticles, int stride,
+                                  const GPU_FTABLE_DATA *data,
+                                  float *milliseconds) {
+  GPU_FTABLE_DATA deviceData;
+  cudaEvent_t start, stop;
+  int threads = 128;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  if (!coord || !data || nParticles <= 0 || stride < 7 ||
+      data->nKicks < 1 || data->length <= 0 || data->pCentral <= 0 ||
+      data->eomc == 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  status = ensureFtableScratch(data);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  deviceData = *data;
+  for (long field = 0; field < 3; field++)
+    deviceData.field[field] = gpuFtableScratch.field[field];
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuFtableKernel<<<blocks, threads>>>(static_cast<double *>(coord),
+                                      nParticles, stride, deviceData);
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
 

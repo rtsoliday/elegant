@@ -20,6 +20,7 @@
 #ifdef HAVE_GPU
 #  include <gpu_base.h>
 #  include <gpu_funcs.h>
+#  include <gpu_ftable.h>
 #  include <gpu_kickmap.h>
 #  include <gpu_limit_amplitudes.h>
 #  include <gpu_polynomial_series.h>
@@ -1840,10 +1841,29 @@ long do_tracking(
                     }
                   }
                   break;
-                case T_FTABLE:
+                case T_FTABLE: {
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                  long ftableGpuTracked = 0;
+#endif
                   ftable = (FTABLE *)eptr->p_elem;
+#ifdef HAVE_GPU
+                  if (getElementOnGpu()) {
+                    gpu_track_ftable(nToTrack, ftable, *P_central);
+#  ifdef GPU_VERIFY
+                    startCpuTimer();
+                    ftableGpuTracked = 1;
+#  else
+                    break;
+#  endif
+                  }
+#endif
                   field_table_tracking(coord, nToTrack, ftable, *P_central, run);
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                  if (ftableGpuTracked)
+                    compareGpuCpu(nToTrack, "field_table_tracking");
+#endif
                   break;
+                }
                 case T_BGGEXP:
                   trackBGGExpansion(coord, nToTrack, (BGGEXP *)eptr->p_elem, *P_central, accepted, NULL);
                   break;
