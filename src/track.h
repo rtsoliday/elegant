@@ -889,6 +889,7 @@ typedef struct {
 #if SDDS_MPI_IO
   long n_to_track_total;    /* The total number of particles being tracked on all the processors */
   long n_original_total;    /* The total number of particles read from data file */
+  long n_saved_total;       /* The total number of particles saved for reuse on all the processors */
 #endif
     long n_particle;        /* size of particle and accepted arrays */
     double p0;              /* current/final central momentum */
