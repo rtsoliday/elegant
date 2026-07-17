@@ -1849,6 +1849,148 @@ __global__ void gpuBggexpKernel(double *coord, long nParticles, int stride,
   part[4] = s;
 }
 
+__device__ __forceinline__ double gpuCwigglerPoleFactor(
+  double z, const GPU_CWIGGLER_DATA &data) {
+  if (z < data.z3) {
+    if (z < data.z1)
+      return data.poleFactor[0];
+    if (z < data.z2)
+      return data.poleFactor[1];
+    return data.poleFactor[2];
+  }
+  if (z < data.z4)
+    return 1.0;
+  if (z < data.z5)
+    return data.poleFactor[2];
+  if (z < data.z6)
+    return data.poleFactor[1];
+  return data.poleFactor[0];
+}
+
+__device__ __forceinline__ void gpuCwigglerAx(
+  double *ax, double *axpy, double x, double y, double z,
+  double poleFactor, const GPU_CWIGGLER_DATA &data) {
+  *ax = 0.0;
+  *axpy = 0.0;
+  if (data.hasHorizontal && z >= data.zStartHorizontal &&
+      z <= data.zEndHorizontal) {
+    double coefficient = data.horizontalCoefficient * poleFactor;
+    double sinz = sin(data.kw * z + data.horizontalPhase);
+    *ax = coefficient * cosh(data.kw * y) * sinz;
+    *axpy = coefficient * data.kw * x * sinh(data.kw * y) * sinz;
+  }
+}
+
+__device__ __forceinline__ void gpuCwigglerAy(
+  double *ay, double *aypx, double x, double y, double z,
+  double poleFactor, const GPU_CWIGGLER_DATA &data) {
+  *ay = 0.0;
+  *aypx = 0.0;
+  if (data.hasVertical && z >= data.zStartVertical &&
+      z <= data.zEndVertical) {
+    double coefficient = data.verticalCoefficient * poleFactor;
+    double sinz = sin(data.kw * z + data.verticalPhase);
+    *ay = coefficient * cosh(data.kw * x) * sinz;
+    *aypx = coefficient * data.kw * sinh(data.kw * x) * y * sinz;
+  }
+}
+
+__device__ __forceinline__ void gpuCwigglerMapSecondOrder(
+  double *x, double *qx, double *y, double *qy, double *s,
+  double delta, double *z, double dl, double poleFactor,
+  const GPU_CWIGGLER_DATA &data) {
+  double dld = dl / (1.0 + delta);
+  double dl2 = 0.5 * dl;
+  double dl2d = dl2 / (1.0 + delta);
+  double ax, ay, axpy, aypx;
+
+  *z += dl2;
+
+  gpuCwigglerAy(&ay, &aypx, *x, *y, *z, poleFactor, data);
+  *qx -= aypx;
+  *qy -= ay;
+  *y += dl2d * *qy;
+  *s += 0.5 * dl2d * *qy * *qy / (1.0 + delta);
+  gpuCwigglerAy(&ay, &aypx, *x, *y, *z, poleFactor, data);
+  *qx += aypx;
+  *qy += ay;
+
+  gpuCwigglerAx(&ax, &axpy, *x, *y, *z, poleFactor, data);
+  *qx -= ax;
+  *qy -= axpy;
+  *x += dld * *qx;
+  *s += dl + 0.5 * dld * *qx * *qx / (1.0 + delta);
+  gpuCwigglerAx(&ax, &axpy, *x, *y, *z, poleFactor, data);
+  *qx += ax;
+  *qy += axpy;
+
+  gpuCwigglerAy(&ay, &aypx, *x, *y, *z, poleFactor, data);
+  *qx -= aypx;
+  *qy -= ay;
+  *y += dl2d * *qy;
+  *s += 0.5 * dl2d * *qy * *qy / (1.0 + delta);
+  gpuCwigglerAy(&ay, &aypx, *x, *y, *z, poleFactor, data);
+  *qx += aypx;
+  *qy += ay;
+
+  *z += dl2;
+}
+
+__global__ void gpuCwigglerKernel(double *coord, long nParticles, int stride,
+                                  GPU_CWIGGLER_DATA data) {
+  const double fourthOrderX1 =
+    1.3512071919596576340476878089715;
+  const double fourthOrderX0 =
+    -1.7024143839193152680953756179429;
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+  double x, xp, qx, y, yp, qy, s, delta, denom, z = 0.0;
+  double periodLength, dl, dl1, dl0;
+  long totalSteps;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  x = part[0];
+  xp = part[1];
+  y = part[2];
+  yp = part[3];
+  s = part[4];
+  delta = part[5];
+  denom = sqrt(1.0 + xp * xp + yp * yp);
+  qx = (1.0 + delta) * xp / denom;
+  qy = (1.0 + delta) * yp / denom;
+
+  periodLength = data.periodLength;
+  dl = periodLength / data.stepsPerPeriod;
+  dl1 = fourthOrderX1 * dl;
+  dl0 = fourthOrderX0 * dl;
+  totalSteps = data.periods * data.stepsPerPeriod;
+  for (long step = 1; step <= totalSteps; step++) {
+    double poleFactor = gpuCwigglerPoleFactor(
+      ((step - 1) * data.length) / totalSteps, data);
+    if (data.integrationOrder == 2) {
+      gpuCwigglerMapSecondOrder(&x, &qx, &y, &qy, &s, delta, &z,
+                                dl, poleFactor, data);
+    } else {
+      gpuCwigglerMapSecondOrder(&x, &qx, &y, &qy, &s, delta, &z,
+                                dl1, poleFactor, data);
+      gpuCwigglerMapSecondOrder(&x, &qx, &y, &qy, &s, delta, &z,
+                                dl0, poleFactor, data);
+      gpuCwigglerMapSecondOrder(&x, &qx, &y, &qy, &s, delta, &z,
+                                dl1, poleFactor, data);
+    }
+  }
+
+  denom = sqrt((1.0 + delta) * (1.0 + delta) - qx * qx - qy * qy);
+  part[0] = x;
+  part[1] = qx / denom;
+  part[2] = y;
+  part[3] = qy / denom;
+  part[4] = s;
+  part[5] = delta;
+}
+
 __global__ void gpuRfcwRfOnlyMatrixKernel(double *coord, long nParticles, int stride,
                                           double pCentral, double length,
                                           double volt, double omega,
@@ -8185,6 +8327,27 @@ extern "C" int gpuCudaBggexpTrack(void *coord, long nParticles, int stride,
     return status;
   gpuBggexpKernel<<<blocks, threads>>>(static_cast<double *>(coord),
                                       nParticles, stride, deviceData);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaCwigglerTrack(void *coord, long nParticles, int stride,
+                                    const GPU_CWIGGLER_DATA *data,
+                                    float *milliseconds) {
+  cudaEvent_t start, stop;
+  int threads = 128;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  if (!coord || !data || nParticles <= 0 || stride < 7 ||
+      data->periods <= 0 || data->stepsPerPeriod <= 0 ||
+      data->periodLength <= 0 ||
+      (data->integrationOrder != 2 && data->integrationOrder != 4))
+    return static_cast<int>(cudaErrorInvalidValue);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuCwigglerKernel<<<blocks, threads>>>(static_cast<double *>(coord),
+                                        nParticles, stride, *data);
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
 

@@ -337,6 +337,32 @@ typedef struct GPU_BGGEXP_DATA {
   double cMks;
 } GPU_BGGEXP_DATA;
 
+typedef struct GPU_CWIGGLER_DATA {
+  long periods;
+  long stepsPerPeriod;
+  int integrationOrder;
+  int hasHorizontal;
+  int hasVertical;
+  double length;
+  double periodLength;
+  double kw;
+  double horizontalCoefficient;
+  double verticalCoefficient;
+  double horizontalPhase;
+  double verticalPhase;
+  double zStartHorizontal;
+  double zEndHorizontal;
+  double zStartVertical;
+  double zEndVertical;
+  double poleFactor[3];
+  double z1;
+  double z2;
+  double z3;
+  double z4;
+  double z5;
+  double z6;
+} GPU_CWIGGLER_DATA;
+
 typedef struct GPU_KICKMAP_DATA {
   int undulator;
   long nKicks;

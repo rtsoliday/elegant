@@ -231,6 +231,9 @@ extern int gpuCudaBggexpTrack(void *coord, long nParticles, int stride,
                               const GPU_BGGEXP_DATA *data,
                               float *milliseconds);
 extern void gpuCudaBggexpRelease(void);
+extern int gpuCudaCwigglerTrack(void *coord, long nParticles, int stride,
+                                const GPU_CWIGGLER_DATA *data,
+                                float *milliseconds);
 extern int gpuCudaRfcwRfOnlyMatrix(void *coord, long nParticles, int stride,
                                    double pCentral, double length,
                                    double volt, double omega, double phase,
@@ -724,6 +727,8 @@ static long gpuEnableRfdf = 0;
 static long gpuRfdfMinParticles = 64;
 static long gpuEnableBggexp = 0;
 static long gpuBggexpMinParticles = 64;
+static long gpuEnableCwiggler = 0;
+static long gpuCwigglerMinParticles = 64;
 static long gpuEnableLscTracking = 0;
 static long gpuLscTrackingExplicit = 0;
 static long gpuEnableRfcwTrackingDrift = 0;
@@ -2083,6 +2088,37 @@ static long gpuBggexpElementSupported(ELEMENT_LIST *eptr) {
   return 1;
 }
 
+static long gpuCwigglerElementSupported(ELEMENT_LIST *eptr) {
+  CWIGGLER *cwiggler;
+  long hasHorizontal, hasVertical;
+
+  if (!gpuEnableCwiggler || gpuBase.backtrack)
+    return 0;
+  if (!eptr || eptr->type != T_CWIGGLER || !eptr->p_elem)
+    return 0;
+  cwiggler = (CWIGGLER *)eptr->p_elem;
+  if (!cwiggler->sinusoidal || cwiggler->sr || cwiggler->isr ||
+      cwiggler->tgu || cwiggler->BySplitPole || cwiggler->BxSplitPole ||
+      (cwiggler->ByFile && cwiggler->ByFile[0]) ||
+      (cwiggler->BxFile && cwiggler->BxFile[0]) ||
+      (cwiggler->fieldOutput && cwiggler->fieldOutput[0]) ||
+      cwiggler->dx || cwiggler->dy || cwiggler->dz || cwiggler->tilt ||
+      cwiggler->BConstant[0] || cwiggler->BConstant[1] ||
+      cwiggler->gap > 0 || cwiggler->length <= 0 ||
+      cwiggler->periods <= 0 || cwiggler->stepsPerPeriod <= 0 ||
+      cwiggler->stepsPerPeriod % 4 ||
+      (cwiggler->integrationOrder != 2 && cwiggler->integrationOrder != 4) ||
+      cwiggler->poleFactor[0] != 1 || cwiggler->poleFactor[1] != 1 ||
+      cwiggler->poleFactor[2] != 1)
+    return 0;
+  hasHorizontal = !cwiggler->vertical || cwiggler->helical;
+  hasVertical = cwiggler->vertical || cwiggler->helical;
+  if ((hasHorizontal && !cwiggler->BMax && !cwiggler->ByMax) ||
+      (hasVertical && !cwiggler->BMax && !cwiggler->BxMax))
+    return 0;
+  return 1;
+}
+
 static long gpuLscDataSupported(LSCDRIFT *lsc) {
   if (!lsc)
     return 0;
@@ -2301,6 +2337,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuBggexpElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuBggexpMinParticles);
+  if (gpuCwigglerElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuCwigglerMinParticles);
   if (gpuWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuTrwakeElementSupported(eptr))
@@ -3960,6 +3999,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_BGGEXP_PARTICLES", 64);
   if (gpuBggexpMinParticles < 1)
     gpuBggexpMinParticles = 1;
+  gpuEnableCwiggler =
+    gpuEnvSet("ELEGANT_GPU_ENABLE_CWIGGLER") &&
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_CWIGGLER");
+  gpuCwigglerMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_CWIGGLER_PARTICLES", 64);
+  if (gpuCwigglerMinParticles < 1)
+    gpuCwigglerMinParticles = 1;
   gpuLscTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_LSC");
   gpuEnableLscTracking = !gpuLscTrackingExplicit ||
                          gpuEnvFlag("ELEGANT_GPU_ENABLE_LSC");
@@ -3980,6 +4026,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnablePolynomialSeries = 0;
   gpuEnableRfdf = 0;
   gpuEnableBggexp = 0;
+  gpuEnableCwiggler = 0;
 #endif
   gpuAvoidShortGpuIslands = !gpuEnvSet("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS") ||
                             gpuEnvFlag("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS");
@@ -7304,6 +7351,26 @@ void gpu_track_bggexp(long nParticles, const GPU_BGGEXP_DATA *data) {
                               &milliseconds);
   if (status != 0)
     gpuFatalStatus("BGGEXP tracking CUDA kernel", status);
+  gpuRecordMagnetKernel(milliseconds);
+  gpuMarkDeviceChanged(nParticles);
+  gpuRecordWallSeconds();
+}
+
+void gpu_track_cwiggler(long nParticles, const GPU_CWIGGLER_DATA *data) {
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0)
+    return;
+  if (!data)
+    gpuRequiredFailure("NULL CWIGGLER CUDA tracking data");
+  startGpuTimer();
+  gpuCopyHostToDevice(nParticles);
+  status = gpuCudaCwigglerTrack(gpuBase.deviceCoord, nParticles,
+                                (int)gpuBase.deviceStride, data,
+                                &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("CWIGGLER tracking CUDA kernel", status);
   gpuRecordMagnetKernel(milliseconds);
   gpuMarkDeviceChanged(nParticles);
   gpuRecordWallSeconds();

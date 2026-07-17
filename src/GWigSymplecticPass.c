@@ -22,6 +22,10 @@
 #include <stdlib.h>
 #include <math.h>
 #include "gwig.h"
+#ifdef HAVE_GPU
+#  include "gpu/gpu_base.h"
+#  include "gpu/gpu_cwiggler.h"
+#endif
 
 /******************************************************************************/
 /* PHYSICS SECTION ************************************************************/
@@ -184,6 +188,67 @@ void GWigInit(struct gwig *Wig,
 #define second 2
 #define fourth 4
 
+#ifdef HAVE_GPU
+static long GWigTrackIdealSinusoidalOnGpu(struct gwig *Wig,
+                                           long numParticles) {
+  GPU_CWIGGLER_DATA data;
+  double beta0, gamma0, kw;
+
+  if (!Wig || !Wig->cwiggler || numParticles <= 0 ||
+      Wig->NHharm < 0 || Wig->NHharm > 1 ||
+      Wig->NVharm < 0 || Wig->NVharm > 1)
+    return 0;
+  kw = 2 * PI / Wig->Lw;
+  if ((Wig->NHharm &&
+       (Wig->HCw_raw[0] != 1 || Wig->Hkx[0] != 0 ||
+        Wig->Hky[0] != kw || Wig->Hkz[0] != kw)) ||
+      (Wig->NVharm &&
+       (Wig->VCw_raw[0] != 1 || Wig->Vkx[0] != kw ||
+        Wig->Vky[0] != 0 || Wig->Vkz[0] != kw)))
+    return 0;
+
+  memset(&data, 0, sizeof(data));
+  gamma0 = Wig->E0 / XMC2;
+  beta0 = sqrt(1 - 1 / (gamma0 * gamma0));
+  data.periods = Wig->Nw;
+  data.stepsPerPeriod = Wig->PN;
+  data.integrationOrder = Wig->Pmethod;
+  data.hasHorizontal = Wig->NHharm == 1;
+  data.hasVertical = Wig->NVharm == 1;
+  data.length = Wig->cwiggler->length;
+  data.periodLength = Wig->Lw;
+  data.kw = kw;
+  if (data.hasHorizontal) {
+    double field = Wig->PB0H != 0 ? Wig->PB0H : Wig->PB0;
+    data.horizontalCoefficient =
+      (q_e / m_e / clight) / (2 * PI) * Wig->Lw * field /
+      (gamma0 * beta0);
+    data.horizontalPhase = Wig->Htz[0];
+  }
+  if (data.hasVertical) {
+    double field = Wig->PB0V != 0 ? Wig->PB0V : Wig->PB0;
+    data.verticalCoefficient =
+      (q_e / m_e / clight) / (2 * PI) * Wig->Lw * field /
+      (gamma0 * beta0);
+    data.verticalPhase = Wig->Vtz[0];
+  }
+  data.zStartHorizontal = Wig->zStartH;
+  data.zEndHorizontal = Wig->zEndH;
+  data.zStartVertical = Wig->zStartV;
+  data.zEndVertical = Wig->zEndV;
+  memcpy(data.poleFactor, Wig->cwiggler->poleFactor,
+         sizeof(data.poleFactor));
+  data.z1 = Wig->z1;
+  data.z2 = Wig->z2;
+  data.z3 = Wig->z3;
+  data.z4 = Wig->z4;
+  data.z5 = Wig->z5;
+  data.z6 = Wig->z6;
+  gpu_track_cwiggler(numParticles, &data);
+  return 1;
+}
+#endif
+
 void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
                         CWIGGLER *cwiggler, double *sigmaDelta2,
                         long singleStep,
@@ -194,6 +259,9 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
   static struct gwig Wig;
   MALIGN malign;
   TRACKING_CONTEXT tContext;
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  long gpuTracked = 0;
+#endif
 
   getTrackingContext(&tContext);
 
@@ -226,6 +294,22 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
            cwiggler->endFlag[0], cwiggler->endFlag[1], &cwiggler->BConstant[0]);
 
   Wig.cwiggler = cwiggler;
+
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    if (!singleStep && !ZwStart && !sigmaDelta2 &&
+        GWigTrackIdealSinusoidalOnGpu(&Wig, num_particles)) {
+#  ifdef GPU_VERIFY
+      startCpuTimer();
+      gpuTracked = 1;
+#  else
+      return;
+#  endif
+    } else {
+      coord = forceParticlesToCpu("unsupported CWIGGLER tracking call");
+    }
+  }
+#endif
 
   if (ZwStart && (*ZwStart - cwiggler->length) > 1e-6 * cwiggler->length)
     bombElegant("ZwStart>cwiggler->length  This is a bug!", NULL);
@@ -358,6 +442,10 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
     *sigmaDelta2 /= num_particles;
   if (ZwStart)
     *ZwStart += singleStep ? cwiggler->length / (cwiggler->periods * cwiggler->stepsPerPeriod) : cwiggler->length;
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  if (gpuTracked)
+    compareGpuCpu(num_particles, "GWigSymplecticPass");
+#endif
 }
 
 void InitializeCWiggler(CWIGGLER *cwiggler, char *name) {
