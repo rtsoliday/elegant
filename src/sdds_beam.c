@@ -160,6 +160,9 @@ void setup_sdds_beam(
 
   beam->original = beam->particle = beam->accepted = NULL;
   beam->n_original = beam->n_to_track = beam->n_accepted = beam->n_saved = beam->n_particle = 0;
+#if SDDS_MPI_IO
+  beam->n_saved_total = 0;
+#endif
   beam->id_slots_per_bunch = 0;
   save_initial_coordinates = save_original || save_initial_coordinates;
 
@@ -529,13 +532,24 @@ long new_sdds_beam(
     /* use (x, x', y, x', s, dp/p) saved in beam->original[] */
     if (!(beam->n_to_track = beam->n_saved)) {
 #if SDDS_MPI_IO
-      if (!beam->n_to_track_total) { /* Problem!!! In the parallel version, we need check the total number of particles */
+      /* This processor has no saved particles.  With a distributed beam the master
+       * legitimately holds none, so local emptiness does not mean the run is over;
+       * only end the run when the whole saved beam is empty.  beam->n_saved_total
+       * (the sum of n_saved over all processors) is the correct quantity for that,
+       * and it is identical on every processor, so this decision is made in lock
+       * step by all of them.  (Testing beam->n_to_track_total here instead was the
+       * bug: that count is updated only on the master during tracking, so after a
+       * step lost every particle the master alone returned early and hung the
+       * slaves at the MPI_Allreduce below.) */
+      if (!beam->n_saved_total) {
 #endif
         log_exit("new_sdds_beam");
         return -1;
-      }
 #if SDDS_MPI_IO
+      }
+#endif
     }
+#if SDDS_MPI_IO
     /* We need change to the singlePart mode for certain special situations */
     if (do_find_aperture || independentRunPerRank) {
       distributedBeam = 0;
@@ -598,6 +612,15 @@ long new_sdds_beam(
 #  endif
     MPI_Allreduce(&(beam->n_to_track), &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     beam->n_original_total = beam->n_to_track_total;
+    /* Record the global size of the saved/reusable beam.  In the reuse branch
+     * beam->n_to_track was just set to beam->n_saved on every processor (and the
+     * master's was zeroed above), so this freshly reduced total is exactly the sum
+     * of n_saved over all processors; on the initial read it is the number just
+     * distributed, which is what will be saved.  Unlike beam->n_to_track_total,
+     * which the master overwrites with the surviving count during tracking, this
+     * stays valid between steps, so the empty-beam test at the top of the reuse
+     * branch can rely on it. */
+    beam->n_saved_total = beam->n_to_track_total;
 #  ifdef MPI_DEBUG
     printf("%ld particles total\n", beam->n_to_track_total);
 #  endif

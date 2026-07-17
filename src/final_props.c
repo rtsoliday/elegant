@@ -510,7 +510,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
   double tPosition2[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
 #if USE_MPI
   double tmp;
-  long n_part_total, n_orig_total;
+  long n_part_total = 0, n_orig_total = 0;
 #endif
   log_entry("compute_final_properties");
 #ifdef DEBUG
@@ -533,6 +533,28 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
       /* compute centroids and sigmas */
 #if USE_MPI
   if (distributedBeam) {
+    /* Establish the two global particle counts used below (notably for the
+     * Transmission = n_part_total/n_orig_total ratio):
+     *   n_orig_total  = global number of particles initially tracked.  n_original
+     *                   is passed in as beam->n_to_track_total, i.e. the MPI_Reduce
+     *                   of each processor's initial beam->n_to_track performed by
+     *                   the caller (see bunched_beam.c, finish_output).  That reduce
+     *                   writes only the root, so on the slaves n_original is stale
+     *                   here; the Bcast below repairs it.
+     *   n_part_total  = global number of surviving particles.  We read it from the
+     *                   master's sums->n_part rather than reducing the slaves'
+     *                   counts on purpose: accumulate_beam_sums() (compute_centroids.c)
+     *                   already stores the *global* survivor total in the master's
+     *                   sums->n_part for BOTH true-parallel (particles on slaves)
+     *                   and gathered (particles on master) modes.  A slave-side
+     *                   reduction would be wrong in the gathered case, so do not
+     *                   "simplify" this to an Allreduce of slave counts.
+     * The Bcasts are also load-bearing for synchronization, not just for the value:
+     * the guard just below (... && n_part_total) gates a block that performs
+     * collective operations (approximate_percentiles_p, the momentum-sum reduce,
+     * etc.).  All processors must agree on n_part_total to enter or skip that block
+     * together; otherwise some would skip the collectives and the run would hang
+     * (the same class of deadlock as the lost-particle bug in new_sdds_beam). */
     n_orig_total = n_original;
     if (myid == 0)
       n_part_total = sums->n_part;
@@ -682,11 +704,23 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
 
   /* transmission */
 #if USE_MPI
-  if (n_orig_total)
-    data[F_T_OFFSET] = ((double)n_part_total) / n_orig_total;
-  else
-    data[F_T_OFFSET] = 0;
-#else  
+  if (distributedBeam) {
+    /* n_part_total/n_orig_total are the reduced counts computed above */
+    if (n_orig_total)
+      data[F_T_OFFSET] = ((double)n_part_total) / n_orig_total;
+    else
+      data[F_T_OFFSET] = 0;
+  } else {
+    /* Non-distributed (e.g. single-particle) beam: n_part_total/n_orig_total were
+     * never set, and the master holds the whole beam, so use the local counts as
+     * in the serial case.  Using the uninitialized totals here gave a nonsensical
+     * Transmission for a single-particle beam from bunched_beam. */
+    if (n_original)
+      data[F_T_OFFSET] = ((double)sums->n_part) / n_original;
+    else
+      data[F_T_OFFSET] = 0;
+  }
+#else
   if (n_original)
     data[F_T_OFFSET] = ((double)sums->n_part) / n_original;
   else
