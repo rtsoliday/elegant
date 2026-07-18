@@ -198,6 +198,20 @@ typedef struct GPU_WAKE_LONGITUDINAL_DATA {
   double cMks;
 } GPU_WAKE_LONGITUDINAL_DATA;
 
+typedef struct GPU_RFMODE_DATA {
+  long bins;
+  long firstBin;
+  long lastBin;
+  int interpolate;
+  long nCavities;
+  double tmin;
+  double dt;
+  double pCentral;
+  double particleMassMV;
+  double particleRelSign;
+  double cMks;
+} GPU_RFMODE_DATA;
+
 typedef struct GPU_TRWAKE_DATA {
   long bins;
   long wakePoints;

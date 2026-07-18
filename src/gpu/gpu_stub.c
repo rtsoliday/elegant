@@ -545,6 +545,18 @@ extern int gpuCudaCombinedWakeTrack(
   double *histogramReturn, double *voltageReturn,
   float *milliseconds);
 extern void gpuCudaCombinedWakeRelease(void);
+extern int gpuCudaRfmodeHistogram(
+  void *coord, long nParticles, int stride, const GPU_RFMODE_DATA *data,
+  unsigned long long *histogramReturn, long *binnedCount,
+  float *milliseconds);
+extern int gpuCudaRfmodeTimeCoordinates(
+  void *coord, long nParticles, int stride, double pCentral, double cMks,
+  double *timeReturn, float *kernelMilliseconds,
+  float *transferMilliseconds);
+extern int gpuCudaRfmodeApplyKicks(
+  void *coord, long nParticles, int stride, const GPU_RFMODE_DATA *data,
+  const double *voltage, float *milliseconds);
+extern void gpuCudaRfmodeRelease(void);
 extern int gpuCudaLscBin(void *coord, long nParticles, int stride,
                          const GPU_LSC_DATA *lsc, long *binnedCount,
                          double *itimeReturn, void *deviceItimeScratch,
@@ -780,6 +792,9 @@ static long gpuEnableFtable = 0;
 static long gpuFtableMinParticles = 64;
 static long gpuEnableBmxyz = 0;
 static long gpuBmxyzMinParticles = 64;
+static long gpuEnableRfmode = 0;
+static long gpuEnableFrfmode = 0;
+static long gpuRfmodeMinParticles = 8192;
 static long gpuEnableLscTracking = 0;
 static long gpuLscTrackingExplicit = 0;
 static long gpuEnableRfcwTrackingDrift = 0;
@@ -808,6 +823,10 @@ static BEAM_SUMS gpuSavedSums;
 static BEAM_SUMS2 gpuSavedSums2;
 static SPIN_SUMS gpuSavedSpinSums;
 static long gpuSavedSumsValid = 0;
+static unsigned long long *gpuRfmodeHostHistogram;
+static long gpuRfmodeHostHistogramCapacity;
+static double *gpuRfmodeHostTime;
+static long gpuRfmodeHostTimeCapacity;
 
 static long gpuPackMatrix(GPU_MATRIX_DATA *packed, VMATRIX *M);
 static long gpuMatrixSupported(VMATRIX *M);
@@ -2157,6 +2176,48 @@ static long gpuSreffectsElementSupported(ELEMENT_LIST *eptr) {
 #endif
 }
 
+static long gpuRfmodeElementSupported(ELEMENT_LIST *eptr) {
+#if USE_MPI
+  (void)eptr;
+  return 0;
+#else
+  long noise;
+  RFMODE *rfmode;
+  FRFMODE *frfmode;
+
+  if (!eptr || !eptr->p_elem || gpuBase.backtrack)
+    return 0;
+  if (eptr->type == T_RFMODE) {
+    if (!gpuEnableRfmode)
+      return 0;
+    rfmode = (RFMODE *)eptr->p_elem;
+    if (rfmode->binless || rfmode->n_bins < 2 || rfmode->bin_size <= 0 ||
+        rfmode->bunchedBeamMode != 1 || rfmode->driveFrequency ||
+        gpuStringSet(rfmode->record) ||
+        gpuStringSet(rfmode->feedbackRecordFile) ||
+        gpuStringSet(rfmode->fwaveform) || gpuStringSet(rfmode->Qwaveform) ||
+        rfmode->adjustmentFraction ||
+        (rfmode->interpolate != 0 && rfmode->interpolate != 1))
+      return 0;
+    for (noise = 0; noise < 8; noise++)
+      if (gpuStringSet(rfmode->noiseData[noise]))
+        return 0;
+    return 1;
+  }
+  if (eptr->type == T_FRFMODE) {
+    if (!gpuEnableFrfmode)
+      return 0;
+    frfmode = (FRFMODE *)eptr->p_elem;
+    if (frfmode->n_bins < 2 || frfmode->bin_size <= 0 ||
+        frfmode->bunchedBeamMode != 1 ||
+        gpuStringSet(frfmode->outputFile))
+      return 0;
+    return 1;
+  }
+  return 0;
+#endif
+}
+
 static long gpuBggexpElementSupported(ELEMENT_LIST *eptr) {
   BGGEXP *bgg;
 
@@ -2479,6 +2540,7 @@ static long gpuPassiveElementSupported(ELEMENT_LIST *eptr, long nParticles) {
   case T_MARK:
   case T_MAXAMP:
   case T_RECIRC:
+  case T_TSCATTER:
   case T_TRCOUNT:
   case T_WATCH:
     return 1;
@@ -2549,6 +2611,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuBmxyzElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuBmxyzMinParticles);
+  if (gpuRfmodeElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuRfmodeMinParticles);
   if (gpuWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuTrwakeElementSupported(eptr))
@@ -4296,6 +4361,16 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_BMXYZ_PARTICLES", 64);
   if (gpuBmxyzMinParticles < 1)
     gpuBmxyzMinParticles = 1;
+  gpuEnableRfmode =
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_RFMODE") ||
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_RFMODE");
+  gpuEnableFrfmode =
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_FRFMODE") ||
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_FRFMODE");
+  gpuRfmodeMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_RFMODE_PARTICLES", 8192);
+  if (gpuRfmodeMinParticles < 1)
+    gpuRfmodeMinParticles = 1;
   gpuLscTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_LSC");
   gpuEnableLscTracking = !gpuLscTrackingExplicit ||
                          gpuEnvFlag("ELEGANT_GPU_ENABLE_LSC");
@@ -4341,6 +4416,8 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnableCwiggler = 0;
   gpuEnableFtable = 0;
   gpuEnableBmxyz = 0;
+  gpuEnableRfmode = 0;
+  gpuEnableFrfmode = 0;
 #endif
   gpuAvoidShortGpuIslands = !gpuEnvSet("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS") ||
                             gpuEnvFlag("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS");
@@ -4489,6 +4566,11 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
       fprintf(stderr,
               "elegant CUDA: fixed-step BMXYZ enabled at %ld particles.\n",
               gpuBmxyzMinParticles);
+    if (gpuEnableRfmode || gpuEnableFrfmode)
+      fprintf(stderr,
+              "elegant CUDA: resident RFMODE=%ld FRFMODE=%ld at %ld particles.\n",
+              gpuEnableRfmode, gpuEnableFrfmode,
+              gpuRfmodeMinParticles);
     if (gpuEnableSreffects)
       fprintf(stderr,
               "elegant CUDA: deterministic SREFFECTS enabled at %ld particles.\n",
@@ -4530,12 +4612,19 @@ void gpuBaseDealloc(void) {
   gpuCudaBggexpRelease();
   gpuCudaFtableRelease();
   gpuCudaBmxyzRelease();
+  gpuCudaRfmodeRelease();
   gpuReleaseApertureScratch();
   gpuReleaseCsrScratch();
   gpuCudaCombinedWakeRelease();
   free(gpuBunchRangeCache.start);
   free(gpuBunchRangeCache.count);
   memset(&gpuBunchRangeCache, 0, sizeof(gpuBunchRangeCache));
+  free(gpuRfmodeHostHistogram);
+  gpuRfmodeHostHistogram = NULL;
+  gpuRfmodeHostHistogramCapacity = 0;
+  free(gpuRfmodeHostTime);
+  gpuRfmodeHostTime = NULL;
+  gpuRfmodeHostTimeCapacity = 0;
   gpuBase.elementOnGpu = 0;
   gpuBase.element = NULL;
 }
@@ -9775,6 +9864,241 @@ static long gpuBunchedWakePlan(long np, long bunchedBeamMode,
   }
   plan->action = GPU_BUNCHED_WAKE_TRACK;
   return GPU_BUNCHED_WAKE_TRACK;
+}
+
+long gpu_rfmode_single_bunch_supported(long np, long bunchedBeamMode,
+                                        void *charge0) {
+  GPU_BUNCHED_WAKE_PLAN plan;
+  long action;
+
+  if (np <= 0 || bunchedBeamMode != 1)
+    return 0;
+  startGpuTimer();
+  action = gpuBunchedWakePlan(np, bunchedBeamMode, -1, -1,
+                              (CHARGE *)charge0, "RFMODE", &plan);
+  gpuRecordWallSeconds();
+  return action == GPU_BUNCHED_WAKE_TRACK && plan.nBuckets == 1;
+}
+
+double gpu_rfmode_time_mean(long np, double pCentral) {
+  double sum = 0;
+  float kernelMilliseconds = 0, transferMilliseconds = 0;
+  int status;
+  long ip;
+
+  if (np <= 0)
+    return 0;
+  if (!gpuRfmodeHostTime || gpuRfmodeHostTimeCapacity < np) {
+    double *replacement = (double *)realloc(
+      gpuRfmodeHostTime, np * sizeof(*replacement));
+    if (!replacement)
+      gpuRequiredFailure("unable to allocate RFMODE/FRFMODE host time buffer");
+    gpuRfmodeHostTime = replacement;
+    gpuRfmodeHostTimeCapacity = np;
+  }
+  startGpuTimer();
+  gpuCopyHostToDevice(np);
+  status = gpuCudaRfmodeTimeCoordinates(
+    gpuBase.deviceCoord, np, (int)gpuBase.deviceStride,
+    pCentral, c_mks, gpuRfmodeHostTime,
+    &kernelMilliseconds, &transferMilliseconds);
+  if (status != 0)
+    gpuFatalStatus("RFMODE/FRFMODE time-coordinate CUDA kernel", status);
+  gpuRecordReductionKernel(kernelMilliseconds);
+  gpuRecordMilliseconds(&gpuBase.gpuTransferToHostSeconds,
+                        transferMilliseconds);
+  for (ip = 0; ip < np; ip++)
+    sum += gpuRfmodeHostTime[ip];
+  gpuRecordWallSeconds();
+  return sum / np;
+}
+
+#ifdef GPU_VERIFY
+static double gpuRfmodeCpuTime(const double *part, double pCentral) {
+  double p = pCentral * (1 + part[5]);
+  return part[4] * sqrt(p * p + 1) / (c_mks * p);
+}
+
+static void gpuRfmodeCpuAddEnergy(double *part, double timeOfFlight,
+                                  double pCentral, double dgamma) {
+  double gamma, gamma1, pRatio, p, p1, pz1, pz;
+
+  p = pCentral * (1 + part[5]);
+  gamma1 = (gamma = sqrt(p * p + 1)) + dgamma;
+  if (gamma1 <= 1)
+    gamma1 = 1 + 1e-7;
+  p1 = sqrt(gamma1 * gamma1 - 1);
+  part[5] = (p1 - pCentral) / pCentral;
+  part[4] = timeOfFlight * c_mks * p1 / gamma1;
+  pz = p / sqrt(1 + part[1] * part[1] + part[3] * part[3]);
+  pz1 = sqrt(pz * pz + gamma1 * gamma1 - gamma * gamma);
+  pRatio = pz / pz1;
+  part[1] *= pRatio;
+  part[3] *= pRatio;
+}
+#endif
+
+long gpu_rfmode_histogram(long np, double pCentral,
+                          long bins, double tmin, double dt,
+                          long *histogram, long *firstBin,
+                          long *lastBin) {
+  GPU_RFMODE_DATA data;
+  long ib, binnedCount = 0;
+  float milliseconds = 0;
+  int status;
+
+  if (np <= 0 || bins < 2 || dt <= 0 || !histogram ||
+      !firstBin || !lastBin)
+    gpuRequiredFailure("invalid RFMODE/FRFMODE CUDA histogram request");
+  if (!gpuRfmodeHostHistogram || gpuRfmodeHostHistogramCapacity < bins) {
+    unsigned long long *replacement = (unsigned long long *)realloc(
+      gpuRfmodeHostHistogram, bins * sizeof(*replacement));
+    if (!replacement)
+      gpuRequiredFailure("unable to allocate RFMODE/FRFMODE host histogram");
+    gpuRfmodeHostHistogram = replacement;
+    gpuRfmodeHostHistogramCapacity = bins;
+  }
+  memset(&data, 0, sizeof(data));
+  data.bins = bins;
+  data.tmin = tmin;
+  data.dt = dt;
+  data.pCentral = pCentral;
+  data.cMks = c_mks;
+  startGpuTimer();
+  gpuCopyHostToDevice(np);
+  status = gpuCudaRfmodeHistogram(
+    gpuBase.deviceCoord, np, (int)gpuBase.deviceStride, &data,
+    gpuRfmodeHostHistogram, &binnedCount, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("RFMODE/FRFMODE histogram CUDA kernel", status);
+  gpuRecordWakeKernel(milliseconds);
+  *firstBin = bins;
+  *lastBin = 0;
+  for (ib = 0; ib < bins; ib++) {
+    if (gpuRfmodeHostHistogram[ib] > (unsigned long long)LONG_MAX)
+      gpuRequiredFailure("RFMODE/FRFMODE histogram count overflow");
+    histogram[ib] = (long)gpuRfmodeHostHistogram[ib];
+    if (histogram[ib]) {
+      if (ib < *firstBin)
+        *firstBin = ib;
+      if (ib > *lastBin)
+        *lastBin = ib;
+    }
+  }
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode) {
+    double **coord = copyParticlesToCpuReadOnly(
+      "RFMODE/FRFMODE histogram verification input");
+    long *cpuHistogram = (long *)calloc(bins, sizeof(*cpuHistogram));
+    long cpuBinned = 0;
+    if (!cpuHistogram)
+      gpuRequiredFailure("unable to allocate RFMODE/FRFMODE verification histogram");
+    for (long ip = 0; ip < np; ip++) {
+      double time = gpuRfmodeCpuTime(coord[ip], pCentral);
+      long bin = (long)((time - tmin) / dt);
+      if (bin < 0 || bin >= bins)
+        continue;
+      cpuHistogram[bin]++;
+      cpuBinned++;
+    }
+    for (ib = 0; ib < bins; ib++)
+      if (cpuHistogram[ib] != histogram[ib]) {
+        fprintf(stderr,
+                "elegant CUDA VERIFY mismatch RFMODE/FRFMODE histogram bin=%ld cpu=%ld gpu=%ld\n",
+                ib, cpuHistogram[ib], histogram[ib]);
+        free(cpuHistogram);
+        exit(1);
+      }
+    free(cpuHistogram);
+    if (cpuBinned != binnedCount)
+      gpuRequiredFailure("RFMODE/FRFMODE verification binned-count mismatch");
+    if (gpuVerbose)
+      fprintf(stderr,
+              "elegant CUDA VERIFY passed for RFMODE/FRFMODE histogram: %ld particles in %ld bins\n",
+              binnedCount, bins);
+  }
+#endif
+  gpuRecordWallSeconds();
+  return binnedCount;
+}
+
+void gpu_rfmode_apply_kicks(long np, double pCentral,
+                            long bins, double tmin, double dt,
+                            long firstBin, long lastBin,
+                            long interpolate, long nCavities,
+                            const double *voltage) {
+  GPU_RFMODE_DATA data;
+  float milliseconds = 0;
+  int status;
+
+  if (np <= 0 || bins < 2 || dt <= 0 || firstBin < 0 ||
+      lastBin < firstBin || lastBin >= bins || !voltage)
+    gpuRequiredFailure("invalid RFMODE/FRFMODE CUDA kick request");
+  memset(&data, 0, sizeof(data));
+  data.bins = bins;
+  data.firstBin = firstBin;
+  data.lastBin = lastBin;
+  data.interpolate = interpolate ? 1 : 0;
+  data.nCavities = nCavities;
+  data.tmin = tmin;
+  data.dt = dt;
+  data.pCentral = pCentral;
+  data.particleMassMV = particleMassMV;
+  data.particleRelSign = particleRelSign;
+  data.cMks = c_mks;
+  startGpuTimer();
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode) {
+    double **coord = copyParticlesToCpuReadOnly(
+      "RFMODE/FRFMODE kick verification input");
+    for (long ip = 0; ip < np; ip++) {
+      double time = gpuRfmodeCpuTime(coord[ip], pCentral);
+      double value;
+      long ib = (long)((time - tmin) / dt);
+      if (ib < 0 || ib >= bins)
+        continue;
+      if (interpolate) {
+        double dt1 = time - (tmin + dt * (ib + 0.5));
+        long ib1, ib2;
+        if (dt1 < 0) {
+          ib1 = ib - 1;
+          ib2 = ib;
+        } else {
+          ib1 = ib;
+          ib2 = ib + 1;
+        }
+        if (ib2 > lastBin) {
+          ib2--;
+          ib1--;
+        }
+        if (ib1 < firstBin) {
+          ib1++;
+          ib2++;
+        }
+        dt1 = time - (tmin + dt * (ib1 + 0.5));
+        value = voltage[ib1] +
+          (voltage[ib2] - voltage[ib1]) / dt * dt1;
+      } else {
+        value = voltage[ib];
+      }
+      gpuRfmodeCpuAddEnergy(
+        coord[ip], time, pCentral,
+        nCavities * value / (1e6 * particleMassMV * particleRelSign));
+    }
+  }
+#endif
+  status = gpuCudaRfmodeApplyKicks(
+    gpuBase.deviceCoord, np, (int)gpuBase.deviceStride,
+    &data, voltage, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("RFMODE/FRFMODE kick CUDA kernel", status);
+  gpuRecordWakeKernel(milliseconds);
+  gpuMarkDeviceChanged(np);
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode)
+    compareGpuCpu(np, "resident RFMODE/FRFMODE kick");
+#endif
+  gpuRecordWallSeconds();
 }
 
 long gpu_wake_bunched_mode_action(long np, void *wakeData0, void *charge0) {

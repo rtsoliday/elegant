@@ -14,6 +14,9 @@
  */
 #include "mdb.h"
 #include "track.h"
+#ifdef HAVE_GPU
+#  include "gpu_rfmode.h"
+#endif
 
 void track_through_frfmode(
   double **part0, long np0, FRFMODE *rfmode, double Po,
@@ -49,6 +52,9 @@ void track_through_frfmode(
   long np_total;
   long nonEmptyBins = 0;
 #endif
+#ifdef HAVE_GPU
+  long gpuTracking = 0;
+#endif
 
 #if DEBUG == 1 && USE_MPI == 1
   printf("FRFMODE(1): myid=%d, isSlave=%ld, distributedBeam=%ld, np0=%ld\n",
@@ -79,6 +85,16 @@ void track_through_frfmode(
   if (rfmode->mp_charge == 0 || rfmode->factor == 0)
     return;
 
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    if (gpu_rfmode_single_bunch_supported(
+          np0, rfmode->bunchedBeamMode, charge))
+      gpuTracking = 1;
+    else
+      part0 = forceParticlesToCpu("FRFMODE physical-bunch CPU fallback");
+  }
+#endif
+
   if (rfmode->n_bins > max_n_bins) {
     Ihist = trealloc(Ihist, sizeof(*Ihist) * (max_n_bins = rfmode->n_bins));
     Vbin = trealloc(Vbin, sizeof(*Vbin) * max_n_bins);
@@ -91,6 +107,12 @@ void track_through_frfmode(
 #endif
 
   if (isSlave || !distributedBeam) {
+#ifdef HAVE_GPU
+    if (gpuTracking) {
+      nBuckets = 1;
+    } else
+#endif
+    {
 #ifdef DEBUG
     printf("FRFMODE: Determining bucket assignments\n");
     fflush(stdout);
@@ -104,6 +126,7 @@ void track_through_frfmode(
     printf("FRFMODE: Done determining bucket assignments\n");
     fflush(stdout);
 #endif
+    }
   } else
     nBuckets = 0;
 
@@ -151,10 +174,15 @@ void track_through_frfmode(
 
     if (isSlave || !distributedBeam) {
       if (nBuckets == 1) {
-        time = time0;
         part = part0;
         np = np0;
-        pbin = (long *)trealloc(pbin, sizeof(*pbin) * (max_np = np));
+#ifdef HAVE_GPU
+        if (!gpuTracking)
+#endif
+        {
+          time = time0;
+          pbin = (long *)trealloc(pbin, sizeof(*pbin) * (max_np = np));
+        }
       } else {
         if (npBucket && (np = npBucket[iBucket]) > 0) {
           if (part)
@@ -175,6 +203,11 @@ void track_through_frfmode(
       fflush(stdout);
 #endif
       tmean = 0;
+#ifdef HAVE_GPU
+      if (gpuTracking) {
+        tmean = gpu_rfmode_time_mean(np, Po);
+      } else
+#endif
       if (isSlave) {
         for (ip = 0; ip < np; ip++) {
           tmean += time[ip];
@@ -198,10 +231,15 @@ void track_through_frfmode(
       else
         tmean = 0;
 #else
-      if (np != 0)
-        tmean /= np;
-      else
-        tmean = 0;
+#  ifdef HAVE_GPU
+      if (!gpuTracking)
+#  endif
+      {
+        if (np != 0)
+          tmean /= np;
+        else
+          tmean = 0;
+      }
 #endif
 
       tmin = tmean - rfmode->bin_size * rfmode->n_bins / 2.;
@@ -245,6 +283,13 @@ void track_through_frfmode(
         dt = (tmax - tmin) / rfmode->n_bins;
 #if USE_MPI
         nonEmptyBins = 0;
+#endif
+#ifdef HAVE_GPU
+        if (gpuTracking) {
+          gpu_rfmode_histogram(
+            np, Po, rfmode->n_bins, tmin, dt,
+            Ihist, &firstBin, &lastBin);
+        } else
 #endif
         for (ip = 0; ip < np; ip++) {
           pbin[ip] = -1;
@@ -380,6 +425,14 @@ void track_through_frfmode(
       if (rfmode->rigid_until_pass <= pass) {
         /* change particle momentum offsets to reflect voltage in relevant bin */
         /* also recompute slopes for new momentum to conserve transverse momentum */
+#ifdef HAVE_GPU
+        if (gpuTracking) {
+          if (firstBin <= lastBin)
+            gpu_rfmode_apply_kicks(
+              np, Po, rfmode->n_bins, tmin, dt,
+              firstBin, lastBin, 0, rfmode->n_cavities, Vbin);
+        } else
+#endif
         for (ip = 0; ip < np; ip++) {
           if (pbin[ip] >= 0) {
             /* compute new momentum and momentum offset for this particle */
@@ -437,7 +490,11 @@ void track_through_frfmode(
     free(time);
   if (pbin)
     free(pbin);
-  if (isSlave || !distributedBeam)
+  if ((isSlave || !distributedBeam)
+#ifdef HAVE_GPU
+      && !gpuTracking
+#endif
+      )
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 #ifdef DEBUG
   printf("FRFMODE: Returning\n");

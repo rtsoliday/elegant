@@ -21,6 +21,9 @@
 #include <complex>
 #include "mdb.h"
 #include "track.h"
+#ifdef HAVE_GPU
+#  include "gpu_rfmode.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,6 +71,9 @@ void track_through_rfmode(
   double Qrp, VbImagFactor, Q = 0;
   long deltaPass;
   long np_total;
+#ifdef HAVE_GPU
+  long gpuTracking = 0;
+#endif
 #if USE_MPI
   long nonEmptyBins = 0;
   MPI_Status mpiStatus;
@@ -196,6 +202,16 @@ void track_through_rfmode(
   else
     rfmode->RaInternal = 2 * rfmode->Rs;
 
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    if (gpu_rfmode_single_bunch_supported(
+          np0, rfmode->bunchedBeamMode, charge))
+      gpuTracking = 1;
+    else
+      part0 = forceParticlesToCpu("RFMODE physical-bunch CPU fallback");
+  }
+#endif
+
   if (rfmode->n_bins > max_n_bins) {
 #ifdef DEBUG
     printf("Allocating Ihist and Vbin to %ld bins, Ihist=%x, Vbin=%x\n", rfmode->n_bins, Ihist, Vbin);
@@ -208,6 +224,12 @@ void track_through_rfmode(
   }
 
   if (isSlave || !distributedBeam) {
+#ifdef HAVE_GPU
+    if (gpuTracking) {
+      nBuckets = 1;
+    } else
+#endif
+    {
 #ifdef DEBUG
     printf("RFMODE: Determining bucket assignments\n");
 #endif
@@ -221,6 +243,7 @@ void track_through_rfmode(
         /* Use pseudo-bunched beam mode---only one bunch is really present */
       } else
         bombElegantVA((char *)"RFMODE %s has invalid values for bunched_beam_mode (>1) and bunch_interval (<=0)\n", element_name);
+    }
     }
   }
 
@@ -278,10 +301,15 @@ void track_through_rfmode(
 
     if (isSlave || !distributedBeam) {
       if (nBuckets == 1) {
-        time = time0;
         part = part0;
         np = np0;
-        pbin = (long *)trealloc(pbin, sizeof(*pbin) * (max_np = np));
+#ifdef HAVE_GPU
+        if (!gpuTracking)
+#endif
+        {
+          time = time0;
+          pbin = (long *)trealloc(pbin, sizeof(*pbin) * (max_np = np));
+        }
       } else {
         if (npBucket && (np = npBucket[iBucket]) > 0) {
           if (part)
@@ -299,6 +327,11 @@ void track_through_rfmode(
       }
 
       tmean = DBL_MAX;
+#ifdef HAVE_GPU
+      if (gpuTracking) {
+        tmean = gpu_rfmode_time_mean(np, Po);
+      } else
+#endif
       if (isSlave) {
         for (ip = tmean = 0; ip < np; ip++) {
           tmean += time[ip];
@@ -319,10 +352,15 @@ void track_through_rfmode(
       else
         tmean = 0;
 #else
-      if (np != 0)
-        tmean /= np;
-      else
-        tmean = 0;
+#  ifdef HAVE_GPU
+      if (!gpuTracking)
+#  endif
+      {
+        if (np != 0)
+          tmean /= np;
+        else
+          tmean = 0;
+      }
 #endif
 #ifdef DEBUG
       printf("computed tmean = %21.15le\n", tmean);
@@ -585,9 +623,6 @@ void track_through_rfmode(
         fflush(stdout);
 #endif
 
-        for (ib = 0; ib < rfmode->n_bins; ib++)
-          Ihist[ib] = 0;
-
         dt = (tmax - tmin) / rfmode->n_bins;
         n_binned = lastBin = 0;
         firstBin = rfmode->n_bins;
@@ -598,24 +633,35 @@ void track_through_rfmode(
           /* This shouldn't happen, but compiler says it might... */
           bombElegant("np==-1 in track_through_rfmode. Seek professional help!\n", NULL);
         }
-        for (ip = 0; ip < np; ip++) {
-          pbin[ip] = -1;
-          ib = (long)((time[ip] + tOffset - tmin) / dt);
-          if (ib < 0)
-            continue;
-          if (ib > rfmode->n_bins - 1)
-            continue;
-          Ihist[ib] += 1;
-#if USE_MPI
-          if (Ihist[ib] == 1)
-            nonEmptyBins++;
+#ifdef HAVE_GPU
+        if (gpuTracking) {
+          n_binned = gpu_rfmode_histogram(
+            np, Po, rfmode->n_bins, tmin, dt,
+            Ihist, &firstBin, &lastBin);
+        } else
 #endif
-          pbin[ip] = ib;
-          if (ib > lastBin)
-            lastBin = ib;
-          if (ib < firstBin)
-            firstBin = ib;
-          n_binned++;
+        {
+          for (ib = 0; ib < rfmode->n_bins; ib++)
+            Ihist[ib] = 0;
+          for (ip = 0; ip < np; ip++) {
+            pbin[ip] = -1;
+            ib = (long)((time[ip] + tOffset - tmin) / dt);
+            if (ib < 0)
+              continue;
+            if (ib > rfmode->n_bins - 1)
+              continue;
+            Ihist[ib] += 1;
+#if USE_MPI
+            if (Ihist[ib] == 1)
+              nonEmptyBins++;
+#endif
+            pbin[ip] = ib;
+            if (ib > lastBin)
+              lastBin = ib;
+            if (ib < firstBin)
+              firstBin = ib;
+            n_binned++;
+          }
         }
 #if USE_MPI && MPI_DEBUG
         /*
@@ -878,6 +924,15 @@ void track_through_rfmode(
         double dt1;
         /* change particle momentum offsets to reflect voltage in relevant bin */
         /* also recompute slopes for new momentum to conserve transverse momentum */
+#ifdef HAVE_GPU
+        if (gpuTracking) {
+          if (firstBin <= lastBin)
+            gpu_rfmode_apply_kicks(
+              np, Po, rfmode->n_bins, tmin, dt,
+              firstBin, lastBin, rfmode->interpolate,
+              rfmode->n_cavities, Vbin);
+        } else
+#endif
         for (ip = 0; ip < np; ip++) {
           /* compute voltage seen by this particle */
           if (rfmode->interpolate) {
@@ -1099,7 +1154,11 @@ void track_through_rfmode(
     free(time);
   if (pbin)
     free(pbin);
-  if (isSlave || !distributedBeam)
+  if ((isSlave || !distributedBeam)
+#ifdef HAVE_GPU
+      && !gpuTracking
+#endif
+      )
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 }
 

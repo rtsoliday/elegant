@@ -776,7 +776,10 @@ void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
         }
         n_left = do_tracking(beam, NULL, (long)iTotal, NULL, beamline,
                              &beam->p0, NULL, NULL, NULL, NULL, run, control->i_step,
-                             FIRST_BEAM_IS_FIDUCIAL + FIDUCIAL_BEAM_SEEN + RESTRICT_FIDUCIALIZATION + (verbosity > 2 ? 0 : SILENT_RUNNING + INHIBIT_FILE_OUTPUT), control->n_passes, 0, NULL,
+                             FIRST_BEAM_IS_FIDUCIAL + FIDUCIAL_BEAM_SEEN + RESTRICT_FIDUCIALIZATION +
+                               LOSS_COORDINATES_NEEDED +
+                               (verbosity > 2 ? 0 : SILENT_RUNNING + INHIBIT_FILE_OUTPUT),
+                             control->n_passes, 0, NULL,
                              NULL, NULL, NULL, eptr);
         nLost = beam->n_lost;
         distributedBeam = 0;
