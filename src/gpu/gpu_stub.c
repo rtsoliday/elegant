@@ -42,6 +42,7 @@
 #pragma weak rotate_xy
 #pragma weak multipoleKicksDone
 #pragma weak track_through_csbend
+#pragma weak track_through_ccbend
 #ifdef GPU_VERIFY
 #pragma weak gpu_verify_csrcsbend_cpu_body_slice
 #endif
@@ -466,6 +467,9 @@ extern int gpuCudaCsbendTrackStableCompact(void *coord, void *scratchCoord,
                                            const GPU_CSBEND_DATA *csbend,
                                            long *remaining,
                                            float *milliseconds);
+extern int gpuCudaCcbendTrackChecked(void *coord, long nParticles, int stride,
+                                     const GPU_CCBEND_DATA *ccbend,
+                                     long *lostCount, float *milliseconds);
 extern int gpuCudaCsrCsbendBodySliceChecked(void *coord, long nParticles,
                                             int stride,
                                             const GPU_CSBEND_DATA *csbend,
@@ -792,6 +796,8 @@ static long gpuEnableFtable = 0;
 static long gpuFtableMinParticles = 64;
 static long gpuEnableBmxyz = 0;
 static long gpuBmxyzMinParticles = 64;
+static long gpuEnableCcbend = 0;
+static long gpuCcbendMinParticles = 64;
 static long gpuEnableRfmode = 0;
 static long gpuEnableFrfmode = 0;
 static long gpuRfmodeMinParticles = 8192;
@@ -845,6 +851,7 @@ static void gpuFlushPendingExactDrift(const char *reason);
 static long gpuCsrCsbendDeviceEntrySupported(ELEMENT_LIST *eptr, long nParticles);
 static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr);
 static long gpuCsbendElementSupported(ELEMENT_LIST *eptr);
+static long gpuCcbendElementSupported(ELEMENT_LIST *eptr);
 static long gpuWakeElementSupported(ELEMENT_LIST *eptr);
 static long gpuTrwakeElementSupported(ELEMENT_LIST *eptr);
 static long gpuCombinedWakeElementSupported(ELEMENT_LIST *eptr);
@@ -2059,6 +2066,52 @@ static long gpuCsbendElementSupported(ELEMENT_LIST *eptr) {
   return gpuCsbendCommonSupported((CSBEND *)eptr->p_elem);
 }
 
+static long gpuCcbendCommonSupported(CCBEND *ccbend) {
+  if (!ccbend || !gpuEnableCcbend || spinCoordOffset)
+    return 0;
+  if (ccbend->optimized != 1 || ccbend->length <= 0 || ccbend->angle <= 0 ||
+      ccbend->nSlices <= 0 || ccbend->integration_order != 2 ||
+      ccbend->fringeModel != -1)
+    return 0;
+  if (ccbend->synch_rad || ccbend->isr ||
+      ccbend->distributionBasedRadiation || ccbend->synchRadInOrdinaryMatrix)
+    return 0;
+  if (ccbend->tilt || ccbend->yaw || ccbend->extraTilt ||
+      ccbend->dx || ccbend->dy || ccbend->dz || ccbend->eTilt ||
+      ccbend->ePitch || ccbend->eYaw || ccbend->malignMethod ||
+      ccbend->edgeFlip)
+    return 0;
+  if (ccbend->K3 || ccbend->K4 || ccbend->K5 || ccbend->K6 ||
+      ccbend->K7 || ccbend->K8)
+    return 0;
+  if (gpuStringSet(ccbend->systematic_multipoles) ||
+      gpuStringSet(ccbend->edge_multipoles) ||
+      gpuStringSet(ccbend->edge1_multipoles) ||
+      gpuStringSet(ccbend->edge2_multipoles) ||
+      gpuStringSet(ccbend->random_multipoles) ||
+      gpuStringSet(ccbend->centroidOutputFile))
+    return 0;
+  if (gpuMultipoleDataPresent(&ccbend->systematicMultipoleData) ||
+      gpuMultipoleDataPresent(&ccbend->edge1MultipoleData) ||
+      gpuMultipoleDataPresent(&ccbend->edge2MultipoleData) ||
+      gpuMultipoleDataPresent(&ccbend->randomMultipoleData) ||
+      gpuMultipoleDataPresent(&ccbend->totalMultipoleData))
+    return 0;
+  if (ccbend->centroidsRequested || ccbend->SDDScen ||
+      (ccbend->referenceCorrection & ~3) ||
+      !isfinite(ccbend->KnDelta) || ccbend->KnDelta == 1 ||
+      !isfinite(cos(ccbend->angle / 2)) || cos(ccbend->angle / 2) == 0)
+    return 0;
+  return 1;
+}
+
+static long gpuCcbendElementSupported(ELEMENT_LIST *eptr) {
+  if (gpuBase.backtrack || !eptr || !eptr->p_elem ||
+      eptr->type != T_CCBEND)
+    return 0;
+  return gpuCcbendCommonSupported((CCBEND *)eptr->p_elem);
+}
+
 static long gpuWakeDataSupported(WAKE *wake) {
   if (!wake)
     return 0;
@@ -2586,6 +2639,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuKickMapElementSupported(eptr))
     return gpuMagnetParticleCountAllowed(nParticles);
+  if (gpuCcbendElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuCcbendMinParticles);
   if (gpuCsbendElementSupported(eptr))
     return gpuMagnetParticleCountAllowed(nParticles);
   if (gpuMultipoleElementSupported(eptr))
@@ -4361,6 +4417,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_BMXYZ_PARTICLES", 64);
   if (gpuBmxyzMinParticles < 1)
     gpuBmxyzMinParticles = 1;
+  gpuEnableCcbend =
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_CCBEND") ||
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_CCBEND");
+  gpuCcbendMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_CCBEND_PARTICLES", 64);
+  if (gpuCcbendMinParticles < 1)
+    gpuCcbendMinParticles = 1;
   gpuEnableRfmode =
     !gpuEnvSet("ELEGANT_GPU_ENABLE_RFMODE") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_RFMODE");
@@ -4566,6 +4629,10 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
       fprintf(stderr,
               "elegant CUDA: fixed-step BMXYZ enabled at %ld particles.\n",
               gpuBmxyzMinParticles);
+    if (gpuEnableCcbend)
+      fprintf(stderr,
+              "elegant CUDA: deterministic order-2 CCBEND enabled at %ld particles.\n",
+              gpuCcbendMinParticles);
     if (gpuEnableRfmode || gpuEnableFrfmode)
       fprintf(stderr,
               "elegant CUDA: resident RFMODE=%ld FRFMODE=%ld at %ld particles.\n",
@@ -8900,6 +8967,128 @@ long gpu_multipole_tracking(long n_part, void *multipole0, double p_error,
   gpuRecordWallSeconds();
   if (&multipoleKicksDone && data.KnL[0])
     multipoleKicksDone += n_part * data.nSlices * 4;
+  return n_part;
+}
+
+static long gpuPackCcbendTracking(GPU_CCBEND_DATA *data, CCBEND *ccbend) {
+  double rho0, fse, denominator;
+  long i;
+
+  if (!data || !gpuCcbendCommonSupported(ccbend))
+    return 0;
+  memset(data, 0, sizeof(*data));
+  rho0 = ccbend->length / ccbend->angle;
+  data->chordLength = 2 * rho0 * sin(ccbend->angle / 2);
+  denominator = 1 - ccbend->KnDelta;
+  fse = ccbend->fse + ccbend->fseOffset;
+  data->KnL[0] =
+    (1 + fse + ccbend->fseDipole) / rho0 * data->chordLength -
+    ccbend->xKick;
+  data->KnL[1] =
+    (1 + fse + ccbend->fseQuadrupole) * ccbend->K1 *
+    data->chordLength / denominator;
+  data->KnL[2] =
+    (1 + fse) * ccbend->K2 * data->chordLength / denominator;
+  data->nSlices = ccbend->nSlices;
+  data->referenceCorrection = ccbend->referenceCorrection;
+  data->angleHalf = ccbend->angle / 2;
+  data->dxOffset = ccbend->dxOffset;
+  data->xAdjust = ccbend->xAdjust;
+  data->coordLimit = coordLimit;
+  data->slopeLimit = slopeLimit;
+  memcpy(data->referenceTrajectory, ccbend->referenceTrajectory,
+         sizeof(data->referenceTrajectory));
+  if (!isfinite(data->chordLength) || data->chordLength <= 0 ||
+      !isfinite(data->angleHalf) || !isfinite(data->dxOffset) ||
+      !isfinite(data->xAdjust) || !isfinite(data->coordLimit) ||
+      !isfinite(data->slopeLimit))
+    return 0;
+  for (i = 0; i < 3; i++)
+    if (!isfinite(data->KnL[i]))
+      return 0;
+  for (i = 0; i < 5; i++)
+    if (!isfinite(data->referenceTrajectory[i]))
+      return 0;
+  return 1;
+}
+
+static long gpuCcbendOnCpu(long n_part, ELEMENT_LIST *eptr, CCBEND *ccbend,
+                           double Po, double **accepted, double z_start,
+                           double *sigmaDelta2, char *rootname,
+                           MAXAMP *maxamp, APCONTOUR *apContour,
+                           APERTURE_DATA *apFileData, long iPart,
+                           long iFinalSlice, const char *reason) {
+  double **coord = forceParticlesToCpu(reason);
+  long remaining;
+
+  if (!track_through_ccbend)
+    gpuRequiredFailure("CPU track_through_ccbend fallback is unavailable");
+  gpuBase.elementOnGpu = 0;
+  remaining = track_through_ccbend(coord, n_part, eptr, ccbend, Po, accepted,
+                                   z_start, sigmaDelta2, rootname, maxamp,
+                                   apContour, apFileData, iPart, iFinalSlice);
+  gpuMarkHostWillChange();
+  gpuRecordWallSeconds();
+  return remaining;
+}
+
+long gpu_track_through_ccbend(long n_part, void *eptr0, void *ccbend0,
+                              double Po, double **accepted, double z_start,
+                              double *sigmaDelta2, char *rootname,
+                              void *maxamp0, void *apContour0,
+                              void *apFileData0, long iPart,
+                              long iFinalSlice) {
+  ELEMENT_LIST *eptr = (ELEMENT_LIST *)eptr0;
+  CCBEND *ccbend = (CCBEND *)ccbend0;
+  MAXAMP *maxamp = (MAXAMP *)maxamp0;
+  APCONTOUR *apContour = (APCONTOUR *)apContour0;
+  APERTURE_DATA *apFileData = (APERTURE_DATA *)apFileData0;
+  GPU_CCBEND_DATA data;
+  long lostCount = 0;
+  float milliseconds = 0;
+  int status;
+
+  if (n_part <= 0)
+    return n_part;
+  if (!ccbend)
+    gpuRequiredFailure("NULL CCBEND pointer in gpu_track_through_ccbend");
+  if (gpuBase.backtrack || iPart >= 0 || iFinalSlice > 0)
+    return gpuCcbendOnCpu(n_part, eptr, ccbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "CCBEND partial/backtracking CPU fallback");
+  if (maxamp || apContour || (apFileData && apFileData->initialized))
+    return gpuCcbendOnCpu(n_part, eptr, ccbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "CCBEND aperture CPU fallback");
+  if (sigmaDelta2)
+    return gpuCcbendOnCpu(n_part, eptr, ccbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "CCBEND radiation-sigma CPU fallback");
+  if (!gpuPackCcbendTracking(&data, ccbend))
+    return gpuCcbendOnCpu(n_part, eptr, ccbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "CCBEND unsupported-option CPU fallback");
+
+  gpuCopyHostToDevice(n_part);
+  status = gpuCudaCcbendTrackChecked(gpuBase.deviceCoord, n_part,
+                                     (int)gpuBase.deviceStride, &data,
+                                     &lostCount, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("CCBEND tracking CUDA checked kernel", status);
+  gpuRecordMagnetKernel(milliseconds);
+  if (lostCount)
+    return gpuCcbendOnCpu(n_part, eptr, ccbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "CCBEND particle-loss CPU fallback");
+  gpuMarkDeviceChanged(n_part);
+  gpuRecordWallSeconds();
+  if (&multipoleKicksDone)
+    multipoleKicksDone += n_part * data.nSlices;
   return n_part;
 }
 

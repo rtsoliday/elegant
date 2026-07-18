@@ -1465,6 +1465,155 @@ __global__ void gpuMultipoleStableTrackScatterKernel(
     gpuMultipoleTrackParticle<Radiation>(target, stride, 1);
 }
 
+__device__ __forceinline__ int gpuCcbendSwitchPlane(
+  double *x, double *xp, double *y, double *yp, double *s,
+  double dp, double angle) {
+  double tanAngle = tan(angle);
+  double cosAngle = cos(angle);
+  double sinAngle = sin(angle);
+  double denominator = 1 - *xp * tanAngle;
+  double ds, norm, qx0, qy0, qz0, qx, qy, qz;
+
+  if (denominator == 0 || cosAngle == 0)
+    return 0;
+  ds = *x * tanAngle / denominator;
+  *x = (*x + *xp * ds) / cosAngle;
+  *y = *y + *yp * ds;
+  *s += ds;
+  norm = sqrt(1 + *xp * *xp + *yp * *yp);
+  qx0 = *xp * (1 + dp) / norm;
+  qy0 = *yp * (1 + dp) / norm;
+  qz0 = (1 + dp) / norm;
+  qx = qx0 * cosAngle + qz0 * sinAngle;
+  qy = qy0;
+  qz = -qx0 * sinAngle + qz0 * cosAngle;
+  if (qz == 0)
+    return 0;
+  *xp = qx / qz;
+  *yp = qy / qz;
+  return isfinite(*x) && isfinite(*xp) && isfinite(*y) &&
+         isfinite(*yp) && isfinite(*s);
+}
+
+__device__ int gpuCcbendTrackParticle(double *part, int stride,
+                                      GPU_CCBEND_DATA data,
+                                      int writeOutput) {
+  double x = part[0];
+  double xp = part[1];
+  double y = part[2];
+  double yp = part[3];
+  double path = part[4];
+  double dp = part[5];
+  double qx, qy, denominator, bodyPath = 0;
+  double xpow[3], ypow[3];
+  double halfDrift = data.chordLength / data.nSlices * 0.5;
+
+  (void)stride;
+  if (!isfinite(x) || !isfinite(xp) || !isfinite(y) ||
+      !isfinite(yp) || !isfinite(path) || !isfinite(dp))
+    return 0;
+  if (!gpuCcbendSwitchPlane(&x, &xp, &y, &yp, &path, dp,
+                             data.angleHalf))
+    return 0;
+  x -= data.dxOffset;
+  if (fabs(x) > data.coordLimit || fabs(y) > data.coordLimit ||
+      fabs(xp) > data.slopeLimit || fabs(yp) > data.slopeLimit)
+    return 0;
+
+  denominator = sqrt(1 + xp * xp + yp * yp);
+  qx = (1 + dp) * xp / denominator;
+  qy = (1 + dp) * yp / denominator;
+  denominator = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
+  if (denominator <= 0)
+    return 0;
+  denominator = sqrt(denominator);
+  xp = qx / denominator;
+  yp = qy / denominator;
+
+  for (long slice = 0; slice < data.nSlices; slice++) {
+    double deltaQx = 0, deltaQy = 0;
+
+    bodyPath += halfDrift * sqrt(1 + xp * xp + yp * yp);
+    x += xp * halfDrift;
+    y += yp * halfDrift;
+    gpuMultipoleFillPowerArray(x, xpow, 2);
+    gpuMultipoleFillPowerArray(y, ypow, 2);
+    for (int order = 0; order < 3; order++) {
+      if (data.KnL[order])
+        gpuMultipoleApplyKick(&qx, &qy, &deltaQx, &deltaQy,
+                              xpow, ypow, order,
+                              data.KnL[order] / data.nSlices, 0);
+    }
+    denominator = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
+    if (denominator <= 0)
+      return 0;
+    denominator = sqrt(denominator);
+    xp = qx / denominator;
+    yp = qy / denominator;
+    bodyPath += halfDrift * sqrt(1 + xp * xp + yp * yp);
+    x += xp * halfDrift;
+    y += yp * halfDrift;
+  }
+
+  denominator = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
+  if (denominator <= 0)
+    return 0;
+  denominator = sqrt(denominator);
+  xp = qx / denominator;
+  yp = qy / denominator;
+  path += bodyPath;
+  if (!isfinite(x) || !isfinite(xp) || !isfinite(y) || !isfinite(yp) ||
+      fabs(x) > data.coordLimit || fabs(y) > data.coordLimit ||
+      fabs(xp) > data.slopeLimit || fabs(yp) > data.slopeLimit)
+    return 0;
+
+  x -= data.xAdjust;
+  if (!gpuCcbendSwitchPlane(&x, &xp, &y, &yp, &path, dp,
+                             data.angleHalf))
+    return 0;
+  if (data.referenceCorrection & 2) {
+    x -= data.referenceTrajectory[0];
+    xp -= data.referenceTrajectory[1];
+    y -= data.referenceTrajectory[2];
+    yp -= data.referenceTrajectory[3];
+  }
+  if (data.referenceCorrection & 1)
+    path -= data.referenceTrajectory[4];
+  if (!isfinite(x) || !isfinite(xp) || !isfinite(y) ||
+      !isfinite(yp) || !isfinite(path))
+    return 0;
+  if (writeOutput) {
+    part[0] = x;
+    part[1] = xp;
+    part[2] = y;
+    part[3] = yp;
+    part[4] = path;
+    part[5] = dp;
+  }
+  return 1;
+}
+
+__global__ void gpuCcbendTrackCheckedKernel(
+  double *coord, long nParticles, int stride, GPU_CCBEND_DATA data,
+  unsigned long long *lostCount) {
+  extern __shared__ unsigned long long partial[];
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  unsigned long long localCount = 0;
+
+  if (ip < nParticles &&
+      !gpuCcbendTrackParticle(coord + ip * stride, stride, data, 1))
+    localCount = 1;
+  partial[threadIdx.x] = localCount;
+  __syncthreads();
+  for (unsigned int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (threadIdx.x < offset)
+      partial[threadIdx.x] += partial[threadIdx.x + offset];
+    __syncthreads();
+  }
+  if (threadIdx.x == 0 && partial[0])
+    atomicAdd(lostCount, partial[0]);
+}
+
 __global__ void gpuAddCoordinateKernel(double *coord, long nParticles, int stride,
                                        int index, double value) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
@@ -6457,6 +6606,81 @@ extern "C" int gpuCudaMultipoleTrackChecked(void *coord, long nParticles,
     cudaStatus = cudaMemcpy(coord, backup, count * sizeof(*backup),
                             cudaMemcpyDeviceToDevice);
   }
+  cudaFree(backup);
+  cudaFree(deviceLostCount);
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  *lostCount = static_cast<long>(hostLostCount);
+  return static_cast<int>(cudaSuccess);
+}
+
+extern "C" int gpuCudaCcbendTrackChecked(void *coord, long nParticles,
+                                          int stride,
+                                          const GPU_CCBEND_DATA *ccbend,
+                                          long *lostCount,
+                                          float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  unsigned long long *deviceLostCount = NULL;
+  unsigned long long hostLostCount = 0;
+  double *backup = NULL;
+  unsigned long long count;
+  int threads = 256;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  if (!coord || !ccbend || !lostCount)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *lostCount = 0;
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+  cudaStatus = cudaMalloc(&deviceLostCount, sizeof(*deviceLostCount));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMemset(deviceLostCount, 0, sizeof(*deviceLostCount));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceLostCount);
+    return static_cast<int>(cudaStatus);
+  }
+  count = static_cast<unsigned long long>(nParticles) *
+          static_cast<unsigned long long>(stride);
+  cudaStatus = cudaMalloc(&backup, count * sizeof(*backup));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceLostCount);
+    return static_cast<int>(cudaStatus);
+  }
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(backup);
+    cudaFree(deviceLostCount);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(backup, coord, count * sizeof(*backup),
+                          cudaMemcpyDeviceToDevice);
+  if (cudaStatus != cudaSuccess) {
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    cudaFree(backup);
+    cudaFree(deviceLostCount);
+    return static_cast<int>(cudaStatus);
+  }
+  gpuCcbendTrackCheckedKernel<<<blocks, threads,
+                                threads * sizeof(unsigned long long)>>>(
+    static_cast<double *>(coord), nParticles, stride, *ccbend,
+    deviceLostCount);
+  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(backup);
+    cudaFree(deviceLostCount);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(&hostLostCount, deviceLostCount,
+                          sizeof(hostLostCount), cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess && hostLostCount)
+    cudaStatus = cudaMemcpy(coord, backup, count * sizeof(*backup),
+                            cudaMemcpyDeviceToDevice);
   cudaFree(backup);
   cudaFree(deviceLostCount);
   if (cudaStatus != cudaSuccess)

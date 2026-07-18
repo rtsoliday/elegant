@@ -181,6 +181,19 @@ typedef struct GPU_CSBEND_DATA {
   double Fy[121];
 } GPU_CSBEND_DATA;
 
+typedef struct GPU_CCBEND_DATA {
+  long nSlices;
+  int referenceCorrection;
+  double chordLength;
+  double angleHalf;
+  double KnL[3];
+  double dxOffset;
+  double xAdjust;
+  double referenceTrajectory[5];
+  double coordLimit;
+  double slopeLimit;
+} GPU_CCBEND_DATA;
+
 typedef struct GPU_WAKE_LONGITUDINAL_DATA {
   long bins;
   long wakePoints;

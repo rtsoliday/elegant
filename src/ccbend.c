@@ -15,6 +15,11 @@
 #include "mdb.h"
 #include "track.h"
 #include "multipole.h"
+#ifdef HAVE_GPU
+#  include "gpu_base.h"
+#  include "gpu_ccbend.h"
+#  include "gpu_funcs.h"
+#endif
 
 static CCBEND ccbendCopy;
 static ELEMENT_LIST *eptrCopy = NULL;
@@ -110,6 +115,24 @@ long track_through_ccbend(
 
   if (!particle)
     bombTracking("particle array is null (track_through_ccbend)");
+
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    startGpuTimer();
+    i_top = gpu_track_through_ccbend(n_part, eptr, ccbend, Po, accepted,
+                                     z_start, sigmaDelta2, rootname, maxamp,
+                                     apContour, apFileData, iPart,
+                                     iFinalSlice);
+#  ifdef GPU_VERIFY
+    startCpuTimer();
+    track_through_ccbend(particle, n_part, eptr, ccbend, Po, accepted,
+                         z_start, sigmaDelta2, rootname, maxamp, apContour,
+                         apFileData, iPart, iFinalSlice);
+    compareGpuCpu(n_part, "track_through_ccbend");
+#  endif
+    return i_top;
+  }
+#endif
 
   if (iPart >= 0 && ccbend->optimized != 1)
     bombTracking("Programming error: one-step mode invoked for unoptimized CCBEND.");
