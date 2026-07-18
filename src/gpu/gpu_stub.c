@@ -2304,7 +2304,7 @@ static long gpuCwigglerElementSupported(ELEMENT_LIST *eptr) {
   if (!eptr || eptr->type != T_CWIGGLER || !eptr->p_elem)
     return 0;
   cwiggler = (CWIGGLER *)eptr->p_elem;
-  if (!cwiggler->sinusoidal || cwiggler->sr || cwiggler->isr ||
+  if (!cwiggler->sinusoidal || cwiggler->isr ||
       cwiggler->tgu || cwiggler->BySplitPole || cwiggler->BxSplitPole ||
       (cwiggler->ByFile && cwiggler->ByFile[0]) ||
       (cwiggler->BxFile && cwiggler->BxFile[0]) ||

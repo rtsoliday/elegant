@@ -384,11 +384,16 @@ typedef struct GPU_CWIGGLER_DATA {
   int integrationOrder;
   int hasHorizontal;
   int hasVertical;
+  int synchRad;
   double length;
   double periodLength;
   double kw;
   double horizontalCoefficient;
   double verticalCoefficient;
+  double horizontalField;
+  double verticalField;
+  double pCentral;
+  double srCoef;
   double horizontalPhase;
   double verticalPhase;
   double zStartHorizontal;

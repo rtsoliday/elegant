@@ -2329,6 +2329,48 @@ __device__ __forceinline__ void gpuCwigglerAy(
   }
 }
 
+__device__ __forceinline__ void gpuCwigglerField(
+  double *bx, double *by, double x, double y, double z,
+  double poleFactor, const GPU_CWIGGLER_DATA &data) {
+  *bx = 0.0;
+  *by = 0.0;
+  if (data.hasHorizontal && z >= data.zStartHorizontal &&
+      z <= data.zEndHorizontal) {
+    *by -= data.horizontalField * poleFactor * cosh(data.kw * y) *
+           cos(data.kw * z + data.horizontalPhase);
+  }
+  if (data.hasVertical && z >= data.zStartVertical &&
+      z <= data.zEndVertical) {
+    *bx += data.verticalField * poleFactor * cosh(data.kw * x) *
+           cos(data.kw * z + data.verticalPhase);
+  }
+}
+
+__device__ __forceinline__ void gpuCwigglerRadiationKick(
+  double *qx, double *qy, double *delta, double x, double y, double z,
+  double dl, double poleFactor, const GPU_CWIGGLER_DATA &data) {
+  double ax, ay, axpy, aypx, bx, by, b2, rigidity, irho2;
+  double dFactor, dDelta;
+
+  gpuCwigglerAx(&ax, &axpy, x, y, z, poleFactor, data);
+  gpuCwigglerAy(&ay, &aypx, x, y, z, poleFactor, data);
+  gpuCwigglerField(&bx, &by, x, y, z, poleFactor, data);
+  *qx -= ax;
+  *qy -= ay;
+  b2 = bx * bx + by * by;
+  if (b2 != 0.0) {
+    rigidity = data.pCentral / 586.679074042074490;
+    irho2 = b2 / (rigidity * rigidity);
+    dFactor = (1.0 + *delta) * (1.0 + *delta);
+    dDelta = -data.srCoef * dFactor * irho2 * dl;
+    *delta += dDelta;
+    *qx *= 1.0 + dDelta;
+    *qy *= 1.0 + dDelta;
+  }
+  *qx += ax;
+  *qy += ay;
+}
+
 __device__ __forceinline__ void gpuCwigglerMapSecondOrder(
   double *x, double *qx, double *y, double *qy, double *s,
   double delta, double *z, double dl, double poleFactor,
@@ -2400,6 +2442,9 @@ __global__ void gpuCwigglerKernel(double *coord, long nParticles, int stride,
   dl1 = fourthOrderX1 * dl;
   dl0 = fourthOrderX0 * dl;
   totalSteps = data.periods * data.stepsPerPeriod;
+  if (data.synchRad)
+    gpuCwigglerRadiationKick(&qx, &qy, &delta, x, y, z, dl,
+                              data.poleFactor[0], data);
   for (long step = 1; step <= totalSteps; step++) {
     double poleFactor = gpuCwigglerPoleFactor(
       ((step - 1) * data.length) / totalSteps, data);
@@ -2414,6 +2459,9 @@ __global__ void gpuCwigglerKernel(double *coord, long nParticles, int stride,
       gpuCwigglerMapSecondOrder(&x, &qx, &y, &qy, &s, delta, &z,
                                 dl1, poleFactor, data);
     }
+    if (data.synchRad)
+      gpuCwigglerRadiationKick(&qx, &qy, &delta, x, y, z, dl,
+                                poleFactor, data);
   }
 
   denom = sqrt((1.0 + delta) * (1.0 + delta) - qx * qx - qy * qy);
@@ -9591,6 +9639,7 @@ extern "C" int gpuCudaCwigglerTrack(void *coord, long nParticles, int stride,
   if (!coord || !data || nParticles <= 0 || stride < 7 ||
       data->periods <= 0 || data->stepsPerPeriod <= 0 ||
       data->periodLength <= 0 ||
+      (data->synchRad && (data->pCentral <= 0 || data->srCoef <= 0)) ||
       (data->integrationOrder != 2 && data->integrationOrder != 4))
     return static_cast<int>(cudaErrorInvalidValue);
   status = prepareTimedLaunch(&start, &stop, milliseconds);

@@ -215,11 +215,15 @@ static long GWigTrackIdealSinusoidalOnGpu(struct gwig *Wig,
   data.integrationOrder = Wig->Pmethod;
   data.hasHorizontal = Wig->NHharm == 1;
   data.hasVertical = Wig->NVharm == 1;
+  data.synchRad = Wig->sr;
   data.length = Wig->cwiggler->length;
   data.periodLength = Wig->Lw;
   data.kw = kw;
+  data.pCentral = Wig->Po;
+  data.srCoef = Wig->srCoef;
   if (data.hasHorizontal) {
     double field = Wig->PB0H != 0 ? Wig->PB0H : Wig->PB0;
+    data.horizontalField = field;
     data.horizontalCoefficient =
       (q_e / m_e / clight) / (2 * PI) * Wig->Lw * field /
       (gamma0 * beta0);
@@ -227,6 +231,7 @@ static long GWigTrackIdealSinusoidalOnGpu(struct gwig *Wig,
   }
   if (data.hasVertical) {
     double field = Wig->PB0V != 0 ? Wig->PB0V : Wig->PB0;
+    data.verticalField = field;
     data.verticalCoefficient =
       (q_e / m_e / clight) / (2 * PI) * Wig->Lw * field /
       (gamma0 * beta0);
