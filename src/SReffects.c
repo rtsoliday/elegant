@@ -14,6 +14,9 @@
  */
 #include "mdb.h"
 #include "track.h"
+#ifdef HAVE_GPU
+#  include "gpu/gpu_sreffects.h"
+#endif
 
 void track_SReffects(double **coord, long np, SREFFECTS *SReffects0, double Po,
                      TWISS *twiss, RADIATION_INTEGRALS *radIntegrals,
@@ -28,6 +31,9 @@ void track_SReffects(double **coord, long np, SREFFECTS *SReffects0, double Po,
   double deltaChange, cutoff;
   long active = 1;
   SREFFECTS SReffects;
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  long gpuTracked = 0;
+#endif
 
 #if USE_MPI
   mpiAbort = 0;
@@ -89,6 +95,10 @@ void track_SReffects(double **coord, long np, SREFFECTS *SReffects0, double Po,
 #if (!USE_MPI) /* The parallel version doesn't check here, as it needs communications every time */
   if (SReffects.DdeltaRef > 0) {
     /* this is a temporary kludge to ensure that all particles get lost when this happens */
+#  ifdef HAVE_GPU
+    if (getElementOnGpu())
+      coord = forceParticlesToCpu("unphysical SREFFECTS parameters");
+#  endif
     for (ip = 0; ip < np; ip++)
       coord[ip][5] = -1;
     printWarningForTracking("SReffects parameters are unphysical.", "Particles are being dumped.");
@@ -151,6 +161,30 @@ void track_SReffects(double **coord, long np, SREFFECTS *SReffects0, double Po,
 
   cutoff = SReffects.cutoff;
   if (active) {
+#ifdef HAVE_GPU
+    if (getElementOnGpu()) {
+      GPU_SREFFECTS_DATA gpuData;
+      memset(&gpuData, 0, sizeof(gpuData));
+      gpuData.lossOnly = lossOnly ? 1 : 0;
+      gpuData.includeOffsets = SReffects.includeOffsets ? 1 : 0;
+      gpuData.Fx = Fx;
+      gpuData.Fy = Fy;
+      gpuData.Fdelta = Fdelta;
+      gpuData.Ddelta = Ddelta;
+      gpuData.pCentral = Po;
+      gpuData.etax = twiss->etax;
+      gpuData.etapx = twiss->etapx;
+      gpuData.etay = twiss->etay;
+      gpuData.etapy = twiss->etapy;
+      gpu_track_sreffects(np, &gpuData);
+#  ifdef GPU_VERIFY
+      startCpuTimer();
+      gpuTracked = 1;
+#  else
+      return;
+#  endif
+    }
+#endif
     if (!lossOnly) {
       for (ip = 0; ip < np; ip++) {
         part = coord[ip];
@@ -191,6 +225,10 @@ void track_SReffects(double **coord, long np, SREFFECTS *SReffects0, double Po,
       }
     }
   }
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  if (gpuTracked)
+    compareGpuCpu(np, "track_SReffects");
+#endif
 }
 
 VMATRIX *srEffectsMatrix(SREFFECTS *SReffects) {

@@ -1748,6 +1748,46 @@ __global__ void gpuRfdfKernel(double *coord, long nParticles, int stride,
   part[5] = (pc - data.pCentral) / data.pCentral;
 }
 
+__global__ void gpuSreffectsKernel(double *coord, long nParticles, int stride,
+                                   GPU_SREFFECTS_DATA data) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+  double P, beta, t;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+
+  P = (1 + part[5]) * data.pCentral;
+  beta = P / sqrt(P * P + 1);
+  t = part[4] / beta;
+
+  if (data.lossOnly) {
+    part[5] += data.Ddelta;
+  } else {
+    double deltaChange;
+    double xpEta = part[5] * data.etapx;
+    double ypEta;
+
+    part[1] = (part[1] - xpEta) * data.Fx + xpEta;
+    ypEta = part[5] * data.etapy;
+    part[3] = (part[3] - ypEta) * data.Fy + ypEta;
+    deltaChange = -part[5];
+    part[5] = data.Ddelta + part[5] * data.Fdelta;
+    deltaChange += part[5];
+    if (data.includeOffsets) {
+      part[0] += data.etax * deltaChange;
+      part[1] += data.etapx * deltaChange;
+      part[2] += data.etay * deltaChange;
+      part[3] += data.etapy * deltaChange;
+    }
+  }
+
+  P = (1 + part[5]) * data.pCentral;
+  beta = P / sqrt(P * P + 1);
+  part[4] = t * beta;
+}
+
 typedef struct GPU_BGGEXP_DEVICE_DATA {
   long nz;
   long termCount;
@@ -8663,6 +8703,24 @@ extern "C" int gpuCudaRfdfTrack(void *coord, long nParticles, int stride,
   gpuRfdfKernel<<<blocks, threads>>>(static_cast<double *>(coord),
                                      nParticles, stride, *data,
                                      particleIdIndex);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaSreffectsTrack(void *coord, long nParticles, int stride,
+                                      const GPU_SREFFECTS_DATA *data,
+                                      float *milliseconds) {
+  cudaEvent_t start, stop;
+  int threads = 256;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  if (!coord || !data || nParticles <= 0 || stride < 7)
+    return static_cast<int>(cudaErrorInvalidValue);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuSreffectsKernel<<<blocks, threads>>>(static_cast<double *>(coord),
+                                          nParticles, stride, *data);
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
 

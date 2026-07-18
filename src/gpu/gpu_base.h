@@ -307,6 +307,20 @@ typedef struct GPU_RFDF_DATA {
   double cMks;
 } GPU_RFDF_DATA;
 
+typedef struct GPU_SREFFECTS_DATA {
+  int lossOnly;
+  int includeOffsets;
+  double Fx;
+  double Fy;
+  double Fdelta;
+  double Ddelta;
+  double pCentral;
+  double etax;
+  double etapx;
+  double etay;
+  double etapy;
+} GPU_SREFFECTS_DATA;
+
 typedef struct GPU_BGGEXP_DATA {
   const void *tableOwner;
   unsigned long long tableSignature;

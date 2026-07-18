@@ -237,6 +237,9 @@ extern int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
 extern int gpuCudaRfdfTrack(void *coord, long nParticles, int stride,
                             const GPU_RFDF_DATA *data,
                             int particleIdIndex, float *milliseconds);
+extern int gpuCudaSreffectsTrack(void *coord, long nParticles, int stride,
+                                 const GPU_SREFFECTS_DATA *data,
+                                 float *milliseconds);
 extern int gpuCudaBggexpTrack(void *coord, long nParticles, int stride,
                               const GPU_BGGEXP_DATA *data,
                               float *milliseconds);
@@ -761,6 +764,8 @@ static long gpuBatchedSearchMinParticles = 32;
 static long gpuEnablePolynomialSeries = 0;
 static long gpuEnableRfdf = 0;
 static long gpuRfdfMinParticles = 64;
+static long gpuEnableSreffects = 0;
+static long gpuSreffectsMinParticles = 64;
 static long gpuEnableBggexp = 0;
 static long gpuBggexpMinParticles = 64;
 static long gpuEnableCwiggler = 0;
@@ -2126,6 +2131,24 @@ static long gpuRfdfElementSupported(ELEMENT_LIST *eptr) {
   return 1;
 }
 
+static long gpuSreffectsElementSupported(ELEMENT_LIST *eptr) {
+#if USE_MPI
+  (void)eptr;
+  return 0;
+#else
+  SREFFECTS *sreffects;
+
+  if (!gpuEnableSreffects || gpuBase.backtrack)
+    return 0;
+  if (!eptr || eptr->type != T_SREFFECTS || !eptr->p_elem)
+    return 0;
+  sreffects = (SREFFECTS *)eptr->p_elem;
+  if (sreffects->qExcite || sreffects->DdeltaRef > 0)
+    return 0;
+  return 1;
+#endif
+}
+
 static long gpuBggexpElementSupported(ELEMENT_LIST *eptr) {
   BGGEXP *bgg;
 
@@ -2450,6 +2473,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuRfdfElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuRfdfMinParticles);
+  if (gpuSreffectsElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuSreffectsMinParticles);
   if (gpuBggexpElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuBggexpMinParticles);
@@ -4171,6 +4197,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_RFDF_PARTICLES", 64);
   if (gpuRfdfMinParticles < 1)
     gpuRfdfMinParticles = 1;
+  gpuEnableSreffects =
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_SREFFECTS") ||
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_SREFFECTS");
+  gpuSreffectsMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_SREFFECTS_PARTICLES", 64);
+  if (gpuSreffectsMinParticles < 1)
+    gpuSreffectsMinParticles = 1;
   gpuEnableBggexp =
     !gpuEnvSet("ELEGANT_GPU_ENABLE_BGGEXP") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_BGGEXP");
@@ -4232,6 +4265,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnableBatchedSearchTracking = 0;
   gpuEnablePolynomialSeries = 0;
   gpuEnableRfdf = 0;
+  gpuEnableSreffects = 0;
   gpuEnableBggexp = 0;
   gpuEnableCwiggler = 0;
   gpuEnableFtable = 0;
@@ -4379,6 +4413,10 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
       fprintf(stderr,
               "elegant CUDA: fixed-step FTABLE enabled at %ld particles.\n",
               gpuFtableMinParticles);
+    if (gpuEnableSreffects)
+      fprintf(stderr,
+              "elegant CUDA: deterministic SREFFECTS enabled at %ld particles.\n",
+              gpuSreffectsMinParticles);
   }
 
   gpuBase.initialized = 1;
@@ -7723,6 +7761,27 @@ void gpu_apply_rfdf(long nParticles, const GPU_RFDF_DATA *data) {
                             particleIDIndex, &milliseconds);
   if (status != 0)
     gpuFatalStatus("RFDF tracking CUDA kernel", status);
+  gpuRecordHelperKernel(milliseconds);
+  gpuMarkDeviceChanged(nParticles);
+  gpuRecordWallSeconds();
+}
+
+void gpu_track_sreffects(long nParticles,
+                         const GPU_SREFFECTS_DATA *data) {
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0)
+    return;
+  if (!data)
+    gpuRequiredFailure("NULL SREFFECTS CUDA tracking data");
+  startGpuTimer();
+  gpuCopyHostToDevice(nParticles);
+  status = gpuCudaSreffectsTrack(gpuBase.deviceCoord, nParticles,
+                                 (int)gpuBase.deviceStride, data,
+                                 &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("SREFFECTS tracking CUDA kernel", status);
   gpuRecordHelperKernel(milliseconds);
   gpuMarkDeviceChanged(nParticles);
   gpuRecordWallSeconds();
