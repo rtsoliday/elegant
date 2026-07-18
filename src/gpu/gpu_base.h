@@ -392,6 +392,19 @@ typedef struct GPU_FTABLE_DATA {
   double eomc;
 } GPU_FTABLE_DATA;
 
+typedef struct GPU_BMXYZ_DATA {
+  const void *tableOwner;
+  long dimensions[3];
+  const double *field[3];
+  double minimum[3];
+  double spacing[3];
+  double fieldLength;
+  double integrationAccuracy;
+  double strengthFactor;
+  double fieldScale;
+  int fieldIsMagnetic;
+} GPU_BMXYZ_DATA;
+
 typedef struct GPU_KICKMAP_DATA {
   int undulator;
   long nKicks;

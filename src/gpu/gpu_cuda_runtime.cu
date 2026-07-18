@@ -97,6 +97,14 @@ typedef struct GPU_FTABLE_SCRATCH {
 
 static GPU_FTABLE_SCRATCH gpuFtableScratch;
 
+typedef struct GPU_BMXYZ_SCRATCH {
+  double *coordBackup;
+  long coordCapacity;
+  unsigned long long *failedCount;
+} GPU_BMXYZ_SCRATCH;
+
+static GPU_BMXYZ_SCRATCH gpuBmxyzScratch;
+
 static void releaseFtableScratch(void) {
   for (long field = 0; field < 3; field++)
     cudaFree(gpuFtableScratch.field[field]);
@@ -105,6 +113,44 @@ static void releaseFtableScratch(void) {
 
 extern "C" void gpuCudaFtableRelease(void) {
   releaseFtableScratch();
+}
+
+static void releaseBmxyzScratch(void) {
+  cudaFree(gpuBmxyzScratch.coordBackup);
+  cudaFree(gpuBmxyzScratch.failedCount);
+  std::memset(&gpuBmxyzScratch, 0, sizeof(gpuBmxyzScratch));
+}
+
+extern "C" void gpuCudaBmxyzRelease(void) {
+  releaseBmxyzScratch();
+}
+
+static int ensureBmxyzScratch(long coordinateValues) {
+  cudaError_t status;
+
+  if (coordinateValues <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  if (!gpuBmxyzScratch.failedCount) {
+    status = cudaMalloc(&gpuBmxyzScratch.failedCount,
+                        sizeof(*gpuBmxyzScratch.failedCount));
+    if (status != cudaSuccess) {
+      releaseBmxyzScratch();
+      return static_cast<int>(status);
+    }
+  }
+  if (!gpuBmxyzScratch.coordBackup ||
+      gpuBmxyzScratch.coordCapacity < coordinateValues) {
+    cudaFree(gpuBmxyzScratch.coordBackup);
+    gpuBmxyzScratch.coordBackup = NULL;
+    status = cudaMalloc(&gpuBmxyzScratch.coordBackup,
+                        coordinateValues * sizeof(*gpuBmxyzScratch.coordBackup));
+    if (status != cudaSuccess) {
+      releaseBmxyzScratch();
+      return static_cast<int>(status);
+    }
+    gpuBmxyzScratch.coordCapacity = coordinateValues;
+  }
+  return static_cast<int>(cudaSuccess);
 }
 
 static int ensureFtableScratch(const GPU_FTABLE_DATA *data) {
@@ -2382,6 +2428,247 @@ __global__ void gpuFtableKernel(double *coord, long nParticles, int stride,
       part[4] += step * factor;
     }
   }
+}
+
+__device__ __forceinline__ int gpuBmxyzInterpolate(
+  double *F0, double *F1, double *F2, double x, double y, double z,
+  const GPU_BMXYZ_DATA &data) {
+  long ix, iy, iz;
+  double fx, fy, fz;
+  double result[3];
+  double position[3] = {x, y, z};
+  long grid[3];
+
+  for (long dimension = 0; dimension < 3; dimension++)
+    grid[dimension] = static_cast<long>(
+      (position[dimension] - data.minimum[dimension]) /
+      data.spacing[dimension]);
+  ix = grid[0];
+  iy = grid[1];
+  iz = grid[2];
+  *F0 = *F1 = *F2 = 0.0;
+  if (ix < 0 || iy < 0 || iz < 0 ||
+      ix >= data.dimensions[0] - 1 ||
+      iy >= data.dimensions[1] - 1 ||
+      iz >= data.dimensions[2] - 1)
+    return 0;
+
+  fx = (x - (ix * data.spacing[0] + data.minimum[0])) /
+       data.spacing[0];
+  fy = (y - (iy * data.spacing[1] + data.minimum[1])) /
+       data.spacing[1];
+  fz = (z - (iz * data.spacing[2] + data.minimum[2])) /
+       data.spacing[2];
+  for (long field = 0; field < 3; field++) {
+    double interp1[2][2], interp2[2];
+    const double *values = data.field[field];
+    long nx = data.dimensions[0];
+    long nxy = nx * data.dimensions[1];
+
+    interp1[0][0] =
+      (1.0 - fz) * values[ix + iy * nx + iz * nxy] +
+      fz * values[ix + iy * nx + (iz + 1) * nxy];
+    interp1[1][0] =
+      (1.0 - fz) * values[ix + 1 + iy * nx + iz * nxy] +
+      fz * values[ix + 1 + iy * nx + (iz + 1) * nxy];
+    interp1[0][1] =
+      (1.0 - fz) * values[ix + (iy + 1) * nx + iz * nxy] +
+      fz * values[ix + (iy + 1) * nx + (iz + 1) * nxy];
+    interp1[1][1] =
+      (1.0 - fz) * values[ix + 1 + (iy + 1) * nx + iz * nxy] +
+      fz * values[ix + 1 + (iy + 1) * nx + (iz + 1) * nxy];
+    interp2[0] = (1.0 - fy) * interp1[0][0] + fy * interp1[0][1];
+    interp2[1] = (1.0 - fy) * interp1[1][0] + fy * interp1[1][1];
+    result[field] =
+      data.strengthFactor *
+      ((1.0 - fx) * interp2[0] + fx * interp2[1]);
+  }
+  *F0 = result[0];
+  *F1 = result[1];
+  *F2 = result[2];
+  return 1;
+}
+
+__device__ __forceinline__ int gpuBmxyzDerivatives(
+  double derivative[8], const double q[8],
+  const GPU_BMXYZ_DATA &data) {
+  double F0, F1, F2;
+
+  if (!isfinite(q[1]) || !isfinite(q[2]))
+    return 0;
+  derivative[0] = q[3];
+  derivative[1] = q[4];
+  derivative[2] = q[5];
+  derivative[6] = 1.0;
+  derivative[7] = 0.0;
+  if (!gpuBmxyzInterpolate(&F0, &F1, &F2, q[1], q[2], q[0], data)) {
+    derivative[3] = derivative[4] = derivative[5] = 0.0;
+    return 1;
+  }
+  derivative[3] = (q[4] * F2 - q[5] * F1) / (1.0 + q[7]);
+  derivative[4] = (q[5] * F0 - q[3] * F2) / (1.0 + q[7]);
+  derivative[5] = (q[3] * F1 - q[4] * F0) / (1.0 + q[7]);
+  if (data.fieldIsMagnetic) {
+    derivative[3] *= data.fieldScale;
+    derivative[4] *= data.fieldScale;
+    derivative[5] *= data.fieldScale;
+  }
+  return 1;
+}
+
+__device__ __forceinline__ int gpuBmxyzRk4Step(
+  double finalState[8], const double initialState[8],
+  const double initialDerivative[8], double h,
+  const GPU_BMXYZ_DATA &data) {
+  double k1[8], k2[8], k3[8], temporary[8], derivative[8];
+
+  for (long equation = 0; equation < 8; equation++) {
+    k1[equation] = h * initialDerivative[equation];
+    temporary[equation] = initialState[equation] + k1[equation] / 2.0;
+  }
+  if (!gpuBmxyzDerivatives(derivative, temporary, data))
+    return 0;
+  for (long equation = 0; equation < 8; equation++) {
+    k2[equation] = h * derivative[equation];
+    temporary[equation] = initialState[equation] + k2[equation] / 2.0;
+  }
+  if (!gpuBmxyzDerivatives(derivative, temporary, data))
+    return 0;
+  for (long equation = 0; equation < 8; equation++) {
+    k3[equation] = h * derivative[equation];
+    temporary[equation] = initialState[equation] + k3[equation];
+  }
+  if (!gpuBmxyzDerivatives(derivative, temporary, data))
+    return 0;
+  for (long equation = 0; equation < 8; equation++)
+    finalState[equation] = initialState[equation] +
+      (k1[equation] / 2.0 + k2[equation] + k3[equation] +
+       h * derivative[equation] / 2.0) / 3.0;
+  return 1;
+}
+
+__device__ __forceinline__ int gpuBmxyzSign(double value) {
+  return value < 0.0 ? -1 : (value > 0.0 ? 1 : 0);
+}
+
+__device__ int gpuBmxyzIntegrate(double state[8],
+                                 const GPU_BMXYZ_DATA &data) {
+  double y0[8], y1[8], derivative0[8], derivative1[8];
+  double x0 = 0.0, x1, ex0, ex1;
+  double xf = 2.0 * data.fieldLength;
+  double hStep = data.fieldLength * data.integrationAccuracy;
+  double exitAccuracy = data.integrationAccuracy *
+                        data.integrationAccuracy * xf;
+  long maxSteps;
+
+  if (exitAccuracy < data.fieldLength * 1e-14)
+    exitAccuracy = data.fieldLength * 1e-14;
+  maxSteps = static_cast<long>(ceil(xf / hStep)) + 2;
+  for (long equation = 0; equation < 8; equation++)
+    y0[equation] = state[equation];
+  if (!gpuBmxyzDerivatives(derivative0, y0, data))
+    return 0;
+  ex0 = data.fieldLength - y0[0];
+
+  for (long step = 0; step < maxSteps; step++) {
+    double xdiff;
+    if (fabs(ex0) < exitAccuracy) {
+      for (long equation = 0; equation < 8; equation++)
+        state[equation] = y0[equation];
+      return 1;
+    }
+    xdiff = xf - x0;
+    if (xdiff < hStep)
+      hStep = xdiff;
+    x1 = x0;
+    if (!gpuBmxyzRk4Step(y1, y0, derivative0, hStep, data))
+      return 0;
+    x1 += hStep;
+    if (!gpuBmxyzDerivatives(derivative1, y1, data))
+      return 0;
+    ex1 = data.fieldLength - y1[0];
+    if (gpuBmxyzSign(ex0) != gpuBmxyzSign(ex1))
+      break;
+    if (fabs(xf - x1) < exitAccuracy)
+      return 0;
+    for (long equation = 0; equation < 8; equation++) {
+      y0[equation] = y1[equation];
+      derivative0[equation] = derivative1[equation];
+    }
+    ex0 = ex1;
+    x0 = x1;
+  }
+
+  if (fabs(ex1) < exitAccuracy) {
+    for (long equation = 0; equation < 8; equation++)
+      state[equation] = y1[equation];
+    return 1;
+  }
+  for (long iteration = 0; iteration <= 400; iteration++) {
+    double y2[8], derivative2[8];
+    double h = -ex0 * (x1 - x0) / (ex1 - ex0) * 0.995;
+    double x2 = x0;
+    double ex2;
+    if (!gpuBmxyzRk4Step(y2, y0, derivative0, h, data))
+      return 0;
+    x2 += h;
+    if (!gpuBmxyzDerivatives(derivative2, y2, data))
+      return 0;
+    ex2 = data.fieldLength - y2[0];
+    if (fabs(ex2) < exitAccuracy) {
+      for (long equation = 0; equation < 8; equation++)
+        state[equation] = y2[equation];
+      return 1;
+    }
+    if (gpuBmxyzSign(ex1) == gpuBmxyzSign(ex2)) {
+      for (long equation = 0; equation < 8; equation++) {
+        y1[equation] = y2[equation];
+        derivative1[equation] = derivative2[equation];
+      }
+      x1 = x2;
+      ex1 = ex2;
+    } else {
+      for (long equation = 0; equation < 8; equation++) {
+        y0[equation] = y2[equation];
+        derivative0[equation] = derivative2[equation];
+      }
+      x0 = x2;
+      ex0 = ex2;
+    }
+  }
+  return 0;
+}
+
+__global__ void gpuBmxyzKernel(double *coord, long nParticles, int stride,
+                               GPU_BMXYZ_DATA data,
+                               unsigned long long *failedCount) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double state[8];
+  double *part;
+  double dzds;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  dzds = 1.0 / sqrt(1.0 + part[1] * part[1] + part[3] * part[3]);
+  state[0] = 0.0;
+  state[1] = part[0];
+  state[2] = part[2];
+  state[3] = dzds;
+  state[4] = part[1] * dzds;
+  state[5] = part[3] * dzds;
+  state[6] = part[4];
+  state[7] = part[5];
+  if (!gpuBmxyzIntegrate(state, data)) {
+    atomicAdd(failedCount, 1ULL);
+    return;
+  }
+  part[0] = state[1];
+  part[1] = state[4] / state[3];
+  part[2] = state[2];
+  part[3] = state[5] / state[3];
+  part[4] = state[6];
+  part[5] = state[7];
 }
 
 __global__ void gpuRfcwRfOnlyMatrixKernel(double *coord, long nParticles, int stride,
@@ -8820,6 +9107,72 @@ extern "C" int gpuCudaFtableTrack(void *coord, long nParticles, int stride,
   gpuFtableKernel<<<blocks, threads>>>(static_cast<double *>(coord),
                                       nParticles, stride, deviceData);
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaBmxyzTrack(void *coord, long nParticles, int stride,
+                                  const GPU_BMXYZ_DATA *data,
+                                  long *failedCount, float *milliseconds) {
+  GPU_BMXYZ_DATA deviceData;
+  GPU_FTABLE_DATA uploadData;
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  int status;
+  int threads = 128;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  long coordinateValues;
+  unsigned long long hostFailedCount = 0;
+
+  if (!coord || !data || !failedCount || nParticles <= 0 || stride < 7 ||
+      nParticles > LONG_MAX / stride)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *failedCount = 0;
+  coordinateValues = nParticles * stride;
+  status = ensureBmxyzScratch(coordinateValues);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  std::memset(&uploadData, 0, sizeof(uploadData));
+  uploadData.tableOwner = data->tableOwner;
+  for (long dimension = 0; dimension < 3; dimension++)
+    uploadData.dimensions[dimension] = data->dimensions[dimension];
+  for (long field = 0; field < 3; field++)
+    uploadData.field[field] = data->field[field];
+  status = ensureFtableScratch(&uploadData);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  deviceData = *data;
+  for (long field = 0; field < 3; field++)
+    deviceData.field[field] = gpuFtableScratch.field[field];
+  cudaStatus = cudaMemcpy(gpuBmxyzScratch.coordBackup, coord,
+                          coordinateValues * sizeof(double),
+                          cudaMemcpyDeviceToDevice);
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMemset(gpuBmxyzScratch.failedCount, 0,
+                          sizeof(*gpuBmxyzScratch.failedCount));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuBmxyzKernel<<<blocks, threads>>>(static_cast<double *>(coord),
+                                      nParticles, stride, deviceData,
+                                      gpuBmxyzScratch.failedCount);
+  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  cudaStatus = cudaMemcpy(&hostFailedCount, gpuBmxyzScratch.failedCount,
+                          sizeof(hostFailedCount), cudaMemcpyDeviceToHost);
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  *failedCount = static_cast<long>(hostFailedCount);
+  if (hostFailedCount) {
+    cudaStatus = cudaMemcpy(coord, gpuBmxyzScratch.coordBackup,
+                            coordinateValues * sizeof(double),
+                            cudaMemcpyDeviceToDevice);
+    if (cudaStatus != cudaSuccess)
+      return static_cast<int>(cudaStatus);
+  }
+  return static_cast<int>(cudaSuccess);
 }
 
 extern "C" int gpuCudaRfcwRfOnlyMatrix(void *coord, long nParticles, int stride,

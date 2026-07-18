@@ -68,6 +68,7 @@
 #pragma weak rotateBeamCoordinatesForMisalignment
 #pragma weak initialize_polynomialSeries
 #pragma weak polynomialSeries_tracking
+#pragma weak bmapxyz_field_setup
 
 extern unsigned long multipoleKicksDone;
 extern double **Fx_xy;
@@ -111,6 +112,7 @@ extern long SavitzkyGolaySmooth(double *data, long rows, long order,
 extern void rotateBeamCoordinatesForMisalignment(double **part, long np,
                                                  double angle);
 extern void initialize_polynomialSeries(POLYNOMIALSERIES *polynomialSeries);
+extern void bmapxyz_field_setup(BMAPXYZ *bmapxyz);
 extern long polynomialSeries_tracking(
   double **particle, long nPart, POLYNOMIALSERIES *polynomialSeries,
   double pError, double pCentral, double **accepted, double zStart);
@@ -251,6 +253,10 @@ extern int gpuCudaFtableTrack(void *coord, long nParticles, int stride,
                               const GPU_FTABLE_DATA *data,
                               float *milliseconds);
 extern void gpuCudaFtableRelease(void);
+extern int gpuCudaBmxyzTrack(void *coord, long nParticles, int stride,
+                             const GPU_BMXYZ_DATA *data, long *failedCount,
+                             float *milliseconds);
+extern void gpuCudaBmxyzRelease(void);
 extern int gpuCudaRfcwRfOnlyMatrix(void *coord, long nParticles, int stride,
                                    double pCentral, double length,
                                    double volt, double omega, double phase,
@@ -772,6 +778,8 @@ static long gpuEnableCwiggler = 0;
 static long gpuCwigglerMinParticles = 64;
 static long gpuEnableFtable = 0;
 static long gpuFtableMinParticles = 64;
+static long gpuEnableBmxyz = 0;
+static long gpuBmxyzMinParticles = 64;
 static long gpuEnableLscTracking = 0;
 static long gpuLscTrackingExplicit = 0;
 static long gpuEnableRfcwTrackingDrift = 0;
@@ -2254,6 +2262,59 @@ static long gpuFtableElementSupported(ELEMENT_LIST *eptr) {
   return 1;
 }
 
+static long gpuBmxyzElementSupported(ELEMENT_LIST *eptr) {
+#if USE_MPI
+  (void)eptr;
+  return 0;
+#else
+  BMAPXYZ *bmxyz;
+  BMAPXYZ_DATA *data;
+  long tableLength;
+
+  if (!gpuEnableBmxyz || gpuBase.backtrack)
+    return 0;
+  if (!eptr || eptr->type != T_BMAPXYZ || !eptr->p_elem)
+    return 0;
+  bmxyz = (BMAPXYZ *)eptr->p_elem;
+  if (!bmxyz->filename || !bmxyz->filename[0] ||
+      !bmxyz->method || strcmp(bmxyz->method, "non-adaptive runge-kutta") != 0 ||
+      !isfinite(bmxyz->accuracy) || bmxyz->accuracy < 1e-6 ||
+      bmxyz->accuracy > 0.1 || bmxyz->synchRad || bmxyz->checkFields ||
+      bmxyz->injectAtZero || bmxyz->singlePrecision || bmxyz->discardMap ||
+      bmxyz->verbosity || bmxyz->xyInterpolationOrder != 1 ||
+      bmxyz->xyGridExcess || bmxyz->dxError || bmxyz->dyError ||
+      bmxyz->dzError || bmxyz->tilt ||
+      (bmxyz->particleOutputFile && bmxyz->particleOutputFile[0]) ||
+      (bmxyz->apContourElement && bmxyz->apContourElement[0]) ||
+      bmxyz->BFactor[0] != 1 || bmxyz->BFactor[1] != 1 ||
+      bmxyz->BFactor[2] != 1 || bmxyz->BInside[0] ||
+      bmxyz->BInside[1] || bmxyz->BInside[2])
+    return 0;
+  if (!bmxyz->data && !bmapxyz_field_setup)
+    return 0;
+  if (!bmxyz->data)
+    bmapxyz_field_setup(bmxyz);
+  data = bmxyz->data;
+  if (!data || !data->Fx || !data->Fy || !data->Fz ||
+      data->nx < 2 || data->ny < 2 || data->nz < 2 ||
+      data->dx <= 0 || data->dy <= 0 || data->dz <= 0 ||
+      bmxyz->fieldLength <= 0 || bmxyz->length != bmxyz->fieldLength ||
+      data->magnetSymmetry[0] || data->magnetSymmetry[1] ||
+      data->magnetSymmetry[2])
+    return 0;
+  tableLength = data->nx;
+  if (tableLength > LONG_MAX / data->ny)
+    return 0;
+  tableLength *= data->ny;
+  if (tableLength > LONG_MAX / data->nz)
+    return 0;
+  tableLength *= data->nz;
+  if (tableLength != data->points)
+    return 0;
+  return 1;
+#endif
+}
+
 static long gpuLscDataSupported(LSCDRIFT *lsc) {
   if (!lsc)
     return 0;
@@ -2485,6 +2546,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuFtableElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuFtableMinParticles);
+  if (gpuBmxyzElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuBmxyzMinParticles);
   if (gpuWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuTrwakeElementSupported(eptr))
@@ -4225,6 +4289,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_FTABLE_PARTICLES", 64);
   if (gpuFtableMinParticles < 1)
     gpuFtableMinParticles = 1;
+  gpuEnableBmxyz =
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_BMXYZ") ||
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_BMXYZ");
+  gpuBmxyzMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_BMXYZ_PARTICLES", 64);
+  if (gpuBmxyzMinParticles < 1)
+    gpuBmxyzMinParticles = 1;
   gpuLscTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_LSC");
   gpuEnableLscTracking = !gpuLscTrackingExplicit ||
                          gpuEnvFlag("ELEGANT_GPU_ENABLE_LSC");
@@ -4269,6 +4340,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnableBggexp = 0;
   gpuEnableCwiggler = 0;
   gpuEnableFtable = 0;
+  gpuEnableBmxyz = 0;
 #endif
   gpuAvoidShortGpuIslands = !gpuEnvSet("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS") ||
                             gpuEnvFlag("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS");
@@ -4413,6 +4485,10 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
       fprintf(stderr,
               "elegant CUDA: fixed-step FTABLE enabled at %ld particles.\n",
               gpuFtableMinParticles);
+    if (gpuEnableBmxyz)
+      fprintf(stderr,
+              "elegant CUDA: fixed-step BMXYZ enabled at %ld particles.\n",
+              gpuBmxyzMinParticles);
     if (gpuEnableSreffects)
       fprintf(stderr,
               "elegant CUDA: deterministic SREFFECTS enabled at %ld particles.\n",
@@ -4453,6 +4529,7 @@ void gpuBaseDealloc(void) {
   gpuCudaPolynomialSeriesRelease();
   gpuCudaBggexpRelease();
   gpuCudaFtableRelease();
+  gpuCudaBmxyzRelease();
   gpuReleaseApertureScratch();
   gpuReleaseCsrScratch();
   gpuCudaCombinedWakeRelease();
@@ -7868,6 +7945,53 @@ void gpu_track_ftable(long nParticles, FTABLE *ftable, double pCentral) {
   gpuRecordMagnetKernel(milliseconds);
   gpuMarkDeviceChanged(nParticles);
   gpuRecordWallSeconds();
+}
+
+long gpu_track_bmxyz(long nParticles, BMAPXYZ *bmxyz, double pCentral) {
+  GPU_BMXYZ_DATA data;
+  BMAPXYZ_DATA *map;
+  float milliseconds = 0;
+  int status;
+  long failedCount = 0;
+
+  if (nParticles <= 0)
+    return 1;
+  if (!bmxyz || !(map = bmxyz->data) ||
+      !map->Fx || !map->Fy || !map->Fz)
+    gpuRequiredFailure("NULL BMXYZ CUDA tracking data");
+  memset(&data, 0, sizeof(data));
+  data.tableOwner = map;
+  data.dimensions[0] = map->nx;
+  data.dimensions[1] = map->ny;
+  data.dimensions[2] = map->nz;
+  data.field[0] = map->Fz;
+  data.field[1] = map->Fx;
+  data.field[2] = map->Fy;
+  data.minimum[0] = map->xmin;
+  data.minimum[1] = map->ymin;
+  data.minimum[2] = map->zmin;
+  data.spacing[0] = map->dx;
+  data.spacing[1] = map->dy;
+  data.spacing[2] = map->dz;
+  data.fieldLength = bmxyz->fieldLength;
+  data.integrationAccuracy = bmxyz->accuracy;
+  data.strengthFactor = bmxyz->strength * (1 + bmxyz->fse);
+  data.fieldIsMagnetic = map->BGiven ? 1 : 0;
+  data.fieldScale = -particleCharge * particleRelSign /
+                    (particleMass * c_mks * pCentral);
+
+  startGpuTimer();
+  gpuCopyHostToDevice(nParticles);
+  status = gpuCudaBmxyzTrack(gpuBase.deviceCoord, nParticles,
+                             (int)gpuBase.deviceStride, &data,
+                             &failedCount, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("BMXYZ fixed-step tracking CUDA kernel", status);
+  gpuRecordMagnetKernel(milliseconds);
+  if (!failedCount)
+    gpuMarkDeviceChanged(nParticles);
+  gpuRecordWallSeconds();
+  return failedCount == 0;
 }
 
 static double gpuLscVarianceFromSums(const GPU_BEAM_SUM_DATA *sums, long coordinate) {

@@ -19,6 +19,7 @@
 #endif
 #ifdef HAVE_GPU
 #  include <gpu_base.h>
+#  include <gpu_bmxyz.h>
 #  include <gpu_funcs.h>
 #  include <gpu_ftable.h>
 #  include <gpu_kickmap.h>
@@ -2199,10 +2200,38 @@ long do_tracking(
                 case T_BMAPXY:
                   nLeft = lorentz(coord, nToTrack, (BMAPXY *)eptr->p_elem, T_BMAPXY, *P_central, accepted, NULL, NULL, NULL);
                   break;
-                case T_BMAPXYZ:
-                  nLeft = lorentz(coord, nToTrack, (BMAPXYZ *)eptr->p_elem, T_BMAPXYZ, *P_central, accepted,
+                case T_BMAPXYZ: {
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                  long bmxyzGpuTracked = 0;
+#endif
+#ifdef HAVE_GPU
+                  if (getElementOnGpu() && !maxamp && !apcontour &&
+                      !run->apertureData.initialized) {
+                    if (gpu_track_bmxyz(nToTrack, (BMAPXYZ *)eptr->p_elem,
+                                        *P_central)) {
+                      nLeft = nToTrack;
+#  ifdef GPU_VERIFY
+                      startCpuTimer();
+                      bmxyzGpuTracked = 1;
+#  else
+                      break;
+#  endif
+                    } else {
+                      coord = forceParticlesToCpu("BMXYZ CUDA trajectory fallback");
+                    }
+                  } else if (getElementOnGpu()) {
+                    coord = forceParticlesToCpu("BMXYZ aperture fallback");
+                  }
+#endif
+                  nLeft = lorentz(coord, nToTrack, (BMAPXYZ *)eptr->p_elem,
+                                  T_BMAPXYZ, *P_central, accepted,
                                   maxamp, apcontour, &(run->apertureData));
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                  if (bmxyzGpuTracked)
+                    compareGpuCpu(nLeft, "BMXYZ fixed-step tracking");
+#endif
                   break;
+                }
                 case T_BRAT:
                   nLeft = trackBRAT(coord, nToTrack, (BRAT *)eptr->p_elem, *P_central, accepted);
                   /* printf("%ld particles left after BRAT %s\n", nLeft, eptr->name); */
