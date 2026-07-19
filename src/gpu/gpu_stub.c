@@ -343,6 +343,16 @@ extern int gpuCudaBeamSums2(void *coord, long nParticles, int stride,
                             GPU_BEAM_SUM_DATA *result,
                             GPU_BEAM_SUM_DATA *centeredResult,
                             void *deviceScratch, float *milliseconds);
+extern int gpuCudaHistogramRanges(
+  void *coord, long nParticles, int stride, double pCentral, double cMks,
+  long startPID, long endPID, unsigned int coordinateMask,
+  GPU_HISTOGRAM_RANGE_DATA *result, float *milliseconds);
+extern int gpuCudaHistogramBins(
+  void *coord, long nParticles, int stride, double pCentral, double cMks,
+  long startPID, long endPID, long bins, unsigned int coordinateMask,
+  double timeOffset, const double *lower, const double *upper,
+  unsigned long long *histogramReturn, float *milliseconds);
+extern void gpuCudaHistogramRelease(void);
 extern int gpuCudaLongMinMax(void *coord, long nParticles, int stride,
                              int coordinateIndex,
                              GPU_LONG_MIN_MAX_DATA *result,
@@ -792,6 +802,8 @@ static long gpuEnableBggexp = 0;
 static long gpuBggexpMinParticles = 64;
 static long gpuEnableCwiggler = 0;
 static long gpuCwigglerMinParticles = 64;
+static long gpuEnableHistogram = 0;
+static long gpuHistogramMinParticles = 64;
 static long gpuEnableFtable = 0;
 static long gpuFtableMinParticles = 64;
 static long gpuEnableBmxyz = 0;
@@ -829,10 +841,14 @@ static BEAM_SUMS gpuSavedSums;
 static BEAM_SUMS2 gpuSavedSums2;
 static SPIN_SUMS gpuSavedSpinSums;
 static long gpuSavedSumsValid = 0;
+static GPU_BEAM_SUM_DATA gpuLastBeamSumResult;
+static long gpuLastBeamSumResultValid = 0;
 static unsigned long long *gpuRfmodeHostHistogram;
 static long gpuRfmodeHostHistogramCapacity;
 static double *gpuRfmodeHostTime;
 static long gpuRfmodeHostTimeCapacity;
+static unsigned long long *gpuHistogramHostBins;
+static long gpuHistogramHostBinCapacity;
 
 static long gpuPackMatrix(GPU_MATRIX_DATA *packed, VMATRIX *M);
 static long gpuMatrixSupported(VMATRIX *M);
@@ -856,6 +872,7 @@ static long gpuWakeElementSupported(ELEMENT_LIST *eptr);
 static long gpuTrwakeElementSupported(ELEMENT_LIST *eptr);
 static long gpuCombinedWakeElementSupported(ELEMENT_LIST *eptr);
 static long gpuLscElementSupported(ELEMENT_LIST *eptr);
+static long gpuHistogramElementSupported(ELEMENT_LIST *eptr);
 long gpu_csr_csbend_resident_available(void *csbend0, long nParticles,
                                        long nBins);
 static void gpuWakeTrackingWarning(const char *text, const char *detail);
@@ -2468,6 +2485,23 @@ static long gpuLscElementSupported(ELEMENT_LIST *eptr) {
   return gpuLscDataSupported(lsc);
 }
 
+static long gpuHistogramElementSupported(ELEMENT_LIST *eptr) {
+#if USE_MPI
+  (void)eptr;
+  return 0;
+#else
+  HISTOGRAM *histogram;
+
+  if (!gpuEnableHistogram || !eptr || eptr->type != T_HISTOGRAM ||
+      !eptr->p_elem)
+    return 0;
+  histogram = (HISTOGRAM *)eptr->p_elem;
+  if (histogram->disable || histogram->bins < 2)
+    return 0;
+  return 1;
+#endif
+}
+
 static long gpuExactDriftElement(long type) {
   return type == T_EDRIFT;
 }
@@ -2678,6 +2712,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuLscElementSupported(eptr))
     return gpuParticleCountAllowed(nParticles, gpuBase.lscMinParticles);
+  if (gpuHistogramElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuHistogramMinParticles);
   if (gpuCsrCsbendDeviceEntrySupported(eptr, nParticles))
     return gpuParticleCountAllowed(nParticles, gpuBase.csrMinParticles);
   if (gpuCsrDriftNoOpElementSupported(eptr))
@@ -4227,6 +4264,236 @@ long gpu_reductions_enabled(long nParticles) {
   return gpuParticleCountAllowed(nParticles, gpuBase.reductionMinParticles);
 }
 
+long gpu_watch_parameters_supported(void *watch0, long nParticles) {
+#if USE_MPI
+  (void)watch0;
+  (void)nParticles;
+  return 0;
+#else
+  WATCH *watch = (WATCH *)watch0;
+
+  if (!watch || watch->disable || !getElementOnGpu() ||
+      !gpu_reductions_enabled(nParticles))
+    return 0;
+  if (!(watch->startPID < 0 && watch->endPID < 0))
+    return 0;
+  if (exactNormalizedEmittance || spinCoordOffset)
+    return 0;
+  return 1;
+#endif
+}
+
+long gpu_watch_parameter_sums(long nParticles, long *count,
+                              double *pSum, double *gammaSum) {
+  if (!gpuLastBeamSumResultValid ||
+      gpuLastBeamSumResult.count != nParticles ||
+      !count || !pSum || !gammaSum)
+    return 0;
+  *count = gpuLastBeamSumResult.count;
+  *pSum = gpuLastBeamSumResult.pSum;
+  *gammaSum = gpuLastBeamSumResult.gammaSum;
+  return 1;
+}
+
+#ifdef GPU_VERIFY
+static double gpuHistogramCpuCoordinate(const double *part, long coordinate,
+                                        double pCentral,
+                                        double timeOffset) {
+  double p, time;
+
+  if (coordinate != 4 && coordinate != 6)
+    return part[coordinate];
+  p = pCentral * (1 + part[5]);
+  time = part[4] / (c_mks * p / sqrt(p * p + 1));
+  return coordinate == 6 ? time - timeOffset : time;
+}
+
+static long gpuHistogramCpuParticleSelected(const double *part,
+                                            long startPID, long endPID) {
+  return (startPID < 0 && endPID < 0) ||
+         (part[6] >= startPID && part[6] <= endPID);
+}
+#endif
+
+long gpu_histogram_ranges(long nParticles, double pCentral,
+                          long startPID, long endPID,
+                          unsigned int coordinateMask,
+                          double *minimum, double *maximum) {
+  GPU_HISTOGRAM_RANGE_DATA result;
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0 || !(coordinateMask & 0x7fU) ||
+      !minimum || !maximum)
+    gpuRequiredFailure("invalid HISTOGRAM CUDA range request");
+  startGpuTimer();
+  gpuCopyHostToDevice(nParticles);
+  status = gpuCudaHistogramRanges(
+    gpuBase.deviceCoord, nParticles, (int)gpuBase.deviceStride,
+    pCentral, c_mks, startPID, endPID, coordinateMask,
+    &result, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("HISTOGRAM CUDA range kernels", status);
+  gpuRecordReductionKernel(milliseconds);
+  gpuBase.gpuHistogramCount++;
+  memcpy(minimum, result.minimum, sizeof(result.minimum));
+  memcpy(maximum, result.maximum, sizeof(result.maximum));
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode) {
+    double **coord = copyParticlesToCpuReadOnly(
+      "HISTOGRAM range verification input");
+    double cpuMinimum[7], cpuMaximum[7];
+    double absTol = gpuEnvDouble("ELEGANT_GPU_HISTOGRAM_COMPARE_ABS", 1e-15);
+    double relTol = gpuEnvDouble("ELEGANT_GPU_HISTOGRAM_COMPARE_REL", 1e-12);
+    long cpuCount = 0, mismatches = 0;
+
+    for (long icoord = 0; icoord < 7; icoord++) {
+      cpuMinimum[icoord] = DBL_MAX;
+      cpuMaximum[icoord] = -DBL_MAX;
+    }
+    for (long ip = 0; ip < nParticles; ip++) {
+      if (!gpuHistogramCpuParticleSelected(coord[ip], startPID, endPID))
+        continue;
+      cpuCount++;
+      for (long icoord = 0; icoord < 7; icoord++) {
+        double value;
+
+        if (!(coordinateMask & (1U << icoord)))
+          continue;
+        value = gpuHistogramCpuCoordinate(coord[ip], icoord, pCentral, 0);
+        if (value < cpuMinimum[icoord])
+          cpuMinimum[icoord] = value;
+        if (value > cpuMaximum[icoord])
+          cpuMaximum[icoord] = value;
+      }
+    }
+    if (cpuCount != result.count) {
+      fprintf(stderr,
+              "elegant CUDA VERIFY mismatch HISTOGRAM selection count cpu=%ld gpu=%ld\n",
+              cpuCount, result.count);
+      mismatches++;
+    }
+    if (cpuCount) {
+      for (long icoord = 0; icoord < 7; icoord++) {
+        double absDiff, relDiff;
+
+        if (!(coordinateMask & (1U << icoord)))
+          continue;
+        if (!gpuValuesClose(cpuMinimum[icoord], result.minimum[icoord],
+                            absTol, relTol, &absDiff, &relDiff)) {
+          fprintf(stderr,
+                  "elegant CUDA VERIFY mismatch HISTOGRAM minimum coordinate=%ld cpu=%.17e gpu=%.17e abs=%.3e rel=%.3e\n",
+                  icoord, cpuMinimum[icoord], result.minimum[icoord],
+                  absDiff, relDiff);
+          mismatches++;
+        }
+        if (!gpuValuesClose(cpuMaximum[icoord], result.maximum[icoord],
+                            absTol, relTol, &absDiff, &relDiff)) {
+          fprintf(stderr,
+                  "elegant CUDA VERIFY mismatch HISTOGRAM maximum coordinate=%ld cpu=%.17e gpu=%.17e abs=%.3e rel=%.3e\n",
+                  icoord, cpuMaximum[icoord], result.maximum[icoord],
+                  absDiff, relDiff);
+          mismatches++;
+        }
+      }
+    }
+    if (mismatches)
+      gpuRequiredFailure("HISTOGRAM CUDA range verification failed");
+    if (gpuVerbose)
+      fprintf(stderr,
+              "elegant CUDA VERIFY passed for HISTOGRAM ranges: %ld selected particles\n",
+              result.count);
+  }
+#endif
+  gpuRecordWallSeconds();
+  return result.count;
+}
+
+void gpu_histogram_bins(long nParticles, double pCentral,
+                        long startPID, long endPID, long bins,
+                        unsigned int coordinateMask, double timeOffset,
+                        const double *lower, const double *upper,
+                        double *histogram) {
+  long values;
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0 || bins < 2 || bins > LONG_MAX / 7 ||
+      !(coordinateMask & 0x7fU) || !lower || !upper || !histogram)
+    gpuRequiredFailure("invalid HISTOGRAM CUDA bin request");
+  values = 7 * bins;
+  if (!gpuHistogramHostBins || gpuHistogramHostBinCapacity < values) {
+    unsigned long long *replacement = (unsigned long long *)realloc(
+      gpuHistogramHostBins, values * sizeof(*replacement));
+    if (!replacement)
+      gpuRequiredFailure("unable to allocate HISTOGRAM host bin buffer");
+    gpuHistogramHostBins = replacement;
+    gpuHistogramHostBinCapacity = values;
+  }
+  startGpuTimer();
+  gpuCopyHostToDevice(nParticles);
+  status = gpuCudaHistogramBins(
+    gpuBase.deviceCoord, nParticles, (int)gpuBase.deviceStride,
+    pCentral, c_mks, startPID, endPID, bins, coordinateMask,
+    timeOffset, lower, upper, gpuHistogramHostBins, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("HISTOGRAM CUDA bin kernels", status);
+  gpuRecordReductionKernel(milliseconds);
+  for (long index = 0; index < values; index++) {
+    if (gpuHistogramHostBins[index] > 9007199254740992ULL)
+      gpuRequiredFailure("HISTOGRAM CUDA bin count exceeds exact double range");
+    histogram[index] = (double)gpuHistogramHostBins[index];
+  }
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode) {
+    double **coord = copyParticlesToCpuReadOnly(
+      "HISTOGRAM bin verification input");
+    unsigned long long *cpuHistogram = (unsigned long long *)calloc(
+      values, sizeof(*cpuHistogram));
+    long mismatches = 0;
+
+    if (!cpuHistogram)
+      gpuRequiredFailure("unable to allocate HISTOGRAM verification bins");
+    for (long ip = 0; ip < nParticles; ip++) {
+      if (!gpuHistogramCpuParticleSelected(coord[ip], startPID, endPID))
+        continue;
+      for (long icoord = 0; icoord < 7; icoord++) {
+        double binSize, dbin, value;
+        long bin;
+
+        if (!(coordinateMask & (1U << icoord)))
+          continue;
+        value = gpuHistogramCpuCoordinate(coord[ip], icoord, pCentral,
+                                          timeOffset);
+        binSize = (upper[icoord] - lower[icoord]) / bins;
+        bin = (dbin = (value - lower[icoord]) / binSize);
+        if (dbin < 0 || bin < 0 || bin >= bins)
+          continue;
+        cpuHistogram[icoord * bins + bin]++;
+      }
+    }
+    for (long index = 0; index < values; index++) {
+      if (cpuHistogram[index] == gpuHistogramHostBins[index])
+        continue;
+      if (mismatches < 10)
+        fprintf(stderr,
+                "elegant CUDA VERIFY mismatch HISTOGRAM coordinate=%ld bin=%ld cpu=%llu gpu=%llu\n",
+                index / bins, index % bins,
+                cpuHistogram[index], gpuHistogramHostBins[index]);
+      mismatches++;
+    }
+    free(cpuHistogram);
+    if (mismatches)
+      gpuRequiredFailure("HISTOGRAM CUDA bin verification failed");
+    if (gpuVerbose)
+      fprintf(stderr,
+              "elegant CUDA VERIFY passed for HISTOGRAM bins: mask=0x%x with %ld bins\n",
+              coordinateMask, bins);
+  }
+#endif
+  gpuRecordWallSeconds();
+}
+
 GPU_BASE *getGpuBase(void) {
   return &gpuBase;
 }
@@ -4403,6 +4670,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_CWIGGLER_PARTICLES", 64);
   if (gpuCwigglerMinParticles < 1)
     gpuCwigglerMinParticles = 1;
+  gpuEnableHistogram =
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_HISTOGRAM_DIAGNOSTICS") ||
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_HISTOGRAM_DIAGNOSTICS");
+  gpuHistogramMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_HISTOGRAM_PARTICLES", 64);
+  if (gpuHistogramMinParticles < 1)
+    gpuHistogramMinParticles = 1;
   gpuEnableFtable =
     !gpuEnvSet("ELEGANT_GPU_ENABLE_FTABLE") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_FTABLE");
@@ -4477,6 +4751,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnableSreffects = 0;
   gpuEnableBggexp = 0;
   gpuEnableCwiggler = 0;
+  gpuEnableHistogram = 0;
   gpuEnableFtable = 0;
   gpuEnableBmxyz = 0;
   gpuEnableRfmode = 0;
@@ -4642,6 +4917,10 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
       fprintf(stderr,
               "elegant CUDA: deterministic SREFFECTS enabled at %ld particles.\n",
               gpuSreffectsMinParticles);
+    if (gpuEnableHistogram)
+      fprintf(stderr,
+              "elegant CUDA: HISTOGRAM diagnostics enabled at %ld particles.\n",
+              gpuHistogramMinParticles);
   }
 
   gpuBase.initialized = 1;
@@ -4680,6 +4959,7 @@ void gpuBaseDealloc(void) {
   gpuCudaFtableRelease();
   gpuCudaBmxyzRelease();
   gpuCudaRfmodeRelease();
+  gpuCudaHistogramRelease();
   gpuReleaseApertureScratch();
   gpuReleaseCsrScratch();
   gpuCudaCombinedWakeRelease();
@@ -4692,6 +4972,9 @@ void gpuBaseDealloc(void) {
   free(gpuRfmodeHostTime);
   gpuRfmodeHostTime = NULL;
   gpuRfmodeHostTimeCapacity = 0;
+  free(gpuHistogramHostBins);
+  gpuHistogramHostBins = NULL;
+  gpuHistogramHostBinCapacity = 0;
   gpuBase.elementOnGpu = 0;
   gpuBase.element = NULL;
 }
@@ -5023,7 +5306,7 @@ void displayTimings(void) {
   if (!gpuVerbose && !gpuBase.gpuElementCount)
     return;
   fprintf(stderr,
-          "elegant CUDA: elements=%ld passive=%ld matrix=%ld exactDrift=%ld linearDrift=%ld helpers=%ld reductions=%ld apertures=%ld magnets=%ld wakes=%ld lsc=%ld csr=%ld scmult=%ld wall=%.6fs kernel=%.6fs h2d=%.6fs d2h=%.6fs\n",
+          "elegant CUDA: elements=%ld passive=%ld matrix=%ld exactDrift=%ld linearDrift=%ld helpers=%ld reductions=%ld apertures=%ld magnets=%ld wakes=%ld lsc=%ld csr=%ld scmult=%ld histograms=%ld wall=%.6fs kernel=%.6fs h2d=%.6fs d2h=%.6fs\n",
           gpuBase.gpuElementCount,
           gpuBase.gpuPassiveElementCount,
           gpuBase.gpuTrackParticleCount,
@@ -5037,6 +5320,7 @@ void displayTimings(void) {
           gpuBase.gpuLscCount,
           gpuBase.gpuCsrCount,
           gpuBase.gpuScmultCount,
+          gpuBase.gpuHistogramCount,
           gpuBase.gpuWallSeconds,
           gpuBase.gpuKernelSeconds,
           gpuBase.gpuTransferToDeviceSeconds,
@@ -6443,6 +6727,8 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
     {0, 0, 0, 0, 0, 0, 1}};
   double centroid[7];
 
+  gpuLastBeamSumResultValid = 0;
+
   if (beamSums && beamSums->beamSums2 &&
       !gpuOutputDriftReductionMinParticlesExplicit) {
     gpuAccumulateBeamSumsOnCpu(sums, n_part, p_central, mp_charge,
@@ -6478,6 +6764,8 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
   if (status != 0)
     gpuFatalStatus("compound beam sums reduction kernel", status);
   gpuRecordReductionKernel(milliseconds);
+  gpuLastBeamSumResult = result;
+  gpuLastBeamSumResultValid = 1;
 
   if (result.count <= 0) {
     beamSums->charge = 0;

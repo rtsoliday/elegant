@@ -16,6 +16,9 @@
 #include "fftpackC.h"
 #include "track.h"
 #include "SDDS.h"
+#ifdef HAVE_GPU
+#  include <gpu_base.h>
+#endif
 
 void SDDS_ElegantOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row,
                              char *contents, char *command_file, char *lattice_file, SDDS_DEFINITION *parameter_definition,
@@ -991,6 +994,9 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
   BEAM_SUMS *sums;
   double emittance_l;
   long memoryUsed;
+#ifdef HAVE_GPU
+  long useGpuParameters = 0;
+#endif
 #if USE_MPI
   long particles_total, npCount_total = 0;
 
@@ -1072,6 +1078,10 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
 
   sample = (pass - watchStartPass) / watch->interval;
 
+#ifdef HAVE_GPU
+  useGpuParameters = gpu_watch_parameters_supported(watch, particles);
+#endif
+
   if (isMaster)
     if ((watchStartPass == pass) && !SDDS_StartTable(watch->SDDS_table, (n_passes - watchStartPass) / watch->interval + 1)) {
       SDDS_SetError("Problem starting SDDS table (dump_watch_parameters)");
@@ -1088,6 +1098,17 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
   zero_beam_sums(sums, 1);
   accumulate_beam_sums(sums, particle, particles, Po, mp_charge, NULL, 0.0, 0.0,
                        watch->startPID, watch->endPID, BEAM_SUMS_SPARSE | BEAM_SUMS_NOMINMAX);
+#ifdef HAVE_GPU
+  if (useGpuParameters &&
+      !gpu_watch_parameter_sums(particles, &npCount, &p_sum, &gamma_sum)) {
+    particle = copyParticlesToCpuReadOnly("WATCH parameter aggregate fallback");
+    useGpuParameters = 0;
+    zero_beam_sums(sums, 1);
+    accumulate_beam_sums(sums, particle, particles, Po, mp_charge, NULL,
+                         0.0, 0.0, watch->startPID, watch->endPID,
+                         BEAM_SUMS_SPARSE | BEAM_SUMS_NOMINMAX);
+  }
+#endif
   if (isMaster) {
     if ((Cx_index = SDDS_GetColumnIndex(watch->SDDS_table, "Cx")) < 0) {
       SDDS_SetError("Problem getting index of SDDS columns (dump_watch_parameters)");
@@ -1189,7 +1210,15 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
   fflush(stdout);
 #  endif
 #else
-  emittance_l = rms_longitudinal_emittance(particle, particles, Po, watch->startPID, watch->endPID);
+#  ifdef HAVE_GPU
+  if (useGpuParameters)
+    emittance_l = SAFE_SQRT(sums->beamSums2->sigma[6][6] *
+                              sums->beamSums2->sigma[5][5] -
+                            sqr(sums->beamSums2->sigma[5][6]));
+  else
+#  endif
+    emittance_l = rms_longitudinal_emittance(particle, particles, Po,
+                                             watch->startPID, watch->endPID);
   if (watch->mode_code == WATCH_PARAMETERS)
     if (!SDDS_SetRowValues(watch->SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, sample,
                            "el", emittance_l, NULL)) {
@@ -1203,17 +1232,25 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
 #endif
 
   /* time centroid and sigma */
-  for (i = npCount = p_sum = gamma_sum = sum = error_sum = 0; i < particles; i++) {
-    if ((watch->startPID<0 && watch->endPID<0) || (particle[i][6] >= watch->startPID && particle[i][6] <= watch->endPID)) {
-      p = Po * (1 + particle[i][5]);
-      p_sum += p;
-      gamma_sum += sqrt(sqr(p) + 1);
-#ifndef USE_KAHAN
-      sum += particle[i][4] / (p / sqrt(sqr(p) + 1) * c_mks);
-#else
-      sum = KahanPlus(sum, particle[i][4] / (p / sqrt(sqr(p) + 1) * c_mks), &error_sum);
+  sum = error_sum = 0;
+#ifdef HAVE_GPU
+  if (useGpuParameters) {
+    tc = sums->centroid[6];
+  } else
 #endif
-      npCount++;
+  {
+    for (i = npCount = p_sum = gamma_sum = 0; i < particles; i++) {
+      if ((watch->startPID<0 && watch->endPID<0) || (particle[i][6] >= watch->startPID && particle[i][6] <= watch->endPID)) {
+        p = Po * (1 + particle[i][5]);
+        p_sum += p;
+        gamma_sum += sqrt(sqr(p) + 1);
+#ifndef USE_KAHAN
+        sum += particle[i][4] / (p / sqrt(sqr(p) + 1) * c_mks);
+#else
+        sum = KahanPlus(sum, particle[i][4] / (p / sqrt(sqr(p) + 1) * c_mks), &error_sum);
+#endif
+        npCount++;
+      }
     }
   }
 #if USE_MPI
@@ -1249,9 +1286,19 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
     }
   }
 #else
-  if (particles)
+  if (
+#  ifdef HAVE_GPU
+      !useGpuParameters &&
+#  endif
+      particles)
     tc = sum / npCount;
-  else
+  else if (
+#  ifdef HAVE_GPU
+           !useGpuParameters
+#  else
+           1
+#  endif
+          )
     tc = 0;
 
   if (!SDDS_SetRowValues(watch->SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, sample,
@@ -1487,9 +1534,15 @@ void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double 
   double p, t0;
   static long maxBins = 0, maxParticles = 0;
   static double *frequency = NULL, *coordinate = NULL, *histData = NULL;
+  static double *gpuFrequency = NULL;
   double center, range, lower, upper;
   static short *chosen = NULL;
   long nChosen = 0;
+#ifdef HAVE_GPU
+  double gpuMinimum[7], gpuMaximum[7], gpuLower[7], gpuUpper[7];
+  unsigned int gpuCoordinateMask = 0;
+  long useGpu = getElementOnGpu();
+#endif
 
 #if USE_MPI
   static double *buffer = NULL;
@@ -1519,7 +1572,8 @@ void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double 
   if (histogram->bins > maxBins) {
     maxBins = histogram->bins;
     if (!(frequency = SDDS_Realloc(frequency, sizeof(*frequency) * maxBins)) ||
-        !(coordinate = SDDS_Realloc(coordinate, sizeof(*coordinate) * maxBins))) {
+        !(coordinate = SDDS_Realloc(coordinate, sizeof(*coordinate) * maxBins)) ||
+        !(gpuFrequency = SDDS_Realloc(gpuFrequency, sizeof(*gpuFrequency) * 7 * maxBins))) {
       SDDS_Bomb("Memory allocation failure (dump_particle_histogram)");
     }
 #if USE_MPI
@@ -1537,23 +1591,96 @@ void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double 
         SDDS_Bomb("Memory allocation failure (dump_particle_histogram)");
     }
   }
-  for (ipart = 0; ipart < particles; ipart++) {
-    if ((histogram->startPID<0 && histogram->endPID<0) || 
-        (particle[ipart][6] >= histogram->startPID && particle[ipart][6] <= histogram->endPID)) {
-      chosen[ipart] = 1;
-      nChosen++;
-    } else
-      chosen[ipart] = 0;
-  }
 
   t0 = pass * length * sqrt(Po * Po + 1) / (c_mks * (Po + 1e-32));
+
+#ifdef HAVE_GPU
+  if (useGpu) {
+    for (icoord = 0; icoord < 7; icoord++) {
+      if (histogram->columnIndex[icoord][0] == -1 ||
+          (histogram->sparse && (icoord == 1 || icoord == 3 || icoord == 5)))
+        continue;
+      gpuCoordinateMask |= 1U << icoord;
+    }
+    nChosen = gpu_histogram_ranges(particles, Po,
+                                   histogram->startPID, histogram->endPID,
+                                   gpuCoordinateMask,
+                                   gpuMinimum, gpuMaximum);
+    if (!nChosen) {
+      particle = copyParticlesToCpuReadOnly("HISTOGRAM empty-selection fallback");
+      useGpu = 0;
+    } else {
+      if (gpuCoordinateMask & (1U << 6)) {
+        gpuMinimum[6] -= t0;
+        gpuMaximum[6] -= t0;
+      }
+      for (icoord = 0; icoord < 7; icoord++) {
+        gpuLower[icoord] = gpuUpper[icoord] = 0;
+        if (!(gpuCoordinateMask & (1U << icoord)))
+          continue;
+        lower = gpuMinimum[icoord];
+        upper = gpuMaximum[icoord];
+        if (lower == upper) {
+          lower -= 1e-16;
+          upper += 1e-16;
+          /* Preserve the CPU zero-width-range convention for the later
+           * coordinate and normalization output calculations as well as
+           * for the GPU binning bounds computed here. */
+          gpuMinimum[icoord] = lower;
+          gpuMaximum[icoord] = upper;
+        }
+        if (histogram->count == 0 || !histogram->fixedBinSize) {
+          range = histogram->binSizeFactor * (upper - lower);
+          histogram->binSize[icoord] = range / histogram->bins;
+        } else
+          range = histogram->binSize[icoord] * histogram->bins;
+        center = (lower + upper) / 2;
+        range *= (1 + 1e-12);
+        gpuLower[icoord] = center - range / 2;
+        gpuUpper[icoord] = center + range / 2;
+      }
+      gpu_histogram_bins(particles, Po,
+                         histogram->startPID, histogram->endPID,
+                         histogram->bins, gpuCoordinateMask,
+                         t0, gpuLower, gpuUpper, gpuFrequency);
+    }
+  }
+#endif
+  if (
+#ifdef HAVE_GPU
+      !useGpu
+#else
+      1
+#endif
+  ) {
+    for (ipart = 0; ipart < particles; ipart++) {
+      if ((histogram->startPID<0 && histogram->endPID<0) ||
+          (particle[ipart][6] >= histogram->startPID && particle[ipart][6] <= histogram->endPID)) {
+        chosen[ipart] = 1;
+        nChosen++;
+      } else
+        chosen[ipart] = 0;
+    }
+  }
+
   for (icoord = 0; icoord < 7; icoord++) {
     upper = -(lower = DBL_MAX);
     if (histogram->columnIndex[icoord][0] == -1)
       continue;
     if (histogram->sparse && (icoord == 1 || icoord == 3 || icoord == 5))
       continue;
-    if (isSlave) {
+    if (
+#ifdef HAVE_GPU
+        useGpu
+#else
+        0
+#endif
+    ) {
+#ifdef HAVE_GPU
+      lower = gpuMinimum[icoord];
+      upper = gpuMaximum[icoord];
+#endif
+    } else if (isSlave) {
       if (icoord == 4) {
         /* t */
         for (ipart = jpart = 0; ipart < particles; ipart++) {
@@ -1599,7 +1726,19 @@ void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double 
     upper = center + range / 2;
     for (ibin = 0; ibin < histogram->bins; ibin++)
       coordinate[ibin] = (ibin + 0.5) * histogram->binSize[icoord] + lower;
-    make_histogram(frequency, histogram->bins, lower, upper, histData, nChosen, 1);
+    if (
+#ifdef HAVE_GPU
+        useGpu
+#else
+        0
+#endif
+    ) {
+#ifdef HAVE_GPU
+      memcpy(frequency, gpuFrequency + icoord * histogram->bins,
+             sizeof(*frequency) * histogram->bins);
+#endif
+    } else
+      make_histogram(frequency, histogram->bins, lower, upper, histData, nChosen, 1);
 #if USE_MPI
     if (USE_MPI) /* This will update the number of particles locally on master if there are lost on slaves */
       MPI_Reduce(&nChosen, &nChosen_total, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);

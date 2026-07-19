@@ -17,6 +17,8 @@ __constant__ GPU_CSBEND_DATA gpuCsbendData;
 
 #define GPU_REDUCTION_THREADS 64
 #define GPU_BEAM_SUM_BLOCKS 64
+#define GPU_HISTOGRAM_THREADS 128
+#define GPU_HISTOGRAM_BLOCKS 64
 #define GPU_MATCH_ENERGY_BLOCKS 64
 #define GPU_OPEN_PLUS_X 1
 #define GPU_OPEN_PLUS_Y 2
@@ -116,6 +118,86 @@ typedef struct GPU_RFMODE_SCRATCH {
 } GPU_RFMODE_SCRATCH;
 
 static GPU_RFMODE_SCRATCH gpuRfmodeScratch;
+
+typedef struct GPU_HISTOGRAM_SCRATCH {
+  GPU_HISTOGRAM_RANGE_DATA *rangePartial;
+  GPU_HISTOGRAM_RANGE_DATA *rangeResult;
+  unsigned long long *histogramPartial;
+  unsigned long long *histogram;
+  long binCapacity;
+} GPU_HISTOGRAM_SCRATCH;
+
+typedef struct GPU_HISTOGRAM_BIN_DATA {
+  long bins;
+  long startPID;
+  long endPID;
+  unsigned int coordinateMask;
+  double pCentral;
+  double cMks;
+  double timeOffset;
+  double lower[7];
+  double upper[7];
+} GPU_HISTOGRAM_BIN_DATA;
+
+static GPU_HISTOGRAM_SCRATCH gpuHistogramScratch;
+
+static void releaseHistogramScratch(void) {
+  cudaFree(gpuHistogramScratch.rangePartial);
+  cudaFree(gpuHistogramScratch.rangeResult);
+  cudaFree(gpuHistogramScratch.histogramPartial);
+  cudaFree(gpuHistogramScratch.histogram);
+  std::memset(&gpuHistogramScratch, 0, sizeof(gpuHistogramScratch));
+}
+
+extern "C" void gpuCudaHistogramRelease(void) {
+  releaseHistogramScratch();
+}
+
+static int ensureHistogramScratch(long bins) {
+  cudaError_t status;
+
+  if (bins < 2)
+    return static_cast<int>(cudaErrorInvalidValue);
+  if (!gpuHistogramScratch.rangePartial) {
+    status = cudaMalloc(&gpuHistogramScratch.rangePartial,
+                        GPU_HISTOGRAM_BLOCKS *
+                          sizeof(*gpuHistogramScratch.rangePartial));
+    if (status != cudaSuccess) {
+      releaseHistogramScratch();
+      return static_cast<int>(status);
+    }
+  }
+  if (!gpuHistogramScratch.rangeResult) {
+    status = cudaMalloc(&gpuHistogramScratch.rangeResult,
+                        sizeof(*gpuHistogramScratch.rangeResult));
+    if (status != cudaSuccess) {
+      releaseHistogramScratch();
+      return static_cast<int>(status);
+    }
+  }
+  if (!gpuHistogramScratch.histogramPartial ||
+      !gpuHistogramScratch.histogram ||
+      gpuHistogramScratch.binCapacity < bins) {
+    cudaFree(gpuHistogramScratch.histogramPartial);
+    cudaFree(gpuHistogramScratch.histogram);
+    gpuHistogramScratch.histogramPartial = NULL;
+    gpuHistogramScratch.histogram = NULL;
+    status = cudaMalloc(
+      &gpuHistogramScratch.histogramPartial,
+      7 * bins * GPU_HISTOGRAM_BLOCKS *
+        sizeof(*gpuHistogramScratch.histogramPartial));
+    if (status == cudaSuccess)
+      status = cudaMalloc(&gpuHistogramScratch.histogram,
+                          7 * bins *
+                            sizeof(*gpuHistogramScratch.histogram));
+    if (status != cudaSuccess) {
+      releaseHistogramScratch();
+      return static_cast<int>(status);
+    }
+    gpuHistogramScratch.binCapacity = bins;
+  }
+  return static_cast<int>(cudaSuccess);
+}
 
 static void releaseRfmodeScratch(void) {
   cudaFree(gpuRfmodeScratch.time);
@@ -4087,6 +4169,166 @@ __device__ __forceinline__ double gpuParticleTime(double *part, double pCentral,
   return part[4] * sqrt(p * p + 1) / (cMks * p);
 }
 
+__device__ __forceinline__ int gpuHistogramParticleSelected(
+  const double *part, long startPID, long endPID) {
+  return (startPID < 0 && endPID < 0) ||
+         (part[6] >= startPID && part[6] <= endPID);
+}
+
+__device__ __forceinline__ double gpuHistogramParticleTime(
+  const double *part, double pCentral, double cMks) {
+  double p = pCentral * (1 + part[5]);
+  return part[4] / (cMks * p / sqrt(p * p + 1));
+}
+
+__global__ void gpuHistogramRangePartialKernel(
+  const double *coord, long nParticles, int stride, double pCentral,
+  double cMks, long startPID, long endPID,
+  unsigned int coordinateMask, GPU_HISTOGRAM_RANGE_DATA *partial) {
+  __shared__ long count[GPU_HISTOGRAM_THREADS];
+  __shared__ double minimum[7][GPU_HISTOGRAM_THREADS];
+  __shared__ double maximum[7][GPU_HISTOGRAM_THREADS];
+  long tid = threadIdx.x;
+  long ip;
+  int icoord;
+
+  count[tid] = 0;
+  for (icoord = 0; icoord < 7; icoord++) {
+    minimum[icoord][tid] = DBL_MAX;
+    maximum[icoord][tid] = -DBL_MAX;
+  }
+  for (ip = blockIdx.x * blockDim.x + tid; ip < nParticles;
+       ip += gridDim.x * blockDim.x) {
+    const double *part = coord + ip * stride;
+    double time = 0;
+
+    if (!gpuHistogramParticleSelected(part, startPID, endPID))
+      continue;
+    count[tid]++;
+    if (coordinateMask & ((1U << 4) | (1U << 6)))
+      time = gpuHistogramParticleTime(part, pCentral, cMks);
+    for (icoord = 0; icoord < 7; icoord++) {
+      double value;
+
+      if (!(coordinateMask & (1U << icoord)))
+        continue;
+      value = (icoord == 4 || icoord == 6) ? time : part[icoord];
+      if (value < minimum[icoord][tid])
+        minimum[icoord][tid] = value;
+      if (value > maximum[icoord][tid])
+        maximum[icoord][tid] = value;
+    }
+  }
+  __syncthreads();
+
+  for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (tid < offset) {
+      count[tid] += count[tid + offset];
+      for (icoord = 0; icoord < 7; icoord++) {
+        if (minimum[icoord][tid + offset] < minimum[icoord][tid])
+          minimum[icoord][tid] = minimum[icoord][tid + offset];
+        if (maximum[icoord][tid + offset] > maximum[icoord][tid])
+          maximum[icoord][tid] = maximum[icoord][tid + offset];
+      }
+    }
+    __syncthreads();
+  }
+  if (tid == 0) {
+    partial[blockIdx.x].count = count[0];
+    for (icoord = 0; icoord < 7; icoord++) {
+      partial[blockIdx.x].minimum[icoord] = minimum[icoord][0];
+      partial[blockIdx.x].maximum[icoord] = maximum[icoord][0];
+    }
+  }
+}
+
+__global__ void gpuHistogramRangeFinalizeKernel(
+  const GPU_HISTOGRAM_RANGE_DATA *partial,
+  GPU_HISTOGRAM_RANGE_DATA *result) {
+  __shared__ long count[GPU_HISTOGRAM_THREADS];
+  __shared__ double minimum[7][GPU_HISTOGRAM_THREADS];
+  __shared__ double maximum[7][GPU_HISTOGRAM_THREADS];
+  long tid = threadIdx.x;
+  int icoord;
+
+  count[tid] = tid < GPU_HISTOGRAM_BLOCKS ? partial[tid].count : 0;
+  for (icoord = 0; icoord < 7; icoord++) {
+    minimum[icoord][tid] = tid < GPU_HISTOGRAM_BLOCKS ?
+                             partial[tid].minimum[icoord] : DBL_MAX;
+    maximum[icoord][tid] = tid < GPU_HISTOGRAM_BLOCKS ?
+                             partial[tid].maximum[icoord] : -DBL_MAX;
+  }
+  __syncthreads();
+  for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (tid < offset) {
+      count[tid] += count[tid + offset];
+      for (icoord = 0; icoord < 7; icoord++) {
+        if (minimum[icoord][tid + offset] < minimum[icoord][tid])
+          minimum[icoord][tid] = minimum[icoord][tid + offset];
+        if (maximum[icoord][tid + offset] > maximum[icoord][tid])
+          maximum[icoord][tid] = maximum[icoord][tid + offset];
+      }
+    }
+    __syncthreads();
+  }
+  if (tid == 0) {
+    result->count = count[0];
+    for (icoord = 0; icoord < 7; icoord++) {
+      result->minimum[icoord] = minimum[icoord][0];
+      result->maximum[icoord] = maximum[icoord][0];
+    }
+  }
+}
+
+__global__ void gpuHistogramBinPartialKernel(
+  const double *coord, long nParticles, int stride,
+  GPU_HISTOGRAM_BIN_DATA data, unsigned long long *partial) {
+  long ip;
+
+  for (ip = blockIdx.x * blockDim.x + threadIdx.x; ip < nParticles;
+       ip += gridDim.x * blockDim.x) {
+    const double *part = coord + ip * stride;
+    double time = 0;
+
+    if (!gpuHistogramParticleSelected(part, data.startPID, data.endPID))
+      continue;
+    if (data.coordinateMask & ((1U << 4) | (1U << 6)))
+      time = gpuHistogramParticleTime(part, data.pCentral, data.cMks);
+    for (int icoord = 0; icoord < 7; icoord++) {
+      double binSize, dbin, value;
+      long bin;
+
+      if (!(data.coordinateMask & (1U << icoord)))
+        continue;
+      value = (icoord == 4 || icoord == 6) ? time : part[icoord];
+      if (icoord == 6)
+        value -= data.timeOffset;
+      binSize = (data.upper[icoord] - data.lower[icoord]) / data.bins;
+      dbin = (value - data.lower[icoord]) / binSize;
+      bin = static_cast<long>(dbin);
+      if (dbin < 0 || bin < 0 || bin >= data.bins)
+        continue;
+      atomicAdd(partial +
+                  (icoord * data.bins + bin) * GPU_HISTOGRAM_BLOCKS +
+                  blockIdx.x,
+                1ULL);
+    }
+  }
+}
+
+__global__ void gpuHistogramBinFinalizeKernel(
+  const unsigned long long *partial, long bins,
+  unsigned long long *histogram) {
+  long index = blockIdx.x * blockDim.x + threadIdx.x;
+  unsigned long long sum = 0;
+
+  if (index >= 7 * bins)
+    return;
+  for (long block = 0; block < GPU_HISTOGRAM_BLOCKS; block++)
+    sum += partial[index * GPU_HISTOGRAM_BLOCKS + block];
+  histogram[index] = sum;
+}
+
 __device__ __forceinline__ void gpuWakeAddToParticleEnergy(double *part,
                                                            double timeOfFlight,
                                                            const GPU_WAKE_LONGITUDINAL_DATA *wake,
@@ -5613,6 +5855,8 @@ __global__ void gpuBeamSumsKernel(double *coord, long nParticles, int stride,
                                   double pCentral, double cMks,
                                   GPU_BEAM_SUM_DATA *result) {
   __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ double pSum[GPU_REDUCTION_THREADS];
+  __shared__ double gammaSum[GPU_REDUCTION_THREADS];
   __shared__ double sum[7][GPU_REDUCTION_THREADS];
   __shared__ double product[28][GPU_REDUCTION_THREADS];
   __shared__ double maxabs[7][GPU_REDUCTION_THREADS];
@@ -5623,6 +5867,7 @@ __global__ void gpuBeamSumsKernel(double *coord, long nParticles, int stride,
   int i, j;
 
   count[tid] = 0;
+  pSum[tid] = gammaSum[tid] = 0;
   for (i = 0; i < 7; i++) {
     sum[i][tid] = 0;
     maxabs[i][tid] = 0;
@@ -5635,6 +5880,7 @@ __global__ void gpuBeamSumsKernel(double *coord, long nParticles, int stride,
   for (ip = tid; ip < nParticles; ip += blockDim.x) {
     double *part = coord + ip * stride;
     double value[7];
+    double p = pCentral * (1 + part[5]);
     value[0] = part[0];
     value[1] = part[1];
     value[2] = part[2];
@@ -5643,6 +5889,8 @@ __global__ void gpuBeamSumsKernel(double *coord, long nParticles, int stride,
     value[5] = part[5];
     value[6] = gpuParticleTime(part, pCentral, cMks);
     count[tid]++;
+    pSum[tid] += p;
+    gammaSum[tid] += sqrt(p * p + 1);
     for (i = 0; i < 7; i++) {
       double absValue = fabs(value[i]);
       sum[i][tid] += value[i];
@@ -5662,6 +5910,8 @@ __global__ void gpuBeamSumsKernel(double *coord, long nParticles, int stride,
   for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
     if (tid < offset) {
       count[tid] += count[tid + offset];
+      pSum[tid] += pSum[tid + offset];
+      gammaSum[tid] += gammaSum[tid + offset];
       for (i = 0; i < 7; i++) {
         sum[i][tid] += sum[i][tid + offset];
         if (maxabs[i][tid + offset] > maxabs[i][tid])
@@ -5679,6 +5929,8 @@ __global__ void gpuBeamSumsKernel(double *coord, long nParticles, int stride,
 
   if (tid == 0) {
     result->count = count[0];
+    result->pSum = pSum[0];
+    result->gammaSum = gammaSum[0];
     for (i = 0; i < 7; i++) {
       result->centroidSum[i] = sum[i][0];
       result->maxabs[i] = maxabs[i][0];
@@ -5750,6 +6002,8 @@ __global__ void gpuBeamStatisticsPartialKernel(
   double *coord, long nParticles, int stride, double pCentral, double cMks,
   GPU_BEAM_SUM_DATA *partial) {
   __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ double pSum[GPU_REDUCTION_THREADS];
+  __shared__ double gammaSum[GPU_REDUCTION_THREADS];
   __shared__ double sum[7][GPU_REDUCTION_THREADS];
   __shared__ double maxabs[7][GPU_REDUCTION_THREADS];
   __shared__ double minValue[7][GPU_REDUCTION_THREADS];
@@ -5759,6 +6013,7 @@ __global__ void gpuBeamStatisticsPartialKernel(
   int i;
 
   count[tid] = 0;
+  pSum[tid] = gammaSum[tid] = 0;
   for (i = 0; i < 7; i++) {
     sum[i][tid] = 0;
     maxabs[i][tid] = 0;
@@ -5769,6 +6024,7 @@ __global__ void gpuBeamStatisticsPartialKernel(
        ip += gridDim.x * blockDim.x) {
     double *part = coord + ip * stride;
     double value[7];
+    double p = pCentral * (1 + part[5]);
     value[0] = part[0];
     value[1] = part[1];
     value[2] = part[2];
@@ -5777,6 +6033,8 @@ __global__ void gpuBeamStatisticsPartialKernel(
     value[5] = part[5];
     value[6] = gpuParticleTime(part, pCentral, cMks);
     count[tid]++;
+    pSum[tid] += p;
+    gammaSum[tid] += sqrt(p * p + 1);
     for (i = 0; i < 7; i++) {
       double absValue = fabs(value[i]);
       sum[i][tid] += value[i];
@@ -5793,6 +6051,8 @@ __global__ void gpuBeamStatisticsPartialKernel(
   for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
     if (tid < offset) {
       count[tid] += count[tid + offset];
+      pSum[tid] += pSum[tid + offset];
+      gammaSum[tid] += gammaSum[tid + offset];
       for (i = 0; i < 7; i++) {
         sum[i][tid] += sum[i][tid + offset];
         if (maxabs[i][tid + offset] > maxabs[i][tid])
@@ -5809,6 +6069,8 @@ __global__ void gpuBeamStatisticsPartialKernel(
   if (tid == 0) {
     GPU_BEAM_SUM_DATA *result = partial + blockIdx.x;
     result->count = count[0];
+    result->pSum = pSum[0];
+    result->gammaSum = gammaSum[0];
     for (i = 0; i < 7; i++) {
       result->centroidSum[i] = sum[i][0];
       result->maxabs[i] = maxabs[i][0];
@@ -5822,6 +6084,8 @@ __global__ void gpuBeamStatisticsFinalizeKernel(
   const GPU_BEAM_SUM_DATA *partial, int blocks, GPU_BEAM_SUM_DATA *result,
   double *centroid) {
   __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ double pSum[GPU_REDUCTION_THREADS];
+  __shared__ double gammaSum[GPU_REDUCTION_THREADS];
   __shared__ double sum[7][GPU_REDUCTION_THREADS];
   __shared__ double maxabs[7][GPU_REDUCTION_THREADS];
   __shared__ double minValue[7][GPU_REDUCTION_THREADS];
@@ -5830,6 +6094,7 @@ __global__ void gpuBeamStatisticsFinalizeKernel(
   int i;
 
   count[tid] = 0;
+  pSum[tid] = gammaSum[tid] = 0;
   for (i = 0; i < 7; i++) {
     sum[i][tid] = 0;
     maxabs[i][tid] = 0;
@@ -5838,6 +6103,8 @@ __global__ void gpuBeamStatisticsFinalizeKernel(
   }
   if (tid < blocks) {
     count[tid] = partial[tid].count;
+    pSum[tid] = partial[tid].pSum;
+    gammaSum[tid] = partial[tid].gammaSum;
     for (i = 0; i < 7; i++) {
       sum[i][tid] = partial[tid].centroidSum[i];
       maxabs[i][tid] = partial[tid].maxabs[i];
@@ -5850,6 +6117,8 @@ __global__ void gpuBeamStatisticsFinalizeKernel(
   for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
     if (tid < offset) {
       count[tid] += count[tid + offset];
+      pSum[tid] += pSum[tid + offset];
+      gammaSum[tid] += gammaSum[tid + offset];
       for (i = 0; i < 7; i++) {
         sum[i][tid] += sum[i][tid + offset];
         if (maxabs[i][tid + offset] > maxabs[i][tid])
@@ -5865,6 +6134,8 @@ __global__ void gpuBeamStatisticsFinalizeKernel(
 
   if (tid == 0) {
     result->count = count[0];
+    result->pSum = pSum[0];
+    result->gammaSum = gammaSum[0];
     for (i = 0; i < 7; i++) {
       result->centroidSum[i] = sum[i][0];
       result->maxabs[i] = maxabs[i][0];
@@ -9938,6 +10209,95 @@ extern "C" int gpuCudaCenterBeam(void *coord, long nParticles, int stride,
                                            offsetValues[2], offsetValues[3], offsetValues[4],
                                            offsetValues[5], doTime, pCentral, timeOffset, cMks);
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaHistogramRanges(
+  void *coord, long nParticles, int stride, double pCentral, double cMks,
+  long startPID, long endPID, unsigned int coordinateMask,
+  GPU_HISTOGRAM_RANGE_DATA *result, float *milliseconds) {
+  static cudaEvent_t start = NULL, stop = NULL;
+  cudaError_t cudaStatus;
+  int status;
+
+  if (!coord || !result || nParticles <= 0 || stride < 7 ||
+      !(coordinateMask & 0x7fU))
+    return static_cast<int>(cudaErrorInvalidValue);
+  std::memset(result, 0, sizeof(*result));
+  status = ensureHistogramScratch(2);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  status = getCachedTimingEvents(&start, &stop);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  cudaStatus = cudaEventRecord(start, 0);
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  gpuHistogramRangePartialKernel<<<GPU_HISTOGRAM_BLOCKS,
+                                   GPU_HISTOGRAM_THREADS>>>(
+    static_cast<const double *>(coord), nParticles, stride, pCentral, cMks,
+    startPID, endPID, coordinateMask, gpuHistogramScratch.rangePartial);
+  gpuHistogramRangeFinalizeKernel<<<1, GPU_HISTOGRAM_THREADS>>>(
+    gpuHistogramScratch.rangePartial, gpuHistogramScratch.rangeResult);
+  status = finishTimedKernel(start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  return static_cast<int>(cudaMemcpy(result, gpuHistogramScratch.rangeResult,
+                                     sizeof(*result),
+                                     cudaMemcpyDeviceToHost));
+}
+
+extern "C" int gpuCudaHistogramBins(
+  void *coord, long nParticles, int stride, double pCentral, double cMks,
+  long startPID, long endPID, long bins, unsigned int coordinateMask,
+  double timeOffset, const double *lower, const double *upper,
+  unsigned long long *histogramReturn, float *milliseconds) {
+  static cudaEvent_t start = NULL, stop = NULL;
+  GPU_HISTOGRAM_BIN_DATA data;
+  cudaError_t cudaStatus;
+  int blocks, status;
+
+  if (!coord || !lower || !upper || !histogramReturn || nParticles <= 0 ||
+      stride < 7 || bins < 2 || !(coordinateMask & 0x7fU))
+    return static_cast<int>(cudaErrorInvalidValue);
+  status = ensureHistogramScratch(bins);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  std::memset(&data, 0, sizeof(data));
+  data.bins = bins;
+  data.startPID = startPID;
+  data.endPID = endPID;
+  data.coordinateMask = coordinateMask;
+  data.pCentral = pCentral;
+  data.cMks = cMks;
+  data.timeOffset = timeOffset;
+  std::memcpy(data.lower, lower, sizeof(data.lower));
+  std::memcpy(data.upper, upper, sizeof(data.upper));
+  cudaStatus = cudaMemset(
+    gpuHistogramScratch.histogramPartial, 0,
+    7 * bins * GPU_HISTOGRAM_BLOCKS *
+      sizeof(*gpuHistogramScratch.histogramPartial));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  status = getCachedTimingEvents(&start, &stop);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  cudaStatus = cudaEventRecord(start, 0);
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  gpuHistogramBinPartialKernel<<<GPU_HISTOGRAM_BLOCKS,
+                                 GPU_HISTOGRAM_THREADS>>>(
+    static_cast<const double *>(coord), nParticles, stride, data,
+    gpuHistogramScratch.histogramPartial);
+  blocks = static_cast<int>((7 * bins + 255) / 256);
+  gpuHistogramBinFinalizeKernel<<<blocks, 256>>>(
+    gpuHistogramScratch.histogramPartial, bins,
+    gpuHistogramScratch.histogram);
+  status = finishTimedKernel(start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  return static_cast<int>(cudaMemcpy(
+    histogramReturn, gpuHistogramScratch.histogram,
+    7 * bins * sizeof(*histogramReturn), cudaMemcpyDeviceToHost));
 }
 
 static int gpuCudaRunReduction(void *coord, long nParticles, int stride,

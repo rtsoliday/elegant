@@ -1694,7 +1694,8 @@ long do_tracking(
                       case WATCH_PARAMETERS:
                       case WATCH_CENTROIDS:
 #ifdef HAVE_GPU
-                        if (getElementOnGpu())
+                        if (getElementOnGpu() &&
+                            !gpu_watch_parameters_supported(watch, nToTrack))
                           coord = copyParticlesToCpuReadOnly("WATCH parameter output");
 #endif
                         dump_watch_parameters(watch, step, i_pass, n_passes, coord, nToTrack,
@@ -3041,7 +3042,8 @@ long do_tracking(
                       case WATCH_PARAMETERS:
                       case WATCH_CENTROIDS:
 #ifdef HAVE_GPU
-                        coord = copyParticlesToCpuReadOnly("dump_watch_parameters");
+                        if (!gpu_watch_parameters_supported(watch, nToTrack))
+                          coord = copyParticlesToCpuReadOnly("dump_watch_parameters");
 #endif
                         dump_watch_parameters(watch, step, i_pass, n_passes, coord, nToTrack,
 #if SDDS_MPI_IO

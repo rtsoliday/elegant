@@ -66,6 +66,7 @@ typedef struct GPU_BASE {
   long gpuRfcwLscFullCount;
   long gpuCsrCount;
   long gpuScmultCount;
+  long gpuHistogramCount;
   long gpuPassiveElementCount;
   double gpuKernelSeconds;
   double gpuTransferToDeviceSeconds;
@@ -99,12 +100,20 @@ typedef struct GPU_MATRIX_DATA {
 
 typedef struct GPU_BEAM_SUM_DATA {
   long count;
+  double pSum;
+  double gammaSum;
   double centroidSum[7];
   double productSum[28];
   double maxabs[7];
   double min[7];
   double max[7];
 } GPU_BEAM_SUM_DATA;
+
+typedef struct GPU_HISTOGRAM_RANGE_DATA {
+  long count;
+  double minimum[7];
+  double maximum[7];
+} GPU_HISTOGRAM_RANGE_DATA;
 
 typedef struct GPU_LONG_MIN_MAX_DATA {
   long count;
@@ -470,6 +479,19 @@ double **forceParticlesToCpu(const char *reason);
 double **copyParticlesToCpuReadOnly(const char *reason);
 long gpu_matrix_supported(void *M);
 long gpu_reductions_enabled(long nParticles);
+long gpu_watch_parameters_supported(void *watch, long nParticles);
+long gpu_watch_parameter_sums(long nParticles, long *count,
+                              double *pSum, double *gammaSum);
+long gpu_histogram_ranges(long nParticles, double pCentral,
+                          long startPID, long endPID,
+                          unsigned int coordinateMask,
+                          double *minimum, double *maximum);
+void gpu_histogram_bins(long nParticles, double pCentral,
+                        long startPID, long endPID, long bins,
+                        unsigned int coordinateMask,
+                        double timeOffset,
+                        const double *lower, const double *upper,
+                        double *histogram);
 void startGpuTimer(void);
 void startCpuTimer(void);
 void displayTimings(void);
