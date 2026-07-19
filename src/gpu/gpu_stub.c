@@ -218,6 +218,7 @@ extern int gpuCudaMatchEnergyAndAverage(void *coord, long nParticles,
                                         void *deviceScratch,
                                         float *milliseconds);
 extern unsigned long gpuCudaMatchEnergyScratchBytes(void);
+extern void gpuCudaReductionRelease(void);
 extern int gpuCudaCenteredBeamSums(void *coord, long nParticles, int stride,
                                    double pCentral, double cMks,
                                    const double *centroid,
@@ -337,12 +338,13 @@ extern int gpuCudaCentroidTimeSums(void *coord, long nParticles, int stride,
 extern int gpuCudaBeamSums(void *coord, long nParticles, int stride,
                            double pCentral, double cMks,
                            GPU_BEAM_SUM_DATA *result, float *milliseconds);
-extern unsigned long gpuCudaBeamSums2ScratchBytes(void);
+extern unsigned long gpuCudaBeamSums2ScratchBytes(long nParticles);
 extern int gpuCudaBeamSums2(void *coord, long nParticles, int stride,
                             double pCentral, double cMks,
                             GPU_BEAM_SUM_DATA *result,
                             GPU_BEAM_SUM_DATA *centeredResult,
-                            void *deviceScratch, float *milliseconds);
+                            void *deviceScratch, unsigned int productMask,
+                            float *milliseconds);
 extern int gpuCudaHistogramRanges(
   void *coord, long nParticles, int stride, double pCentral, double cMks,
   long startPID, long endPID, unsigned int coordinateMask,
@@ -711,6 +713,7 @@ typedef struct GPU_LSC_SCRATCH {
 
 typedef struct GPU_BEAM_SUMS_SCRATCH {
   void *data;
+  long particleCapacity;
 } GPU_BEAM_SUMS_SCRATCH;
 
 typedef struct GPU_RFCA_SCRATCH {
@@ -847,6 +850,8 @@ static SPIN_SUMS gpuSavedSpinSums;
 static long gpuSavedSumsValid = 0;
 static GPU_BEAM_SUM_DATA gpuLastBeamSumResult;
 static long gpuLastBeamSumResultValid = 0;
+static unsigned long gpuMatrixSparseTermTotal = 0;
+static unsigned long gpuMatrixSparseTermHistogram[GPU_MATRIX_MAX_TERMS + 1];
 static unsigned long long *gpuRfmodeHostHistogram;
 static long gpuRfmodeHostHistogramCapacity;
 static double *gpuRfmodeHostTime;
@@ -862,7 +867,7 @@ static long gpuMatrixSupported(VMATRIX *M);
 static void gpuReleaseKickMapCache(void);
 static void gpuEnsureRfcwKickScratch(long nParticles);
 static void gpuEnsureLscScratch(long bins);
-static void gpuEnsureBeamSumsScratch(void);
+static void gpuEnsureBeamSumsScratch(long nParticles);
 static void gpuEnsureRfcaScratch(void);
 static void gpuReleasePolynomialSeriesCache(void);
 static void gpuRfcwApplyCoordinateOffset(long np, int index, double value,
@@ -3120,15 +3125,18 @@ static void gpuEnsureLscScratch(long bins) {
   gpuLscScratch.binsCapacity = bins;
 }
 
-static void gpuEnsureBeamSumsScratch(void) {
+static void gpuEnsureBeamSumsScratch(long nParticles) {
   int status;
 
-  if (gpuBeamSumsScratch.data)
+  if (gpuBeamSumsScratch.data &&
+      gpuBeamSumsScratch.particleCapacity >= nParticles)
     return;
+  gpuReleaseBeamSumsScratch();
   status = gpuCudaMallocBytes(&gpuBeamSumsScratch.data,
-                              gpuCudaBeamSums2ScratchBytes());
+                              gpuCudaBeamSums2ScratchBytes(nParticles));
   if (status != 0)
     gpuFatalStatus("cudaMalloc(beam-sums reduction scratch)", status);
+  gpuBeamSumsScratch.particleCapacity = nParticles;
 }
 
 static void gpuEnsureRfcaScratch(void) {
@@ -4014,6 +4022,7 @@ static void gpuRecordHelperKernel(float milliseconds) {
 
 static void gpuRecordReductionKernel(float milliseconds) {
   gpuRecordMilliseconds(&gpuBase.gpuKernelSeconds, milliseconds);
+  gpuRecordMilliseconds(&gpuBase.gpuReductionSeconds, milliseconds);
   gpuBase.gpuReductionCount++;
 }
 
@@ -4199,11 +4208,13 @@ static void gpuLaunchTrackParticlesWithSReference(VMATRIX *matrix, long nParticl
   packed.useSReference = useSReference ? 1 : 0;
   packed.sReference = useSReference ? sReference : 0;
   gpuCopyHostToDevice(nParticles);
-  status = gpuCudaTrackParticles(gpuBase.deviceCoord, nParticles, (int)gpuBase.deviceStride,
-                                 &packed, &milliseconds);
+  status = gpuCudaTrackParticles(gpuBase.deviceCoord, nParticles,
+                                 (int)gpuBase.deviceStride, &packed,
+                                 &milliseconds);
   if (status != 0)
     gpuFatalStatus("matrix tracking kernel", status);
   gpuRecordMilliseconds(&gpuBase.gpuKernelSeconds, milliseconds);
+  gpuRecordMilliseconds(&gpuBase.gpuMatrixSeconds, milliseconds);
   gpuMarkDeviceChanged(nParticles);
   gpuBase.gpuTrackParticleCount++;
 }
@@ -4213,8 +4224,7 @@ static void gpuLaunchTrackParticles(VMATRIX *matrix, long nParticles) {
 }
 
 static long gpuPackMatrix(GPU_MATRIX_DATA *packed, VMATRIX *M) {
-  long i, j, k, l;
-  long offset;
+  long i, j, k, l, terms = 0;
 
   if (!packed || !gpuMatrixSupported(M))
     return 0;
@@ -4232,15 +4242,78 @@ static long gpuPackMatrix(GPU_MATRIX_DATA *packed, VMATRIX *M) {
         for (k = 0; k <= j; k++)
           packed->T[i * 21 + j * (j + 1) / 2 + k] = M->T[i][j][k];
   }
-  if (M->order >= 3) {
+  if (M->order == 2) {
     for (i = 0; i < 6; i++) {
-      offset = i * 56;
-      for (j = 0; j < 6; j++)
-        for (k = 0; k <= j; k++)
-          for (l = 0; l <= k; l++)
-            packed->Q[offset + j * (j + 1) * (j + 2) / 6 + k * (k + 1) / 2 + l] =
-              M->Q[i][j][k][l];
+      for (j = 0; j < 6; j++) {
+        packed->secondOrderOffset[i * 6 + j] = (int)terms;
+        for (k = j; k >= 0; k--) {
+          if (M->T[i][j][k] != 0) {
+            packed->term[terms].coefficient = M->T[i][j][k];
+            packed->term[terms].degree = 2;
+            packed->term[terms].j = (unsigned char)j;
+            packed->term[terms].k = (unsigned char)k;
+            terms++;
+          }
+        }
+      }
     }
+    packed->secondOrderOffset[36] = (int)terms;
+    if (!terms) {
+      packed->order = 1;
+      for (i = 0; i < 6; i++) {
+        packed->termOffset[i] = (int)terms;
+        for (j = 5; j >= 0; j--) {
+          if (M->R[i][j] != 0) {
+            packed->term[terms].coefficient = M->R[i][j];
+            packed->term[terms].degree = 1;
+            packed->term[terms].j = (unsigned char)j;
+            terms++;
+          }
+        }
+      }
+      packed->termOffset[6] = (int)terms;
+    }
+    gpuMatrixSparseTermTotal += (unsigned long)terms;
+    gpuMatrixSparseTermHistogram[terms]++;
+  }
+  if (M->order == 1 || M->order >= 3) {
+    for (i = 0; i < 6; i++) {
+      packed->termOffset[i] = (int)terms;
+      for (j = 5; j >= 0; j--) {
+        if (M->R[i][j] != 0) {
+          packed->term[terms].coefficient = M->R[i][j];
+          packed->term[terms].degree = 1;
+          packed->term[terms].j = (unsigned char)j;
+          terms++;
+        }
+        if (M->order == 1)
+          continue;
+        for (k = j; k >= 0; k--) {
+          if (M->T[i][j][k] != 0) {
+            packed->term[terms].coefficient = M->T[i][j][k];
+            packed->term[terms].degree = 2;
+            packed->term[terms].j = (unsigned char)j;
+            packed->term[terms].k = (unsigned char)k;
+            terms++;
+          }
+          for (l = k; l >= 0; l--) {
+            if (M->Q[i][j][k][l] != 0) {
+              packed->term[terms].coefficient = M->Q[i][j][k][l];
+              packed->term[terms].degree = 3;
+              packed->term[terms].j = (unsigned char)j;
+              packed->term[terms].k = (unsigned char)k;
+              packed->term[terms].l = (unsigned char)l;
+              terms++;
+            }
+          }
+        }
+      }
+    }
+    packed->termOffset[6] = (int)terms;
+    if (terms > GPU_MATRIX_MAX_TERMS)
+      return 0;
+    gpuMatrixSparseTermTotal += (unsigned long)terms;
+    gpuMatrixSparseTermHistogram[terms]++;
   }
   return 1;
 }
@@ -4962,6 +5035,7 @@ void gpuBaseDealloc(void) {
   gpuReleaseRfcwKickScratch();
   gpuReleaseLscScratch();
   gpuReleaseBeamSumsScratch();
+  gpuCudaReductionRelease();
   gpuReleaseRfcaScratch();
   gpuReleasePolynomialSeriesCache();
   gpuReleaseBatchedSearchScratch();
@@ -5337,6 +5411,20 @@ void displayTimings(void) {
           gpuBase.gpuKernelSeconds,
           gpuBase.gpuTransferToDeviceSeconds,
           gpuBase.gpuTransferToHostSeconds);
+  if (gpuBase.gpuTrackParticleCount || gpuBase.gpuReductionCount)
+    fprintf(stderr,
+            "elegant CUDA: kernel detail matrix=%.6fs reduction=%.6fs sparseMatrixTerms=%lu\n",
+            gpuBase.gpuMatrixSeconds, gpuBase.gpuReductionSeconds,
+            gpuMatrixSparseTermTotal);
+  if (gpuMatrixSparseTermTotal) {
+    long termCount;
+    fprintf(stderr, "elegant CUDA: sparse matrix term histogram");
+    for (termCount = 0; termCount <= GPU_MATRIX_MAX_TERMS; termCount++)
+      if (gpuMatrixSparseTermHistogram[termCount])
+        fprintf(stderr, " %ld:%lu", termCount,
+                gpuMatrixSparseTermHistogram[termCount]);
+    fputc('\n', stderr);
+  }
   if (gpuBase.gpuStandaloneLscCount ||
       gpuBase.gpuRfcwLscKickOnlyCount ||
       gpuBase.gpuRfcwLscFullCount)
@@ -6736,6 +6824,7 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
   BEAM_SUMS *beamSums = (BEAM_SUMS *)sums;
   float milliseconds = 0;
   long oldCount, newCount, i, j, sparseAllowed;
+  unsigned int productMask = 0;
   int status;
   static short sparse[7][7] = {
     {1, 1, 0, 0, 0, 1, 0},
@@ -6771,11 +6860,20 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
 
   gpuCopyHostToDevice(n_part);
   if (beamSums->beamSums2) {
-    gpuEnsureBeamSumsScratch();
+    if (flags & BEAM_SUMS_SPARSE) {
+      for (i = 0; i < 7; i++)
+        for (j = i; j < 7; j++)
+          if (sparse[i][j])
+            productMask |= 1U << gpuUpperTriangularIndex(i, j);
+    } else {
+      productMask = 0x0fffffffU;
+    }
+    gpuEnsureBeamSumsScratch(n_part);
     status = gpuCudaBeamSums2(gpuBase.deviceCoord, n_part,
                               (int)gpuBase.deviceStride,
                               p_central, c_mks, &result, &centeredResult,
-                              gpuBeamSumsScratch.data, &milliseconds);
+                              gpuBeamSumsScratch.data, productMask,
+                              &milliseconds);
   } else {
     status = gpuCudaBeamSums(gpuBase.deviceCoord, n_part,
                              (int)gpuBase.deviceStride,

@@ -71,6 +71,8 @@ typedef struct GPU_BASE {
   long gpuHistogramCount;
   long gpuPassiveElementCount;
   double gpuKernelSeconds;
+  double gpuMatrixSeconds;
+  double gpuReductionSeconds;
   double gpuScmultMomentSeconds;
   double gpuScmultKickSeconds;
   double gpuTransferToDeviceSeconds;
@@ -92,6 +94,16 @@ typedef struct GPU_BASE {
   long gpuShortGpuIslandCpuCount;
 } GPU_BASE;
 
+#define GPU_MATRIX_MAX_TERMS 498
+
+typedef struct GPU_MATRIX_TERM {
+  double coefficient;
+  unsigned char degree;
+  unsigned char j;
+  unsigned char k;
+  unsigned char l;
+} GPU_MATRIX_TERM;
+
 typedef struct GPU_MATRIX_DATA {
   int order;
   int useSReference;
@@ -99,7 +111,9 @@ typedef struct GPU_MATRIX_DATA {
   double C[6];
   double R[36];
   double T[126];
-  double Q[336];
+  int termOffset[7];
+  int secondOrderOffset[37];
+  GPU_MATRIX_TERM term[GPU_MATRIX_MAX_TERMS];
 } GPU_MATRIX_DATA;
 
 typedef struct GPU_BEAM_SUM_DATA {
