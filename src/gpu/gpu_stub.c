@@ -588,6 +588,10 @@ extern int gpuCudaScmultLinearKick(void *coord, long nParticles, int stride,
 extern int gpuCudaScmultNonlinearKick(void *coord, long nParticles, int stride,
                                       const GPU_SCMULT_LINEAR_DATA *data,
                                       float *milliseconds);
+extern int gpuCudaScmultMoments(void *coord, long nParticles, int stride,
+                                GPU_SCMULT_MOMENT_DATA *result,
+                                float *milliseconds);
+extern void gpuCudaScmultRelease(void);
 extern int gpuCudaPolynomialSeriesTrack(
   void *coord, long nParticles, int stride,
   const GPU_POLYNOMIAL_SERIES_DATA *data, const double *coefficient,
@@ -849,6 +853,9 @@ static double *gpuRfmodeHostTime;
 static long gpuRfmodeHostTimeCapacity;
 static unsigned long long *gpuHistogramHostBins;
 static long gpuHistogramHostBinCapacity;
+static GPU_SCMULT_MOMENT_DATA gpuScmultMomentCache;
+static long gpuScmultMomentCacheParticles;
+static long gpuScmultMomentCacheValid;
 
 static long gpuPackMatrix(GPU_MATRIX_DATA *packed, VMATRIX *M);
 static long gpuMatrixSupported(VMATRIX *M);
@@ -879,7 +886,6 @@ static void gpuWakeTrackingWarning(const char *text, const char *detail);
 static void gpuSmoothWakeHistogram(double *data, long nb, long order,
                                    long halfWidth, const char *elementType,
                                    const char *inputFile);
-static double gpuLscVarianceFromSums(const GPU_BEAM_SUM_DATA *sums, long coordinate);
 static void gpuDisplaySyncTimings(void);
 #ifdef GPU_VERIFY
 static void gpuCompareWakeArray(const char *label, const char *arrayName,
@@ -2817,6 +2823,7 @@ static void gpuReleaseDeviceBuffer(void) {
   gpuPendingExactDriftLength = 0;
   gpuPendingExactDriftCount = 0;
   gpuPendingExactDriftParticles = 0;
+  gpuScmultMomentCacheValid = 0;
 }
 
 static void gpuReleaseAcceptedBuffer(void) {
@@ -3443,6 +3450,7 @@ static void gpuNoticeHostBaseChange(void) {
     gpuBase.deviceCurrent = 0;
     gpuBase.hostCurrent = 1;
     gpuDeviceIslandHasCsbend = 0;
+    gpuScmultMomentCacheValid = 0;
   }
 }
 
@@ -3952,6 +3960,7 @@ static void gpuMarkHostWillChange(void) {
   gpuBase.hostCurrent = 1;
   gpuBase.deviceCurrent = 0;
   gpuDeviceIslandHasCsbend = 0;
+  gpuScmultMomentCacheValid = 0;
   if (gpuAcceptedBuffer.hostAccepted) {
     gpuAcceptedBuffer.hostCurrent = 1;
     gpuAcceptedBuffer.deviceCurrent = 0;
@@ -3962,6 +3971,7 @@ static void gpuMarkDeviceChanged(long nParticles) {
   gpuBase.deviceCurrent = 1;
   gpuBase.hostCurrent = 0;
   gpuBase.nParticles = nParticles;
+  gpuScmultMomentCacheValid = 0;
   if (gpuBase.element && ((ELEMENT_LIST *)gpuBase.element)->type == T_CSBEND)
     gpuDeviceIslandHasCsbend = 1;
 }
@@ -4034,6 +4044,7 @@ static void gpuRecordCsrKernel(float milliseconds) {
 
 static void gpuRecordScmultKernel(float milliseconds) {
   gpuRecordMilliseconds(&gpuBase.gpuKernelSeconds, milliseconds);
+  gpuRecordMilliseconds(&gpuBase.gpuScmultKickSeconds, milliseconds);
   gpuBase.gpuScmultCount++;
 }
 
@@ -4960,6 +4971,7 @@ void gpuBaseDealloc(void) {
   gpuCudaBmxyzRelease();
   gpuCudaRfmodeRelease();
   gpuCudaHistogramRelease();
+  gpuCudaScmultRelease();
   gpuReleaseApertureScratch();
   gpuReleaseCsrScratch();
   gpuCudaCombinedWakeRelease();
@@ -5333,6 +5345,14 @@ void displayTimings(void) {
             gpuBase.gpuStandaloneLscCount,
             gpuBase.gpuRfcwLscKickOnlyCount,
             gpuBase.gpuRfcwLscFullCount);
+  if (gpuBase.gpuScmultCount || gpuBase.gpuScmultMomentCount ||
+      gpuBase.gpuScmultMomentCacheHitCount)
+    fprintf(stderr,
+            "elegant CUDA: scmult detail moments=%ld cacheHits=%ld momentKernel=%.6fs kickKernel=%.6fs\n",
+            gpuBase.gpuScmultMomentCount,
+            gpuBase.gpuScmultMomentCacheHitCount,
+            gpuBase.gpuScmultMomentSeconds,
+            gpuBase.gpuScmultKickSeconds);
   if (gpuBase.gpuShortGpuIslandCpuCount)
     fprintf(stderr,
             "elegant CUDA: short GPU island CPU skips=%ld maxElements=%ld\n",
@@ -8018,12 +8038,14 @@ long gpu_scmult_count_bunches(long nParticles, long idSlotsPerBunch,
 
 long gpu_scmult_compute_centroid_sigma(long nParticles, double Po,
                                         double *center, double *sigma) {
-  GPU_BEAM_SUM_DATA sums;
+  GPU_SCMULT_MOMENT_DATA sums;
   double variance;
   float milliseconds = 0;
   int status;
-  long i, coordinate;
+  long i;
   long startedWallTimer = 0;
+
+  (void)Po;
 
   if (!center || !sigma)
     gpuRequiredFailure("NULL SCMULT moment output pointer in CUDA path");
@@ -8034,28 +8056,39 @@ long gpu_scmult_compute_centroid_sigma(long nParticles, double Po,
   if (!gpuScmultAllowed(nParticles))
     return 0;
 
-  if (gpuWallStart <= 0) {
-    gpuWallStart = wallSeconds();
-    startedWallTimer = 1;
-  }
-  memset(&sums, 0, sizeof(sums));
   gpuCopyHostToDevice(nParticles);
-  status = gpuCudaBeamSums(gpuBase.deviceCoord, nParticles,
-                           (int)gpuBase.deviceStride, Po, c_mks,
-                           &sums, &milliseconds);
-  if (status != 0)
-    gpuFatalStatus("SCMULT centroid/rms reduction kernel", status);
-  gpuRecordReductionKernel(milliseconds);
-  if (startedWallTimer)
-    gpuRecordWallSeconds();
+  if (gpuScmultMomentCacheValid &&
+      gpuScmultMomentCacheParticles == nParticles) {
+    sums = gpuScmultMomentCache;
+    gpuBase.gpuScmultMomentCacheHitCount++;
+  } else {
+    if (gpuWallStart <= 0) {
+      gpuWallStart = wallSeconds();
+      startedWallTimer = 1;
+    }
+    memset(&sums, 0, sizeof(sums));
+    status = gpuCudaScmultMoments(gpuBase.deviceCoord, nParticles,
+                                  (int)gpuBase.deviceStride, &sums,
+                                  &milliseconds);
+    if (status != 0)
+      gpuFatalStatus("SCMULT centroid/rms reduction kernel", status);
+    gpuRecordReductionKernel(milliseconds);
+    gpuRecordMilliseconds(&gpuBase.gpuScmultMomentSeconds, milliseconds);
+    gpuBase.gpuScmultMomentCount++;
+    gpuScmultMomentCache = sums;
+    gpuScmultMomentCacheParticles = nParticles;
+    gpuScmultMomentCacheValid = 1;
+    if (startedWallTimer)
+      gpuRecordWallSeconds();
+  }
 
   if (sums.count <= 0)
     return 0;
   for (i = 0; i < 3; i++) {
-    coordinate = 2 * i;
-    center[i] = sums.centroidSum[coordinate] / sums.count;
-    variance = gpuLscVarianceFromSums(&sums, coordinate);
-    sigma[i] = sqrt(variance);
+    center[i] = sums.sum[i] / sums.count;
+    variance = sums.squareSum[i] - sums.sum[i] * sums.sum[i] / sums.count;
+    variance /= sums.count;
+    sigma[i] = sqrt(variance > 0 ? variance : 0);
   }
   return 1;
 }
@@ -8093,6 +8126,8 @@ void gpu_track_through_scmult_linear(long nParticles, double charge, double c1,
   data.dmuy = dmuy;
   data.betax = betax;
   data.betay = betay;
+  data.longitudinalScale = c1 / sigma[2] * charge *
+    (uniformDistribution ? sqrt(PI / 6.0) : 1.0);
 
   startGpuTimer();
   gpuCopyHostToDevice(nParticles);
@@ -8143,6 +8178,34 @@ void gpu_track_through_scmult_nonlinear(long nParticles, double charge,
   data.dmuy = dmuy;
   data.betax = betax;
   data.betay = betay;
+  data.longitudinalScale = c1 / sigma[2] * charge *
+    (uniformDistribution ? PI / 12.0 : sqrt(PI / 2.0));
+  data.roundBeam = fabs(sigma[0] - sigma[1]) / sigma[0] < 1e-6;
+  if (data.roundBeam) {
+    data.roundSigma = (sigma[0] + sigma[1]) / 2;
+  } else {
+    double majorSigma = sigma[0];
+    double minorSigma = sigma[1];
+    double transverseScale;
+
+    data.swapXY = majorSigma < minorSigma;
+    if (data.swapXY) {
+      double temporary = majorSigma;
+      majorSigma = minorSigma;
+      minorSigma = temporary;
+    }
+    data.inverseSd = 1 / sqrt(2.0 *
+                              (majorSigma * majorSigma -
+                               minorSigma * minorSigma));
+    data.minorMajorRatio = minorSigma / majorSigma;
+    data.majorMinorRatio = majorSigma / minorSigma;
+    data.inverseTwoMajorSigma2 = 1 / (2 * majorSigma * majorSigma);
+    data.inverseTwoMinorSigma2 = 1 / (2 * minorSigma * minorSigma);
+    transverseScale = sqrt((sigma[0] + sigma[1]) /
+                           fabs(sigma[0] - sigma[1]));
+    data.kxScale = dmux * sigma[0] * transverseScale / betax;
+    data.kyScale = dmuy * sigma[1] * transverseScale / betay;
+  }
 
   startGpuTimer();
   gpuCopyHostToDevice(nParticles);
@@ -8436,17 +8499,6 @@ long gpu_track_bmxyz(long nParticles, BMAPXYZ *bmxyz, double pCentral) {
     gpuMarkDeviceChanged(nParticles);
   gpuRecordWallSeconds();
   return failedCount == 0;
-}
-
-static double gpuLscVarianceFromSums(const GPU_BEAM_SUM_DATA *sums, long coordinate) {
-  double variance;
-
-  if (!sums || sums->count <= 0)
-    return 0;
-  variance = sums->productSum[gpuUpperTriangularIndex(coordinate, coordinate)] -
-             sums->centroidSum[coordinate] * sums->centroidSum[coordinate] / sums->count;
-  variance /= sums->count;
-  return variance > 0 ? variance : 0;
 }
 
 static void gpuLscCenteredVariances(const GPU_BEAM_SUM_DATA *sums,

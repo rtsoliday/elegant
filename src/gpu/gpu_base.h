@@ -66,9 +66,13 @@ typedef struct GPU_BASE {
   long gpuRfcwLscFullCount;
   long gpuCsrCount;
   long gpuScmultCount;
+  long gpuScmultMomentCount;
+  long gpuScmultMomentCacheHitCount;
   long gpuHistogramCount;
   long gpuPassiveElementCount;
   double gpuKernelSeconds;
+  double gpuScmultMomentSeconds;
+  double gpuScmultKickSeconds;
   double gpuTransferToDeviceSeconds;
   double gpuTransferToHostSeconds;
   double gpuWallSeconds;
@@ -304,6 +308,8 @@ typedef struct GPU_SCMULT_LINEAR_DATA {
   int horizontal;
   int vertical;
   int uniformDistribution;
+  int roundBeam;
+  int swapXY;
   double charge;
   double c1;
   double center[3];
@@ -312,7 +318,22 @@ typedef struct GPU_SCMULT_LINEAR_DATA {
   double dmuy;
   double betax;
   double betay;
+  double longitudinalScale;
+  double roundSigma;
+  double inverseSd;
+  double minorMajorRatio;
+  double majorMinorRatio;
+  double inverseTwoMajorSigma2;
+  double inverseTwoMinorSigma2;
+  double kxScale;
+  double kyScale;
 } GPU_SCMULT_LINEAR_DATA;
+
+typedef struct GPU_SCMULT_MOMENT_DATA {
+  long count;
+  double sum[3];
+  double squareSum[3];
+} GPU_SCMULT_MOMENT_DATA;
 
 typedef struct GPU_POLYNOMIAL_SERIES_DATA {
   long coordinateOffset[7];
