@@ -14,6 +14,9 @@
  */
 #include "mdb.h"
 #include "track.h"
+#ifdef HAVE_GPU
+#  include "gpu_rfmode.h"
+#endif
 
 void runBinlessTrfMode(double **part, long np, TRFMODE *trfmode, double Po,
                        char *element_name, double element_z, long pass, long n_passes,
@@ -46,6 +49,9 @@ void track_through_trfmode(
   double Px, Py, Pz;
   double Q, Qrp;
   long n_binned, firstBin, lastBin;
+#ifdef HAVE_GPU
+  long gpuTracking = 0;
+#endif
 #ifdef DEBUG
   static FILE *fpdeb = NULL;
   static long debugPass = 0;
@@ -150,6 +156,16 @@ void track_through_trfmode(
   if (!trfmode->initialized)
     bombElegant("track_through_trfmode called with uninitialized element", NULL);
 
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    if (gpu_rfmode_single_bunch_supported(
+          np0, trfmode->bunchedBeamMode, charge))
+      gpuTracking = 1;
+    else
+      part0 = forceParticlesToCpu("TRFMODE physical-bunch CPU fallback");
+  }
+#endif
+
   if (trfmode->n_bins > max_n_bins) {
     max_n_bins = trfmode->n_bins;
     xsum = trealloc(xsum, sizeof(*xsum) * max_n_bins);
@@ -165,6 +181,12 @@ void track_through_trfmode(
   }
 
   if (isSlave || !distributedBeam) {
+#ifdef HAVE_GPU
+    if (gpuTracking) {
+      nBuckets = 1;
+    } else
+#endif
+    {
 #ifdef DEBUG
     printf("TRFMODE: Determining bucket assignments IDSlotsPerBunch = %ld\n",
             (charge && trfmode->bunchedBeamMode) ? charge->idSlotsPerBunch : 0);
@@ -178,6 +200,7 @@ void track_through_trfmode(
     if (mpiAbort)
       return;
 #endif
+    }
   } else
     nBuckets = 1;
 
@@ -222,10 +245,15 @@ void track_through_trfmode(
 
     if (isSlave || !distributedBeam) {
       if (nBuckets == 1) {
-        time = time0;
         part = part0;
         np = np0;
-        pbin = (long *)trealloc(pbin, sizeof(*pbin) * (max_np = np));
+#ifdef HAVE_GPU
+        if (!gpuTracking)
+#endif
+        {
+          time = time0;
+          pbin = (long *)trealloc(pbin, sizeof(*pbin) * (max_np = np));
+        }
       } else {
         if (npBucket && (np = npBucket[iBucket]) > 0) {
           if (part)
@@ -243,6 +271,11 @@ void track_through_trfmode(
       }
 
       tmean = 0;
+#ifdef HAVE_GPU
+      if (gpuTracking) {
+        tmean = gpu_rfmode_time_mean(np, Po);
+      } else
+#endif
       if (isSlave) {
         for (ip = 0; ip < np; ip++) {
           tmean += time[ip];
@@ -257,7 +290,10 @@ void track_through_trfmode(
     MPI_Allreduce(&tmean, &t_total, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     tmean = t_total / np_total;
 #else
-    tmean /= np;
+#  ifdef HAVE_GPU
+    if (!gpuTracking)
+#  endif
+      tmean /= np;
 #endif
 
     tmin = tmean - trfmode->bin_size * trfmode->n_bins / 2.;
@@ -282,6 +318,15 @@ void track_through_trfmode(
         /* should never happen... */
         bombElegant("np==-1 in TRFMODE. Seek professional help!", NULL);
       }
+#ifdef HAVE_GPU
+      if (gpuTracking) {
+        n_binned = gpu_trfmode_histogram(
+          np, Po, trfmode->n_bins, tmin, dt,
+          trfmode->dx, trfmode->dy, xsum, ysum, count,
+          &firstBin, &lastBin);
+      } else
+#endif
+      {
       for (ip = 0; ip < np; ip++) {
         pbin[ip] = -1;
         ib = (time[ip] - tmin) / dt;
@@ -299,6 +344,7 @@ void track_through_trfmode(
         if (ib < firstBin)
           firstBin = ib;
         n_binned++;
+      }
       }
     }
 
@@ -448,6 +494,15 @@ void track_through_trfmode(
 
       if (pass >= trfmode->rigid_until_pass) {
         /* change particle slopes to reflect voltage in relevant bin */
+#ifdef HAVE_GPU
+        if (gpuTracking) {
+          if (firstBin <= lastBin)
+            gpu_trfmode_apply_kicks(
+              np, Po, trfmode->n_bins, tmin, dt,
+              firstBin, lastBin, trfmode->interpolate,
+              trfmode->n_cavities, Vxbin, Vybin, Vzbin);
+        } else
+#endif
         for (ip = 0; ip < np; ip++) {
           double Vx, Vy, Vz;
           if (pbin[ip] >= 0) {

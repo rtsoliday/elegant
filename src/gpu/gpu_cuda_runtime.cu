@@ -156,6 +156,8 @@ typedef struct GPU_RFMODE_SCRATCH {
   double *time;
   long *pbin;
   unsigned long long *histogram;
+  double *xsum;
+  double *ysum;
   double *voltage;
   unsigned long long *binnedCount;
   long particleCapacity;
@@ -274,6 +276,8 @@ static void releaseRfmodeScratch(void) {
   cudaFree(gpuRfmodeScratch.time);
   cudaFree(gpuRfmodeScratch.pbin);
   cudaFree(gpuRfmodeScratch.histogram);
+  cudaFree(gpuRfmodeScratch.xsum);
+  cudaFree(gpuRfmodeScratch.ysum);
   cudaFree(gpuRfmodeScratch.voltage);
   cudaFree(gpuRfmodeScratch.binnedCount);
   std::memset(&gpuRfmodeScratch, 0, sizeof(gpuRfmodeScratch));
@@ -325,17 +329,28 @@ static int ensureRfmodeScratch(long particles, long bins) {
       return static_cast<int>(status);
     }
   }
-  if (!gpuRfmodeScratch.histogram || !gpuRfmodeScratch.voltage ||
+  if (!gpuRfmodeScratch.histogram || !gpuRfmodeScratch.xsum ||
+      !gpuRfmodeScratch.ysum || !gpuRfmodeScratch.voltage ||
       gpuRfmodeScratch.binCapacity < bins) {
     cudaFree(gpuRfmodeScratch.histogram);
+    cudaFree(gpuRfmodeScratch.xsum);
+    cudaFree(gpuRfmodeScratch.ysum);
     cudaFree(gpuRfmodeScratch.voltage);
     gpuRfmodeScratch.histogram = NULL;
+    gpuRfmodeScratch.xsum = NULL;
+    gpuRfmodeScratch.ysum = NULL;
     gpuRfmodeScratch.voltage = NULL;
     status = cudaMalloc(&gpuRfmodeScratch.histogram,
                         bins * sizeof(*gpuRfmodeScratch.histogram));
     if (status == cudaSuccess)
+      status = cudaMalloc(&gpuRfmodeScratch.xsum,
+                          bins * sizeof(*gpuRfmodeScratch.xsum));
+    if (status == cudaSuccess)
+      status = cudaMalloc(&gpuRfmodeScratch.ysum,
+                          bins * sizeof(*gpuRfmodeScratch.ysum));
+    if (status == cudaSuccess)
       status = cudaMalloc(&gpuRfmodeScratch.voltage,
-                          bins * sizeof(*gpuRfmodeScratch.voltage));
+                          3 * bins * sizeof(*gpuRfmodeScratch.voltage));
     if (status != cudaSuccess) {
       releaseRfmodeScratch();
       return static_cast<int>(status);
@@ -4479,6 +4494,26 @@ __global__ void gpuRfmodeHistogramKernel(
   atomicAdd(binnedCount, 1ULL);
 }
 
+__global__ void gpuTrfmodeHistogramKernel(
+  double *coord, long nParticles, int stride, GPU_RFMODE_DATA data,
+  const double *time, long *pbin, unsigned long long *histogram,
+  double *xsum, double *ysum, unsigned long long *binnedCount) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ib;
+
+  if (ip >= nParticles)
+    return;
+  pbin[ip] = -1;
+  ib = static_cast<long>((time[ip] - data.tmin) / data.dt);
+  if (ib < 0 || ib >= data.bins)
+    return;
+  pbin[ip] = ib;
+  atomicAdd(histogram + ib, 1ULL);
+  atomicAdd(xsum + ib, coord[ip * stride] - data.dx);
+  atomicAdd(ysum + ib, coord[ip * stride + 2] - data.dy);
+  atomicAdd(binnedCount, 1ULL);
+}
+
 __device__ __forceinline__ void gpuRfmodeAddToParticleEnergy(
   double *part, double timeOfFlight, const GPU_RFMODE_DATA *data,
   double dgamma) {
@@ -4540,6 +4575,64 @@ __global__ void gpuRfmodeApplyKicksKernel(
     part, time[ip], &data,
     data.nCavities * value /
       (1e6 * data.particleMassMV * data.particleRelSign));
+}
+
+__device__ __forceinline__ double gpuTrfmodeVoltage(
+  const double *voltage, long ib, double time,
+  const GPU_RFMODE_DATA *data) {
+  if (data->interpolate) {
+    double dt1 = time - (data->tmin + data->dt * (ib + 0.5));
+    long ib1, ib2;
+    if (dt1 < 0) {
+      ib1 = ib - 1;
+      ib2 = ib;
+    } else {
+      ib1 = ib;
+      ib2 = ib + 1;
+    }
+    if (ib2 > data->lastBin) {
+      ib2--;
+      ib1--;
+    }
+    if (ib1 < data->firstBin) {
+      ib1++;
+      ib2++;
+    }
+    dt1 = time - (data->tmin + data->dt * (ib1 + 0.5));
+    return voltage[ib1] +
+      (voltage[ib2] - voltage[ib1]) / data->dt * dt1;
+  }
+  return voltage[ib];
+}
+
+__global__ void gpuTrfmodeApplyKicksKernel(
+  double *coord, long nParticles, int stride, GPU_RFMODE_DATA data,
+  const double *time, const long *pbin, const double *voltage) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part, P, Px, Py, Pz, factor, Vx, Vy, Vz;
+  long ib;
+
+  if (ip >= nParticles)
+    return;
+  ib = pbin[ip];
+  if (ib < 0 || ib >= data.bins)
+    return;
+  part = coord + ip * stride;
+  Vx = gpuTrfmodeVoltage(voltage, ib, time[ip], &data);
+  Vy = gpuTrfmodeVoltage(voltage + data.bins, ib, time[ip], &data);
+  Vz = gpuTrfmodeVoltage(voltage + 2 * data.bins, ib, time[ip], &data);
+  factor = data.nCavities /
+    (1e6 * data.particleMassMV * data.particleRelSign);
+  P = data.pCentral * (1 + part[5]);
+  Pz = P / sqrt(1 + part[1] * part[1] + part[3] * part[3]) +
+    factor * Vz;
+  Px = part[1] * Pz + factor * Vx;
+  Py = part[3] * Pz + factor * Vy;
+  P = sqrt(Pz * Pz + Px * Px + Py * Py);
+  part[1] = Px / Pz;
+  part[3] = Py / Pz;
+  part[5] = (P - data.pCentral) / data.pCentral;
+  part[4] = time[ip] * data.cMks * P / sqrt(P * P + 1);
 }
 
 __global__ void gpuWakeBinKernel(double *coord, long nParticles, int stride,
@@ -8704,6 +8797,70 @@ extern "C" int gpuCudaRfmodeHistogram(
   return status;
 }
 
+extern "C" int gpuCudaTrfmodeHistogram(
+  void *coord, long nParticles, int stride, const GPU_RFMODE_DATA *data,
+  unsigned long long *histogramReturn, double *xsumReturn,
+  double *ysumReturn, long *binnedCount, float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  unsigned long long hostBinnedCount = 0;
+  int status, threads = 256;
+  int blocks;
+
+  if (!coord || !data || !histogramReturn || !xsumReturn || !ysumReturn ||
+      !binnedCount || nParticles <= 0 || stride < 6 || data->bins < 2 ||
+      data->dt <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *binnedCount = 0;
+  if (milliseconds)
+    *milliseconds = 0;
+  status = ensureRfmodeScratch(nParticles, data->bins);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  cudaStatus = cudaMemset(gpuRfmodeScratch.histogram, 0,
+                          data->bins * sizeof(*gpuRfmodeScratch.histogram));
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemset(gpuRfmodeScratch.xsum, 0,
+                            data->bins * sizeof(*gpuRfmodeScratch.xsum));
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemset(gpuRfmodeScratch.ysum, 0,
+                            data->bins * sizeof(*gpuRfmodeScratch.ysum));
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemset(gpuRfmodeScratch.binnedCount, 0,
+                            sizeof(*gpuRfmodeScratch.binnedCount));
+  if (cudaStatus == cudaSuccess)
+    gpuTrfmodeHistogramKernel<<<blocks, threads>>>(
+      static_cast<double *>(coord), nParticles, stride, *data,
+      gpuRfmodeScratch.time, gpuRfmodeScratch.pbin,
+      gpuRfmodeScratch.histogram, gpuRfmodeScratch.xsum,
+      gpuRfmodeScratch.ysum, gpuRfmodeScratch.binnedCount);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(histogramReturn, gpuRfmodeScratch.histogram,
+                            data->bins * sizeof(*histogramReturn),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(xsumReturn, gpuRfmodeScratch.xsum,
+                            data->bins * sizeof(*xsumReturn),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(ysumReturn, gpuRfmodeScratch.ysum,
+                            data->bins * sizeof(*ysumReturn),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(&hostBinnedCount, gpuRfmodeScratch.binnedCount,
+                            sizeof(hostBinnedCount), cudaMemcpyDeviceToHost);
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  if (status == static_cast<int>(cudaSuccess))
+    *binnedCount = static_cast<long>(hostBinnedCount);
+  return status;
+}
+
 extern "C" int gpuCudaRfmodeTimeCoordinates(
   void *coord, long nParticles, int stride, double pCentral, double cMks,
   double *timeReturn, float *kernelMilliseconds,
@@ -8765,6 +8922,51 @@ extern "C" int gpuCudaRfmodeApplyKicks(
                           cudaMemcpyHostToDevice);
   if (cudaStatus == cudaSuccess)
     gpuRfmodeApplyKicksKernel<<<blocks, threads>>>(
+      static_cast<double *>(coord), nParticles, stride, *data,
+      gpuRfmodeScratch.time, gpuRfmodeScratch.pbin,
+      gpuRfmodeScratch.voltage);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaGetLastError();
+  return launchTimedKernel(cudaStatus, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaTrfmodeApplyKicks(
+  void *coord, long nParticles, int stride, const GPU_RFMODE_DATA *data,
+  const double *voltageX, const double *voltageY,
+  const double *voltageZ, float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  int status, threads = 256;
+  int blocks;
+
+  if (!coord || !data || !voltageX || !voltageY || !voltageZ ||
+      nParticles <= 0 || stride < 6 || data->bins < 2 || data->dt <= 0 ||
+      data->firstBin < 0 || data->lastBin < data->firstBin ||
+      data->lastBin >= data->bins)
+    return static_cast<int>(cudaErrorInvalidValue);
+  if (!gpuRfmodeScratch.time || !gpuRfmodeScratch.pbin ||
+      gpuRfmodeScratch.particleCapacity < nParticles ||
+      gpuRfmodeScratch.binCapacity < data->bins)
+    return static_cast<int>(cudaErrorInvalidValue);
+  if (milliseconds)
+    *milliseconds = 0;
+  blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  cudaStatus = cudaMemcpy(gpuRfmodeScratch.voltage, voltageX,
+                          data->bins * sizeof(*voltageX),
+                          cudaMemcpyHostToDevice);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(gpuRfmodeScratch.voltage + data->bins, voltageY,
+                            data->bins * sizeof(*voltageY),
+                            cudaMemcpyHostToDevice);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(gpuRfmodeScratch.voltage + 2 * data->bins,
+                            voltageZ, data->bins * sizeof(*voltageZ),
+                            cudaMemcpyHostToDevice);
+  if (cudaStatus == cudaSuccess)
+    gpuTrfmodeApplyKicksKernel<<<blocks, threads>>>(
       static_cast<double *>(coord), nParticles, stride, *data,
       gpuRfmodeScratch.time, gpuRfmodeScratch.pbin,
       gpuRfmodeScratch.voltage);

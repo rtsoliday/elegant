@@ -250,6 +250,8 @@ typedef struct GPU_RFMODE_DATA {
   double particleMassMV;
   double particleRelSign;
   double cMks;
+  double dx;
+  double dy;
 } GPU_RFMODE_DATA;
 
 typedef struct GPU_TRWAKE_DATA {
