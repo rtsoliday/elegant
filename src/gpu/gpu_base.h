@@ -517,6 +517,26 @@ typedef struct GPU_BMXYZ_DATA {
   int fieldIsMagnetic;
 } GPU_BMXYZ_DATA;
 
+#define GPU_LORENTZ_BMAPXY 1
+#define GPU_LORENTZ_NIBEND 2
+#define GPU_LORENTZ_NISEPT 3
+
+typedef struct GPU_LORENTZ_DATA {
+  int type;
+  const void *tableOwner;
+  long nx, ny;
+  const double *field[2];
+  double xmin, ymin, dx, dy;
+  double length, integrationAccuracy;
+  double strengthFactor, fieldScale;
+  int fieldIsMagnetic;
+  double angle, e1, e2, rho;
+  double b1, q1Reference, q1Offset, fringeLength;
+  double entranceSlope, entranceIntercept, fringeEntranceIntercept;
+  double exitSlope, exitIntercept, fringeExitIntercept;
+  double cosAlpha1, sinAlpha1, cosAlpha2, sinAlpha2;
+} GPU_LORENTZ_DATA;
+
 typedef struct GPU_KICKMAP_DATA {
   int undulator;
   long nKicks;

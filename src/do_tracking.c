@@ -24,6 +24,7 @@
 #  include <gpu_ftable.h>
 #  include <gpu_kickmap.h>
 #  include <gpu_limit_amplitudes.h>
+#  include <gpu_lorentz.h>
 #  include <gpu_polynomial_series.h>
 #  include <gpu_space_charge.h>
 #endif /* HAVE_GPU */
@@ -2193,14 +2194,35 @@ long do_tracking(
                 case T_TSCATTER:
                   break;
                 case T_NIBEND:
-                  nLeft = lorentz(coord, nToTrack, (NIBEND *)eptr->p_elem, T_NIBEND, *P_central, accepted, NULL, NULL, NULL);
-                  break;
                 case T_NISEPT:
-                  nLeft = lorentz(coord, nToTrack, (NISEPT *)eptr->p_elem, T_NISEPT, *P_central, accepted, NULL, NULL, NULL);
+                case T_BMAPXY: {
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                  long lorentzGpuTracked = 0;
+#endif
+#ifdef HAVE_GPU
+                  if (getElementOnGpu()) {
+                    if (gpu_track_lorentz(nToTrack, eptr->p_elem, eptr->type,
+                                          *P_central)) {
+                      nLeft = nToTrack;
+#  ifdef GPU_VERIFY
+                      startCpuTimer();
+                      lorentzGpuTracked = 1;
+#  else
+                      break;
+#  endif
+                    } else {
+                      coord = forceParticlesToCpu("Lorentz-family CUDA trajectory fallback");
+                    }
+                  }
+#endif
+                  nLeft = lorentz(coord, nToTrack, eptr->p_elem, eptr->type,
+                                  *P_central, accepted, NULL, NULL, NULL);
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                  if (lorentzGpuTracked)
+                    compareGpuCpu(nLeft, "fixed-step Lorentz-family tracking");
+#endif
                   break;
-                case T_BMAPXY:
-                  nLeft = lorentz(coord, nToTrack, (BMAPXY *)eptr->p_elem, T_BMAPXY, *P_central, accepted, NULL, NULL, NULL);
-                  break;
+                }
                 case T_BMAPXYZ: {
 #if defined(HAVE_GPU) && defined(GPU_VERIFY)
                   long bmxyzGpuTracked = 0;

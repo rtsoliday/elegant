@@ -152,6 +152,18 @@ typedef struct GPU_BMXYZ_SCRATCH {
 
 static GPU_BMXYZ_SCRATCH gpuBmxyzScratch;
 
+typedef struct GPU_LORENTZ_SCRATCH {
+  double *field[2];
+  long fieldCapacity;
+  long nx, ny;
+  const void *tableOwner;
+  double *coordBackup;
+  long coordCapacity;
+  unsigned long long *failedCount;
+} GPU_LORENTZ_SCRATCH;
+
+static GPU_LORENTZ_SCRATCH gpuLorentzScratch;
+
 typedef struct GPU_RFMODE_SCRATCH {
   double *time;
   long *pbin;
@@ -378,6 +390,87 @@ static void releaseBmxyzScratch(void) {
 
 extern "C" void gpuCudaBmxyzRelease(void) {
   releaseBmxyzScratch();
+}
+
+static void releaseLorentzScratch(void) {
+  cudaFree(gpuLorentzScratch.field[0]);
+  cudaFree(gpuLorentzScratch.field[1]);
+  cudaFree(gpuLorentzScratch.coordBackup);
+  cudaFree(gpuLorentzScratch.failedCount);
+  std::memset(&gpuLorentzScratch, 0, sizeof(gpuLorentzScratch));
+}
+
+extern "C" void gpuCudaLorentzRelease(void) {
+  releaseLorentzScratch();
+}
+
+static int ensureLorentzScratch(long coordinateValues,
+                                const GPU_LORENTZ_DATA *data) {
+  cudaError_t status;
+
+  if (coordinateValues <= 0 || !data)
+    return static_cast<int>(cudaErrorInvalidValue);
+  if (!gpuLorentzScratch.failedCount) {
+    status = cudaMalloc(&gpuLorentzScratch.failedCount,
+                        sizeof(*gpuLorentzScratch.failedCount));
+    if (status != cudaSuccess) {
+      releaseLorentzScratch();
+      return static_cast<int>(status);
+    }
+  }
+  if (!gpuLorentzScratch.coordBackup ||
+      gpuLorentzScratch.coordCapacity < coordinateValues) {
+    cudaFree(gpuLorentzScratch.coordBackup);
+    gpuLorentzScratch.coordBackup = NULL;
+    status = cudaMalloc(&gpuLorentzScratch.coordBackup,
+                        coordinateValues * sizeof(*gpuLorentzScratch.coordBackup));
+    if (status != cudaSuccess) {
+      releaseLorentzScratch();
+      return static_cast<int>(status);
+    }
+    gpuLorentzScratch.coordCapacity = coordinateValues;
+  }
+  if (data->type == GPU_LORENTZ_BMAPXY) {
+    long fieldValues;
+    int upload = 0;
+    if (!data->tableOwner || !data->field[0] || !data->field[1] ||
+        data->nx < 2 || data->ny < 2 || data->nx > LONG_MAX / data->ny)
+      return static_cast<int>(cudaErrorInvalidValue);
+    fieldValues = data->nx * data->ny;
+    if (!gpuLorentzScratch.field[0] || !gpuLorentzScratch.field[1] ||
+        gpuLorentzScratch.fieldCapacity < fieldValues) {
+      cudaFree(gpuLorentzScratch.field[0]);
+      cudaFree(gpuLorentzScratch.field[1]);
+      gpuLorentzScratch.field[0] = gpuLorentzScratch.field[1] = NULL;
+      status = cudaMalloc(&gpuLorentzScratch.field[0],
+                          fieldValues * sizeof(*gpuLorentzScratch.field[0]));
+      if (status == cudaSuccess)
+        status = cudaMalloc(&gpuLorentzScratch.field[1],
+                            fieldValues * sizeof(*gpuLorentzScratch.field[1]));
+      if (status != cudaSuccess) {
+        releaseLorentzScratch();
+        return static_cast<int>(status);
+      }
+      gpuLorentzScratch.fieldCapacity = fieldValues;
+      upload = 1;
+    }
+    if (gpuLorentzScratch.tableOwner != data->tableOwner ||
+        gpuLorentzScratch.nx != data->nx || gpuLorentzScratch.ny != data->ny)
+      upload = 1;
+    if (upload) {
+      for (long field = 0; field < 2; field++) {
+        status = cudaMemcpy(gpuLorentzScratch.field[field], data->field[field],
+                            fieldValues * sizeof(*data->field[field]),
+                            cudaMemcpyHostToDevice);
+        if (status != cudaSuccess)
+          return static_cast<int>(status);
+      }
+      gpuLorentzScratch.tableOwner = data->tableOwner;
+      gpuLorentzScratch.nx = data->nx;
+      gpuLorentzScratch.ny = data->ny;
+    }
+  }
+  return static_cast<int>(cudaSuccess);
 }
 
 static int ensureBmxyzScratch(long coordinateValues) {
@@ -3179,6 +3272,354 @@ __global__ void gpuBmxyzKernel(double *coord, long nParticles, int stride,
   part[3] = state[5] / state[3];
   part[4] = state[6];
   part[5] = state[7];
+}
+
+__device__ __forceinline__ double gpuLorentzExitValue(
+  const double state[8], const GPU_LORENTZ_DATA &data) {
+  if (data.type == GPU_LORENTZ_BMAPXY)
+    return data.length - state[0];
+  if (data.type == GPU_LORENTZ_NIBEND)
+    return state[1] * data.exitSlope + data.exitIntercept - state[0];
+  return data.exitIntercept - state[0];
+}
+
+__device__ __forceinline__ int gpuLorentzDerivatives(
+  double derivative[8], double state[8], const GPU_LORENTZ_DATA &data) {
+  const double *velocity = state + 3;
+  double F0 = 0.0, F1 = 0.0, F2 = 0.0;
+
+  if (!isfinite(state[1]) || !isfinite(state[2]))
+    return 0;
+  derivative[0] = velocity[0];
+  derivative[1] = velocity[1];
+  derivative[2] = velocity[2];
+  derivative[6] = 1.0;
+  derivative[7] = 0.0;
+
+  if (data.type == GPU_LORENTZ_BMAPXY) {
+    long ix = static_cast<long>((state[1] - data.xmin) / data.dx);
+    long iy = static_cast<long>((state[2] - data.ymin) / data.dy);
+    if (ix >= 0 && iy >= 0 && ix < data.nx - 1 && iy < data.ny - 1) {
+      double fx = (state[1] - (ix * data.dx + data.xmin)) / data.dx;
+      double fy = (state[2] - (iy * data.dy + data.ymin)) / data.dy;
+      double Fa = (1.0 - fy) * data.field[0][ix + iy * data.nx] +
+                  fy * data.field[0][ix + (iy + 1) * data.nx];
+      double Fb = (1.0 - fy) * data.field[0][ix + 1 + iy * data.nx] +
+                  fy * data.field[0][ix + 1 + (iy + 1) * data.nx];
+      F1 = data.strengthFactor * ((1.0 - fx) * Fa + fx * Fb);
+      Fa = (1.0 - fy) * data.field[1][ix + iy * data.nx] +
+           fy * data.field[1][ix + (iy + 1) * data.nx];
+      Fb = (1.0 - fy) * data.field[1][ix + 1 + iy * data.nx] +
+           fy * data.field[1][ix + 1 + (iy + 1) * data.nx];
+      F2 = data.strengthFactor * ((1.0 - fx) * Fa + fx * Fb);
+      if (data.fieldIsMagnetic) {
+        F1 *= data.fieldScale;
+        F2 *= data.fieldScale;
+      }
+    }
+  } else if (data.type == GPU_LORENTZ_NIBEND) {
+    double S = data.strengthFactor / (1.0 + state[7]);
+    double dq0 = state[0] -
+      (state[1] * data.entranceSlope + data.fringeEntranceIntercept);
+    double z = dq0 * data.cosAlpha1;
+    if (z >= 0.0) {
+      dq0 = state[0] -
+        (state[1] * data.exitSlope + data.fringeExitIntercept);
+      z = dq0 * data.cosAlpha2;
+      if (z <= 0.0)
+        F2 = S;
+    }
+  } else if (data.type == GPU_LORENTZ_NISEPT) {
+    double S = data.strengthFactor / (1.0 + state[7]);
+    double dq0 = state[0] - data.entranceIntercept;
+    double dq1 = state[1] - (data.q1Reference + data.q1Offset);
+    if (dq0 > 0.0) {
+      if (data.fringeLength && dq0 <= data.fringeLength) {
+        S /= data.fringeLength;
+        F0 = S * state[2] * (1.0 + data.b1 * dq1);
+        F1 = S * state[2] * dq0 * data.b1;
+        F2 = S * dq0 * (1.0 + data.b1 * dq1);
+      } else {
+        dq0 = state[0] - data.fringeExitIntercept;
+        if (dq0 < data.fringeLength) {
+          if (data.fringeLength && dq0 > 0.0) {
+            S /= data.fringeLength;
+            F0 = -S * state[2] * (1.0 + data.b1 * dq1);
+            F1 = S * state[2] * (data.fringeLength - dq0) * data.b1;
+            F2 = S * (data.fringeLength - dq0) *
+                 (1.0 + data.b1 * dq1);
+          } else {
+            F1 = S * data.b1 * state[2];
+            F2 = S * (1.0 + data.b1 * dq1);
+          }
+        }
+      }
+    }
+  } else {
+    return 0;
+  }
+
+  derivative[3] = velocity[1] * F2 - velocity[2] * F1;
+  derivative[4] = velocity[2] * F0 - velocity[0] * F2;
+  derivative[5] = velocity[0] * F1 - velocity[1] * F0;
+  if (data.type == GPU_LORENTZ_BMAPXY) {
+    double denominator = 1.0 + state[7];
+    derivative[3] /= denominator;
+    derivative[4] /= denominator;
+    derivative[5] /= denominator;
+  }
+  return isfinite(derivative[3]) && isfinite(derivative[4]) &&
+         isfinite(derivative[5]);
+}
+
+__device__ __forceinline__ int gpuLorentzRk4Step(
+  double finalState[8], const double initialState[8],
+  const double initialDerivative[8], double h,
+  const GPU_LORENTZ_DATA &data) {
+  double k1[8], k2[8], k3[8], temporary[8], derivative[8];
+
+  for (long equation = 0; equation < 8; equation++) {
+    k1[equation] = h * initialDerivative[equation];
+    temporary[equation] = initialState[equation] + k1[equation] / 2.0;
+  }
+  if (!gpuLorentzDerivatives(derivative, temporary, data))
+    return 0;
+  for (long equation = 0; equation < 8; equation++) {
+    k2[equation] = h * derivative[equation];
+    temporary[equation] = initialState[equation] + k2[equation] / 2.0;
+  }
+  if (!gpuLorentzDerivatives(derivative, temporary, data))
+    return 0;
+  for (long equation = 0; equation < 8; equation++) {
+    k3[equation] = h * derivative[equation];
+    temporary[equation] = initialState[equation] + k3[equation];
+  }
+  if (!gpuLorentzDerivatives(derivative, temporary, data))
+    return 0;
+  for (long equation = 0; equation < 8; equation++)
+    finalState[equation] = initialState[equation] +
+      (k1[equation] / 2.0 + k2[equation] + k3[equation] +
+       h * derivative[equation] / 2.0) / 3.0;
+  return 1;
+}
+
+__device__ int gpuLorentzIntegrate(double state[8],
+                                   const GPU_LORENTZ_DATA &data) {
+  double y0[8], y1[8], derivative0[8], derivative1[8];
+  double x0 = 0.0, x1 = 0.0, ex0, ex1 = 0.0;
+  double xf = 2.0 * data.length;
+  double hStep = data.length * data.integrationAccuracy;
+  double exitAccuracy = data.integrationAccuracy *
+                        data.integrationAccuracy * xf;
+  long maxSteps;
+
+  if (exitAccuracy < data.length * 1e-14)
+    exitAccuracy = data.length * 1e-14;
+  maxSteps = static_cast<long>(ceil(xf / hStep)) + 2;
+  for (long equation = 0; equation < 8; equation++)
+    y0[equation] = state[equation];
+  if (!gpuLorentzDerivatives(derivative0, y0, data))
+    return 0;
+  ex0 = gpuLorentzExitValue(y0, data);
+
+  for (long step = 0; step < maxSteps; step++) {
+    double xdiff;
+    if (fabs(ex0) < exitAccuracy) {
+      for (long equation = 0; equation < 8; equation++)
+        state[equation] = y0[equation];
+      return 1;
+    }
+    xdiff = xf - x0;
+    if (xdiff < hStep)
+      hStep = xdiff;
+    x1 = x0;
+    if (!gpuLorentzRk4Step(y1, y0, derivative0, hStep, data))
+      return 0;
+    x1 += hStep;
+    if (!gpuLorentzDerivatives(derivative1, y1, data))
+      return 0;
+    ex1 = gpuLorentzExitValue(y1, data);
+    if (gpuBmxyzSign(ex0) != gpuBmxyzSign(ex1))
+      break;
+    if (fabs(xf - x1) < exitAccuracy)
+      return 0;
+    for (long equation = 0; equation < 8; equation++) {
+      y0[equation] = y1[equation];
+      derivative0[equation] = derivative1[equation];
+    }
+    ex0 = ex1;
+    x0 = x1;
+  }
+
+  if (fabs(ex1) < exitAccuracy) {
+    for (long equation = 0; equation < 8; equation++)
+      state[equation] = y1[equation];
+    return 1;
+  }
+  for (long iteration = 0; iteration <= 400; iteration++) {
+    double y2[8], derivative2[8];
+    double h = -ex0 * (x1 - x0) / (ex1 - ex0) * 0.995;
+    double x2 = x0;
+    double ex2;
+    if (!gpuLorentzRk4Step(y2, y0, derivative0, h, data))
+      return 0;
+    x2 += h;
+    if (!gpuLorentzDerivatives(derivative2, y2, data))
+      return 0;
+    ex2 = gpuLorentzExitValue(y2, data);
+    if (fabs(ex2) < exitAccuracy) {
+      for (long equation = 0; equation < 8; equation++)
+        state[equation] = y2[equation];
+      return 1;
+    }
+    if (gpuBmxyzSign(ex1) == gpuBmxyzSign(ex2)) {
+      for (long equation = 0; equation < 8; equation++) {
+        y1[equation] = y2[equation];
+        derivative1[equation] = derivative2[equation];
+      }
+      x1 = x2;
+      ex1 = ex2;
+    } else {
+      for (long equation = 0; equation < 8; equation++) {
+        y0[equation] = y2[equation];
+        derivative0[equation] = derivative2[equation];
+      }
+      x0 = x2;
+      ex0 = ex2;
+    }
+  }
+  return 0;
+}
+
+__device__ __forceinline__ int gpuLorentzTransformIn(
+  double state[8], const double *part, const GPU_LORENTZ_DATA &data) {
+  double dzds = 1.0 / sqrt(1.0 + part[1] * part[1] + part[3] * part[3]);
+  double dxds = part[1] * dzds;
+  double dyds = part[3] * dzds;
+
+  if (data.type == GPU_LORENTZ_BMAPXY) {
+    state[0] = 0.0;
+    state[1] = part[0];
+    state[2] = part[2];
+    state[3] = dzds;
+    state[4] = dxds;
+    state[5] = dyds;
+    state[6] = part[4];
+    state[7] = part[5];
+    return 1;
+  }
+  if (data.type == GPU_LORENTZ_NIBEND) {
+    double halfAngle = data.angle / 2.0;
+    double sinHalf = sin(halfAngle), cosHalf = cos(halfAngle);
+    double alpha = halfAngle - data.e1;
+    double q0[3], velocity[3], q0Intersection, ds;
+    q0[0] = -(data.rho + part[0]) * sinHalf;
+    q0[1] = (data.rho + part[0]) * cosHalf;
+    q0[2] = part[2];
+    velocity[0] = dzds * cosHalf - dxds * sinHalf;
+    velocity[1] = dzds * sinHalf + dxds * cosHalf;
+    velocity[2] = dyds;
+    q0Intersection = data.rho * (cosHalf * tan(alpha) - sinHalf);
+    ds = (-q0[1] * tan(alpha) + q0Intersection - q0[0]) /
+         (velocity[0] + velocity[1] * tan(alpha));
+    state[0] = q0[0] + velocity[0] * ds;
+    state[1] = q0[1] + velocity[1] * ds;
+    state[2] = q0[2] + velocity[2] * ds;
+    state[3] = velocity[0];
+    state[4] = velocity[1];
+    state[5] = velocity[2];
+    state[6] = part[4] + ds;
+    state[7] = part[5];
+    return isfinite(ds);
+  }
+  if (data.type == GPU_LORENTZ_NISEPT) {
+    double sinE1 = sin(data.e1), cosE1 = cos(data.e1);
+    double q0[3], velocity[3], ds;
+    q0[0] = -(data.rho + part[0]) * sinE1;
+    q0[1] = (data.rho + part[0]) * cosE1;
+    q0[2] = part[2];
+    velocity[0] = dzds * cosE1 - dxds * sinE1;
+    velocity[1] = dzds * sinE1 + dxds * cosE1;
+    velocity[2] = dyds;
+    ds = (data.entranceIntercept - q0[0]) / velocity[0];
+    state[0] = q0[0] + velocity[0] * ds;
+    state[1] = q0[1] + velocity[1] * ds;
+    state[2] = q0[2] + velocity[2] * ds;
+    state[3] = velocity[0];
+    state[4] = velocity[1];
+    state[5] = velocity[2];
+    state[6] = part[4] + ds;
+    state[7] = part[5];
+    return isfinite(ds);
+  }
+  return 0;
+}
+
+__device__ __forceinline__ int gpuLorentzTransformOut(
+  double *part, const double state[8], const GPU_LORENTZ_DATA &data) {
+  if (data.type == GPU_LORENTZ_BMAPXY) {
+    part[0] = state[1];
+    part[1] = state[4] / state[3];
+    part[2] = state[2];
+    part[3] = state[5] / state[3];
+    part[4] = state[6];
+    part[5] = state[7];
+    return isfinite(part[1]) && isfinite(part[3]);
+  }
+  if (data.type == GPU_LORENTZ_NIBEND) {
+    double halfAngle = data.angle / 2.0;
+    double tanHalf = tan(halfAngle), sinHalf = sin(halfAngle),
+           cosHalf = cos(halfAngle);
+    double ds = -(state[0] - state[1] * tanHalf) /
+                (state[3] - state[4] * tanHalf);
+    double q0 = state[0] + ds * state[3];
+    double q1 = state[1] + ds * state[4];
+    double q2 = state[2] + ds * state[5];
+    double dzds = state[3] * cosHalf - state[4] * sinHalf;
+    double dxds = state[3] * sinHalf + state[4] * cosHalf;
+    part[0] = sqrt(q0 * q0 + q1 * q1) - data.rho;
+    part[1] = dxds / dzds;
+    part[2] = q2;
+    part[3] = state[5] / dzds;
+    part[4] = state[6] + ds;
+    part[5] = state[7];
+    return isfinite(ds) && isfinite(part[1]) && isfinite(part[3]);
+  }
+  if (data.type == GPU_LORENTZ_NISEPT) {
+    double tanE2 = tan(data.e2), sinE2 = sin(data.e2),
+           cosE2 = cos(data.e2);
+    double ds = -(state[0] - state[1] * tanE2) /
+                (state[3] - state[4] * tanE2);
+    double q0 = state[0] + ds * state[3];
+    double q1 = state[1] + ds * state[4];
+    double q2 = state[2] + ds * state[5];
+    double dzds = state[3] * cosE2 - state[4] * sinE2;
+    double dxds = state[3] * sinE2 + state[4] * cosE2;
+    part[0] = sqrt(q0 * q0 + q1 * q1) - data.rho;
+    part[1] = dxds / dzds;
+    part[2] = q2;
+    part[3] = state[5] / dzds;
+    part[4] = state[6] + ds;
+    part[5] = state[7];
+    return isfinite(ds) && isfinite(part[1]) && isfinite(part[3]);
+  }
+  return 0;
+}
+
+__global__ void gpuLorentzKernel(double *coord, long nParticles, int stride,
+                                 GPU_LORENTZ_DATA data,
+                                 unsigned long long *failedCount) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double state[8];
+  double *part;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  if (!gpuLorentzTransformIn(state, part, data) ||
+      !gpuLorentzIntegrate(state, data) ||
+      !gpuLorentzTransformOut(part, state, data))
+    atomicAdd(failedCount, 1ULL);
 }
 
 __global__ void gpuRfcwRfOnlyMatrixKernel(double *coord, long nParticles, int stride,
@@ -10978,6 +11419,70 @@ extern "C" int gpuCudaBmxyzTrack(void *coord, long nParticles, int stride,
   *failedCount = static_cast<long>(hostFailedCount);
   if (hostFailedCount) {
     cudaStatus = cudaMemcpy(coord, gpuBmxyzScratch.coordBackup,
+                            coordinateValues * sizeof(double),
+                            cudaMemcpyDeviceToDevice);
+    if (cudaStatus != cudaSuccess)
+      return static_cast<int>(cudaStatus);
+  }
+  return static_cast<int>(cudaSuccess);
+}
+
+extern "C" int gpuCudaLorentzTrack(void *coord, long nParticles, int stride,
+                                    const GPU_LORENTZ_DATA *data,
+                                    long *failedCount, float *milliseconds) {
+  static cudaEvent_t start = NULL, stop = NULL;
+  GPU_LORENTZ_DATA deviceData;
+  cudaError_t cudaStatus;
+  int status;
+  int threads = 128;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  long coordinateValues;
+  unsigned long long hostFailedCount = 0;
+
+  if (!coord || !data || !failedCount || nParticles <= 0 || stride < 7 ||
+      nParticles > LONG_MAX / stride || data->length <= 0 ||
+      data->integrationAccuracy <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *failedCount = 0;
+  coordinateValues = nParticles * stride;
+  status = ensureLorentzScratch(coordinateValues, data);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  deviceData = *data;
+  if (data->type == GPU_LORENTZ_BMAPXY) {
+    deviceData.field[0] = gpuLorentzScratch.field[0];
+    deviceData.field[1] = gpuLorentzScratch.field[1];
+  }
+  cudaStatus = cudaMemcpy(gpuLorentzScratch.coordBackup, coord,
+                          coordinateValues * sizeof(double),
+                          cudaMemcpyDeviceToDevice);
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMemset(gpuLorentzScratch.failedCount, 0,
+                          sizeof(*gpuLorentzScratch.failedCount));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  if (milliseconds)
+    *milliseconds = 0;
+  status = getCachedTimingEvents(&start, &stop);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  cudaStatus = cudaEventRecord(start, 0);
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  gpuLorentzKernel<<<blocks, threads>>>(static_cast<double *>(coord),
+                                        nParticles, stride, deviceData,
+                                        gpuLorentzScratch.failedCount);
+  status = finishTimedKernel(start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  cudaStatus = cudaMemcpy(&hostFailedCount, gpuLorentzScratch.failedCount,
+                          sizeof(hostFailedCount), cudaMemcpyDeviceToHost);
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  *failedCount = static_cast<long>(hostFailedCount);
+  if (hostFailedCount) {
+    cudaStatus = cudaMemcpy(coord, gpuLorentzScratch.coordBackup,
                             coordinateValues * sizeof(double),
                             cudaMemcpyDeviceToDevice);
     if (cudaStatus != cudaSuccess)

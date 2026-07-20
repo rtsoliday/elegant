@@ -70,6 +70,8 @@
 #pragma weak initialize_polynomialSeries
 #pragma weak polynomialSeries_tracking
 #pragma weak bmapxyz_field_setup
+#pragma weak bmapxy_field_setup
+#pragma weak lorentz_setup
 
 extern unsigned long multipoleKicksDone;
 extern double **Fx_xy;
@@ -114,6 +116,9 @@ extern void rotateBeamCoordinatesForMisalignment(double **part, long np,
                                                  double angle);
 extern void initialize_polynomialSeries(POLYNOMIALSERIES *polynomialSeries);
 extern void bmapxyz_field_setup(BMAPXYZ *bmapxyz);
+extern void bmapxy_field_setup(BMAPXY *bmapxy);
+extern void lorentz_setup(void *field, long field_type, double **part,
+                          long np, double Po);
 extern long polynomialSeries_tracking(
   double **particle, long nPart, POLYNOMIALSERIES *polynomialSeries,
   double pError, double pCentral, double **accepted, double zStart);
@@ -270,6 +275,10 @@ extern int gpuCudaBmxyzTrack(void *coord, long nParticles, int stride,
                              const GPU_BMXYZ_DATA *data, long *failedCount,
                              float *milliseconds);
 extern void gpuCudaBmxyzRelease(void);
+extern int gpuCudaLorentzTrack(void *coord, long nParticles, int stride,
+                               const GPU_LORENTZ_DATA *data,
+                               long *failedCount, float *milliseconds);
+extern void gpuCudaLorentzRelease(void);
 extern int gpuCudaRfcwRfOnlyMatrix(void *coord, long nParticles, int stride,
                                    double pCentral, double length,
                                    double volt, double omega, double phase,
@@ -834,6 +843,8 @@ static long gpuEnableFtable = 0;
 static long gpuFtableMinParticles = 64;
 static long gpuEnableBmxyz = 0;
 static long gpuBmxyzMinParticles = 64;
+static long gpuEnableLorentz = 0;
+static long gpuLorentzMinParticles = 64;
 static long gpuEnableCcbend = 0;
 static long gpuCcbendMinParticles = 64;
 static long gpuEnableRfmode = 0;
@@ -2577,6 +2588,73 @@ static long gpuBmxyzElementSupported(ELEMENT_LIST *eptr) {
 #endif
 }
 
+static long gpuLorentzElementSupported(ELEMENT_LIST *eptr) {
+#if USE_MPI
+  (void)eptr;
+  return 0;
+#else
+  if (!gpuEnableLorentz || gpuBase.backtrack || !eptr || !eptr->p_elem)
+    return 0;
+  switch (eptr->type) {
+  case T_BMAPXY: {
+    BMAPXY *bmapxy = (BMAPXY *)eptr->p_elem;
+    if (!bmapxy->filename || !bmapxy->filename[0] ||
+        bmapxy->FxRpn || bmapxy->FyRpn || !bmapxy->method ||
+        strcmp(bmapxy->method, "non-adaptive runge-kutta") != 0 ||
+        !isfinite(bmapxy->length) || bmapxy->length <= 0 ||
+        !isfinite(bmapxy->accuracy) || bmapxy->accuracy < 1e-6 ||
+        bmapxy->accuracy > 0.1 || !isfinite(bmapxy->strength))
+      return 0;
+    if (!bmapxy->points && !bmapxy_field_setup)
+      return 0;
+    if (!bmapxy->points)
+      bmapxy_field_setup(bmapxy);
+    if (!bmapxy->Fx || !bmapxy->Fy || bmapxy->nx < 2 ||
+        bmapxy->ny < 2 || bmapxy->dx <= 0 || bmapxy->dy <= 0 ||
+        bmapxy->nx > LONG_MAX / bmapxy->ny ||
+        bmapxy->nx * bmapxy->ny != bmapxy->points)
+      return 0;
+    return 1;
+  }
+  case T_NIBEND: {
+    NIBEND *nibend = (NIBEND *)eptr->p_elem;
+    if (!nibend->method ||
+        strcmp(nibend->method, "non-adaptive runge-kutta") != 0 ||
+        !nibend->model || strcmp(nibend->model, "hard-edge") != 0 ||
+        !isfinite(nibend->length) || nibend->length <= 0 ||
+        !isfinite(nibend->angle) || nibend->angle <= 0 ||
+        !isfinite(nibend->accuracy) || nibend->accuracy < 1e-6 ||
+        nibend->accuracy > 0.1 || nibend->synch_rad ||
+        nibend->adjustBoundary || nibend->adjustField ||
+        nibend->fudgePathLength || nibend->tilt || nibend->etilt ||
+        nibend->dx || nibend->dy || nibend->dz ||
+        (nibend->fint && nibend->hgap) || !isfinite(nibend->fse) ||
+        nibend->e1Index < 0 || nibend->e1Index > 1 ||
+        nibend->e2Index < 0 || nibend->e2Index > 1)
+      return 0;
+    return isfinite(nibend->e[nibend->e1Index]) &&
+           isfinite(nibend->e[nibend->e2Index]);
+  }
+  case T_NISEPT: {
+    NISEPT *nisept = (NISEPT *)eptr->p_elem;
+    if (!nisept->method ||
+        strcmp(nisept->method, "non-adaptive runge-kutta") != 0 ||
+        !nisept->model || strcmp(nisept->model, "linear") != 0 ||
+        !isfinite(nisept->length) || nisept->length <= 0 ||
+        !isfinite(nisept->angle) || nisept->angle <= 0 ||
+        !isfinite(nisept->e1) || !isfinite(nisept->b1) ||
+        !isfinite(nisept->q1_ref) || !isfinite(nisept->flen) ||
+        nisept->flen < 0 || !isfinite(nisept->accuracy) ||
+        nisept->accuracy < 1e-6 || nisept->accuracy > 0.1)
+      return 0;
+    return lorentz_setup != NULL;
+  }
+  default:
+    return 0;
+  }
+#endif
+}
+
 static long gpuLscDataSupported(LSCDRIFT *lsc) {
   if (!lsc)
     return 0;
@@ -2832,6 +2910,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuBmxyzElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuBmxyzMinParticles);
+  if (gpuLorentzElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuLorentzMinParticles);
   if (gpuRfmodeElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuRfmodeMinParticles);
@@ -4898,6 +4979,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_BMXYZ_PARTICLES", 64);
   if (gpuBmxyzMinParticles < 1)
     gpuBmxyzMinParticles = 1;
+  gpuEnableLorentz =
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_LORENTZ") ||
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_LORENTZ");
+  gpuLorentzMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_LORENTZ_PARTICLES", 64);
+  if (gpuLorentzMinParticles < 1)
+    gpuLorentzMinParticles = 1;
   gpuEnableCcbend =
     !gpuEnvSet("ELEGANT_GPU_ENABLE_CCBEND") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_CCBEND");
@@ -4974,6 +5062,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnableHistogram = 0;
   gpuEnableFtable = 0;
   gpuEnableBmxyz = 0;
+  gpuEnableLorentz = 0;
   gpuEnableRfmode = 0;
   gpuEnableFrfmode = 0;
   gpuEnableTrfmode = 0;
@@ -5127,6 +5216,10 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
       fprintf(stderr,
               "elegant CUDA: fixed-step BMXYZ enabled at %ld particles.\n",
               gpuBmxyzMinParticles);
+    if (gpuEnableLorentz)
+      fprintf(stderr,
+              "elegant CUDA: fixed-step Lorentz-family tracking enabled at %ld particles.\n",
+              gpuLorentzMinParticles);
     if (gpuEnableCcbend)
       fprintf(stderr,
               "elegant CUDA: deterministic order-2 CCBEND enabled at %ld particles.\n",
@@ -5188,6 +5281,7 @@ void gpuBaseDealloc(void) {
   gpuCudaBggexpRelease();
   gpuCudaFtableRelease();
   gpuCudaBmxyzRelease();
+  gpuCudaLorentzRelease();
   gpuCudaRfmodeRelease();
   gpuCudaHistogramRelease();
   gpuCudaScmultRelease();
@@ -8921,6 +9015,106 @@ long gpu_track_bmxyz(long nParticles, BMAPXYZ *bmxyz, double pCentral) {
                              &failedCount, &milliseconds);
   if (status != 0)
     gpuFatalStatus("BMXYZ fixed-step tracking CUDA kernel", status);
+  gpuRecordMagnetKernel(milliseconds);
+  if (!failedCount)
+    gpuMarkDeviceChanged(nParticles);
+  gpuRecordWallSeconds();
+  return failedCount == 0;
+}
+
+long gpu_track_lorentz(long nParticles, void *field, long fieldType,
+                       double pCentral) {
+  GPU_LORENTZ_DATA data;
+  float milliseconds = 0;
+  int status;
+  long failedCount = 0;
+
+  if (nParticles <= 0)
+    return 1;
+  if (!field)
+    gpuRequiredFailure("NULL Lorentz-family CUDA tracking data");
+  memset(&data, 0, sizeof(data));
+  data.length = 0;
+  switch (fieldType) {
+  case T_BMAPXY: {
+    BMAPXY *bmapxy = (BMAPXY *)field;
+    data.type = GPU_LORENTZ_BMAPXY;
+    data.tableOwner = bmapxy->Fx;
+    data.nx = bmapxy->nx;
+    data.ny = bmapxy->ny;
+    data.field[0] = bmapxy->Fx;
+    data.field[1] = bmapxy->Fy;
+    data.xmin = bmapxy->xmin;
+    data.ymin = bmapxy->ymin;
+    data.dx = bmapxy->dx;
+    data.dy = bmapxy->dy;
+    data.length = bmapxy->length;
+    data.integrationAccuracy = bmapxy->accuracy;
+    data.strengthFactor = bmapxy->strength;
+    data.fieldIsMagnetic = bmapxy->BGiven ? 1 : 0;
+    data.fieldScale = -particleCharge * particleRelSign /
+                      (particleMass * c_mks * pCentral);
+    break;
+  }
+  case T_NIBEND: {
+    NIBEND *nibend = (NIBEND *)field;
+    double halfAngle, alpha1, alpha2;
+    data.type = GPU_LORENTZ_NIBEND;
+    data.length = nibend->length;
+    data.integrationAccuracy = nibend->accuracy;
+    data.angle = nibend->angle;
+    data.e1 = nibend->e[nibend->e1Index];
+    data.e2 = nibend->e[nibend->e2Index];
+    data.rho = nibend->length / nibend->angle;
+    data.strengthFactor = (1 + nibend->fse) / data.rho;
+    halfAngle = data.angle / 2;
+    alpha1 = halfAngle - data.e1;
+    alpha2 = halfAngle - data.e2;
+    data.entranceIntercept = data.fringeEntranceIntercept =
+      -data.rho * (sin(halfAngle) - cos(halfAngle) * tan(alpha1));
+    data.exitIntercept = data.fringeExitIntercept =
+      data.rho * (sin(halfAngle) - cos(halfAngle) * tan(alpha2));
+    data.entranceSlope = -tan(alpha1);
+    data.exitSlope = tan(alpha2);
+    data.cosAlpha1 = cos(alpha1);
+    data.sinAlpha1 = sin(alpha1);
+    data.cosAlpha2 = cos(alpha2);
+    data.sinAlpha2 = sin(alpha2);
+    break;
+  }
+  case T_NISEPT: {
+    NISEPT *nisept = (NISEPT *)field;
+    lorentz_setup(nisept, T_NISEPT, NULL, 0, pCentral);
+    data.type = GPU_LORENTZ_NISEPT;
+    data.length = nisept->length;
+    data.integrationAccuracy = nisept->accuracy;
+    data.angle = nisept->angle;
+    data.e1 = nisept->e1;
+    data.e2 = nisept->e2;
+    data.rho = nisept->rho0;
+    data.b1 = nisept->b1;
+    data.q1Reference = nisept->q1_ref;
+    data.q1Offset = nisept->q1_offset;
+    data.fringeLength = nisept->flen;
+    data.strengthFactor = (1 + nisept->fse_opt) / data.rho;
+    data.entranceIntercept = -data.rho * sin(data.e1) - data.fringeLength / 2;
+    data.fringeEntranceIntercept = data.entranceIntercept + data.fringeLength;
+    data.exitIntercept = data.rho * sin(data.e2) + data.fringeLength / 2;
+    data.fringeExitIntercept = data.exitIntercept - data.fringeLength;
+    break;
+  }
+  default:
+    gpuRequiredFailure("invalid Lorentz-family CUDA element type");
+    return 0;
+  }
+
+  startGpuTimer();
+  gpuCopyHostToDevice(nParticles);
+  status = gpuCudaLorentzTrack(gpuBase.deviceCoord, nParticles,
+                               (int)gpuBase.deviceStride, &data,
+                               &failedCount, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("fixed-step Lorentz-family CUDA kernel", status);
   gpuRecordMagnetKernel(milliseconds);
   if (!failedCount)
     gpuMarkDeviceChanged(nParticles);
