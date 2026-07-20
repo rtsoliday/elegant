@@ -1,0 +1,4 @@
+&run_setup lattice="lattice-adaptive.lte",use_beamline="RING",p_central_mev=6000,rootname="run-adaptive-fallback",centroid="%s.cen",semaphore_file="%s.done",random_number_seed=956432,tracking_updates=0 &end
+&run_control n_passes=1 &end
+&bunched_beam n_particles_per_bunch=128,emit_x=1e-9,beta_x=10,emit_y=1e-10,beta_y=10,sigma_dp=1e-4,sigma_s=5e-4,distribution_type[0]=3*"gaussian",distribution_cutoff[0]=3*3 &end
+&track &end

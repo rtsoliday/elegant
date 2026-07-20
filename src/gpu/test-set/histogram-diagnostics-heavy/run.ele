@@ -1,0 +1,35 @@
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  semaphore_file = "%s.done",
+  random_number_seed = 314159265,
+  tracking_updates = 0,
+  show_element_timing = 0,
+  load_balancing_on = 0,
+&end
+
+&run_control
+  n_passes = 1,
+&end
+
+&bunched_beam
+  n_particles_per_bunch = 500000,
+  emit_x = 1.5e-9,
+  beta_x = 9,
+  alpha_x = 0.2,
+  emit_y = 8e-10,
+  beta_y = 6,
+  alpha_y = -0.1,
+  sigma_dp = 8e-5,
+  sigma_s = 6e-4,
+  distribution_type[0] = 3*"gaussian",
+  distribution_cutoff[0] = 3*3,
+  centroid[0] = 2e-4,
+  centroid[2] = -1e-4,
+&end
+
+&track
+&end

@@ -1,0 +1,30 @@
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "small",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  random_number_seed = 82736451,
+  tracking_updates = 0,
+&end
+
+&run_control
+  n_passes = 1,
+&end
+
+&bunched_beam
+  n_particles_per_bunch = 32,
+  emit_x = 2e-10,
+  beta_x = 9,
+  emit_y = 2e-10,
+  beta_y = 7,
+  sigma_dp = 5e-5,
+  sigma_s = 8e-4,
+  distribution_type[0] = 3*"gaussian",
+  distribution_cutoff[0] = 3*3,
+&end
+
+&track
+&end

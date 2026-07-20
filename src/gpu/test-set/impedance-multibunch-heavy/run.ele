@@ -1,0 +1,26 @@
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+  show_element_timing = 0,
+  load_balancing_on = 0,
+&end
+
+&run_control
+  n_passes = 60,
+&end
+
+&sdds_beam
+  input = "../multibunch-data/beam.sdds",
+  track_pages_separately = 0,
+  use_bunched_mode = 1,
+&end
+
+&track
+&end

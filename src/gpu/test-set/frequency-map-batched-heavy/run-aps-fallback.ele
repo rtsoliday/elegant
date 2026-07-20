@@ -1,0 +1,28 @@
+! Companion unsupported-beamline case: the APS lattice retains point tracking.
+&transmute_elements name=*, type=MAXAMP, new_type=DRIF &end
+&transmute_elements name=*, type=WATCH, new_type=DRIF &end
+
+&run_setup
+    lattice = "apsKick.lte",
+    p_central_mev = 7e3,
+    default_order = 1,
+    concat_order = 1,
+    semaphore_file = %s.done
+&end
+
+&run_control
+    n_passes = 32
+&end
+
+&frequency_map
+    output = %s.fma,
+    xmin = 1e-6,
+    xmax = 0.005,
+    ymin = 1e-6,
+    ymax = 0.0005,
+    nx = 3,
+    ny = 3,
+    include_changes = 0,
+    full_grid_output = 1,
+    verbosity = 0
+&end

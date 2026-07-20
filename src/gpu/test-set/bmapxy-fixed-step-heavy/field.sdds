@@ -1,0 +1,32 @@
+SDDS1
+&column name=x, units=m, type=double, &end
+&column name=y, units=m, type=double, &end
+&column name=Fx, type=double, &end
+&column name=Fy, type=double, &end
+&data mode=ascii, &end
+25
+-2e-2 -2e-2 -2e-2 -2e-2
+-1e-2 -2e-2 -2e-2 -1e-2
+ 0e-2 -2e-2 -2e-2  0e-2
+ 1e-2 -2e-2 -2e-2  1e-2
+ 2e-2 -2e-2 -2e-2  2e-2
+-2e-2 -1e-2 -1e-2 -2e-2
+-1e-2 -1e-2 -1e-2 -1e-2
+ 0e-2 -1e-2 -1e-2  0e-2
+ 1e-2 -1e-2 -1e-2  1e-2
+ 2e-2 -1e-2 -1e-2  2e-2
+-2e-2  0e-2  0e-2 -2e-2
+-1e-2  0e-2  0e-2 -1e-2
+ 0e-2  0e-2  0e-2  0e-2
+ 1e-2  0e-2  0e-2  1e-2
+ 2e-2  0e-2  0e-2  2e-2
+-2e-2  1e-2  1e-2 -2e-2
+-1e-2  1e-2  1e-2 -1e-2
+ 0e-2  1e-2  1e-2  0e-2
+ 1e-2  1e-2  1e-2  1e-2
+ 2e-2  1e-2  1e-2  2e-2
+-2e-2  2e-2  2e-2 -2e-2
+-1e-2  2e-2  2e-2 -1e-2
+ 0e-2  2e-2  2e-2  0e-2
+ 1e-2  2e-2  2e-2  1e-2
+ 2e-2  2e-2  2e-2  2e-2

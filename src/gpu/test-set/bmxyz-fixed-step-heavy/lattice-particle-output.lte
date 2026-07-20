@@ -1,0 +1,2 @@
+BMPO: BMXYZ,L=0.8,ACCURACY=1e-3,METHOD="non-adaptive runge-kutta",FILENAME="../ftable-fixed-step-heavy/field.sdds",STRENGTH=0.1,SYNCH_RAD=0,XY_INTERPOLATION_ORDER=1,SINGLE_PRECISION=0,PARTICLE_OUTPUT_FILE="%s.bmxyz"
+RING: LINE=(BMPO)

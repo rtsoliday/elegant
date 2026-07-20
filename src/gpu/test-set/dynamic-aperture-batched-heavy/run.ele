@@ -1,0 +1,28 @@
+! Deterministic n-line search with enough independent trials for GPU batching.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+  load_balancing_on = 0,
+&end
+
+&run_control
+  n_passes = 256,
+&end
+
+&find_aperture
+  mode = "n-line",
+  n_lines = 65,
+  xmax = 0.024,
+  ymax = 0.012,
+  nx = 65,
+  n_splits = 3,
+  split_fraction = 0.2,
+  desired_resolution = 1e-5,
+  output = "%s.aper",
+  verbosity = 0,
+&end

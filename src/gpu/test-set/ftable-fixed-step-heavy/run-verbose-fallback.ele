@@ -1,0 +1,27 @@
+&run_setup
+  lattice = "lattice-verbose.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  rootname = "run-verbose-fallback",
+  final = "%s.fin",
+  semaphore_file = "%s.done",
+  random_number_seed = 987654321,
+  tracking_updates = 0,
+&end
+
+&run_control
+  n_passes = 1,
+&end
+
+&bunched_beam
+  n_particles_per_bunch = 128,
+  emit_x = 2e-9,
+  beta_x = 2,
+  emit_y = 2e-9,
+  beta_y = 2,
+  sigma_dp = 1e-4,
+  sigma_s = 5e-4,
+&end
+
+&track
+&end

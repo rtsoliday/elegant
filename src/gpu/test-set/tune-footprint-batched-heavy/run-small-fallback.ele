@@ -1,0 +1,22 @@
+! Companion below-threshold case: expected to retain the ordinary CPU path.
+&run_setup
+    lattice = "lattice.lte",
+    p_central = 880,
+    semaphore_file = %s.done
+&end
+
+&run_control
+    n_passes = 32
+&end
+
+&tune_footprint
+    delta_output = "%s.dtf",
+    xy_output = "%s.xyf",
+    ndelta = 7,
+    nx = 2,
+    ny = 2,
+    immediate = 1,
+    filtered_output = 0,
+    quadratic_spacing = 0,
+    verbosity = 0
+&end

@@ -1,0 +1,24 @@
+! Companion correctness case for the lower-order polynomial map.
+&run_setup
+    lattice = "lattice-linear.lte",
+    p_central = 880,
+    semaphore_file = %s.done
+&end
+
+&run_control
+    n_passes = 128
+&end
+
+&tune_footprint
+    delta_output = "%s.dtf",
+    xy_output = "%s.xyf",
+    delta_min = -0.005,
+    delta_max = 0.005,
+    ndelta = 41,
+    nx = 13,
+    ny = 13,
+    immediate = 1,
+    filtered_output = 0,
+    quadratic_spacing = 0,
+    verbosity = 0
+&end

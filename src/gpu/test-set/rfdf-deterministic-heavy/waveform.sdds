@@ -1,0 +1,13 @@
+SDDS1
+&description text="Deterministic RFDF voltage waveform", contents="GPU regression input" &end
+&column name=time, units=s, type=double &end
+&column name=voltageFactor, type=double &end
+&data mode=ascii, no_row_counts=1 &end
+0.0      0.90
+1.0e-7   1.05
+2.0e-7   0.98
+3.0e-7   1.08
+4.0e-7   0.94
+5.0e-7   1.02
+7.5e-7   1.10
+1.0e-6   0.96

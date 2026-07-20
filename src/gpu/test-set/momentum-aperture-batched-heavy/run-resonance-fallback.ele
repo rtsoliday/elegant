@@ -1,0 +1,28 @@
+! Tune-history/resonance-crossing mode remains point-by-point on the CPU.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run-resonance",
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+&end
+
+&run_control
+  n_passes = 64,
+&end
+
+&momentum_aperture
+  output = "%s.mmap",
+  delta_negative_limit = -0.02,
+  delta_positive_limit = 0.02,
+  delta_step_size = 0.004,
+  splits = 0,
+  process_elements = 1,
+  include_name_pattern = "B*",
+  fiducialize = 1,
+  forbid_resonance_crossing = 1,
+  soft_failure = 1,
+  verbosity = 0,
+&end

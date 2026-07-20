@@ -1,0 +1,2 @@
+BM: BMAPXY,L=0.4,STRENGTH=0.8,ACCURACY=1e-8,METHOD="runge-kutta",FILENAME="field.sdds"
+RING: LINE=(BM)

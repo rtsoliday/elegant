@@ -1,0 +1,24 @@
+! Deterministic batched frequency-map workload using a high-order map.
+
+&run_setup
+    lattice = "lattice.lte",
+    p_central = 880,
+    semaphore_file = %s.done
+&end
+
+&run_control
+    n_passes = 128
+&end
+
+&frequency_map
+    output = %s.fma,
+    xmin = 1e-6,
+    xmax = 0.005,
+    ymin = 1e-6,
+    ymax = 0.005,
+    nx = 65,
+    ny = 65,
+    include_changes = 0,
+    full_grid_output = 1,
+    verbosity = 0
+&end

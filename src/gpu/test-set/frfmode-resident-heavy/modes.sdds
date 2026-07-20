@@ -1,0 +1,23 @@
+SDDS1
+&column name=Frequency, type=double, units=Hz &end
+&column name=Q, type=double &end
+&column name=ShuntImpedance, type=double, units=Ohm &end
+&column name=beta, type=double &end
+&data mode=ascii &end
+16
+7.50e8 4200 1.20e6 0.10
+8.25e8 4500 1.10e6 0.12
+9.00e8 4800 1.00e6 0.14
+9.75e8 5100 9.20e5 0.16
+1.05e9 5400 8.50e5 0.18
+1.125e9 5700 7.90e5 0.20
+1.20e9 6000 7.30e5 0.22
+1.275e9 6300 6.80e5 0.24
+1.35e9 6600 6.30e5 0.26
+1.425e9 6900 5.90e5 0.28
+1.50e9 7200 5.50e5 0.30
+1.575e9 7500 5.10e5 0.32
+1.65e9 7800 4.80e5 0.34
+1.725e9 8100 4.50e5 0.36
+1.80e9 8400 4.20e5 0.38
+1.875e9 8700 4.00e5 0.40

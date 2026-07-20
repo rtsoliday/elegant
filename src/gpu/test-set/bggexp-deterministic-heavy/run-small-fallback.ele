@@ -1,0 +1,27 @@
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  rootname = "run-small-fallback",
+  final = "%s.fin",
+  semaphore_file = "%s.done",
+  random_number_seed = 987654321,
+  tracking_updates = 0,
+&end
+
+&run_control
+  n_passes = 1,
+&end
+
+&bunched_beam
+  n_particles_per_bunch = 16,
+  emit_x = 8e-7,
+  beta_x = 5,
+  emit_y = 4e-7,
+  beta_y = 4,
+  sigma_dp = 1e-3,
+  sigma_s = 2e-4,
+&end
+
+&track
+&end

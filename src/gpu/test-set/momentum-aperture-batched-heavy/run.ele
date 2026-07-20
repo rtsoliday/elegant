@@ -1,0 +1,35 @@
+! Deterministic momentum searches at several lattice locations. Each search
+! trial keeps a stable ID so loss coordinates and loss pass can be restored.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+  load_balancing_on = 0,
+&end
+
+&run_control
+  n_passes = 64,
+&end
+
+&momentum_aperture
+  output = "%s.mmap",
+  x_initial = 1e-6,
+  y_initial = 1e-6,
+  delta_negative_limit = -0.06,
+  delta_positive_limit = 0.06,
+  delta_negative_start = 0,
+  delta_positive_start = 0,
+  delta_step_size = 0.0005,
+  steps_back = 1,
+  split_step_divisor = 10,
+  splits = 1,
+  process_elements = 24,
+  include_name_pattern = "B*",
+  fiducialize = 1,
+  soft_failure = 1,
+  verbosity = 0,
+&end

@@ -1,0 +1,47 @@
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 1,
+  rootname = "run-loss",
+  semaphore_file = "%s.done",
+  random_number_seed = 987654321,
+  tracking_updates = 0,
+  show_element_timing = 0,
+  load_balancing_on = 0,
+&end
+
+&alter_elements name=AP, item=X_MAX, value=1e-4 &end
+&alter_elements name=AP, item=Y_MAX, value=1e-4 &end
+
+&twiss_output
+  filename = "%s.twi",
+  matched = 1,
+  radiation_integrals = 1,
+  output_at_each_step = 0,
+&end
+
+&run_control
+  n_passes = 16,
+&end
+
+&touschek_scatter
+  charge = 1e-9,
+  frequency = 1e6,
+  emit_x = 2e-9,
+  emit_y = 1e-9,
+  sigma_dp = 1e-4,
+  sigma_s = 1e-3,
+  distribution_cutoff[0] = 3*3,
+  Momentum_Aperture = "momentum-aperture.sdds",
+  Momentum_Aperture_scale = 1,
+  n_simulated = 8192,
+  ignored_portion = 0,
+  bunch = "%s.bun",
+  loss = "%s.los",
+  output = "%s.tshis",
+  do_track = 1,
+  i_start = 1,
+  i_end = 1,
+  verbosity = 1,
+&end

@@ -1,0 +1,27 @@
+! Below the default batched-search threshold, so point tracking stays on CPU.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run-small",
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+&end
+
+&run_control
+  n_passes = 32,
+&end
+
+&find_aperture
+  mode = "n-line",
+  n_lines = 3,
+  xmax = 0.024,
+  ymax = 0.012,
+  nx = 5,
+  n_splits = 1,
+  split_fraction = 0.5,
+  desired_resolution = 1e-3,
+  output = "%s.aper",
+  verbosity = 0,
+&end
