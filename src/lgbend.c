@@ -15,6 +15,11 @@
 #include "mdb.h"
 #include "track.h"
 #include "multipole.h"
+#ifdef HAVE_GPU
+#  include "gpu_base.h"
+#  include "gpu_funcs.h"
+#  include "gpu_lgbend.h"
+#endif
 
 /* Used to share data with trajectory optimization penalty function */
 static LGBEND lgbendCopy;
@@ -102,6 +107,24 @@ long track_through_lgbend(
 
   if (!particle)
     bombTracking("particle array is null (track_through_lgbend)");
+
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    startGpuTimer();
+    i_top = gpu_track_through_lgbend(n_part, eptr, lgbend, Po, accepted,
+                                     z_start, sigmaDelta2, rootname, maxamp,
+                                     apContour, apFileData, iPart,
+                                     iFinalSlice);
+#  ifdef GPU_VERIFY
+    startCpuTimer();
+    track_through_lgbend(particle, n_part, eptr, lgbend, Po, accepted,
+                         z_start, sigmaDelta2, rootname, maxamp, apContour,
+                         apFileData, iPart, iFinalSlice);
+    compareGpuCpu(n_part, "track_through_lgbend");
+#  endif
+    return i_top;
+  }
+#endif
 
   if (iPart >= 0 && lgbend->optimized != 1)
     bombTracking("Programming error: one-step mode invoked for unoptimized LGBEND.");

@@ -1918,6 +1918,225 @@ __global__ void gpuCcbendTrackCheckedKernel(
     atomicAdd(lostCount, partial[0]);
 }
 
+__device__ __forceinline__ int gpuLgbendSwitchPlane(
+  double *x, double *xp, double *y, double *yp, double *path,
+  double dp, double dx, double angle, int exitPlane) {
+  double tanAngle = tan(angle);
+  double cosAngle = cos(angle);
+  double sinAngle = sin(angle);
+  double denominator, ds, norm, qx0, qy0, qz0, qx, qy, qz;
+
+  if (exitPlane)
+    *x += dx;
+  denominator = 1 - *xp * tanAngle;
+  if (denominator == 0 || cosAngle == 0)
+    return 0;
+  ds = *x * tanAngle / denominator;
+  *x = (*x + *xp * ds) / cosAngle;
+  *y = *y + *yp * ds;
+  *path += ds;
+  norm = sqrt(1 + *xp * *xp + *yp * *yp);
+  qx0 = *xp * (1 + dp) / norm;
+  qy0 = *yp * (1 + dp) / norm;
+  qz0 = (1 + dp) / norm;
+  qx = qx0 * cosAngle + qz0 * sinAngle;
+  qy = qy0;
+  qz = -qx0 * sinAngle + qz0 * cosAngle;
+  if (qz == 0)
+    return 0;
+  *xp = qx / qz;
+  *yp = qy / qz;
+  if (!exitPlane)
+    *x += dx;
+  return isfinite(*x) && isfinite(*xp) && isfinite(*y) &&
+         isfinite(*yp) && isfinite(*path);
+}
+
+/* The narrow LGBEND subset has no supplied fringe integrals and edge order
+ * at most one.  Retain the CPU routine's canonical slope round trip and its
+ * zeroth-order path-length term instead of silently dropping the nominal
+ * hard-edge operation. */
+__device__ __forceinline__ int gpuLgbendZeroIntegralFringe(
+  double *x, double *xp, double *y, double *yp, double *path,
+  double dp, double alpha, double invRhoPlus, double invRhoMinus) {
+  double x1 = *x, y1 = *y, tau1, px1, py1;
+  double x2, y2, tau2, px2, py2;
+  double tant = tan(alpha);
+  double sint = sin(alpha);
+  double sect = 1.0 / cos(alpha);
+  double focY0 = -tant * (invRhoPlus - invRhoMinus);
+  double invP = 1.0 / (1.0 + dp);
+  double temp, expT;
+
+  temp = sqrt(1.0 + *xp * *xp + *yp * *yp);
+  px1 = (1.0 + dp) * *xp / temp;
+  py1 = (1.0 + dp) * *yp / temp;
+  tau1 = -*path + sint * x1;
+  px1 -= (1.0 + dp) * sint;
+
+  temp = sect * 0.0 * invP;
+  if (fabs(temp) < 1.0e-20)
+    temp = 1.0e-20;
+  expT = exp(temp);
+  x2 = expT * x1;
+  y2 = y1 / expT;
+  px2 = px1 / expT;
+  py2 = expT * py1 +
+        y1 * focY0 * (expT - 1.0 / expT) / (2.0 * temp);
+  tau2 = tau1 + invP *
+    (-(px1 * x1 - py1 * y1) * temp +
+     focY0 * (1.0 / (expT * expT) - 1.0 + 2.0 * temp) /
+       (4.0 * temp) * y1 * y1);
+
+  px2 += (1.0 + dp) * sint;
+  temp = (1.0 + dp) * (1.0 + dp) - px2 * px2 - py2 * py2;
+  if (temp <= 0)
+    return 0;
+  temp = sqrt(temp);
+  *x = x2;
+  *xp = px2 / temp;
+  *y = y2;
+  *yp = py2 / temp;
+  *path = -tau2 + sint * x2;
+  return isfinite(*x) && isfinite(*xp) && isfinite(*y) &&
+         isfinite(*yp) && isfinite(*path);
+}
+
+__device__ __forceinline__ int gpuLgbendBody(
+  double *x, double *xp, double *y, double *yp, double *path, double dp,
+  const GPU_LGBEND_SEGMENT_DATA &segment, long nSlices,
+  double coordLimit, double slopeLimit) {
+  double qx, qy, denominator, bodyPath = 0;
+  double xpow[3], ypow[3];
+  double halfDrift = segment.length / nSlices * 0.5;
+
+  if (fabs(*x) > coordLimit || fabs(*y) > coordLimit ||
+      fabs(*xp) > slopeLimit || fabs(*yp) > slopeLimit)
+    return 0;
+  denominator = sqrt(1 + *xp * *xp + *yp * *yp);
+  qx = (1 + dp) * *xp / denominator;
+  qy = (1 + dp) * *yp / denominator;
+  denominator = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
+  if (denominator <= 0)
+    return 0;
+  denominator = sqrt(denominator);
+  *xp = qx / denominator;
+  *yp = qy / denominator;
+
+  for (long slice = 0; slice < nSlices; slice++) {
+    double deltaQx = 0, deltaQy = 0;
+    bodyPath += halfDrift * sqrt(1 + *xp * *xp + *yp * *yp);
+    *x += *xp * halfDrift;
+    *y += *yp * halfDrift;
+    gpuMultipoleFillPowerArray(*x, xpow, 2);
+    gpuMultipoleFillPowerArray(*y, ypow, 2);
+    for (int order = 0; order < 3; order++) {
+      if (segment.KnL[order])
+        gpuMultipoleApplyKick(&qx, &qy, &deltaQx, &deltaQy,
+                              xpow, ypow, order,
+                              segment.KnL[order] / nSlices, 0);
+    }
+    denominator = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
+    if (denominator <= 0)
+      return 0;
+    denominator = sqrt(denominator);
+    *xp = qx / denominator;
+    *yp = qy / denominator;
+    bodyPath += halfDrift * sqrt(1 + *xp * *xp + *yp * *yp);
+    *x += *xp * halfDrift;
+    *y += *yp * halfDrift;
+  }
+
+  denominator = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
+  if (denominator <= 0)
+    return 0;
+  denominator = sqrt(denominator);
+  *xp = qx / denominator;
+  *yp = qy / denominator;
+  *path += bodyPath;
+  return isfinite(*x) && isfinite(*xp) && isfinite(*y) &&
+         isfinite(*yp) && isfinite(*path) &&
+         fabs(*x) <= coordLimit && fabs(*y) <= coordLimit &&
+         fabs(*xp) <= slopeLimit && fabs(*yp) <= slopeLimit;
+}
+
+__device__ int gpuLgbendTrackParticle(double *part, int stride,
+                                      const GPU_LGBEND_DATA &data) {
+  double x = part[0], xp = part[1], y = part[2], yp = part[3];
+  double path = part[4], dp = part[5];
+
+  (void)stride;
+  if (!isfinite(x) || !isfinite(xp) || !isfinite(y) ||
+      !isfinite(yp) || !isfinite(path) || !isfinite(dp))
+    return 0;
+  if (data.predrift) {
+    x += xp * data.predrift;
+    y += yp * data.predrift;
+    path += data.predrift * sqrt(1 + xp * xp + yp * yp);
+  }
+  if (!gpuLgbendSwitchPlane(&x, &xp, &y, &yp, &path, dp,
+                             data.entryPosition, data.entryAngle, 0))
+    return 0;
+  for (long i = 0; i < data.nSegments; i++) {
+    double invRhoMinus = i ? data.segment[i - 1].invRho : 0.0;
+    double invRhoPlus = i + 1 < data.nSegments ?
+                          data.segment[i + 1].invRho : 0.0;
+    if (i == 0 &&
+        !gpuLgbendZeroIntegralFringe(&x, &xp, &y, &yp, &path, dp,
+                                     data.segment[i].entryAngle,
+                                     data.segment[i].invRho,
+                                     invRhoMinus))
+      return 0;
+    if (!gpuLgbendBody(&x, &xp, &y, &yp, &path, dp, data.segment[i],
+                       data.nSlices, data.coordLimit, data.slopeLimit))
+      return 0;
+    if (!gpuLgbendZeroIntegralFringe(&x, &xp, &y, &yp, &path, dp,
+                                     data.segment[i].exitAngle,
+                                     invRhoPlus,
+                                     data.segment[i].invRho))
+      return 0;
+  }
+  if (!gpuLgbendSwitchPlane(&x, &xp, &y, &yp, &path, dp,
+                             -data.exitPosition, -data.exitAngle, 1))
+    return 0;
+  if (data.postdrift) {
+    x += xp * data.postdrift;
+    y += yp * data.postdrift;
+    path += data.postdrift * sqrt(1 + xp * xp + yp * yp);
+  }
+  if (!isfinite(x) || !isfinite(xp) || !isfinite(y) ||
+      !isfinite(yp) || !isfinite(path))
+    return 0;
+  part[0] = x;
+  part[1] = xp;
+  part[2] = y;
+  part[3] = yp;
+  part[4] = path;
+  part[5] = dp;
+  return 1;
+}
+
+__global__ void gpuLgbendTrackCheckedKernel(
+  double *coord, long nParticles, int stride, GPU_LGBEND_DATA data,
+  unsigned long long *lostCount) {
+  extern __shared__ unsigned long long partial[];
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  unsigned long long localCount = 0;
+
+  if (ip < nParticles &&
+      !gpuLgbendTrackParticle(coord + ip * stride, stride, data))
+    localCount = 1;
+  partial[threadIdx.x] = localCount;
+  __syncthreads();
+  for (unsigned int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+    if (threadIdx.x < offset)
+      partial[threadIdx.x] += partial[threadIdx.x + offset];
+    __syncthreads();
+  }
+  if (threadIdx.x == 0 && partial[0])
+    atomicAdd(lostCount, partial[0]);
+}
+
 __global__ void gpuAddCoordinateKernel(double *coord, long nParticles, int stride,
                                        int index, double value) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
@@ -8020,6 +8239,83 @@ extern "C" int gpuCudaCcbendTrackChecked(void *coord, long nParticles,
   gpuCcbendTrackCheckedKernel<<<blocks, threads,
                                 threads * sizeof(unsigned long long)>>>(
     static_cast<double *>(coord), nParticles, stride, *ccbend,
+    deviceLostCount);
+  status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(backup);
+    cudaFree(deviceLostCount);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(&hostLostCount, deviceLostCount,
+                          sizeof(hostLostCount), cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess && hostLostCount)
+    cudaStatus = cudaMemcpy(coord, backup, count * sizeof(*backup),
+                            cudaMemcpyDeviceToDevice);
+  cudaFree(backup);
+  cudaFree(deviceLostCount);
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  *lostCount = static_cast<long>(hostLostCount);
+  return static_cast<int>(cudaSuccess);
+}
+
+extern "C" int gpuCudaLgbendTrackChecked(void *coord, long nParticles,
+                                           int stride,
+                                           const GPU_LGBEND_DATA *lgbend,
+                                           long *lostCount,
+                                           float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  unsigned long long *deviceLostCount = NULL;
+  unsigned long long hostLostCount = 0;
+  double *backup = NULL;
+  unsigned long long count;
+  int threads = 256;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  if (!coord || !lgbend || !lostCount || stride <= 0 ||
+      lgbend->nSegments <= 0 ||
+      lgbend->nSegments > GPU_LGBEND_MAX_SEGMENTS || lgbend->nSlices <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *lostCount = 0;
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+  cudaStatus = cudaMalloc(&deviceLostCount, sizeof(*deviceLostCount));
+  if (cudaStatus != cudaSuccess)
+    return static_cast<int>(cudaStatus);
+  cudaStatus = cudaMemset(deviceLostCount, 0, sizeof(*deviceLostCount));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceLostCount);
+    return static_cast<int>(cudaStatus);
+  }
+  count = static_cast<unsigned long long>(nParticles) *
+          static_cast<unsigned long long>(stride);
+  cudaStatus = cudaMalloc(&backup, count * sizeof(*backup));
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceLostCount);
+    return static_cast<int>(cudaStatus);
+  }
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(backup);
+    cudaFree(deviceLostCount);
+    return status;
+  }
+  cudaStatus = cudaMemcpy(backup, coord, count * sizeof(*backup),
+                          cudaMemcpyDeviceToDevice);
+  if (cudaStatus != cudaSuccess) {
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    cudaFree(backup);
+    cudaFree(deviceLostCount);
+    return static_cast<int>(cudaStatus);
+  }
+  gpuLgbendTrackCheckedKernel<<<blocks, threads,
+                                threads * sizeof(unsigned long long)>>>(
+    static_cast<double *>(coord), nParticles, stride, *lgbend,
     deviceLostCount);
   status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
   if (status != static_cast<int>(cudaSuccess)) {

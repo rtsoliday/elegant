@@ -255,6 +255,30 @@ typedef struct GPU_CCBEND_DATA {
   double slopeLimit;
 } GPU_CCBEND_DATA;
 
+#define GPU_LGBEND_MAX_SEGMENTS 16
+
+typedef struct GPU_LGBEND_SEGMENT_DATA {
+  double length;
+  double entryAngle;
+  double exitAngle;
+  double invRho;
+  double KnL[3];
+} GPU_LGBEND_SEGMENT_DATA;
+
+typedef struct GPU_LGBEND_DATA {
+  long nSegments;
+  long nSlices;
+  double predrift;
+  double postdrift;
+  double entryPosition;
+  double entryAngle;
+  double exitPosition;
+  double exitAngle;
+  double coordLimit;
+  double slopeLimit;
+  GPU_LGBEND_SEGMENT_DATA segment[GPU_LGBEND_MAX_SEGMENTS];
+} GPU_LGBEND_DATA;
+
 typedef struct GPU_WAKE_LONGITUDINAL_DATA {
   long bins;
   long wakePoints;

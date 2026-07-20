@@ -43,6 +43,7 @@
 #pragma weak multipoleKicksDone
 #pragma weak track_through_csbend
 #pragma weak track_through_ccbend
+#pragma weak track_through_lgbend
 #ifdef GPU_VERIFY
 #pragma weak gpu_verify_csrcsbend_cpu_body_slice
 #endif
@@ -502,6 +503,9 @@ extern int gpuCudaCsbendTrackStableCompact(void *coord, void *scratchCoord,
 extern int gpuCudaCcbendTrackChecked(void *coord, long nParticles, int stride,
                                      const GPU_CCBEND_DATA *ccbend,
                                      long *lostCount, float *milliseconds);
+extern int gpuCudaLgbendTrackChecked(void *coord, long nParticles, int stride,
+                                     const GPU_LGBEND_DATA *lgbend,
+                                     long *lostCount, float *milliseconds);
 extern int gpuCudaCsrCsbendBodySliceChecked(void *coord, long nParticles,
                                             int stride,
                                             const GPU_CSBEND_DATA *csbend,
@@ -847,6 +851,8 @@ static long gpuEnableLorentz = 0;
 static long gpuLorentzMinParticles = 64;
 static long gpuEnableCcbend = 0;
 static long gpuCcbendMinParticles = 64;
+static long gpuEnableLgbend = 0;
+static long gpuLgbendMinParticles = 64;
 static long gpuEnableRfmode = 0;
 static long gpuEnableFrfmode = 0;
 static long gpuEnableTrfmode = 0;
@@ -918,6 +924,7 @@ static long gpuCsrCsbendDeviceEntrySupported(ELEMENT_LIST *eptr, long nParticles
 static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr);
 static long gpuCsbendElementSupported(ELEMENT_LIST *eptr);
 static long gpuCcbendElementSupported(ELEMENT_LIST *eptr);
+static long gpuLgbendElementSupported(ELEMENT_LIST *eptr);
 static long gpuWakeElementSupported(ELEMENT_LIST *eptr);
 static long gpuTrwakeElementSupported(ELEMENT_LIST *eptr);
 static long gpuCombinedWakeElementSupported(ELEMENT_LIST *eptr);
@@ -2178,6 +2185,70 @@ static long gpuCcbendElementSupported(ELEMENT_LIST *eptr) {
   return gpuCcbendCommonSupported((CCBEND *)eptr->p_elem);
 }
 
+static long gpuLgbendFringeIntegralsAreZero(const LGBEND_SEGMENT *segment) {
+  if (!segment)
+    return 0;
+  return segment->fringeInt1K0 == 0 && segment->fringeInt1I0 == 0 &&
+         segment->fringeInt1K2 == 0 && segment->fringeInt1I1 == 0 &&
+         segment->fringeInt1K4 == 0 && segment->fringeInt1K5 == 0 &&
+         segment->fringeInt1K6 == 0 && segment->fringeInt1K7 == 0 &&
+         segment->fringeInt2K0 == 0 && segment->fringeInt2I0 == 0 &&
+         segment->fringeInt2K2 == 0 && segment->fringeInt2I1 == 0 &&
+         segment->fringeInt2K4 == 0 && segment->fringeInt2K5 == 0 &&
+         segment->fringeInt2K6 == 0 && segment->fringeInt2K7 == 0;
+}
+
+static long gpuLgbendCommonSupported(LGBEND *lgbend) {
+  long i;
+
+  if (!lgbend || !gpuEnableLgbend || spinCoordOffset || gpuBase.backtrack)
+    return 0;
+  if (!lgbend->initialized || lgbend->nSegments <= 0 ||
+      lgbend->nSegments > GPU_LGBEND_MAX_SEGMENTS || lgbend->nSlices <= 0 ||
+      lgbend->integration_order != 2 || lgbend->edgeOrder > 1 ||
+      lgbend->optimizeFse)
+    return 0;
+  if (lgbend->synch_rad || lgbend->isr ||
+      lgbend->distributionBasedRadiation ||
+      lgbend->synchRadInOrdinaryMatrix)
+    return 0;
+  if (lgbend->tilt || lgbend->dx || lgbend->dy || lgbend->dz ||
+      lgbend->eyaw || lgbend->epitch || lgbend->etilt ||
+      lgbend->wasFlipped)
+    return 0;
+  if (gpuStringSet(lgbend->apertureDataFile) ||
+      gpuStringSet(lgbend->centroidOutputFile) || lgbend->localApertureData ||
+      lgbend->centroidsRequested || lgbend->SDDScen)
+    return 0;
+  if (!isfinite(lgbend->predrift) || !isfinite(lgbend->postdrift) ||
+      !lgbend->segment || !lgbend->fseOpt || !lgbend->KnDelta)
+    return 0;
+  for (i = 0; i < lgbend->nSegments; i++) {
+    LGBEND_SEGMENT *segment = lgbend->segment + i;
+    double denominator;
+    if (!isfinite(segment->length) || segment->length <= 0 ||
+        !isfinite(segment->angle) || segment->angle <= 0 ||
+        !isfinite(segment->entryAngle) || !isfinite(segment->exitAngle) ||
+        !isfinite(segment->entryX) || !isfinite(segment->exitX) ||
+        !isfinite(segment->K1) || !isfinite(segment->K2) ||
+        !isfinite(lgbend->fseOpt[i]) || !isfinite(lgbend->KnDelta[i]) ||
+        lgbend->KnDelta[i] == 1 ||
+        !gpuLgbendFringeIntegralsAreZero(segment))
+      return 0;
+    denominator = sin(segment->entryAngle) +
+                  sin(segment->angle - segment->entryAngle);
+    if (!isfinite(denominator) || denominator == 0)
+      return 0;
+  }
+  return 1;
+}
+
+static long gpuLgbendElementSupported(ELEMENT_LIST *eptr) {
+  if (!eptr || !eptr->p_elem || eptr->type != T_LGBEND)
+    return 0;
+  return gpuLgbendCommonSupported((LGBEND *)eptr->p_elem);
+}
+
 static long gpuWakeDataSupported(WAKE *wake) {
   if (!wake)
     return 0;
@@ -2885,6 +2956,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuCcbendElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuCcbendMinParticles);
+  if (gpuLgbendElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuLgbendMinParticles);
   if (gpuCsbendElementSupported(eptr))
     return gpuMagnetParticleCountAllowed(nParticles);
   if (gpuMultipoleElementSupported(eptr))
@@ -4993,6 +5067,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_CCBEND_PARTICLES", 64);
   if (gpuCcbendMinParticles < 1)
     gpuCcbendMinParticles = 1;
+  gpuEnableLgbend =
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_LGBEND") ||
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_LGBEND");
+  gpuLgbendMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_LGBEND_PARTICLES", 64);
+  if (gpuLgbendMinParticles < 1)
+    gpuLgbendMinParticles = 1;
   gpuEnableRfmode =
     !gpuEnvSet("ELEGANT_GPU_ENABLE_RFMODE") ||
     gpuEnvFlag("ELEGANT_GPU_ENABLE_RFMODE");
@@ -5063,6 +5144,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnableFtable = 0;
   gpuEnableBmxyz = 0;
   gpuEnableLorentz = 0;
+  gpuEnableLgbend = 0;
   gpuEnableRfmode = 0;
   gpuEnableFrfmode = 0;
   gpuEnableTrfmode = 0;
@@ -5224,6 +5306,10 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
       fprintf(stderr,
               "elegant CUDA: deterministic order-2 CCBEND enabled at %ld particles.\n",
               gpuCcbendMinParticles);
+    if (gpuEnableLgbend)
+      fprintf(stderr,
+              "elegant CUDA: deterministic order-2 LGBEND enabled at %ld particles.\n",
+              gpuLgbendMinParticles);
     if (gpuEnableRfmode || gpuEnableFrfmode ||
         gpuEnableTrfmode || gpuEnableFtrfmode)
       fprintf(stderr,
@@ -10050,6 +10136,130 @@ long gpu_track_through_ccbend(long n_part, void *eptr0, void *ccbend0,
   gpuRecordWallSeconds();
   if (&multipoleKicksDone)
     multipoleKicksDone += n_part * data.nSlices;
+  return n_part;
+}
+
+static long gpuPackLgbendTracking(GPU_LGBEND_DATA *data, LGBEND *lgbend) {
+  long i, j;
+
+  if (!data || !gpuLgbendCommonSupported(lgbend))
+    return 0;
+  memset(data, 0, sizeof(*data));
+  data->nSegments = lgbend->nSegments;
+  data->nSlices = lgbend->nSlices;
+  data->predrift = lgbend->predrift;
+  data->postdrift = lgbend->postdrift;
+  data->entryPosition = lgbend->segment[0].entryX;
+  data->entryAngle = lgbend->segment[0].entryAngle;
+  data->exitPosition = lgbend->segment[lgbend->nSegments - 1].exitX;
+  data->exitAngle = lgbend->segment[lgbend->nSegments - 1].exitAngle;
+  data->coordLimit = coordLimit;
+  data->slopeLimit = slopeLimit;
+  for (i = 0; i < lgbend->nSegments; i++) {
+    LGBEND_SEGMENT *segment = lgbend->segment + i;
+    double rho0, denominator, scale;
+    denominator = sin(segment->entryAngle) +
+                  sin(segment->angle - segment->entryAngle);
+    rho0 = segment->length / denominator;
+    denominator = 1 - lgbend->KnDelta[i];
+    scale = 1 + lgbend->fse + lgbend->fseOpt[i];
+    data->segment[i].length = segment->length;
+    data->segment[i].entryAngle = segment->entryAngle;
+    data->segment[i].exitAngle = segment->exitAngle;
+    data->segment[i].invRho = 1 / rho0;
+    data->segment[i].KnL[0] = scale / rho0 * segment->length;
+    data->segment[i].KnL[1] =
+      scale * segment->K1 * segment->length / denominator;
+    data->segment[i].KnL[2] =
+      scale * segment->K2 * segment->length / denominator;
+    if (!isfinite(data->segment[i].length))
+      return 0;
+    for (j = 0; j < 3; j++)
+      if (!isfinite(data->segment[i].KnL[j]))
+        return 0;
+  }
+  return isfinite(data->entryPosition) && isfinite(data->entryAngle) &&
+         isfinite(data->exitPosition) && isfinite(data->exitAngle) &&
+         isfinite(data->coordLimit) && isfinite(data->slopeLimit);
+}
+
+static long gpuLgbendOnCpu(long n_part, ELEMENT_LIST *eptr, LGBEND *lgbend,
+                           double Po, double **accepted, double z_start,
+                           double *sigmaDelta2, char *rootname,
+                           MAXAMP *maxamp, APCONTOUR *apContour,
+                           APERTURE_DATA *apFileData, long iPart,
+                           long iFinalSlice, const char *reason) {
+  double **coord = forceParticlesToCpu(reason);
+  long remaining;
+
+  if (!track_through_lgbend)
+    gpuRequiredFailure("CPU track_through_lgbend fallback is unavailable");
+  gpuBase.elementOnGpu = 0;
+  remaining = track_through_lgbend(coord, n_part, eptr, lgbend, Po, accepted,
+                                   z_start, sigmaDelta2, rootname, maxamp,
+                                   apContour, apFileData, iPart, iFinalSlice);
+  gpuMarkHostWillChange();
+  gpuRecordWallSeconds();
+  return remaining;
+}
+
+long gpu_track_through_lgbend(long n_part, void *eptr0, void *lgbend0,
+                              double Po, double **accepted, double z_start,
+                              double *sigmaDelta2, char *rootname,
+                              void *maxamp0, void *apContour0,
+                              void *apFileData0, long iPart,
+                              long iFinalSlice) {
+  ELEMENT_LIST *eptr = (ELEMENT_LIST *)eptr0;
+  LGBEND *lgbend = (LGBEND *)lgbend0;
+  MAXAMP *maxamp = (MAXAMP *)maxamp0;
+  APCONTOUR *apContour = (APCONTOUR *)apContour0;
+  APERTURE_DATA *apFileData = (APERTURE_DATA *)apFileData0;
+  GPU_LGBEND_DATA data;
+  long lostCount = 0;
+  float milliseconds = 0;
+  int status;
+
+  if (n_part <= 0)
+    return n_part;
+  if (!lgbend)
+    gpuRequiredFailure("NULL LGBEND pointer in gpu_track_through_lgbend");
+  if (gpuBase.backtrack || iPart >= 0 || iFinalSlice > 0)
+    return gpuLgbendOnCpu(n_part, eptr, lgbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "LGBEND partial/backtracking CPU fallback");
+  if (maxamp || apContour || (apFileData && apFileData->initialized))
+    return gpuLgbendOnCpu(n_part, eptr, lgbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "LGBEND aperture CPU fallback");
+  if (sigmaDelta2)
+    return gpuLgbendOnCpu(n_part, eptr, lgbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "LGBEND radiation-sigma CPU fallback");
+  if (!gpuPackLgbendTracking(&data, lgbend))
+    return gpuLgbendOnCpu(n_part, eptr, lgbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "LGBEND unsupported-option CPU fallback");
+
+  gpuCopyHostToDevice(n_part);
+  status = gpuCudaLgbendTrackChecked(gpuBase.deviceCoord, n_part,
+                                     (int)gpuBase.deviceStride, &data,
+                                     &lostCount, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("LGBEND tracking CUDA checked kernel", status);
+  gpuRecordMagnetKernel(milliseconds);
+  if (lostCount)
+    return gpuLgbendOnCpu(n_part, eptr, lgbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "LGBEND particle-loss CPU fallback");
+  gpuMarkDeviceChanged(n_part);
+  gpuRecordWallSeconds();
+  if (&multipoleKicksDone)
+    multipoleKicksDone += n_part * data.nSlices * data.nSegments;
   return n_part;
 }
 
