@@ -12,23 +12,23 @@ Run CPU and GPU artifact sets serially so tests do not contend for cores or the
 GPU:
 
 ```sh
-python3 scripts/elegant_test_regression.py baseline \
+python3 src/gpu/scripts/elegant_test_regression.py baseline \
   --test-set src/gpu/test-set --jobs 1 \
   --elegant bin/Linux-x86_64/elegant \
   --output GPU-Testing/gpu-test-set-cpu
 
-python3 scripts/elegant_test_regression.py baseline \
+python3 src/gpu/scripts/elegant_test_regression.py baseline \
   --test-set src/gpu/test-set --jobs 1 \
   --elegant bin/Linux-x86_64-gpu/gpu-elegant \
   --output GPU-Testing/gpu-test-set-gpu-pre-change
 
 # Build the candidate, then create a third completed artifact set.
-python3 scripts/elegant_test_regression.py baseline \
+python3 src/gpu/scripts/elegant_test_regression.py baseline \
   --test-set src/gpu/test-set --jobs 1 \
   --elegant bin/Linux-x86_64-gpu/gpu-elegant \
   --output GPU-Testing/gpu-test-set-gpu-candidate
 
-python3 scripts/elegant_test_regression.py compare-existing \
+python3 src/gpu/scripts/elegant_test_regression.py compare-existing \
   --baseline GPU-Testing/gpu-test-set-cpu \
   --pre-change-gpu GPU-Testing/gpu-test-set-gpu-pre-change \
   --candidate GPU-Testing/gpu-test-set-gpu-candidate \
