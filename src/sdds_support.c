@@ -257,8 +257,8 @@ void SDDS_BeamLossSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long 
   log_exit("SDDS_BeamLossSetup");
 }
 
-#define CENTROID_COLUMNS 10
-#define CENTROID_COLUMNS_WITH_WEIGHTS 12
+#define CENTROID_COLUMNS 11
+#define CENTROID_COLUMNS_WITH_WEIGHTS 13
 static SDDS_DEFINITION centroid_column[CENTROID_COLUMNS_WITH_WEIGHTS] = {
   {"Cx", "&column name=Cx, symbol=\"<x>\", units=m, type=double, description=\"x centroid\" &end"},
   {"Cxp", "&column name=Cxp, symbol=\"<x'>\", type=double, description=\"x' centroid\" &end"},
@@ -266,6 +266,7 @@ static SDDS_DEFINITION centroid_column[CENTROID_COLUMNS_WITH_WEIGHTS] = {
   {"Cyp", "&column name=Cyp, symbol=\"<y'>\", type=double, description=\"y' centroid\" &end"},
   {"Cs", "&column name=Cs, symbol=\"<s>\", units=m, type=double, description=\"mean distance traveled\" &end"},
   {"Cdelta", "&column name=Cdelta, symbol=\"<$gd$r>\", type=double, description=\"delta centroid\" &end"},
+  {"Ct", "&column name=Ct, symbol=\"<t>\", units=s, type=double, description=\"mean arrival time\" &end"},
   {"Particles", "&column name=Particles, description=\"Number of particles\", type=long &end"},
   {"pCentral", "&column name=pCentral, symbol=\"p$bcen$n\", units=\"m$be$nc\", type=double, description=\"Reference beta*gamma\" &end"},
   {"Charge", "&column name=Charge, description=\"Charge in the beam\", units=C, type=double &end"},
@@ -2106,7 +2107,7 @@ void dump_centroid(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline,
   type_name = "MARK";
   occurence = 1;
   type = -1;
-  cent = tmalloc(sizeof(*cent) * 6);
+  cent = tmalloc(sizeof(*cent) * 7);
   for (i = row = 0; i < n_elements; i++) {
     if (!eptr) {
       printf("element pointer is NULL, i=%ld (dump_centroid)", i);
@@ -2115,13 +2116,13 @@ void dump_centroid(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline,
     }
     beam = sums + i;
     if (beam->n_part)
-      for (j = 0; j < 6; j++) {
+      for (j = 0; j < 7; j++) {
         cent[j] = beam->centroid[j];
         if (isnan(cent[j]) || isinf(cent[j]))
           cent[j] = DBL_MAX;
       }
     else
-      for (j = 0; j < 6; j++)
+      for (j = 0; j < 7; j++)
         cent[j] = 0;
     if (!bpmsOnly || type == T_MONI || type == T_HMON || type == T_VMON) {
       if (spinCoordOffset) {
@@ -2137,8 +2138,8 @@ void dump_centroid(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline,
       if (!SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row,
                              Cx_index, cent[0], Cx_index + 1, cent[1], Cx_index + 2, cent[2],
                              Cx_index + 3, cent[3], Cx_index + 4, cent[4], Cx_index + 5, cent[5],
-                             Cx_index + 6, beam->n_part, Cx_index + 7, beam->p0,
-                             Cx_index + 8, beam->charge, Cx_index+9, beam->pass,
+			     Cx_index + 6, cent[6], Cx_index + 7, beam->n_part,
+			     Cx_index + 8, beam->p0, Cx_index + 9, beam->charge, Cx_index+10, beam->pass,
                              s_index, beam->z, s_index + 1, name, s_index + 2, occurence,
                              s_index + 3, type_name, -1)) {
         SDDS_SetError("Problem setting row values for SDDS table (dump_centroid)");
