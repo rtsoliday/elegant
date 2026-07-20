@@ -206,6 +206,14 @@ extern int gpuCudaClearBatchedSearchHistory(void *history,
                                             unsigned long historyCount,
                                             void *turnCount,
                                             unsigned long particles);
+extern int gpuCudaBatchedApertureSearch(
+  const GPU_BATCHED_APERTURE_ELEMENT *element, long elements,
+  long lines, long nx, long nSplits, double splitFraction, long passes,
+  double pCentral, double xmax, double ymax, const double *orbit,
+  const double *dxFactor, const double *dyFactor,
+  double *xLimit, double *yLimit, double *xLost, double *yLost,
+  double *sLost, long *lossPass, long *lossElement,
+  long *originStable, float *milliseconds);
 extern int gpuCudaSetCentralMomentum(void *coord, long nParticles, int stride,
                                      double oldP, double newP, float *milliseconds);
 extern int gpuCudaMatchEnergy(void *coord, long nParticles, int stride,
@@ -881,6 +889,8 @@ static long gpuScmultMomentCacheValid;
 
 static long gpuPackMatrix(GPU_MATRIX_DATA *packed, VMATRIX *M);
 static long gpuMatrixSupported(VMATRIX *M);
+static long gpuPackMultipoleTracking(GPU_MULTIPOLE_DATA *data,
+                                     ELEMENT_LIST *elem, double Po);
 static void gpuReleaseKickMapCache(void);
 static void gpuEnsureRfcwKickScratch(long nParticles);
 static void gpuEnsureLscScratch(long bins);
@@ -5352,6 +5362,186 @@ long gpu_batched_search_beamline_supported(void *beamline0) {
     }
   }
   return 1;
+#endif
+}
+
+long gpu_run_batched_aperture_search(
+  void *beamline0, double pCentral, long lines, long nx, long nSplits,
+  double splitFraction, long nPasses, double xmax, double ymax,
+  const double *orbit, const double *dxFactor, const double *dyFactor,
+  double *xLimit, double *yLimit, double *xLost, double *yLost,
+  double *sLost, long *lossPass, long *lossElement, long *originStable) {
+#if USE_MPI
+  (void)beamline0;
+  (void)pCentral;
+  (void)lines;
+  (void)nx;
+  (void)nSplits;
+  (void)splitFraction;
+  (void)nPasses;
+  (void)xmax;
+  (void)ymax;
+  (void)orbit;
+  (void)dxFactor;
+  (void)dyFactor;
+  (void)xLimit;
+  (void)yLimit;
+  (void)xLost;
+  (void)yLost;
+  (void)sLost;
+  (void)lossPass;
+  (void)lossElement;
+  (void)originStable;
+  return 0;
+#else
+  LINE_LIST *beamline = (LINE_LIST *)beamline0;
+  ELEMENT_LIST *eptr;
+  GPU_BATCHED_APERTURE_ELEMENT *program = NULL;
+  long elements = 0, packed = 0, beamElementIndex = 0;
+  long matrixElements = 0, magnetElements = 0, apertureElements = 0;
+  long logicalExecutions;
+  float milliseconds = 0;
+  int status;
+
+  if (!beamline || !gpuBase.initialized || gpuBase.activeDevice < 0 ||
+      lines <= 0 || nx < 2 || nSplits < 0 || nPasses <= 0 ||
+      splitFraction <= 0 || splitFraction >= 1 || !orbit ||
+      !dxFactor || !dyFactor || !xLimit || !yLimit || !xLost || !yLost ||
+      !sLost || !lossPass || !lossElement || !originStable)
+    return 0;
+
+  /* This is intentionally narrower than ordinary batched-search support.
+   * A single CUDA thread follows one independent trial through the complete
+   * flattened lattice, so every accepted element must be free of evolving
+   * host state and order-sensitive output. */
+  for (eptr = beamline->elem; eptr; eptr = eptr->succ) {
+    RCOL *rcol;
+
+    if (eptr->ignore)
+      continue;
+    switch (eptr->type) {
+    case T_MARK:
+    case T_RECIRC:
+      break;
+    case T_DRIF:
+      if (!eptr->p_elem || !eptr->matrix || !gpuMatrixSupported(eptr->matrix))
+        return 0;
+      elements++;
+      break;
+    case T_KQUAD:
+    case T_KSEXT:
+    case T_KOCT:
+      if (!gpuMultipoleElementSupported(eptr))
+        return 0;
+      elements++;
+      break;
+    case T_RCOL:
+      rcol = (RCOL *)eptr->p_elem;
+      if (!rcol || rcol->length != 0 || rcol->invert ||
+          (rcol->openSide && *rcol->openSide))
+        return 0;
+      elements++;
+      break;
+    default:
+      return 0;
+    }
+  }
+  if (elements <= 0)
+    return 0;
+
+  program = (GPU_BATCHED_APERTURE_ELEMENT *)calloc(
+    (size_t)elements, sizeof(*program));
+  if (!program)
+    gpuRequiredFailure("unable to allocate device-resident aperture-search program");
+  for (eptr = beamline->elem; eptr; eptr = eptr->succ) {
+    GPU_BATCHED_APERTURE_ELEMENT *item;
+
+    if (eptr->ignore)
+      continue;
+    if (eptr->type == T_MARK || eptr->type == T_RECIRC) {
+      beamElementIndex++;
+      continue;
+    }
+    item = program + packed;
+    item->elementIndex = beamElementIndex++;
+    switch (eptr->type) {
+    case T_DRIF:
+      item->type = GPU_BATCHED_APERTURE_MATRIX_DRIFT;
+      item->data.drift.length = ((DRIFT *)eptr->p_elem)->length;
+      item->data.drift.order = eptr->matrix->order;
+      matrixElements++;
+      break;
+    case T_KQUAD:
+    case T_KSEXT:
+    case T_KOCT:
+      item->type = GPU_BATCHED_APERTURE_MULTIPOLE;
+      if (!gpuPackMultipoleTracking(&item->data.multipole, eptr, pCentral) ||
+          item->data.multipole.radCoef != 0)
+        goto unsupported;
+      if (!item->data.multipole.KnL[0] &&
+          !item->data.multipole.KnL[1] &&
+          !item->data.multipole.KnL[2] &&
+          !item->data.multipole.xkick &&
+          !item->data.multipole.ykick &&
+          !item->data.multipole.dx && !item->data.multipole.dy &&
+          !item->data.multipole.dz &&
+          !item->data.multipole.sinTilt &&
+          item->data.multipole.cosTilt == 1) {
+        GPU_MULTIPOLE_DATA multipole = item->data.multipole;
+        memset(&item->data, 0, sizeof(item->data));
+        item->type = GPU_BATCHED_APERTURE_MULTIPOLE_DRIFT;
+        item->data.drift.length = multipole.drift;
+        item->data.drift.coordLimit = multipole.coordLimit;
+        item->data.drift.slopeLimit = multipole.slopeLimit;
+        item->data.drift.expandHamiltonian = multipole.expandHamiltonian;
+      }
+      magnetElements++;
+      break;
+    case T_RCOL: {
+      RCOL *rcol = (RCOL *)eptr->p_elem;
+      item->type = GPU_BATCHED_APERTURE_RCOL;
+      item->data.rcol.xmax = rcol->x_max;
+      item->data.rcol.ymax = rcol->y_max;
+      item->data.rcol.xCenter = rcol->dx;
+      item->data.rcol.yCenter = rcol->dy;
+      item->data.rcol.sStart = eptr->beg_pos;
+      apertureElements++;
+      break;
+    }
+    default:
+      goto unsupported;
+    }
+    packed++;
+  }
+  if (packed != elements)
+    goto unsupported;
+
+  startGpuTimer();
+  status = gpuCudaBatchedApertureSearch(
+    program, elements, lines, nx, nSplits, splitFraction, nPasses,
+    pCentral, xmax, ymax, orbit, dxFactor, dyFactor,
+    xLimit, yLimit, xLost, yLost, sLost, lossPass, lossElement,
+    originStable, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("device-resident batched aperture search", status);
+  gpuRecordHelperKernel(milliseconds);
+  logicalExecutions = nPasses * (nSplits + 1);
+  gpuBase.gpuElementCount += elements * logicalExecutions;
+  gpuBase.gpuTrackParticleCount += matrixElements * logicalExecutions;
+  gpuBase.gpuMagnetCount += magnetElements * logicalExecutions;
+  gpuBase.gpuApertureCount += apertureElements * logicalExecutions;
+  gpuRecordWallSeconds();
+  if (gpuVerbose)
+    fprintf(stderr,
+            "elegant CUDA: device-resident aperture search packed %ld elements, %ld lines, %ld refinements.\n",
+            elements, lines, nSplits);
+  displayTimings();
+  free(program);
+  return 1;
+
+unsupported:
+  free(program);
+  return 0;
 #endif
 }
 

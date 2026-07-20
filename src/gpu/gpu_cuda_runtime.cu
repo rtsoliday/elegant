@@ -952,9 +952,8 @@ __device__ __forceinline__ int gpuQOffset(int i, int j, int k, int l) {
   return i * 56 + j * (j + 1) * (j + 2) / 6 + k * (k + 1) / 2 + l;
 }
 
-__device__ __forceinline__ void gpuApplyPackedMatrix(double *part,
-                                                     int matrixSlot) {
-  const GPU_MATRIX_DATA *matrix = gpuMatrixData + matrixSlot;
+__device__ __forceinline__ void gpuApplyPackedMatrixData(
+  double *part, const GPU_MATRIX_DATA *matrix) {
   double ini[6], temp[6];
   int i, j, k;
 
@@ -999,6 +998,11 @@ __device__ __forceinline__ void gpuApplyPackedMatrix(double *part,
     part[i] = temp[i];
 }
 
+__device__ __forceinline__ void gpuApplyPackedMatrix(double *part,
+                                                     int matrixSlot) {
+  gpuApplyPackedMatrixData(part, gpuMatrixData + matrixSlot);
+}
+
 __global__ void gpuTrackParticlesKernel(double *coord, long nParticles,
                                         int stride, int matrixSlot) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1030,20 +1034,23 @@ __device__ __forceinline__ double gpuExactPathLengthFactor(double xp,
                        gpuMulRn(yp, yp)));
 }
 
-__global__ void gpuExactDriftKernel(double *coord, long nParticles, int stride, double length) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
-  double *part;
-  double xp, yp;
+__device__ __forceinline__ void gpuExactDriftParticle(double *part,
+                                                      double length) {
+  double xp = part[1];
+  double yp = part[3];
 
-  if (ip >= nParticles)
-    return;
-  part = coord + ip * stride;
-  xp = part[1];
-  yp = part[3];
   part[0] = gpuAddRn(part[0], gpuMulRn(xp, length));
   part[2] = gpuAddRn(part[2], gpuMulRn(yp, length));
   part[4] = gpuAddRn(part[4],
                      gpuMulRn(length, gpuExactPathLengthFactor(xp, yp)));
+}
+
+__global__ void gpuExactDriftKernel(double *coord, long nParticles, int stride, double length) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (ip >= nParticles)
+    return;
+  gpuExactDriftParticle(coord + ip * stride, length);
 }
 
 __global__ void gpuLinearDriftKernel(double *coord, long nParticles, int stride, double length) {
@@ -1333,9 +1340,9 @@ __device__ __forceinline__ void gpuMultipoleApplyKick(double *qx, double *qy,
 }
 
 template <bool Radiation>
-__device__ int gpuMultipoleTrackParticle(double *part, int stride,
-                                         int writeOutput) {
-  const GPU_MULTIPOLE_DATA *data = &gpuMultipoleData;
+__device__ int gpuMultipoleTrackParticleData(
+  double *part, int stride, int writeOutput,
+  const GPU_MULTIPOLE_DATA *data) {
   double driftFrac[8];
   double kickFrac[8];
   double KnLp[3];
@@ -1566,6 +1573,13 @@ __device__ int gpuMultipoleTrackParticle(double *part, int stride,
     part[5] = dp;
   }
   return 1;
+}
+
+template <bool Radiation>
+__device__ int gpuMultipoleTrackParticle(double *part, int stride,
+                                         int writeOutput) {
+  return gpuMultipoleTrackParticleData<Radiation>(
+    part, stride, writeOutput, &gpuMultipoleData);
 }
 
 template <bool Radiation>
@@ -3882,6 +3896,202 @@ __device__ __forceinline__ int gpuRectangularCollimatorLostAt(double *part,
   double y = part[2] + length * part[3];
   return gpuRectangularCollimatorLostAtPosition(x, y, xmax, ymax, xCenter, yCenter,
                                                 openCode, length > 0);
+}
+
+__global__ void gpuBatchedApertureInitializeKernel(
+  long lines, long nx, double xmax, double ymax,
+  const double *dxFactor, const double *dyFactor,
+  double *dx, double *dy, double *x0, double *y0,
+  double *xLimit, double *yLimit,
+  double *xLost, double *yLost, double *sLost,
+  long *lossPass, long *lossElement, long *originStable) {
+  long line = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (line >= lines)
+    return;
+  dx[line] = xmax / (nx - 1) * dxFactor[line];
+  dy[line] = ymax / (nx - 1) * dyFactor[line];
+  x0[line] = y0[line] = 0;
+  xLimit[line] = yLimit[line] = 0;
+  xLost[line] = yLost[line] = sLost[line] = DBL_MAX;
+  lossPass[line] = lossElement[line] = -1;
+  if (line == 0)
+    *originStable = 1;
+}
+
+__global__ void gpuBatchedApertureRefineLinesKernel(
+  long lines, double splitFraction, double *dx, double *dy,
+  double *x0, double *y0, const double *xLimit, const double *yLimit) {
+  long line = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (line >= lines)
+    return;
+  x0[line] = xLimit[line] + dx[line] * splitFraction;
+  y0[line] = yLimit[line] + dy[line] * splitFraction;
+  dx[line] *= splitFraction;
+  dy[line] *= splitFraction;
+}
+
+__global__ void gpuBatchedAperturePrepareKernel(
+  long lines, long nSteps, const double *orbit,
+  const double *dx, const double *dy, const double *x0, const double *y0,
+  double *trialCoord, long trialStride) {
+  long id = blockIdx.x * blockDim.x + threadIdx.x;
+  long trials = lines * nSteps;
+  long line, step;
+  double *part;
+
+  if (id >= trials)
+    return;
+  line = id / nSteps;
+  step = id - line * nSteps;
+  part = trialCoord + id * trialStride;
+  for (int ic = 0; ic < 6; ic++)
+    part[ic] = orbit[ic];
+  part[0] = x0[line] + step * dx[line] + orbit[0];
+  part[2] = y0[line] + step * dy[line] + orbit[2];
+}
+
+__device__ __forceinline__ int gpuBatchedApertureMatrixDrift(
+  double *part, const GPU_BATCHED_APERTURE_DRIFT_DATA *drift) {
+  double xp = part[1], yp = part[3];
+  double x = drift->length * xp + part[0];
+  double y = drift->length * yp + part[2];
+  double s = drift->length + part[4];
+
+  if (drift->order > 1) {
+    s += drift->length / 2 * yp * yp;
+    s += drift->length / 2 * xp * xp;
+  }
+  part[0] = x;
+  part[2] = y;
+  part[4] = s;
+  return isfinite(x) && isfinite(y);
+}
+
+__device__ __forceinline__ int gpuBatchedApertureMultipoleDrift(
+  double *part, const GPU_BATCHED_APERTURE_DRIFT_DATA *drift) {
+  double x = part[0], xp = part[1], y = part[2], yp = part[3];
+  double pathFactor;
+
+  if (!isfinite(x) || !isfinite(xp) || !isfinite(y) || !isfinite(yp) ||
+      fabs(x) > drift->coordLimit || fabs(y) > drift->coordLimit ||
+      fabs(xp) > drift->slopeLimit || fabs(yp) > drift->slopeLimit)
+    return 0;
+  x += xp * drift->length;
+  y += yp * drift->length;
+  pathFactor = drift->expandHamiltonian ?
+    1 + (xp * xp + yp * yp) / 2 : sqrt(1 + xp * xp + yp * yp);
+  part[0] = x;
+  part[2] = y;
+  part[4] += drift->length * pathFactor;
+  return isfinite(x) && isfinite(y) &&
+    fabs(x) <= drift->coordLimit && fabs(y) <= drift->coordLimit;
+}
+
+__global__ void gpuBatchedApertureTrackKernel(
+  double *trialCoord, long trials, int stride,
+  const GPU_BATCHED_APERTURE_ELEMENT *element, long elements,
+  long passes, double pCentral, unsigned char *survived,
+  double *trialXLost, double *trialYLost, double *trialSLost,
+  long *trialLossPass, long *trialLossElement) {
+  long id = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+  int alive = 1;
+
+  if (id >= trials)
+    return;
+  part = trialCoord + id * stride;
+  trialLossPass[id] = trialLossElement[id] = -1;
+  for (long pass = 0; alive && pass < passes; pass++) {
+    for (long ie = 0; ie < elements; ie++) {
+      const GPU_BATCHED_APERTURE_ELEMENT *item = element + ie;
+
+      switch (item->type) {
+      case GPU_BATCHED_APERTURE_MATRIX_DRIFT:
+        if (!gpuBatchedApertureMatrixDrift(part, &item->data.drift))
+          alive = 0;
+        break;
+      case GPU_BATCHED_APERTURE_MULTIPOLE_DRIFT:
+        if (!gpuBatchedApertureMultipoleDrift(part, &item->data.drift))
+          alive = 0;
+        break;
+      case GPU_BATCHED_APERTURE_MULTIPOLE:
+        if (!gpuMultipoleTrackParticleData<false>(
+              part, stride, 1, &item->data.multipole))
+          alive = 0;
+        break;
+      case GPU_BATCHED_APERTURE_RCOL:
+        if (gpuRectangularCollimatorLostAtPosition(
+              part[0], part[2], item->data.rcol.xmax,
+              item->data.rcol.ymax, item->data.rcol.xCenter,
+              item->data.rcol.yCenter, 0, 0)) {
+          part[4] = item->data.rcol.sStart;
+          part[5] = pCentral * (1 + part[5]);
+          alive = 0;
+        }
+        break;
+      default:
+        alive = 0;
+        break;
+      }
+      if (!alive) {
+        trialXLost[id] = part[0];
+        trialYLost[id] = part[2];
+        trialSLost[id] = part[4];
+        trialLossPass[id] = pass;
+        trialLossElement[id] = item->elementIndex;
+        break;
+      }
+    }
+  }
+  survived[id] = alive ? 1 : 0;
+}
+
+__global__ void gpuBatchedApertureReduceKernel(
+  long lines, long nSteps, long split,
+  const unsigned char *survived,
+  const double *trialXLost, const double *trialYLost,
+  const double *trialSLost, const long *trialLossPass,
+  const long *trialLossElement, const double *dx, const double *dy,
+  const double *x0, const double *y0, double *xLimit, double *yLimit,
+  double *xLost, double *yLost, double *sLost,
+  long *lossPass, long *lossElement, long *originStable) {
+  long line = blockIdx.x * blockDim.x + threadIdx.x;
+  long firstLost = nSteps;
+  long lastSurvived;
+
+  if (line >= lines)
+    return;
+  if (split == 0 && line == 0 && !survived[0])
+    *originStable = 0;
+  for (long step = 0; step < nSteps; step++) {
+    if (!survived[line * nSteps + step]) {
+      firstLost = step;
+      break;
+    }
+  }
+  lastSurvived = firstLost - 1;
+  if (lastSurvived >= 0) {
+    double candidateX = x0[line] + lastSurvived * dx[line];
+    double candidateY = y0[line] + lastSurvived * dy[line];
+
+    if (split == 0 ||
+        (dx[line] > 0 && xLimit[line] < candidateX) ||
+        (dx[line] == 0 && yLimit[line] < candidateY) ||
+        (dx[line] < 0 && xLimit[line] > candidateX)) {
+      xLimit[line] = candidateX;
+      yLimit[line] = candidateY;
+    }
+  }
+  if (firstLost < nSteps) {
+    long id = line * nSteps + firstLost;
+    xLost[line] = trialXLost[id];
+    yLost[line] = trialYLost[id];
+    sLost[line] = trialSLost[id];
+    lossPass[line] = trialLossPass[id];
+    lossElement[line] = trialLossElement[id];
+  }
 }
 
 __global__ void gpuRectangularCollimatorSurvivorFlagKernel(double *coord,
@@ -10223,6 +10433,202 @@ extern "C" int gpuCudaClearBatchedSearchHistory(
   if (status == cudaSuccess)
     status = cudaMemset(turnCount, 0, particles * sizeof(double));
   return static_cast<int>(status);
+}
+
+extern "C" int gpuCudaBatchedApertureSearch(
+  const GPU_BATCHED_APERTURE_ELEMENT *element, long elements,
+  long lines, long nx, long nSplits, double splitFraction, long passes,
+  double pCentral, double xmax, double ymax, const double *orbit,
+  const double *dxFactor, const double *dyFactor,
+  double *xLimitReturn, double *yLimitReturn,
+  double *xLostReturn, double *yLostReturn, double *sLostReturn,
+  long *lossPassReturn, long *lossElementReturn, long *originStableReturn,
+  float *milliseconds) {
+  GPU_BATCHED_APERTURE_ELEMENT *deviceElement = NULL;
+  double *deviceLine = NULL, *deviceTrial = NULL, *deviceTrialLoss = NULL;
+  double *deviceFactor = NULL, *deviceOrbit = NULL;
+  long *deviceLineLoss = NULL, *deviceTrialLossIndex = NULL;
+  unsigned char *deviceSurvived = NULL;
+  long *deviceOriginStable = NULL;
+  double *dx, *dy, *x0, *y0, *xLimit, *yLimit, *xLost, *yLost, *sLost;
+  long *lossPass, *lossElement;
+  long maxSteps, maxTrials, lineBlocks, trialBlocks;
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus = cudaSuccess;
+  int threads = 128;
+  int status = static_cast<int>(cudaSuccess);
+
+  if (!element || elements <= 0 || lines <= 0 || nx < 2 || nSplits < 0 ||
+      splitFraction <= 0 || splitFraction >= 1 || passes <= 0 ||
+      !orbit || !dxFactor || !dyFactor || !xLimitReturn || !yLimitReturn ||
+      !xLostReturn || !yLostReturn || !sLostReturn || !lossPassReturn ||
+      !lossElementReturn || !originStableReturn)
+    return static_cast<int>(cudaErrorInvalidValue);
+  maxSteps = static_cast<long>(1 / splitFraction - 0.5);
+  if (maxSteps < nx)
+    maxSteps = nx;
+  if (maxSteps < 1 || lines > LONG_MAX / maxSteps)
+    return static_cast<int>(cudaErrorInvalidValue);
+  maxTrials = lines * maxSteps;
+  lineBlocks = (lines + threads - 1) / threads;
+  trialBlocks = (maxTrials + threads - 1) / threads;
+
+  cudaStatus = cudaMalloc(&deviceElement, elements * sizeof(*deviceElement));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  cudaStatus = cudaMalloc(&deviceFactor, 2 * lines * sizeof(*deviceFactor));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  cudaStatus = cudaMalloc(&deviceOrbit, 6 * sizeof(*deviceOrbit));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  cudaStatus = cudaMalloc(&deviceLine, 9 * lines * sizeof(*deviceLine));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  cudaStatus = cudaMalloc(&deviceLineLoss, 2 * lines * sizeof(*deviceLineLoss));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  cudaStatus = cudaMalloc(&deviceOriginStable, sizeof(*deviceOriginStable));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  cudaStatus = cudaMalloc(&deviceTrial, 6 * maxTrials * sizeof(*deviceTrial));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  cudaStatus = cudaMalloc(&deviceSurvived,
+                          maxTrials * sizeof(*deviceSurvived));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  cudaStatus = cudaMalloc(&deviceTrialLoss,
+                          3 * maxTrials * sizeof(*deviceTrialLoss));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  cudaStatus = cudaMalloc(&deviceTrialLossIndex,
+                          2 * maxTrials * sizeof(*deviceTrialLossIndex));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+
+  dx = deviceLine;
+  dy = dx + lines;
+  x0 = dy + lines;
+  y0 = x0 + lines;
+  xLimit = y0 + lines;
+  yLimit = xLimit + lines;
+  xLost = yLimit + lines;
+  yLost = xLost + lines;
+  sLost = yLost + lines;
+  lossPass = deviceLineLoss;
+  lossElement = lossPass + lines;
+
+  cudaStatus = cudaMemcpy(deviceElement, element,
+                          elements * sizeof(*deviceElement),
+                          cudaMemcpyHostToDevice);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(deviceFactor, dxFactor,
+                            lines * sizeof(*deviceFactor),
+                            cudaMemcpyHostToDevice);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(deviceFactor + lines, dyFactor,
+                            lines * sizeof(*deviceFactor),
+                            cudaMemcpyHostToDevice);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(deviceOrbit, orbit, 6 * sizeof(*deviceOrbit),
+                            cudaMemcpyHostToDevice);
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    goto cleanup;
+  gpuBatchedApertureInitializeKernel<<<lineBlocks, threads>>>(
+    lines, nx, xmax, ymax, deviceFactor, deviceFactor + lines,
+    dx, dy, x0, y0, xLimit, yLimit, xLost, yLost, sLost,
+    lossPass, lossElement, deviceOriginStable);
+  cudaStatus = cudaGetLastError();
+  for (long split = 0; cudaStatus == cudaSuccess && split <= nSplits; split++) {
+    long nSteps = split == 0 ? nx :
+      static_cast<long>(1 / splitFraction - 0.5);
+    long trials;
+
+    if (nSteps < 1)
+      nSteps = 1;
+    trials = lines * nSteps;
+    if (split > 0) {
+      gpuBatchedApertureRefineLinesKernel<<<lineBlocks, threads>>>(
+        lines, splitFraction, dx, dy, x0, y0, xLimit, yLimit);
+      cudaStatus = cudaGetLastError();
+    }
+    if (cudaStatus == cudaSuccess) {
+      trialBlocks = (trials + threads - 1) / threads;
+      gpuBatchedAperturePrepareKernel<<<trialBlocks, threads>>>(
+        lines, nSteps, deviceOrbit, dx, dy, x0, y0, deviceTrial, 6);
+      cudaStatus = cudaGetLastError();
+    }
+    if (cudaStatus == cudaSuccess) {
+      gpuBatchedApertureTrackKernel<<<trialBlocks, threads>>>(
+        deviceTrial, trials, 6, deviceElement, elements, passes, pCentral,
+        deviceSurvived, deviceTrialLoss,
+        deviceTrialLoss + maxTrials, deviceTrialLoss + 2 * maxTrials,
+        deviceTrialLossIndex, deviceTrialLossIndex + maxTrials);
+      cudaStatus = cudaGetLastError();
+    }
+    if (cudaStatus == cudaSuccess) {
+      gpuBatchedApertureReduceKernel<<<lineBlocks, threads>>>(
+        lines, nSteps, split, deviceSurvived, deviceTrialLoss,
+        deviceTrialLoss + maxTrials, deviceTrialLoss + 2 * maxTrials,
+        deviceTrialLossIndex, deviceTrialLossIndex + maxTrials,
+        dx, dy, x0, y0, xLimit, yLimit, xLost, yLost, sLost,
+        lossPass, lossElement, deviceOriginStable);
+      cudaStatus = cudaGetLastError();
+    }
+  }
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(xLimitReturn, xLimit,
+                            lines * sizeof(*xLimitReturn),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(yLimitReturn, yLimit,
+                            lines * sizeof(*yLimitReturn),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(xLostReturn, xLost,
+                            lines * sizeof(*xLostReturn),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(yLostReturn, yLost,
+                            lines * sizeof(*yLostReturn),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(sLostReturn, sLost,
+                            lines * sizeof(*sLostReturn),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(lossPassReturn, lossPass,
+                            lines * sizeof(*lossPassReturn),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(lossElementReturn, lossElement,
+                            lines * sizeof(*lossElementReturn),
+                            cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(originStableReturn, deviceOriginStable,
+                            sizeof(*originStableReturn),
+                            cudaMemcpyDeviceToHost);
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+
+cleanup:
+  cudaFree(deviceElement);
+  cudaFree(deviceFactor);
+  cudaFree(deviceOrbit);
+  cudaFree(deviceLine);
+  cudaFree(deviceLineLoss);
+  cudaFree(deviceOriginStable);
+  cudaFree(deviceTrial);
+  cudaFree(deviceSurvived);
+  cudaFree(deviceTrialLoss);
+  cudaFree(deviceTrialLossIndex);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  return static_cast<int>(cudaStatus);
 }
 
 extern "C" int gpuCudaApplyBatchedMomentumSearch(

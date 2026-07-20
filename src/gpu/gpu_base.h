@@ -168,6 +168,40 @@ typedef struct GPU_MULTIPOLE_DATA {
   double sinTilt;
 } GPU_MULTIPOLE_DATA;
 
+#define GPU_BATCHED_APERTURE_MATRIX 1
+#define GPU_BATCHED_APERTURE_MULTIPOLE 2
+#define GPU_BATCHED_APERTURE_RCOL 3
+#define GPU_BATCHED_APERTURE_MATRIX_DRIFT 4
+#define GPU_BATCHED_APERTURE_MULTIPOLE_DRIFT 5
+
+typedef struct GPU_BATCHED_APERTURE_DRIFT_DATA {
+  double length;
+  double coordLimit;
+  double slopeLimit;
+  int order;
+  int expandHamiltonian;
+} GPU_BATCHED_APERTURE_DRIFT_DATA;
+
+typedef struct GPU_BATCHED_APERTURE_RCOL_DATA {
+  double xmax;
+  double ymax;
+  double xCenter;
+  double yCenter;
+  double sStart;
+} GPU_BATCHED_APERTURE_RCOL_DATA;
+
+typedef union GPU_BATCHED_APERTURE_ELEMENT_DATA {
+  GPU_MULTIPOLE_DATA multipole;
+  GPU_BATCHED_APERTURE_RCOL_DATA rcol;
+  GPU_BATCHED_APERTURE_DRIFT_DATA drift;
+} GPU_BATCHED_APERTURE_ELEMENT_DATA;
+
+typedef struct GPU_BATCHED_APERTURE_ELEMENT {
+  int type;
+  long elementIndex;
+  GPU_BATCHED_APERTURE_ELEMENT_DATA data;
+} GPU_BATCHED_APERTURE_ELEMENT;
+
 typedef struct GPU_CSBEND_DATA {
   long nSlices;
   int integrationOrder;

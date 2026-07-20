@@ -990,6 +990,20 @@ int comp_index(const void *idx1, const void *idx2) {
 /* line search routine */
 
 #if defined(HAVE_GPU) && !USE_MPI
+#  ifdef GPU_VERIFY
+static long gpuApertureSearchValueMatches(double expected, double actual) {
+  double scale, tolerance;
+
+  if (expected == actual)
+    return 1;
+  if (!isfinite(expected) || !isfinite(actual))
+    return 0;
+  scale = MAX(fabs(expected), fabs(actual));
+  tolerance = MAX(1e-15, 1e-9 * scale);
+  return fabs(expected - actual) <= tolerance;
+}
+#  endif
+
 static long do_aperture_search_line_batched(
   RUN *run, VARY *control, double *referenceCoord, LINE_LIST *beamline,
   long lines, double *returnValue) {
@@ -997,12 +1011,18 @@ static long do_aperture_search_line_batched(
   double *dxFactor, *dyFactor, *dx, *dy, *x0, *y0;
   double *xLimit, *yLimit, *xLost, *yLost, *sLost;
   double *trialXLost, *trialYLost, *trialSLost;
-  long *trialLossPass;
+  long *trialLossPass, *lineLossPass, *lineLossElement;
   unsigned char *survived, *seen;
   double orbit[6] = {0, 0, 0, 0, 0, 0};
   double pCentral, area = 0, dtheta;
   long line, step, split, index, ip, id, nSteps, maxSteps;
   long trials, nSurvived, effort = 0, originStable = 0;
+#  ifdef GPU_VERIFY
+  double *residentXLimit = NULL, *residentYLimit = NULL;
+  double *residentXLost = NULL, *residentYLost = NULL, *residentSLost = NULL;
+  long *residentLossPass = NULL, *residentLossElement = NULL;
+  long residentOriginStable = 0, residentRan = 0;
+#  endif
 
   maxSteps = (long)(1 / split_fraction - 0.5);
   if (maxSteps < nx)
@@ -1037,10 +1057,12 @@ static long do_aperture_search_line_batched(
                                 sizeof(*trialSLost));
   trialLossPass = (long *)calloc((size_t)lines * maxSteps,
                                  sizeof(*trialLossPass));
+  lineLossPass = (long *)tmalloc((size_t)lines * sizeof(*lineLossPass));
+  lineLossElement = (long *)tmalloc((size_t)lines * sizeof(*lineLossElement));
   if (!coord || !dxFactor || !dyFactor || !dx || !dy || !x0 || !y0 ||
       !xLimit || !yLimit || !xLost || !yLost || !sLost || !survived ||
       !seen || !trialXLost || !trialYLost || !trialSLost ||
-      !trialLossPass)
+      !trialLossPass || !lineLossPass || !lineLossElement)
     bombElegant("memory allocation failure (batched aperture search)", NULL);
 
   switch (lines) {
@@ -1071,8 +1093,10 @@ static long do_aperture_search_line_batched(
     }
     break;
   }
-  for (line = 0; line < lines; line++)
+  for (line = 0; line < lines; line++) {
     xLost[line] = yLost[line] = sLost[line] = DBL_MAX;
+    lineLossPass[line] = lineLossElement[line] = -1;
+  }
   if (offset_by_orbit)
     memcpy(orbit, referenceCoord, sizeof(orbit));
 
@@ -1100,6 +1124,37 @@ static long do_aperture_search_line_batched(
       SDDS_SetError("Problem setting SDDS parameters (batched aperture search)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
+  }
+
+  pCentral = run->p_central;
+  if (!slope_mode) {
+#  ifdef GPU_VERIFY
+    residentXLimit = (double *)tmalloc((size_t)lines * sizeof(*residentXLimit));
+    residentYLimit = (double *)tmalloc((size_t)lines * sizeof(*residentYLimit));
+    residentXLost = (double *)tmalloc((size_t)lines * sizeof(*residentXLost));
+    residentYLost = (double *)tmalloc((size_t)lines * sizeof(*residentYLost));
+    residentSLost = (double *)tmalloc((size_t)lines * sizeof(*residentSLost));
+    residentLossPass = (long *)tmalloc((size_t)lines * sizeof(*residentLossPass));
+    residentLossElement = (long *)tmalloc((size_t)lines * sizeof(*residentLossElement));
+    residentRan = gpu_run_batched_aperture_search(
+      beamline, pCentral, lines, nx, n_splits, split_fraction,
+      control->n_passes, xmax, ymax, orbit, dxFactor, dyFactor,
+      residentXLimit, residentYLimit, residentXLost, residentYLost,
+      residentSLost, residentLossPass, residentLossElement,
+      &residentOriginStable);
+#  else
+    if (gpu_run_batched_aperture_search(
+          beamline, pCentral, lines, nx, n_splits, split_fraction,
+          control->n_passes, xmax, ymax, orbit, dxFactor, dyFactor,
+          xLimit, yLimit, xLost, yLost, sLost,
+          lineLossPass, lineLossElement, &originStable)) {
+      if (!originStable) {
+        *returnValue = 0;
+        goto batchedApertureCleanup;
+      }
+      goto batchedApertureFinalize;
+    }
+#  endif
   }
 
   for (split = 0; split <= n_splits; split++) {
@@ -1163,6 +1218,10 @@ static long do_aperture_search_line_batched(
         bombElegant("missing search ID in batched aperture search", NULL);
 
     if (split == 0 && !survived[0]) {
+#  ifdef GPU_VERIFY
+      if (residentRan && residentOriginStable)
+        bombElegant("GPU_VERIFY device-resident aperture origin stability mismatch", NULL);
+#  endif
       *returnValue = 0;
       goto batchedApertureCleanup;
     }
@@ -1198,13 +1257,41 @@ static long do_aperture_search_line_batched(
         xLost[line] = trialXLost[id];
         yLost[line] = trialYLost[id];
         sLost[line] = trialSLost[id];
-        /* Retained by stable ID even though the legacy SDDS schema has no
-         * loss-pass column for dynamic aperture output. */
-        (void)trialLossPass[id];
+        lineLossPass[line] = trialLossPass[id];
       }
     }
   }
 
+#  ifdef GPU_VERIFY
+  if (residentRan) {
+    if (!residentOriginStable)
+      bombElegant("GPU_VERIFY device-resident aperture origin stability mismatch", NULL);
+    for (line = 0; line < lines; line++) {
+      if (!gpuApertureSearchValueMatches(xLimit[line], residentXLimit[line]) ||
+          !gpuApertureSearchValueMatches(yLimit[line], residentYLimit[line]) ||
+          !gpuApertureSearchValueMatches(xLost[line], residentXLost[line]) ||
+          !gpuApertureSearchValueMatches(yLost[line], residentYLost[line]) ||
+          !gpuApertureSearchValueMatches(sLost[line], residentSLost[line]) ||
+          lineLossPass[line] != residentLossPass[line]) {
+        fprintf(stderr,
+                "GPU_VERIFY aperture line %ld mismatch: limit=(%.17g,%.17g)/(%.17g,%.17g) loss=(%.17g,%.17g,%.17g,%ld)/(%.17g,%.17g,%.17g,%ld)\n",
+                line, xLimit[line], yLimit[line],
+                residentXLimit[line], residentYLimit[line],
+                xLost[line], yLost[line], sLost[line], lineLossPass[line],
+                residentXLost[line], residentYLost[line], residentSLost[line],
+                residentLossPass[line]);
+        bombElegant("GPU_VERIFY device-resident aperture search mismatch", NULL);
+      }
+    }
+    if (verbosity >= 1)
+      printf("GPU_VERIFY device-resident aperture search passed for %ld lines\n",
+             lines);
+  }
+#  endif
+
+#  ifndef GPU_VERIFY
+batchedApertureFinalize:
+#  endif
   if (output) {
     /* Preserve the legacy schema semantics: x/y are the raw search limits,
      * while xClipped/yClipped are populated only after island clipping. */
@@ -1260,6 +1347,17 @@ batchedApertureCleanup:
   free(trialYLost);
   free(trialSLost);
   free(trialLossPass);
+  free(lineLossPass);
+  free(lineLossElement);
+#  ifdef GPU_VERIFY
+  free(residentXLimit);
+  free(residentYLimit);
+  free(residentXLost);
+  free(residentYLost);
+  free(residentSLost);
+  free(residentLossPass);
+  free(residentLossElement);
+#  endif
   return 1;
 }
 #endif
