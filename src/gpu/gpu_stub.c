@@ -238,6 +238,9 @@ extern int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
                                double pCentral, double volt, double omega,
                                double phase, double cMks,
                                float *milliseconds);
+extern int gpuCudaTfeedbackKick(void *coord, long nParticles, int stride,
+                                int pickupCoordinate, int longitudinal,
+                                double kick, float *milliseconds);
 extern int gpuCudaRfdfTrack(void *coord, long nParticles, int stride,
                             const GPU_RFDF_DATA *data,
                             int particleIdIndex, float *milliseconds);
@@ -830,6 +833,8 @@ static long gpuEnableFrfmode = 0;
 static long gpuEnableTrfmode = 0;
 static long gpuEnableFtrfmode = 0;
 static long gpuRfmodeMinParticles = 8192;
+static long gpuEnableTfeedback = 0;
+static long gpuTfeedbackMinParticles = 64;
 static long gpuEnableLscTracking = 0;
 static long gpuLscTrackingExplicit = 0;
 static long gpuEnableRfcwTrackingDrift = 0;
@@ -2334,6 +2339,76 @@ static long gpuRfmodeElementSupported(ELEMENT_LIST *eptr) {
 #endif
 }
 
+static long gpuTfeedbackPickupCoordinate(const TFBPICKUP *pickup) {
+  if (!pickup || !pickup->plane)
+    return -1;
+  if (strcmp(pickup->plane, "x") == 0 || strcmp(pickup->plane, "X") == 0)
+    return 0;
+  if (strcmp(pickup->plane, "y") == 0 || strcmp(pickup->plane, "Y") == 0)
+    return 2;
+  if (strcmp(pickup->plane, "time") == 0 ||
+      strcmp(pickup->plane, "TIME") == 0 ||
+      strcmp(pickup->plane, "phase") == 0 ||
+      strcmp(pickup->plane, "PHASE") == 0)
+    return 4;
+  if (strcmp(pickup->plane, "delta") == 0 ||
+      strcmp(pickup->plane, "DELTA") == 0)
+    return 5;
+  return -1;
+}
+
+static TFBPICKUP *gpuTfeedbackLinkedPickup(ELEMENT_LIST *eptr,
+                                            const char *id) {
+  ELEMENT_LIST *cursor;
+
+  if (!eptr || !id || !*id)
+    return NULL;
+  cursor = eptr;
+  while (cursor->pred)
+    cursor = cursor->pred;
+  for (; cursor; cursor = cursor->succ) {
+    if (cursor->type == T_TFBPICKUP && cursor->p_elem) {
+      TFBPICKUP *pickup = (TFBPICKUP *)cursor->p_elem;
+      if (pickup->ID && strcmp(pickup->ID, id) == 0)
+        return pickup;
+    }
+  }
+  return NULL;
+}
+
+static long gpuTfeedbackPickupSupported(const TFBPICKUP *pickup) {
+  return pickup && pickup->bunchedBeamMode == 0 && !pickup->rmsNoise &&
+         gpuTfeedbackPickupCoordinate(pickup) >= 0;
+}
+
+static long gpuTfeedbackElementSupported(ELEMENT_LIST *eptr) {
+#if USE_MPI
+  (void)eptr;
+  return 0;
+#else
+  if (!gpuEnableTfeedback || gpuBase.backtrack || !eptr || !eptr->p_elem)
+    return 0;
+  if (eptr->type == T_TFBPICKUP)
+    return gpuTfeedbackPickupSupported((TFBPICKUP *)eptr->p_elem);
+  if (eptr->type == T_TFBDRIVER) {
+    TFBDRIVER *driver = (TFBDRIVER *)eptr->p_elem;
+    TFBPICKUP *pickup = driver->pickup ? driver->pickup :
+      gpuTfeedbackLinkedPickup(eptr, driver->ID);
+    long coordinate;
+    if (!gpuTfeedbackPickupSupported(pickup) ||
+        driver->bunchedBeamMode != 0 || driver->frequency != 0 ||
+        driver->RaOverQ > 0 || driver->QLoaded > 0 ||
+        driver->gainChargeScale > 0)
+      return 0;
+    coordinate = gpuTfeedbackPickupCoordinate(pickup);
+    if (!driver->longitudinal && coordinate != 0 && coordinate != 2)
+      return 0;
+    return 1;
+  }
+  return 0;
+#endif
+}
+
 static long gpuBggexpElementSupported(ELEMENT_LIST *eptr) {
   BGGEXP *bgg;
 
@@ -2750,6 +2825,9 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuRfmodeElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
                                           gpuRfmodeMinParticles);
+  if (gpuTfeedbackElementSupported(eptr))
+    return gpuParticleCountMeetsThreshold(nParticles,
+                                          gpuTfeedbackMinParticles);
   if (gpuWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuTrwakeElementSupported(eptr))
@@ -4833,6 +4911,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_RFMODE_PARTICLES", 8192);
   if (gpuRfmodeMinParticles < 1)
     gpuRfmodeMinParticles = 1;
+  gpuEnableTfeedback =
+    !gpuEnvSet("ELEGANT_GPU_ENABLE_TFEEDBACK") ||
+    gpuEnvFlag("ELEGANT_GPU_ENABLE_TFEEDBACK");
+  gpuTfeedbackMinParticles =
+    gpuEnvLong("ELEGANT_GPU_MIN_TFEEDBACK_PARTICLES", 64);
+  if (gpuTfeedbackMinParticles < 1)
+    gpuTfeedbackMinParticles = 1;
   gpuLscTrackingExplicit = gpuEnvSet("ELEGANT_GPU_ENABLE_LSC");
   gpuEnableLscTracking = !gpuLscTrackingExplicit ||
                          gpuEnvFlag("ELEGANT_GPU_ENABLE_LSC");
@@ -4883,6 +4968,7 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnableFrfmode = 0;
   gpuEnableTrfmode = 0;
   gpuEnableFtrfmode = 0;
+  gpuEnableTfeedback = 0;
 #endif
   gpuAvoidShortGpuIslands = !gpuEnvSet("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS") ||
                             gpuEnvFlag("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS");
@@ -5042,6 +5128,10 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
               gpuEnableRfmode, gpuEnableFrfmode,
               gpuEnableTrfmode, gpuEnableFtrfmode,
               gpuRfmodeMinParticles);
+    if (gpuEnableTfeedback)
+      fprintf(stderr,
+              "elegant CUDA: deterministic TFBPICKUP/TFBDRIVER enabled at %ld particles.\n",
+              gpuTfeedbackMinParticles);
     if (gpuEnableSreffects)
       fprintf(stderr,
               "elegant CUDA: deterministic SREFFECTS enabled at %ld particles.\n",
@@ -10542,8 +10632,80 @@ static long gpuBunchedWakePlan(long np, long bunchedBeamMode,
   return GPU_BUNCHED_WAKE_TRACK;
 }
 
+double gpu_tfeedback_pickup_average(long np, long coordinate) {
+  double average;
+
+  if (np <= 0)
+    return 0;
+  if (coordinate < 0 || coordinate > 5)
+    gpuRequiredFailure("invalid TFBPICKUP CUDA coordinate");
+  startGpuTimer();
+  average = gpuCoordinateSumOnDevice(np, coordinate) / np;
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode) {
+    double **coord = copyParticlesToCpuReadOnly(
+      "TFBPICKUP reduction verification input");
+    double cpuAverage = 0, absDiff, relDiff;
+    long ip;
+    for (ip = 0; ip < np; ip++)
+      cpuAverage += coord[ip][coordinate];
+    cpuAverage /= np;
+    if (!gpuValuesClose(
+          cpuAverage, average,
+          gpuEnvDouble("ELEGANT_GPU_TFEEDBACK_COMPARE_ABS", 1e-15),
+          gpuEnvDouble("ELEGANT_GPU_TFEEDBACK_COMPARE_REL", 1e-9),
+          &absDiff, &relDiff)) {
+      fprintf(stderr,
+              "elegant CUDA VERIFY mismatch for TFBPICKUP average: CPU=%.17g GPU=%.17g abs=%.3e rel=%.3e\n",
+              cpuAverage, average, absDiff, relDiff);
+      gpuRequiredFailure("TFBPICKUP CUDA reduction verification failed");
+    }
+  }
+#endif
+  gpuRecordWallSeconds();
+  return average;
+}
+
+void gpu_tfeedback_apply_kick(long np, long pickupCoordinate,
+                              long longitudinal, double kick) {
+  float milliseconds = 0;
+  int status;
+
+  if (np <= 0 || kick == 0)
+    return;
+  if (!longitudinal && pickupCoordinate != 0 && pickupCoordinate != 2)
+    gpuRequiredFailure("invalid transverse TFBDRIVER CUDA pickup plane");
+  startGpuTimer();
+  gpuCopyHostToDevice(np);
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode) {
+    double **coord = copyParticlesToCpuReadOnly(
+      "TFBDRIVER kick verification input");
+    long ip;
+    for (ip = 0; ip < np; ip++) {
+      if (longitudinal)
+        coord[ip][5] += kick;
+      else
+        coord[ip][pickupCoordinate + 1] += kick / (1 + coord[ip][5]);
+    }
+  }
+#endif
+  status = gpuCudaTfeedbackKick(
+    gpuBase.deviceCoord, np, (int)gpuBase.deviceStride,
+    (int)pickupCoordinate, longitudinal ? 1 : 0, kick, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("TFBDRIVER kick CUDA kernel", status);
+  gpuRecordHelperKernel(milliseconds);
+  gpuMarkDeviceChanged(np);
+#ifdef GPU_VERIFY
+  if (gpuBase.verifyMode)
+    compareGpuCpu(np, "deterministic TFBDRIVER kick");
+#endif
+  gpuRecordWallSeconds();
+}
+
 long gpu_rfmode_single_bunch_supported(long np, long bunchedBeamMode,
-                                        void *charge0) {
+                                       void *charge0) {
   GPU_BUNCHED_WAKE_PLAN plan;
   long action;
 

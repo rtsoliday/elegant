@@ -15,6 +15,9 @@
 #include <complex>
 #include "mdb.h"
 #include "track.h"
+#ifdef HAVE_GPU
+#  include "gpu/gpu_tfeedback.h"
+#endif
 
 void propagateLfbCavity(double *V, double *Vp, double *VResidual, double dt0, TFBDRIVER *tfbd,
                         std::complex<double> Ig, std::complex<double> Zc);
@@ -28,6 +31,9 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
   long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
   long *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long iBucket, nBuckets = 0;
+#ifdef HAVE_GPU
+  long gpuTracking = 0;
+#endif
 #if USE_MPI
   long npTotal;
   double sumTotal;
@@ -50,6 +56,12 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
   if (tfbp->initialized == 0)
     initializeTransverseFeedbackPickup(tfbp);
 
+#ifdef HAVE_GPU
+  gpuTracking = getElementOnGpu();
+  if (gpuTracking)
+    nBuckets = 1;
+  else
+#endif
   if (isSlave || !distributedBeam)
     index_bunch_assignments(part0, np0, tfbp->bunchedBeamMode ? idSlotsPerBunch : 0, Po, &time0, &ibParticle, &ipBucket, &npBucket, &nBuckets, -1);
 
@@ -65,6 +77,9 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
 #endif
 
   if (tfbp->updateInterval > 1 && pass % tfbp->updateInterval != 0) {
+#ifdef HAVE_GPU
+    if (!gpuTracking)
+#endif
     if (isSlave || !distributedBeam)
       free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
     return;
@@ -96,8 +111,15 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
     if (isSlave || !distributedBeam) {
       if (nBuckets == 1) {
         np = np0;
+#ifdef HAVE_GPU
+        if (gpuTracking) {
+          position = gpu_tfeedback_pickup_average(np0, tfbp->iPlane);
+        } else
+#endif
+        {
         for (i = 0; i < np0; i++)
           sum += part0[i][tfbp->iPlane];
+        }
       } else {
         if (npBucket)
           np = npBucket[iBucket];
@@ -116,7 +138,11 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
     if (npTotal > 0)
       position = sumTotal / npTotal;
 #else
-    if (np > 0)
+    if (np > 0
+#  ifdef HAVE_GPU
+        && !gpuTracking
+#  endif
+    )
       position = sum / np;
 #endif
     if (tfbp->iPlane == 0) {
@@ -172,6 +198,9 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
     }
   }
 
+#ifdef HAVE_GPU
+  if (!gpuTracking)
+#endif
   if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 }
@@ -237,6 +266,9 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
   std::complex<double> Zc, Ig, iu;
   double V, Vp, tMax = -DBL_MAX;
   double qBunch;
+#ifdef HAVE_GPU
+  long gpuTracking = 0;
+#endif
   
 #if USE_MPI
   MPI_Status mpiStatus;
@@ -256,6 +288,12 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
   if ((tfbd->startPass > 0 && pass < tfbd->startPass) || (tfbd->endPass > 0 && pass > tfbd->endPass))
     return;
 
+#ifdef HAVE_GPU
+  gpuTracking = getElementOnGpu();
+  if (gpuTracking)
+    nBuckets = 1;
+  else
+#endif
   if (isSlave || !distributedBeam)
     index_bunch_assignments(part0, np0, tfbd->bunchedBeamMode ? idSlotsPerBunch : 0, Po, &time0, &ibParticle, &ipBucket, &npBucket, &nBuckets, -1);
 
@@ -292,6 +330,9 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
   if ((updateInterval = tfbd->pickup->updateInterval * tfbd->updateInterval) <= 0)
     bombElegantVA((char *)"TFBDRIVER and TFBPICKUP with ID=%s have UPDATE_INTERVAL product of %d", tfbd->ID, updateInterval);
   if (pass % updateInterval != 0) {
+#ifdef HAVE_GPU
+    if (!gpuTracking)
+#endif
     if (isSlave || !distributedBeam)
       free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
     return;
@@ -433,6 +474,12 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
       }
 
       nomKick = kick * cos(phase);
+#ifdef HAVE_GPU
+      if (gpuTracking) {
+        gpu_tfeedback_apply_kick(np0, tfbd->pickup->iPlane,
+                                 tfbd->longitudinal, kick);
+      } else
+#endif
       if (!tfbd->longitudinal) {
         j = tfbd->pickup->iPlane + 1;
         if (nBuckets == 1) {
@@ -585,6 +632,9 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
   MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
+#ifdef HAVE_GPU
+  if (!gpuTracking)
+#endif
   if (isSlave || !distributedBeam)
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 

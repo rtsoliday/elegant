@@ -2160,6 +2160,21 @@ __global__ void gpuRfcaThinKickKernel(double *coord, long nParticles, int stride
     part[5] = -1;
 }
 
+__global__ void gpuTfeedbackKickKernel(double *coord, long nParticles,
+                                       int stride, int pickupCoordinate,
+                                       int longitudinal, double kick) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  if (longitudinal)
+    part[5] += kick;
+  else
+    part[pickupCoordinate + 1] += kick / (1 + part[5]);
+}
+
 __global__ void gpuRfdfKernel(double *coord, long nParticles, int stride,
                               GPU_RFDF_DATA data, int particleIdIndex) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
@@ -10334,6 +10349,26 @@ extern "C" int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
   gpuRfcaThinKickKernel<<<blocks, threads>>>(static_cast<double *>(coord), nParticles,
                                              stride, pCentral, volt, omega,
                                              phase, cMks);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
+extern "C" int gpuCudaTfeedbackKick(void *coord, long nParticles, int stride,
+                                     int pickupCoordinate, int longitudinal,
+                                     double kick, float *milliseconds) {
+  cudaEvent_t start, stop;
+  int threads = 256;
+  int blocks = static_cast<int>((nParticles + threads - 1) / threads);
+  int status;
+
+  if (!coord || nParticles <= 0 || stride < 6 ||
+      (!longitudinal && pickupCoordinate != 0 && pickupCoordinate != 2))
+    return static_cast<int>(cudaErrorInvalidValue);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuTfeedbackKickKernel<<<blocks, threads>>>(
+    static_cast<double *>(coord), nParticles, stride, pickupCoordinate,
+    longitudinal, kick);
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
 
