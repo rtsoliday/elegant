@@ -164,7 +164,7 @@ ICONV_LIB = $(firstword $(wildcard \
           $(addsuffix /libiconv.a, $(LIB_DIRS))))
 
 IOMP5_LIB = -liomp5
-ifneq ($(wildcard /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0),)
+ifneq ($(findstring improv,$(BASH_ENV)),)
   IMPROV_BUILD=1
   LZMA_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/xz-5.4.6-3zhah5p/lib/liblzma.so
   HDF5_LIB = -Wl,-rpath,/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/hdf5-1.14.3-o6prqns/lib
@@ -176,6 +176,22 @@ ifneq ($(wildcard /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gc
   FFTW3_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/fftw-3.3.10-x5237xr/lib/libfftw3.so
   IOMP5_LIB_DIR = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/intel-oneapi-mkl-2024.2.2-ueuijm5/compiler/2024.2/lib
   IOMP5_LIB = -Wl,-rpath,$(IOMP5_LIB_DIR) $(IOMP5_LIB_DIR)/libiomp5.so
+  MPI_BIN = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/aocc-4.1.0/openmpi-5.0.1-jk5bu46/bin
+endif
+ifneq ($(findstring swing,$(BASH_ENV)),)
+  SWING_BUILD=1
+  LZMA_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/xz-5.4.6-3zhah5p/lib/liblzma.so
+  HDF5_LIB = -Wl,-rpath,/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/hdf5-1.14.3-o6prqns/lib
+  HDF5_LIB += /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/hdf5-1.14.3-o6prqns/lib/libhdf5.so
+  TIFF_LIB = -Wl,-rpath,/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libtiff-4.5.1-hmstscv/lib64
+  TIFF_LIB += /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libtiff-4.5.1-hmstscv/lib64/libtiff.so
+  GD_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libgd-2.3.3-enxppnl/lib/libgd.so
+  JPEG_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libjpeg-turbo-3.0.0-v7a5c5g/lib64/libjpeg.so
+  PNG_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libpng-1.6.39-hsjzalf/lib64/libpng.so
+  FFTW3_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/fftw-3.3.10-x5237xr/lib/libfftw3.so
+  IOMP5_LIB_DIR = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/intel-oneapi-mkl-2024.2.2-ueuijm5/compiler/2024.2/lib
+  IOMP5_LIB = -Wl,-rpath,$(IOMP5_LIB_DIR) $(IOMP5_LIB_DIR)/libiomp5.so
+  MPI_BIN = /soft/openmpi/4.1.1/swing/bin
 endif
 
 
@@ -226,6 +242,12 @@ else
     EXTRA_INC_DIRS += -I/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-11.4.0/libtiff-4.5.1-bzputfw/include
     EXTRA_INC_DIRS += -I/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libgd-2.3.3-enxppnl/include
   endif
+  ifeq ($(SWING_BUILD),1)
+    EXTRA_INC_DIRS += -I/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/aocc-4.1.0/xz-5.4.1-gju4bpk/include
+    EXTRA_INC_DIRS += -I/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-11.4.0/libtiff-4.5.1-bzputfw/include
+    EXTRA_INC_DIRS += -I/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libgd-2.3.3-enxppnl/include
+    EXTRA_INC_DIRS += -I/gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libpng-1.6.39-hsjzalf/include
+  endif
 
 endif
 
@@ -248,7 +270,7 @@ MPI_CC = $(firstword $(wildcard \
            /opt/local/bin/mpicc \
            /opt/homebrew/bin/mpicc \
            /lustre/3rdPartySoftware/mpich-4.1.1/bin/mpicc \
-	   /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/aocc-4.1.0/openmpi-5.0.1-jk5bu46/bin/mpicc ))
+	   $(MPI_BIN)/mpicc ))
 MPI_CCC = $(firstword $(wildcard \
            /usr/bin/mpic++ \
            /usr/bin/mpicxx \
@@ -267,7 +289,7 @@ MPI_CCC = $(firstword $(wildcard \
            /opt/homebrew/bin/mpic++ \
            /opt/homebrew/bin/mpicxx \
            /lustre/3rdPartySoftware/mpich-4.1.1/bin/mpicxx \
-	   /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/aocc-4.1.0/openmpi-5.0.1-jk5bu46/bin/mpicxx ))
+	   $(MPI_BIN)/mpicxx ))
 WIN_MPI = $(firstword $(wildcard \
            C:/Program\ Files/Microsoft\ MPI \
            C:/Program\ Files\ (x86)/Microsoft\ SDKs/MPI \
