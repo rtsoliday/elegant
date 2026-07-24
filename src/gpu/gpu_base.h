@@ -145,6 +145,18 @@ typedef struct GPU_DOUBLE_MIN_MAX_DATA {
   double max;
 } GPU_DOUBLE_MIN_MAX_DATA;
 
+typedef struct GPU_APERTURE_LIMIT_DATA {
+  int present;
+  int elliptical;
+  int xExponent;
+  int yExponent;
+  int openSide;
+  double xMax;
+  double yMax;
+  double cosReverseTilt;
+  double sinReverseTilt;
+} GPU_APERTURE_LIMIT_DATA;
+
 typedef struct GPU_MULTIPOLE_DATA {
   long nSlices;
   int integrationOrder;
@@ -153,6 +165,7 @@ typedef struct GPU_MULTIPOLE_DATA {
   int radiationBlock;
   double drift;
   double Po;
+  double lossZStart;
   double radCoef;
   double coordLimit;
   double slopeLimit;
@@ -166,7 +179,67 @@ typedef struct GPU_MULTIPOLE_DATA {
   double dz;
   double cosTilt;
   double sinTilt;
+  GPU_APERTURE_LIMIT_DATA aperture;
+  double endDrift;
+  double k1;
+  int edge1Effects;
+  int edge2Effects;
+  int edge1Linear;
+  int edge2Linear;
+  double edge1NonlinearFactor;
+  double edge2NonlinearFactor;
+  double edge1M1[8];
+  double edge1M2[8];
+  double edge2M1[8];
+  double edge2M2[8];
 } GPU_MULTIPOLE_DATA;
+
+typedef struct GPU_EXACT_CORRECTOR_DATA {
+  double length;
+  double xkick;
+  double ykick;
+  double dx;
+  double dy;
+  double dz;
+  double cosTilt;
+  double sinTilt;
+  double zStart;
+  double pCentral;
+} GPU_EXACT_CORRECTOR_DATA;
+
+#define GPU_TAPER_APERTURE_CIRCULAR 1
+#define GPU_TAPER_APERTURE_RECTANGULAR 2
+
+typedef struct GPU_TAPER_APERTURE_DATA {
+  int type;
+  double length;
+  double xStart;
+  double xEnd;
+  double yStart;
+  double yEnd;
+  double dx;
+  double dy;
+  double cosTilt;
+  double sinTilt;
+  double zStart;
+  double pCentral;
+} GPU_TAPER_APERTURE_DATA;
+
+typedef struct GPU_SPEEDBUMP_DATA {
+  double length;
+  double chord;
+  double dzCenter;
+  double height;
+  double position;
+  double offset;
+  double radius;
+  double zStart;
+  double pCentral;
+  int plane;
+  int plusDirection;
+  int minusDirection;
+  int scraperConvention;
+} GPU_SPEEDBUMP_DATA;
 
 #define GPU_BATCHED_APERTURE_MATRIX 1
 #define GPU_BATCHED_APERTURE_MULTIPOLE 2
@@ -211,8 +284,10 @@ typedef struct GPU_CSBEND_DATA {
   int expansionOrder1;
   double length;
   double rho0;
+  double invRho0;
   double rhoActual;
   double Po;
+  double lossZStart;
   double radCoef;
   double cosTilt;
   double sinTilt;
@@ -226,9 +301,15 @@ typedef struct GPU_CSBEND_DATA {
   double dcoordEtilt[5];
   int edge1;
   int edge2;
+  int edgeEffect1;
+  int edgeEffect2;
   int edgeOrder;
+  int edgeFlip;
   double e1;
   double e2;
+  double K1;
+  double fringeInt1[7];
+  double fringeInt2[7];
   double he1;
   double he2;
   double psi1;
@@ -238,21 +319,43 @@ typedef struct GPU_CSBEND_DATA {
   double edgeKickLimit2;
   double coordLimit;
   double slopeLimit;
+  GPU_APERTURE_LIMIT_DATA aperture;
   double Fx[121];
   double Fy[121];
 } GPU_CSBEND_DATA;
 
 typedef struct GPU_CCBEND_DATA {
   long nSlices;
+  int integrationOrder;
+  int fringeModel;
+  int edgeOrder;
+  int angleSign;
+  double Po;
+  double radCoef;
   int referenceCorrection;
   double chordLength;
   double angleHalf;
+  double rho0;
   double KnL[3];
+  double fringeInt1[8];
+  double fringeInt2[8];
+  double planeTan;
+  double planeCos;
+  double planeSin;
+  double fringe1Tan;
+  double fringe1Sin;
+  double fringe1Sec;
+  double fringe2Tan;
+  double fringe2Sin;
+  double fringe2Sec;
+  double cosTilt;
+  double sinTilt;
   double dxOffset;
   double xAdjust;
   double referenceTrajectory[5];
   double coordLimit;
   double slopeLimit;
+  GPU_APERTURE_LIMIT_DATA aperture;
 } GPU_CCBEND_DATA;
 
 #define GPU_LGBEND_MAX_SEGMENTS 16
@@ -262,20 +365,43 @@ typedef struct GPU_LGBEND_SEGMENT_DATA {
   double entryAngle;
   double exitAngle;
   double invRho;
+  double K1;
   double KnL[3];
+  double fringe1[8];
+  double fringe2[8];
+  double fringe1Tan;
+  double fringe1Sin;
+  double fringe1Sec;
+  double fringe2Tan;
+  double fringe2Sin;
+  double fringe2Sec;
+  int angleSign;
+  int has1;
+  int has2;
 } GPU_LGBEND_SEGMENT_DATA;
 
 typedef struct GPU_LGBEND_DATA {
   long nSegments;
   long nSlices;
+  int integrationOrder;
+  int edgeOrder;
   double predrift;
   double postdrift;
   double entryPosition;
   double entryAngle;
+  double entryPlaneTan;
+  double entryPlaneCos;
+  double entryPlaneSin;
   double exitPosition;
   double exitAngle;
+  double exitPlaneTan;
+  double exitPlaneCos;
+  double exitPlaneSin;
+  double Po;
+  double radCoef;
   double coordLimit;
   double slopeLimit;
+  GPU_APERTURE_LIMIT_DATA aperture;
   GPU_LGBEND_SEGMENT_DATA segment[GPU_LGBEND_MAX_SEGMENTS];
 } GPU_LGBEND_DATA;
 
@@ -589,6 +715,15 @@ void gpuDisableForRun(const char *reason);
 void gpuSetTrackingSuppressed(long suppressed);
 void setElementGpuData(void *eptr, long nParticles);
 long getElementOnGpu(void);
+long gpu_track_through_exact_corrector(long nParticles, void *element,
+                                       double pCentral, double **accepted,
+                                       double zStart);
+long gpu_track_through_taper_aperture(long nParticles, void *element,
+                                      double pCentral, double **accepted,
+                                      double zStart);
+long gpu_track_through_speedbump(long nParticles, void *element,
+                                 double pCentral, double **accepted,
+                                 double zStart);
 void gpuSetCpuParticleArray(double **coord, long nParticles);
 double **forceParticlesToCpu(const char *reason);
 double **copyParticlesToCpuReadOnly(const char *reason);

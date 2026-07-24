@@ -15,6 +15,15 @@ void gpu_collect_trajectory_data(double *centroid, long n_part);
 void gpu_compute_centroids(double *centroid, long n_part);
 void gpu_matr_element_tracking(VMATRIX *M, MATR *matr, long np, double z);
 void gpu_ematrix_element_tracking(VMATRIX *M, EMATRIX *matr, long np, double z, double *P_central);
+long gpu_track_through_exact_corrector(long nParticles, void *element,
+                                       double pCentral, double **accepted,
+                                       double zStart);
+long gpu_track_through_taper_aperture(long nParticles, void *element,
+                                      double pCentral, double **accepted,
+                                      double zStart);
+long gpu_track_through_speedbump(long nParticles, void *element,
+                                 double pCentral, double **accepted,
+                                 double zStart);
 
 #ifdef __cplusplus
 }

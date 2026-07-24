@@ -44,6 +44,10 @@
 #pragma weak track_through_csbend
 #pragma weak track_through_ccbend
 #pragma weak track_through_lgbend
+#pragma weak trackThroughExactCorrector
+#pragma weak trackThroughTaperApCirc
+#pragma weak trackThroughTaperApRectangular
+#pragma weak track_through_speedbump
 #ifdef GPU_VERIFY
 #pragma weak gpu_verify_csrcsbend_cpu_body_slice
 #endif
@@ -159,6 +163,10 @@ extern long track_through_csbend(double **part, long n_part, CSBEND *csbend,
                                  MAXAMP *maxamp, APCONTOUR *apContour,
                                  APERTURE_DATA *apFileData, long iSlice,
                                  ELEMENT_LIST *eptr);
+extern long trackThroughExactCorrector(double **part, long n_part,
+                                       ELEMENT_LIST *eptr, double Po,
+                                       double **accepted, double z_start,
+                                       double *sigmaDelta2);
 #ifdef GPU_VERIFY
 extern long gpu_verify_csrcsbend_cpu_body_slice(double *coord,
                                                 CSRCSBEND *csbend,
@@ -491,6 +499,18 @@ extern int gpuCudaMultipoleTrackStableCompact(void *coord, void *scratchCoord,
                                               const GPU_MULTIPOLE_DATA *multipole,
                                               long *remaining,
                                               float *milliseconds);
+extern int gpuCudaExactCorrectorTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_EXACT_CORRECTOR_DATA *corrector, long *remaining,
+  float *milliseconds);
+extern int gpuCudaTaperApertureTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_TAPER_APERTURE_DATA *taper, long *remaining,
+  float *milliseconds);
+extern int gpuCudaSpeedbumpTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_SPEEDBUMP_DATA *speedbump, long *remaining,
+  float *milliseconds);
 extern int gpuCudaCsbendTrackChecked(void *coord, long nParticles, int stride,
                                      const GPU_CSBEND_DATA *csbend,
                                      long *lostCount, float *milliseconds);
@@ -922,6 +942,7 @@ static long gpuShouldUseCpuForShortGpuIsland(ELEMENT_LIST *eptr, long nParticles
 static void gpuFlushPendingExactDrift(const char *reason);
 static long gpuCsrCsbendDeviceEntrySupported(ELEMENT_LIST *eptr, long nParticles);
 static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr);
+static long gpuExactCorrectorElementSupported(ELEMENT_LIST *eptr);
 static long gpuCsbendElementSupported(ELEMENT_LIST *eptr);
 static long gpuCcbendElementSupported(ELEMENT_LIST *eptr);
 static long gpuLgbendElementSupported(ELEMENT_LIST *eptr);
@@ -1225,11 +1246,9 @@ static const char *gpuExactDriftStatus(void) {
 }
 
 static const char *gpuMatrixTrackingStatus(void) {
-  if (!gpuBase.orderSensitiveOutputNeeded)
-    return "";
   return gpuMatrixDriftMinParticlesExplicit ?
          "; matrix tracking follows explicit matrix-drift threshold" :
-         "; matrix tracking uses CPU for order-sensitive output by default";
+         "";
 }
 
 static const char *gpuHelperOutputStatus(void) {
@@ -1241,11 +1260,9 @@ static const char *gpuHelperOutputStatus(void) {
 }
 
 static const char *gpuMagnetTrackingStatus(void) {
-  if (!gpuBase.orderSensitiveOutputNeeded)
-    return "";
   return gpuMagnetMinParticlesExplicit ?
          "; magnet tracking follows explicit magnet threshold" :
-         "; magnet tracking uses CPU for order-sensitive output by default";
+         "";
 }
 
 static const char *gpuCsrResidentStatus(void) {
@@ -1465,6 +1482,8 @@ static long gpuHelperElementSupported(ELEMENT_LIST *eptr) {
 }
 
 static long gpuApertureElementSupported(ELEMENT_LIST *eptr) {
+  SPEEDBUMP *speedbump;
+
   if (!eptr)
     return 0;
   switch (eptr->type) {
@@ -1472,6 +1491,34 @@ static long gpuApertureElementSupported(ELEMENT_LIST *eptr) {
   case T_ECOL:
   case T_SCRAPER:
     return 1;
+  case T_TAPERAPC:
+    return eptr->p_elem && !spinCoordOffset &&
+           ((TAPERAPC *)eptr->p_elem)->length >= 0;
+  case T_TAPERAPR:
+    return eptr->p_elem && !spinCoordOffset &&
+           ((TAPERAPR *)eptr->p_elem)->length >= 0;
+  case T_SPEEDBUMP:
+    if (!eptr->p_elem || spinCoordOffset || gpuBase.backtrack)
+      return 0;
+    speedbump = (SPEEDBUMP *)eptr->p_elem;
+    if (!speedbump->insertFrom ||
+        (strcmp(speedbump->insertFrom, "x") != 0 &&
+         strcmp(speedbump->insertFrom, "+x") != 0 &&
+         strcmp(speedbump->insertFrom, "-x") != 0 &&
+         strcmp(speedbump->insertFrom, "y") != 0 &&
+         strcmp(speedbump->insertFrom, "+y") != 0 &&
+         strcmp(speedbump->insertFrom, "-y") != 0))
+      return 0;
+    return isfinite(speedbump->length) && speedbump->length >= 0 &&
+           isfinite(speedbump->chord) && speedbump->chord >= 0 &&
+           isfinite(speedbump->height) && speedbump->height >= 0 &&
+           isfinite(speedbump->dzCenter) &&
+           isfinite(speedbump->position) && isfinite(speedbump->dx) &&
+           isfinite(speedbump->dy) &&
+           speedbump->length / 2 - speedbump->chord / 2 +
+               speedbump->dzCenter >= 0 &&
+           speedbump->length / 2 + speedbump->chord / 2 -
+               speedbump->dzCenter >= 0;
   default:
     break;
   }
@@ -1794,11 +1841,25 @@ static long gpuRfcaRemoveInvalidOnlyElementSupported(ELEMENT_LIST *eptr) {
   return 1;
 }
 
+static long gpuRfcaNoOpElementSupported(ELEMENT_LIST *eptr) {
+  RFCA *rfca;
+
+  if (!eptr || eptr->type != T_RFCA || !eptr->p_elem)
+    return 0;
+  rfca = (RFCA *)eptr->p_elem;
+  /*
+   * trackRfCavityWithWakes returns before phase setup or particle access for
+   * this case.  Keeping it resident is therefore exact even when FREQ and
+   * other inactive RF parameters are present.  Preserve the CPU error for the
+   * one option combination checked before that early return.
+   */
+  return rfca->length == 0 && rfca->volt == 0 &&
+         !(rfca->change_t && rfca->Q);
+}
+
 static long gpuRfcaThinKickElementSupported(ELEMENT_LIST *eptr) {
   RFCA *rfca;
 
-  if (gpuReferenceOutputUsesCpuHelpers())
-    return 0;
   if (!eptr || eptr->type != T_RFCA || !eptr->p_elem)
     return 0;
   rfca = (RFCA *)eptr->p_elem;
@@ -1823,8 +1884,6 @@ static long gpuRfcaRfOnlyMatrixElementSupported(ELEMENT_LIST *eptr) {
   if (distributedBeam)
     return 0;
 #endif
-  if (gpuReferenceOutputUsesCpuHelpers())
-    return 0;
   if (!eptr || eptr->type != T_RFCA || !eptr->p_elem)
     return 0;
   rfca = (RFCA *)eptr->p_elem;
@@ -1855,8 +1914,6 @@ static long gpuRfcaRfOnlyKickElementSupported(ELEMENT_LIST *eptr) {
   if (distributedBeam)
     return 0;
 #endif
-  if (gpuReferenceOutputUsesCpuHelpers())
-    return 0;
   if (!eptr || eptr->type != T_RFCA || !eptr->p_elem)
     return 0;
   rfca = (RFCA *)eptr->p_elem;
@@ -1952,7 +2009,9 @@ static long gpuMultipoleCommonSupported(long nSlices, long nKicks,
   (void)dx;
   (void)dy;
   (void)dz;
-  if (pitch || yaw || malignMethod)
+  if (pitch || yaw)
+    return 0;
+  if (malignMethod && (dx || dy || dz))
     return 0;
   if (integrationOrder != 2 && integrationOrder != 4 && integrationOrder != 6)
     return 0;
@@ -2003,9 +2062,13 @@ static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr) {
                                      kquad->malignMethod,
                                      kquad->expandHamiltonian))
       return 0;
-    if (kquad->edge1_effects || kquad->edge2_effects || kquad->radial)
+    if (kquad->edge1_effects < 0 || kquad->edge1_effects > 3 ||
+        kquad->edge2_effects < 0 || kquad->edge2_effects > 3 ||
+        kquad->radial)
       return 0;
-    if (kquad->lEffective > 0 && kquad->lEffective != kquad->length)
+    if (!isfinite(kquad->lEffective) ||
+        !isfinite(kquad->edge1NonlinearFactor) ||
+        !isfinite(kquad->edge2NonlinearFactor))
       return 0;
     if (gpuStringSet(kquad->systematic_multipoles) ||
         gpuStringSet(kquad->edge_multipoles) ||
@@ -2023,7 +2086,7 @@ static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr) {
   case T_KSEXT: {
     KSEXT *ksext = (KSEXT *)eptr->p_elem;
 
-    if (ksext->synch_rad)
+    if (ksext->synch_rad && ksext->length < 1e-6)
       return 0;
     if (!gpuMultipoleCommonSupported(ksext->nSlices, ksext->n_kicks,
                                      ksext->integration_order,
@@ -2099,6 +2162,60 @@ static long gpuMultipoleElementSupported(ELEMENT_LIST *eptr) {
   return 0;
 }
 
+static long gpuExactCorrectorElementSupported(ELEMENT_LIST *eptr) {
+  short synchRad = 0, isr = 0;
+  char *steeringMultipoles = NULL, *randomMultipoles = NULL;
+  MULTIPOLE_DATA *steeringData = NULL, *randomData = NULL, *totalData = NULL;
+
+  if (!eptr || !eptr->p_elem || gpuBase.backtrack || spinCoordOffset)
+    return 0;
+  switch (eptr->type) {
+  case T_EHCOR: {
+    EHCOR *corrector = (EHCOR *)eptr->p_elem;
+    synchRad = corrector->synchRad;
+    isr = corrector->isr;
+    steeringMultipoles = corrector->steeringMultipoles;
+    randomMultipoles = corrector->randomMultipoles;
+    steeringData = &corrector->steeringMultipoleData;
+    randomData = &corrector->randomMultipoleData;
+    totalData = &corrector->totalMultipoleData;
+    break;
+  }
+  case T_EVCOR: {
+    EVCOR *corrector = (EVCOR *)eptr->p_elem;
+    synchRad = corrector->synchRad;
+    isr = corrector->isr;
+    steeringMultipoles = corrector->steeringMultipoles;
+    randomMultipoles = corrector->randomMultipoles;
+    steeringData = &corrector->steeringMultipoleData;
+    randomData = &corrector->randomMultipoleData;
+    totalData = &corrector->totalMultipoleData;
+    break;
+  }
+  case T_EHVCOR: {
+    EHVCOR *corrector = (EHVCOR *)eptr->p_elem;
+    synchRad = corrector->synchRad;
+    isr = corrector->isr;
+    steeringMultipoles = corrector->steeringMultipoles;
+    randomMultipoles = corrector->randomMultipoles;
+    steeringData = &corrector->steeringMultipoleData;
+    randomData = &corrector->randomMultipoleData;
+    totalData = &corrector->totalMultipoleData;
+    break;
+  }
+  default:
+    return 0;
+  }
+  if (synchRad || isr || gpuStringSet(steeringMultipoles) ||
+      gpuStringSet(randomMultipoles))
+    return 0;
+  if (gpuMultipoleDataPresent(steeringData) ||
+      gpuMultipoleDataPresent(randomData) ||
+      gpuMultipoleDataPresent(totalData))
+    return 0;
+  return 1;
+}
+
 static long gpuCsbendCommonSupported(CSBEND *csbend) {
   double rho;
 
@@ -2112,7 +2229,10 @@ static long gpuCsbendCommonSupported(CSBEND *csbend) {
     return 0;
   if (csbend->referenceCorrection || csbend->fseCorrection)
     return 0;
-  if (csbend->epitch || csbend->eyaw || csbend->malignMethod)
+  if (csbend->epitch || csbend->eyaw)
+    return 0;
+  if (csbend->malignMethod &&
+      (csbend->dx || csbend->dy || csbend->dz || csbend->etilt))
     return 0;
   if (csbend->angle == 0)
     return 0;
@@ -2142,17 +2262,20 @@ static long gpuCsbendElementSupported(ELEMENT_LIST *eptr) {
 static long gpuCcbendCommonSupported(CCBEND *ccbend) {
   if (!ccbend || !gpuEnableCcbend || spinCoordOffset)
     return 0;
-  if (ccbend->optimized != 1 || ccbend->length <= 0 || ccbend->angle <= 0 ||
-      ccbend->nSlices <= 0 || ccbend->integration_order != 2 ||
-      ccbend->fringeModel != -1)
+  if (ccbend->optimized != 1 || ccbend->length <= 0 || ccbend->angle == 0 ||
+      ccbend->nSlices <= 0 ||
+      (ccbend->integration_order != 2 &&
+       ccbend->integration_order != 4 &&
+       ccbend->integration_order != 6) ||
+      (ccbend->fringeModel != -1 && ccbend->fringeModel != 1) ||
+      ccbend->edgeOrder > 3)
     return 0;
-  if (ccbend->synch_rad || ccbend->isr ||
+  if (ccbend->isr ||
       ccbend->distributionBasedRadiation || ccbend->synchRadInOrdinaryMatrix)
     return 0;
-  if (ccbend->tilt || ccbend->yaw || ccbend->extraTilt ||
+  if (ccbend->tilt || ccbend->yaw ||
       ccbend->dx || ccbend->dy || ccbend->dz || ccbend->eTilt ||
-      ccbend->ePitch || ccbend->eYaw || ccbend->malignMethod ||
-      ccbend->edgeFlip)
+      ccbend->ePitch || ccbend->eYaw || ccbend->malignMethod)
     return 0;
   if (ccbend->K3 || ccbend->K4 || ccbend->K5 || ccbend->K6 ||
       ccbend->K7 || ccbend->K8)
@@ -2185,19 +2308,6 @@ static long gpuCcbendElementSupported(ELEMENT_LIST *eptr) {
   return gpuCcbendCommonSupported((CCBEND *)eptr->p_elem);
 }
 
-static long gpuLgbendFringeIntegralsAreZero(const LGBEND_SEGMENT *segment) {
-  if (!segment)
-    return 0;
-  return segment->fringeInt1K0 == 0 && segment->fringeInt1I0 == 0 &&
-         segment->fringeInt1K2 == 0 && segment->fringeInt1I1 == 0 &&
-         segment->fringeInt1K4 == 0 && segment->fringeInt1K5 == 0 &&
-         segment->fringeInt1K6 == 0 && segment->fringeInt1K7 == 0 &&
-         segment->fringeInt2K0 == 0 && segment->fringeInt2I0 == 0 &&
-         segment->fringeInt2K2 == 0 && segment->fringeInt2I1 == 0 &&
-         segment->fringeInt2K4 == 0 && segment->fringeInt2K5 == 0 &&
-         segment->fringeInt2K6 == 0 && segment->fringeInt2K7 == 0;
-}
-
 static long gpuLgbendCommonSupported(LGBEND *lgbend) {
   long i;
 
@@ -2205,16 +2315,16 @@ static long gpuLgbendCommonSupported(LGBEND *lgbend) {
     return 0;
   if (!lgbend->initialized || lgbend->nSegments <= 0 ||
       lgbend->nSegments > GPU_LGBEND_MAX_SEGMENTS || lgbend->nSlices <= 0 ||
-      lgbend->integration_order != 2 || lgbend->edgeOrder > 1 ||
-      lgbend->optimizeFse)
+      (lgbend->integration_order != 2 &&
+       lgbend->integration_order != 4 &&
+       lgbend->integration_order != 6) ||
+      lgbend->edgeOrder > 3 || lgbend->optimized != 1)
     return 0;
-  if (lgbend->synch_rad || lgbend->isr ||
-      lgbend->distributionBasedRadiation ||
+  if (lgbend->isr || lgbend->distributionBasedRadiation ||
       lgbend->synchRadInOrdinaryMatrix)
     return 0;
   if (lgbend->tilt || lgbend->dx || lgbend->dy || lgbend->dz ||
-      lgbend->eyaw || lgbend->epitch || lgbend->etilt ||
-      lgbend->wasFlipped)
+      lgbend->eyaw || lgbend->epitch || lgbend->etilt)
     return 0;
   if (gpuStringSet(lgbend->apertureDataFile) ||
       gpuStringSet(lgbend->centroidOutputFile) || lgbend->localApertureData ||
@@ -2232,8 +2342,7 @@ static long gpuLgbendCommonSupported(LGBEND *lgbend) {
         !isfinite(segment->entryX) || !isfinite(segment->exitX) ||
         !isfinite(segment->K1) || !isfinite(segment->K2) ||
         !isfinite(lgbend->fseOpt[i]) || !isfinite(lgbend->KnDelta[i]) ||
-        lgbend->KnDelta[i] == 1 ||
-        !gpuLgbendFringeIntegralsAreZero(segment))
+        lgbend->KnDelta[i] == 1)
       return 0;
     denominator = sin(segment->entryAngle) +
                   sin(segment->angle - segment->entryAngle);
@@ -2810,14 +2919,10 @@ static long gpuParticleCountAllowed(long nParticles, long minParticles) {
 }
 
 static long gpuMatrixParticleCountAllowed(long nParticles) {
-  if (gpuBase.orderSensitiveOutputNeeded && !gpuMatrixDriftMinParticlesExplicit)
-    return 0;
   return gpuParticleCountAllowed(nParticles, gpuBase.matrixMinParticles);
 }
 
 static long gpuMagnetParticleCountAllowed(long nParticles) {
-  if (gpuBase.orderSensitiveOutputNeeded && !gpuMagnetMinParticlesExplicit)
-    return 0;
   return gpuParticleCountAllowed(nParticles, gpuBase.magnetMinParticles);
 }
 
@@ -2911,6 +3016,8 @@ static long gpuPassiveElementSupported(ELEMENT_LIST *eptr, long nParticles) {
   case T_TRCOUNT:
   case T_WATCH:
     return 1;
+  case T_RFCA:
+    return gpuRfcaNoOpElementSupported(eptr);
   case T_SCMULT:
     return gpuScmultAllowed(nParticles);
   default:
@@ -2952,6 +3059,8 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   if (gpuRfcwKickWakeElementSupported(eptr))
     return gpuWakeParticleCountAllowed(nParticles);
   if (gpuKickMapElementSupported(eptr))
+    return gpuMagnetParticleCountAllowed(nParticles);
+  if (gpuExactCorrectorElementSupported(eptr))
     return gpuMagnetParticleCountAllowed(nParticles);
   if (gpuCcbendElementSupported(eptr))
     return gpuParticleCountMeetsThreshold(nParticles,
@@ -3061,20 +3170,32 @@ static long gpuCsrCsbendDeviceEntrySupported(ELEMENT_LIST *eptr,
 
 static long gpuShouldUseCpuForShortGpuIsland(ELEMENT_LIST *eptr, long nParticles) {
   ELEMENT_LIST *next;
-  long elements = 0;
+  long cost = 0;
+  unsigned long flags;
 
   if (!gpuAvoidShortGpuIslands || gpuShortGpuIslandMaxElements <= 0)
     return 0;
   if (!gpuBase.hostCurrent || !eptr || nParticles <= 0)
     return 0;
-  if (!gpuSimpleMatrixElement(eptr))
+  flags = entity_description[eptr->type].flags;
+  if (!gpuSimpleMatrixElement(eptr) && !(flags & IS_MAGNET) &&
+      eptr->type != T_TAPERAPC && eptr->type != T_TAPERAPR &&
+      eptr->type != T_SPEEDBUMP)
     return 0;
 
   for (next = eptr; next; next = next->succ) {
     if (gpuPassiveElementSupported(next, nParticles))
       continue;
-    if (gpuSimpleMatrixElement(next) && gpuElementEligible(next, nParticles)) {
-      if (++elements > gpuShortGpuIslandMaxElements)
+    if (gpuElementEligible(next, nParticles)) {
+      /*
+       * A magnet is substantially more expensive than a matrix drift, so
+       * count it twice.  This still avoids an upload for an isolated magnet
+       * (including its adjacent drifts), but keeps a two-magnet island on the
+       * device.  Counting every eligible element equally made short repeating
+       * cells such as D-B-D-B fall back entirely to the CPU.
+       */
+      cost += (entity_description[next->type].flags & IS_MAGNET) ? 2 : 1;
+      if (cost > gpuShortGpuIslandMaxElements)
         return 0;
       continue;
     }
@@ -3433,7 +3554,6 @@ static void gpuEnsureRfcaScratch(void) {
   }
 }
 
-#ifndef GPU_VERIFY
 static void gpuEnsureApertureScratch(long nParticles) {
   unsigned long count;
   int status;
@@ -3452,7 +3572,7 @@ static void gpuEnsureApertureScratch(long nParticles) {
   if (status != 0)
     gpuFatalStatus("cudaMalloc(aperture coord scratch)", status);
   status = gpuCudaMallocBytes(&gpuApertureScratch.prefix,
-                              (unsigned long)nParticles * sizeof(long));
+                              (unsigned long)nParticles * 2UL * sizeof(long));
   if (status != 0)
     gpuFatalStatus("cudaMalloc(aperture prefix scratch)", status);
   gpuApertureScratch.capacity = nParticles;
@@ -3481,6 +3601,7 @@ static void gpuPromoteApertureScratchCoord(void) {
   gpuApertureScratch.stride = oldStride;
 }
 
+#ifndef GPU_VERIFY
 static long *gpuEnsureApertureHostPrefix(long nParticles) {
   if (nParticles <= 0)
     return NULL;
@@ -3940,13 +4061,6 @@ static void gpuCopyAperturePrefixToHost(long nParticles, const char *reason) {
   gpuRecordSyncRequest(reason, 1, 1);
 }
 
-static long gpuAperturePrefixSurvives(const long *prefix, long ip,
-                                      long nParticles, long survivors) {
-  if (ip + 1 < nParticles)
-    return prefix[ip + 1] > prefix[ip];
-  return survivors > prefix[ip];
-}
-
 static void gpuStablePartitionAccepted(double **accepted, long nParticles,
                                        long survivors) {
   long *prefix;
@@ -3956,15 +4070,13 @@ static void gpuStablePartitionAccepted(double **accepted, long nParticles,
 
   if (!accepted || nParticles <= 0)
     return;
+  (void)survivors;
   prefix = gpuApertureScratch.hostPrefix;
   scratch = gpuEnsureApertureHostAccepted(nParticles, stride);
   if (!prefix || !scratch)
     gpuRequiredFailure("missing host aperture scratch for accepted partition");
   for (ip = 0; ip < nParticles; ip++) {
-    if (gpuAperturePrefixSurvives(prefix, ip, nParticles, survivors))
-      destination = prefix[ip];
-    else
-      destination = survivors + (ip - prefix[ip]);
+    destination = prefix[ip];
     memcpy(scratch + destination * stride, accepted[ip],
            (size_t)stride * sizeof(*scratch));
   }
@@ -4313,6 +4425,50 @@ static void gpuRecordMagnetKernel(float milliseconds) {
   gpuRecordMilliseconds(&gpuBase.gpuKernelSeconds, milliseconds);
   gpuBase.gpuMagnetCount++;
 }
+
+#ifdef GPU_VERIFY
+static long gpuVerifyMultipoleStableCompact(GPU_MULTIPOLE_DATA *data,
+                                            long nParticles,
+                                            const char *name) {
+  long remaining = nParticles;
+  float milliseconds = 0;
+  int status;
+
+  gpuEnsureApertureScratch(nParticles);
+  status = gpuCudaMultipoleTrackStableCompact(
+    gpuBase.deviceCoord, gpuApertureScratch.coord, gpuApertureScratch.prefix,
+    nParticles, (int)gpuBase.deviceStride, data, &remaining, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus(name ? name :
+                   "multipole GPU-VERIFY stable magnet loss compaction",
+                   status);
+  gpuRecordMagnetKernel(milliseconds);
+  gpuPromoteApertureScratchCoord();
+  gpuMarkDeviceChanged(remaining);
+  return remaining;
+}
+
+static long gpuVerifyCsbendStableCompact(GPU_CSBEND_DATA *data,
+                                         long nParticles,
+                                         const char *name) {
+  long remaining = nParticles;
+  float milliseconds = 0;
+  int status;
+
+  gpuEnsureApertureScratch(nParticles);
+  status = gpuCudaCsbendTrackStableCompact(
+    gpuBase.deviceCoord, gpuApertureScratch.coord, gpuApertureScratch.prefix,
+    nParticles, (int)gpuBase.deviceStride, data, &remaining, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus(name ? name :
+                   "CSBEND GPU-VERIFY stable magnet loss compaction",
+                   status);
+  gpuRecordMagnetKernel(milliseconds);
+  gpuPromoteApertureScratchCoord();
+  gpuMarkDeviceChanged(remaining);
+  return remaining;
+}
+#endif
 
 static void gpuRecordWakeKernel(float milliseconds) {
   gpuRecordMilliseconds(&gpuBase.gpuKernelSeconds, milliseconds);
@@ -4932,19 +5088,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuEnableApertureParallelCompaction =
     gpuApertureParallelCompactionExplicit ?
     gpuEnvFlag("ELEGANT_GPU_ENABLE_APERTURE_PARALLEL_COMPACTION") :
-    !gpuBase.lossOutputNeeded;
+    1;
 #ifdef GPU_VERIFY
   if (gpuEnableApertureParallelCompaction) {
     gpuEnableApertureParallelCompaction = 0;
     gpuApertureParallelCompactionVerifyDisabled = 1;
   }
 #endif
-  if (gpuEnableApertureParallelCompaction &&
-      gpuBase.orderSensitiveOutputNeeded &&
-      !gpuApertureParallelCompactionExplicit) {
-    gpuEnableApertureParallelCompaction = 0;
-    gpuApertureParallelCompactionOrderDisabled = 1;
-  }
   gpuMagnetLossCompactionExplicit =
     gpuEnvSet("ELEGANT_GPU_ENABLE_MAGNET_LOSS_COMPACTION");
   gpuEnableMagnetLossCompaction =
@@ -5959,6 +6109,9 @@ void displayTimings(void) {
 }
 
 void compareGpuCpu(long nParticles, const char *label) {
+  ELEMENT_LIST *verifyElement = (ELEMENT_LIST *)gpuBase.element;
+  const char *verifyElementName =
+    verifyElement && verifyElement->name ? verifyElement->name : "(unknown)";
   double absTol = gpuEnvDouble("ELEGANT_GPU_COMPARE_ABS", 1e-12);
   double defaultRelTol =
     label && strcmp(label, "field_table_tracking") == 0 ? 1e-10 : 1e-12;
@@ -5996,8 +6149,9 @@ void compareGpuCpu(long nParticles, const char *label) {
       if (!(absDiff <= absTol || relDiff <= relTol)) {
         if (mismatches < 10)
           fprintf(stderr,
-                  "elegant CUDA VERIFY mismatch %s particle=%ld coord=%ld cpu=%.17e gpu=%.17e abs=%.3e rel=%.3e\n",
-                  label ? label : "unknown", ip, ic, cpu, gpu, absDiff, relDiff);
+                  "elegant CUDA VERIFY mismatch %s element=%s particle=%ld coord=%ld cpu=%.17e gpu=%.17e abs=%.3e rel=%.3e\n",
+                  label ? label : "unknown", verifyElementName,
+                  ip, ic, cpu, gpu, absDiff, relDiff);
         mismatches++;
       }
     }
@@ -6006,13 +6160,14 @@ void compareGpuCpu(long nParticles, const char *label) {
 
   if (mismatches) {
     fprintf(stderr,
-            "elegant CUDA VERIFY failed for %s: %ld mismatches, maxAbs=%.3e, maxRel=%.3e, absTol=%.3e, relTol=%.3e\n",
-            label ? label : "unknown", mismatches, maxAbs, maxRel, absTol, relTol);
+            "elegant CUDA VERIFY failed for %s element=%s: %ld mismatches, maxAbs=%.3e, maxRel=%.3e, absTol=%.3e, relTol=%.3e\n",
+            label ? label : "unknown", verifyElementName,
+            mismatches, maxAbs, maxRel, absTol, relTol);
     exit(1);
   }
   if (gpuVerbose)
-    fprintf(stderr, "elegant CUDA VERIFY passed for %s: maxAbs=%.3e maxRel=%.3e\n",
-            label ? label : "unknown", maxAbs, maxRel);
+    fprintf(stderr, "elegant CUDA VERIFY passed for %s element=%s: maxAbs=%.3e maxRel=%.3e\n",
+            label ? label : "unknown", verifyElementName, maxAbs, maxRel);
 
   gpuBase.deviceCurrent = 0;
   gpuBase.hostCurrent = 1;
@@ -9705,6 +9860,69 @@ static void gpuInitMultipoleData(GPU_MULTIPOLE_DATA *data, double Po,
   data->cosTilt = 1;
 }
 
+static void gpuPackQuadPartialFringeMatrix(double matrix[8], double K1,
+                                           const double fringeInt[5],
+                                           long part) {
+  double J1x, J2x, J3x, J1y, J2y, J3y;
+  double K1sqr = sqr(K1);
+  double expJ1x, expJ1y;
+
+  if (part == 1) {
+    J1x = K1 * fringeInt[1] -
+          2 * K1sqr * fringeInt[3] / 3. -
+          K1sqr * fringeInt[0] * fringeInt[2] / 2;
+    J2x = K1 * fringeInt[2];
+    J3x = K1sqr *
+          (fringeInt[2] + fringeInt[4] +
+           fringeInt[0] * fringeInt[1]);
+    J1y = -K1 * fringeInt[1] -
+          2 * K1sqr * fringeInt[3] / 3. -
+          K1sqr * fringeInt[0] * fringeInt[2] / 2;
+    J2y = -J2x;
+    J3y = J3x;
+  } else {
+    J1x = K1 * fringeInt[1] +
+          K1sqr * fringeInt[0] * fringeInt[2] / 2;
+    J2x = K1 * fringeInt[2];
+    J3x = K1sqr *
+          (fringeInt[4] - fringeInt[0] * fringeInt[1]);
+    J1y = -K1 * fringeInt[1] +
+          K1sqr * fringeInt[0] * fringeInt[2] / 2;
+    J2y = -J2x;
+    J3y = J3x;
+  }
+
+  expJ1x = matrix[0] = exp(J1x);
+  matrix[1] = J2x / expJ1x;
+  matrix[2] = expJ1x * J3x;
+  matrix[3] = (1 + J2x * J3x) / expJ1x;
+  expJ1y = matrix[4] = exp(J1y);
+  matrix[5] = J2y / expJ1y;
+  matrix[6] = expJ1y * J3y;
+  matrix[7] = (1 + J2y * J3y) / expJ1y;
+}
+
+static void gpuPackQuadFringeMatrices(double matrix1[8], double matrix2[8],
+                                      double K1,
+                                      const double fringeIntM[5],
+                                      const double fringeIntP[5],
+                                      long entrance) {
+  double temporary[8];
+
+  gpuPackQuadPartialFringeMatrix(matrix1, K1, fringeIntM, 1);
+  gpuPackQuadPartialFringeMatrix(matrix2, K1, fringeIntP, 2);
+  if (!entrance)
+    return;
+
+  SWAP_DOUBLE(matrix1[0], matrix1[3]);
+  SWAP_DOUBLE(matrix1[4], matrix1[7]);
+  SWAP_DOUBLE(matrix2[0], matrix2[3]);
+  SWAP_DOUBLE(matrix2[4], matrix2[7]);
+  memcpy(temporary, matrix1, sizeof(temporary));
+  memcpy(matrix1, matrix2, sizeof(temporary));
+  memcpy(matrix2, temporary, sizeof(temporary));
+}
+
 static long gpuPackMultipoleTracking(GPU_MULTIPOLE_DATA *data,
                                      ELEMENT_LIST *elem, double Po) {
   long nSlices = 0;
@@ -9744,6 +9962,20 @@ static long gpuPackMultipoleTracking(GPU_MULTIPOLE_DATA *data,
       return 0;
     gpuInitMultipoleData(data, Po, lEffective, nSlices,
                          kquad->integration_order, kquad->expandHamiltonian);
+    data->endDrift = (kquad->length - lEffective) / 2;
+    data->k1 = kquad->k1;
+    data->edge1Effects = kquad->edge1_effects;
+    data->edge2Effects = kquad->edge2_effects;
+    data->edge1Linear = kquad->edge1Linear;
+    data->edge2Linear = kquad->edge2Linear;
+    data->edge1NonlinearFactor = kquad->edge1NonlinearFactor;
+    data->edge2NonlinearFactor = kquad->edge2NonlinearFactor;
+    if (data->edge1Effects)
+      gpuPackQuadFringeMatrices(data->edge1M1, data->edge1M2, kquad->k1,
+                                kquad->fringeIntM, kquad->fringeIntP, 1);
+    if (data->edge2Effects)
+      gpuPackQuadFringeMatrices(data->edge2M1, data->edge2M2, kquad->k1,
+                                kquad->fringeIntM, kquad->fringeIntP, 0);
     data->order[0] = 1;
     if (kquad->bore)
       data->KnL[0] = kquad->B / kquad->bore *
@@ -9792,6 +10024,10 @@ static long gpuPackMultipoleTracking(GPU_MULTIPOLE_DATA *data,
     data->dx = ksext->dx;
     data->dy = ksext->dy;
     data->dz = ksext->dz;
+    if (ksext->synch_rad)
+      data->radCoef =
+        sqr(particleCharge) * pow3(Po) /
+        (6 * PI * epsilon_o * sqr(c_mks) * particleMass);
     gpuCsbendTiltSinCos(ksext->tilt, &data->cosTilt, &data->sinTilt);
     return 1;
   }
@@ -9853,6 +10089,456 @@ static long gpuPackMultipoleTracking(GPU_MULTIPOLE_DATA *data,
   return 0;
 }
 
+static long gpuPackExactCorrector(GPU_EXACT_CORRECTOR_DATA *data,
+                                  ELEMENT_LIST *elem, double pCentral,
+                                  double zStart) {
+  double tilt = 0;
+
+  if (!data || !gpuExactCorrectorElementSupported(elem))
+    return 0;
+  memset(data, 0, sizeof(*data));
+  data->pCentral = pCentral;
+  data->zStart = zStart;
+  switch (elem->type) {
+  case T_EHCOR: {
+    EHCOR *corrector = (EHCOR *)elem->p_elem;
+    data->length = corrector->length;
+    data->xkick = corrector->kick * corrector->calibration;
+    data->dx = corrector->dx;
+    data->dy = corrector->dy;
+    data->dz = corrector->dz;
+    tilt = corrector->tilt;
+    break;
+  }
+  case T_EVCOR: {
+    EVCOR *corrector = (EVCOR *)elem->p_elem;
+    data->length = corrector->length;
+    data->ykick = corrector->kick * corrector->calibration;
+    data->dx = corrector->dx;
+    data->dy = corrector->dy;
+    data->dz = corrector->dz;
+    tilt = corrector->tilt;
+    break;
+  }
+  case T_EHVCOR: {
+    EHVCOR *corrector = (EHVCOR *)elem->p_elem;
+    data->length = corrector->length;
+    data->xkick = corrector->xkick * corrector->xcalibration;
+    data->ykick = corrector->ykick * corrector->ycalibration;
+    data->dx = corrector->dx;
+    data->dy = corrector->dy;
+    data->dz = corrector->dz;
+    tilt = corrector->tilt;
+    break;
+  }
+  default:
+    return 0;
+  }
+  {
+    double tx = tan(data->xkick);
+    double ty = tan(data->ykick);
+    double theta = atan(sqrt(tx * tx + ty * ty));
+    if (theta)
+      tilt += atan2(ty, tx);
+    if (data->length < 0)
+      tilt += PI;
+  }
+  gpuCsbendTiltSinCos(tilt, &data->cosTilt, &data->sinTilt);
+  return 1;
+}
+
+static long gpuPackMaxamp(GPU_APERTURE_LIMIT_DATA *data, MAXAMP *maxamp,
+                          double cosTilt, double sinTilt) {
+  if (!data)
+    return 0;
+  memset(data, 0, sizeof(*data));
+  data->cosReverseTilt = cosTilt;
+  data->sinReverseTilt = -sinTilt;
+  if (!maxamp)
+    return 1;
+  if ((maxamp->openSide && *maxamp->openSide) && !determineOpenSideCode)
+    return 0;
+  data->xMax = maxamp->x_max;
+  data->yMax = maxamp->y_max;
+  data->elliptical = maxamp->elliptical ? 1 : 0;
+  data->xExponent = maxamp->exponent;
+  data->yExponent = maxamp->yExponent ?
+    maxamp->yExponent : maxamp->exponent;
+  data->openSide = determineOpenSideCode ?
+    (int)determineOpenSideCode(maxamp->openSide) : 0;
+  data->present = data->xMax > 0 || data->yMax > 0;
+  if (data->elliptical && data->present &&
+      (data->xExponent <= 0 || data->yExponent <= 0))
+    return 0;
+  return isfinite(data->xMax) && isfinite(data->yMax);
+}
+
+static long gpuPackTaperAperture(GPU_TAPER_APERTURE_DATA *data,
+                                 ELEMENT_LIST *element, double pCentral,
+                                 double zStart) {
+  if (!data || !element || !element->p_elem)
+    return 0;
+  memset(data, 0, sizeof(*data));
+  data->pCentral = pCentral;
+  data->zStart = zStart;
+  data->cosTilt = 1;
+  switch (element->type) {
+  case T_TAPERAPC: {
+    TAPERAPC *taper = (TAPERAPC *)element->p_elem;
+    if (taper->length < 0)
+      return 0;
+    data->type = GPU_TAPER_APERTURE_CIRCULAR;
+    data->length = taper->length;
+    data->xStart = taper->r[taper->e1Index];
+    data->xEnd = taper->r[taper->e2Index];
+    data->dx = taper->dx;
+    data->dy = taper->dy;
+    break;
+  }
+  case T_TAPERAPR: {
+    TAPERAPR *taper = (TAPERAPR *)element->p_elem;
+    if (taper->length < 0)
+      return 0;
+    data->type = GPU_TAPER_APERTURE_RECTANGULAR;
+    data->length = taper->length;
+    data->xStart = taper->xmax[taper->e1Index];
+    data->xEnd = taper->xmax[taper->e2Index];
+    data->yStart = taper->ymax[taper->e1Index];
+    data->yEnd = taper->ymax[taper->e2Index];
+    data->dx = taper->dx;
+    data->dy = taper->dy;
+    gpuCsbendTiltSinCos(taper->tilt,
+                        &data->cosTilt, &data->sinTilt);
+    break;
+  }
+  default:
+    return 0;
+  }
+  return isfinite(data->length) && isfinite(data->xStart) &&
+         isfinite(data->xEnd) && isfinite(data->yStart) &&
+         isfinite(data->yEnd) && isfinite(data->dx) &&
+         isfinite(data->dy);
+}
+
+static long gpuTaperApertureOnCpu(long nParticles, ELEMENT_LIST *element,
+                                  double pCentral, double **accepted,
+                                  double zStart, const char *reason) {
+  double **coord = forceParticlesToCpu(reason);
+  long remaining;
+
+  gpuBase.elementOnGpu = 0;
+  if (!element || !element->p_elem)
+    gpuRequiredFailure("NULL tapered aperture element");
+  if (element->type == T_TAPERAPC)
+    remaining = trackThroughTaperApCirc(
+      coord, (TAPERAPC *)element->p_elem, nParticles, accepted,
+      zStart, pCentral, element);
+  else if (element->type == T_TAPERAPR)
+    remaining = trackThroughTaperApRectangular(
+      coord, (TAPERAPR *)element->p_elem, nParticles, accepted,
+      zStart, pCentral, element);
+  else
+    gpuRequiredFailure("invalid tapered aperture CPU fallback");
+  gpuMarkHostWillChange();
+  gpuRecordWallSeconds();
+  return remaining;
+}
+
+long gpu_track_through_taper_aperture(long nParticles, void *element0,
+                                      double pCentral, double **accepted,
+                                      double zStart) {
+  ELEMENT_LIST *element = (ELEMENT_LIST *)element0;
+  GPU_TAPER_APERTURE_DATA data;
+  long remaining = nParticles;
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0)
+    return nParticles;
+#ifdef GPU_VERIFY
+  if (globalLossCoordOffset > 0)
+    return gpuTaperApertureOnCpu(
+      nParticles, element, pCentral, accepted, zStart,
+      "tapered aperture global-loss GPU_VERIFY fallback");
+#endif
+  if (!gpuPackTaperAperture(&data, element, pCentral, zStart))
+    return gpuTaperApertureOnCpu(
+      nParticles, element, pCentral, accepted, zStart,
+      "tapered aperture unsupported-option CPU fallback");
+  gpuCopyHostToDevice(nParticles);
+  gpuEnsureApertureScratch(nParticles);
+  status = gpuCudaTaperApertureTrackStableCompact(
+    gpuBase.deviceCoord, gpuApertureScratch.coord, gpuApertureScratch.prefix,
+    nParticles, (int)gpuBase.deviceStride, &data, &remaining, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("tapered aperture CUDA stable tracking", status);
+  gpuRecordApertureKernel(milliseconds);
+#ifndef GPU_VERIFY
+  if (remaining != nParticles && accepted) {
+    if (!gpuStablePartitionAcceptedOnDevice(
+          accepted, nParticles, remaining,
+          "tapered aperture CUDA accepted stable compaction")) {
+      gpuCopyAperturePrefixToHost(
+        nParticles, "tapered aperture CUDA accepted map");
+      gpuStablePartitionAccepted(accepted, nParticles, remaining);
+    }
+  }
+#endif
+  gpuPromoteApertureScratchCoord();
+#ifndef GPU_VERIFY
+  if (remaining != nParticles) {
+    gpuCopyApertureLossRowsToHost(
+      remaining, nParticles,
+      "tapered aperture CUDA stable compaction loss tail output");
+    if (globalLossCoordOffset > 0 && element) {
+      for (long ip = remaining; ip < nParticles; ip++) {
+        double X, Y, Z, theta;
+        double dz = gpuBase.coord[ip][4] - zStart;
+        convertLocalCoordinatesToGlobal(
+          &Z, &X, &Y, &theta, GLOBAL_LOCAL_MODE_DZ,
+          gpuBase.coord[ip], element, dz, 0, 0);
+        gpuBase.coord[ip][globalLossCoordOffset + 0] = X;
+        gpuBase.coord[ip][globalLossCoordOffset + 1] = Z;
+        gpuBase.coord[ip][globalLossCoordOffset + 2] = theta;
+      }
+    }
+  }
+#else
+  {
+    long cpuRemaining;
+    startCpuTimer();
+    if (element->type == T_TAPERAPC)
+      cpuRemaining = trackThroughTaperApCirc(
+        gpuBase.coord, (TAPERAPC *)element->p_elem, nParticles, accepted,
+        zStart, pCentral, element);
+    else
+      cpuRemaining = trackThroughTaperApRectangular(
+        gpuBase.coord, (TAPERAPR *)element->p_elem, nParticles, accepted,
+        zStart, pCentral, element);
+    if (cpuRemaining != remaining) {
+      fprintf(stderr,
+              "elegant CUDA VERIFY failed for tapered aperture element=%s: CPU survivors=%ld GPU survivors=%ld\n",
+              element && element->name ? element->name : "(unknown)",
+              cpuRemaining, remaining);
+      exit(1);
+    }
+    compareGpuCpu(nParticles, "tapered aperture stable tracking");
+    gpuRecordWallSeconds();
+    return cpuRemaining;
+  }
+#endif
+  gpuMarkDeviceChanged(remaining);
+  gpuRecordWallSeconds();
+  return remaining;
+}
+
+static long gpuPackSpeedbump(GPU_SPEEDBUMP_DATA *data,
+                             ELEMENT_LIST *element, double pCentral,
+                             double zStart) {
+  SPEEDBUMP *speedbump;
+  const char *direction;
+
+  if (!data || !element || element->type != T_SPEEDBUMP ||
+      !gpuApertureElementSupported(element))
+    return 0;
+  speedbump = (SPEEDBUMP *)element->p_elem;
+  direction = speedbump->insertFrom;
+  memset(data, 0, sizeof(*data));
+  data->length = speedbump->length;
+  data->chord = speedbump->chord;
+  data->dzCenter = speedbump->dzCenter;
+  data->height = speedbump->height;
+  data->position = speedbump->position;
+  data->zStart = zStart;
+  data->pCentral = pCentral;
+  data->scraperConvention = speedbump->scraperConvention ? 1 : 0;
+  if (strchr(direction, 'x')) {
+    data->plane = 0;
+    data->offset = speedbump->dx;
+  } else {
+    data->plane = 2;
+    data->offset = speedbump->dy;
+  }
+  data->plusDirection = direction[0] != '-';
+  data->minusDirection = direction[0] == '-';
+  if (speedbump->chord && speedbump->height)
+    data->radius =
+      (sqr(speedbump->chord) + 4 * sqr(speedbump->height)) /
+      (8 * speedbump->height);
+  return 1;
+}
+
+static long gpuSpeedbumpOnCpu(long nParticles, ELEMENT_LIST *element,
+                              double pCentral, double **accepted,
+                              double zStart, const char *reason) {
+  double **coord = forceParticlesToCpu(reason);
+  long remaining;
+
+  gpuBase.elementOnGpu = 0;
+  if (!element || !element->p_elem || !track_through_speedbump)
+    gpuRequiredFailure("SPEEDBUMP CPU fallback is unavailable");
+  remaining = track_through_speedbump(
+    coord, (SPEEDBUMP *)element->p_elem, nParticles, accepted,
+    zStart, pCentral, element);
+  gpuMarkHostWillChange();
+  gpuRecordWallSeconds();
+  return remaining;
+}
+
+long gpu_track_through_speedbump(long nParticles, void *element0,
+                                 double pCentral, double **accepted,
+                                 double zStart) {
+  ELEMENT_LIST *element = (ELEMENT_LIST *)element0;
+  GPU_SPEEDBUMP_DATA data;
+  long remaining = nParticles;
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0)
+    return nParticles;
+#ifdef GPU_VERIFY
+  if (globalLossCoordOffset > 0)
+    return gpuSpeedbumpOnCpu(
+      nParticles, element, pCentral, accepted, zStart,
+      "SPEEDBUMP global-loss GPU_VERIFY fallback");
+#endif
+  if (!gpuPackSpeedbump(&data, element, pCentral, zStart))
+    return gpuSpeedbumpOnCpu(
+      nParticles, element, pCentral, accepted, zStart,
+      "SPEEDBUMP unsupported-option CPU fallback");
+  gpuCopyHostToDevice(nParticles);
+  gpuEnsureApertureScratch(nParticles);
+  status = gpuCudaSpeedbumpTrackStableCompact(
+    gpuBase.deviceCoord, gpuApertureScratch.coord, gpuApertureScratch.prefix,
+    nParticles, (int)gpuBase.deviceStride, &data, &remaining, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("SPEEDBUMP CUDA stable tracking", status);
+  gpuRecordApertureKernel(milliseconds);
+#ifndef GPU_VERIFY
+  if (remaining != nParticles && accepted) {
+    if (!gpuStablePartitionAcceptedOnDevice(
+          accepted, nParticles, remaining,
+          "SPEEDBUMP CUDA accepted stable compaction")) {
+      gpuCopyAperturePrefixToHost(
+        nParticles, "SPEEDBUMP CUDA accepted map");
+      gpuStablePartitionAccepted(accepted, nParticles, remaining);
+    }
+  }
+#endif
+  gpuPromoteApertureScratchCoord();
+#ifndef GPU_VERIFY
+  if (remaining != nParticles) {
+    gpuCopyApertureLossRowsToHost(
+      remaining, nParticles,
+      "SPEEDBUMP CUDA stable compaction loss tail output");
+    if (globalLossCoordOffset > 0 && element) {
+      for (long ip = remaining; ip < nParticles; ip++) {
+        double X, Y, Z, theta;
+        double dz = gpuBase.coord[ip][4] - zStart;
+        convertLocalCoordinatesToGlobal(
+          &Z, &X, &Y, &theta, GLOBAL_LOCAL_MODE_DZ,
+          gpuBase.coord[ip], element, dz, 0, 0);
+        gpuBase.coord[ip][globalLossCoordOffset + 0] = X;
+        gpuBase.coord[ip][globalLossCoordOffset + 1] = Z;
+        gpuBase.coord[ip][globalLossCoordOffset + 2] = theta;
+      }
+    }
+  }
+#else
+  {
+    startCpuTimer();
+    long cpuRemaining = track_through_speedbump(
+      gpuBase.coord, (SPEEDBUMP *)element->p_elem, nParticles, accepted,
+      zStart, pCentral, element);
+    if (cpuRemaining != remaining) {
+      fprintf(stderr,
+              "elegant CUDA VERIFY failed for SPEEDBUMP element=%s: CPU survivors=%ld GPU survivors=%ld\n",
+              element && element->name ? element->name : "(unknown)",
+              cpuRemaining, remaining);
+      exit(1);
+    }
+    compareGpuCpu(nParticles, "SPEEDBUMP stable tracking");
+    gpuRecordWallSeconds();
+    return cpuRemaining;
+  }
+#endif
+  gpuMarkDeviceChanged(remaining);
+  gpuRecordWallSeconds();
+  return remaining;
+}
+
+long gpu_track_through_exact_corrector(long nParticles, void *element0,
+                                       double pCentral, double **accepted,
+                                       double zStart) {
+  ELEMENT_LIST *element = (ELEMENT_LIST *)element0;
+  GPU_EXACT_CORRECTOR_DATA data;
+  long remaining = nParticles;
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0)
+    return nParticles;
+  if (!gpuPackExactCorrector(&data, element, pCentral, zStart)) {
+    double **coord = forceParticlesToCpu(
+      "exact corrector unsupported-option CPU fallback");
+    long result;
+    if (!element)
+      gpuRequiredFailure("NULL exact corrector element");
+    result = trackThroughExactCorrector(
+      coord, nParticles, element, pCentral, accepted, zStart, NULL);
+    gpuBase.elementOnGpu = 0;
+    gpuMarkHostWillChange();
+    gpuRecordWallSeconds();
+    return result;
+  }
+
+  gpuCopyHostToDevice(nParticles);
+  gpuEnsureApertureScratch(nParticles);
+  status = gpuCudaExactCorrectorTrackStableCompact(
+    gpuBase.deviceCoord, gpuApertureScratch.coord, gpuApertureScratch.prefix,
+    nParticles, (int)gpuBase.deviceStride, &data, &remaining, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus("exact corrector CUDA stable tracking", status);
+  gpuRecordMagnetKernel(milliseconds);
+#ifndef GPU_VERIFY
+  if (remaining != nParticles && accepted) {
+    if (!gpuStablePartitionAcceptedOnDevice(
+          accepted, nParticles, remaining,
+          "exact corrector CUDA accepted stable compaction")) {
+      gpuCopyAperturePrefixToHost(
+        nParticles, "exact corrector CUDA accepted map");
+      gpuStablePartitionAccepted(accepted, nParticles, remaining);
+    }
+  }
+#endif
+  gpuPromoteApertureScratchCoord();
+#ifndef GPU_VERIFY
+  if (remaining != nParticles)
+    gpuCopyApertureLossRowsToHost(
+      remaining, nParticles,
+      "exact corrector CUDA stable compaction loss tail output");
+#else
+  {
+    startCpuTimer();
+    long cpuRemaining = trackThroughExactCorrector(
+      gpuBase.coord, nParticles, element, pCentral, accepted, zStart, NULL);
+    if (cpuRemaining != remaining) {
+      fprintf(stderr,
+              "elegant CUDA VERIFY failed for exact corrector element=%s: CPU survivors=%ld GPU survivors=%ld\n",
+              element && element->name ? element->name : "(unknown)",
+              cpuRemaining, remaining);
+      exit(1);
+    }
+    compareGpuCpu(nParticles, "exact corrector stable tracking");
+    gpuRecordWallSeconds();
+    return cpuRemaining;
+  }
+#endif
+  gpuMarkDeviceChanged(remaining);
+  gpuRecordWallSeconds();
+  return remaining;
+}
+
 static long gpuMultipoleOnCpu(long n_part, ELEMENT_LIST *elem, double p_error,
                               double Po, double **accepted, double z_start,
                               MAXAMP *maxamp, APCONTOUR *apcontour,
@@ -9897,7 +10583,7 @@ long gpu_multipole_tracking2(long n_part, void *elem0, double p_error,
     return gpuMultipoleOnCpu(n_part, elem, p_error, Po, accepted, z_start,
                              maxamp, apcontour, apFileData, sigmaDelta2, iSlice,
                              "multipole_tracking2 slice-by-slice fallback");
-  if (maxamp || apcontour || (apFileData && apFileData->initialized))
+  if (apcontour || (apFileData && apFileData->initialized))
     return gpuMultipoleOnCpu(n_part, elem, p_error, Po, accepted, z_start,
                              maxamp, apcontour, apFileData, sigmaDelta2, iSlice,
                              "multipole_tracking2 aperture fallback");
@@ -9909,6 +10595,12 @@ long gpu_multipole_tracking2(long n_part, void *elem0, double p_error,
     return gpuMultipoleOnCpu(n_part, elem, p_error, Po, accepted, z_start,
                              maxamp, apcontour, apFileData, sigmaDelta2, iSlice,
                              "multipole_tracking2 unsupported option");
+  if (!gpuPackMaxamp(&data.aperture, maxamp,
+                     data.cosTilt, data.sinTilt))
+    return gpuMultipoleOnCpu(n_part, elem, p_error, Po, accepted, z_start,
+                             maxamp, apcontour, apFileData, sigmaDelta2, iSlice,
+                             "multipole_tracking2 unsupported MAXAMP option");
+  data.lossZStart = z_start;
 
   gpuCopyHostToDevice(n_part);
   status = gpuCudaMultipoleTrackChecked(gpuBase.deviceCoord, n_part,
@@ -9926,6 +10618,28 @@ long gpu_multipole_tracking2(long n_part, void *elem0, double p_error,
       if (&multipoleKicksDone)
         multipoleKicksDone += n_part * data.nSlices * data.integrationOrder;
       return remaining;
+    }
+#else
+    {
+      long remaining = gpuVerifyMultipoleStableCompact(
+        &data, n_part,
+        "multipole_tracking2 GPU-VERIFY stable magnet loss compaction");
+      long cpuRemaining;
+
+      startCpuTimer();
+      cpuRemaining = multipole_tracking2(
+        gpuBase.coord, n_part, elem, p_error, Po, accepted, z_start, maxamp,
+        apcontour, apFileData, sigmaDelta2, iSlice);
+      if (cpuRemaining != remaining) {
+        fprintf(stderr,
+                "elegant CUDA VERIFY failed for multipole_tracking2 element=%s: CPU survivors=%ld GPU survivors=%ld\n",
+                elem->name ? elem->name : "(unknown)",
+                cpuRemaining, remaining);
+        exit(1);
+      }
+      compareGpuCpu(n_part, "multipole_tracking2 stable loss tracking");
+      gpuRecordWallSeconds();
+      return cpuRemaining;
     }
 #endif
     return gpuMultipoleOnCpu(n_part, elem, p_error, Po, accepted, z_start,
@@ -9978,6 +10692,7 @@ long gpu_multipole_tracking(long n_part, void *multipole0, double p_error,
   if (!gpuPackMultipoleTracking(&data, &elem, Po))
     return gpuMultOnCpu(n_part, multipole, p_error, Po, accepted, z_start,
                         "multipole_tracking unsupported option");
+  data.lossZStart = z_start;
   if (data.KnL[0] == 0) {
     if (data.drift == 0)
       return n_part;
@@ -10006,6 +10721,26 @@ long gpu_multipole_tracking(long n_part, void *multipole0, double p_error,
         multipoleKicksDone += n_part * data.nSlices * 4;
       return remaining;
     }
+#else
+    {
+      long remaining = gpuVerifyMultipoleStableCompact(
+        &data, n_part,
+        "multipole_tracking GPU-VERIFY stable magnet loss compaction");
+      long cpuRemaining;
+
+      startCpuTimer();
+      cpuRemaining = multipole_tracking(
+        gpuBase.coord, n_part, multipole, p_error, Po, accepted, z_start);
+      if (cpuRemaining != remaining) {
+        fprintf(stderr,
+                "elegant CUDA VERIFY failed for MULT: CPU survivors=%ld GPU survivors=%ld\n",
+                cpuRemaining, remaining);
+        exit(1);
+      }
+      compareGpuCpu(n_part, "multipole_tracking stable loss tracking");
+      gpuRecordWallSeconds();
+      return cpuRemaining;
+    }
 #endif
     return gpuMultOnCpu(n_part, multipole, p_error, Po, accepted, z_start,
                         "multipole_tracking particle loss fallback");
@@ -10017,7 +10752,8 @@ long gpu_multipole_tracking(long n_part, void *multipole0, double p_error,
   return n_part;
 }
 
-static long gpuPackCcbendTracking(GPU_CCBEND_DATA *data, CCBEND *ccbend) {
+static long gpuPackCcbendTracking(GPU_CCBEND_DATA *data, CCBEND *ccbend,
+                                  double Po) {
   double rho0, fse, denominator;
   long i;
 
@@ -10036,15 +10772,57 @@ static long gpuPackCcbendTracking(GPU_CCBEND_DATA *data, CCBEND *ccbend) {
     data->chordLength / denominator;
   data->KnL[2] =
     (1 + fse) * ccbend->K2 * data->chordLength / denominator;
-  data->nSlices = ccbend->nSlices;
-  data->referenceCorrection = ccbend->referenceCorrection;
+  data->angleSign = 1;
   data->angleHalf = ccbend->angle / 2;
+  data->rho0 = rho0;
+  data->cosTilt = 1;
+  if (ccbend->angle < 0) {
+    data->angleSign = -1;
+    data->angleHalf = -data->angleHalf;
+    data->rho0 = -data->rho0;
+    data->KnL[0] = -data->KnL[0];
+    data->KnL[2] = -data->KnL[2];
+    data->cosTilt = -1;
+  }
+  data->planeTan = tan(data->angleHalf);
+  data->planeCos = cos(data->angleHalf);
+  data->planeSin = sin(data->angleHalf);
+  data->fringe1Tan = tan(data->angleHalf);
+  data->fringe1Sin = sin(data->angleHalf);
+  data->fringe1Sec = 1.0 / cos(data->angleHalf);
+  data->fringe2Tan = tan(-data->angleHalf);
+  data->fringe2Sin = sin(-data->angleHalf);
+  data->fringe2Sec = 1.0 / cos(-data->angleHalf);
+  data->nSlices = ccbend->nSlices;
+  data->integrationOrder = ccbend->integration_order;
+  data->fringeModel = ccbend->fringeModel;
+  data->edgeOrder = ccbend->edgeOrder;
+  data->Po = Po;
+  if (ccbend->synch_rad)
+    data->radCoef =
+      sqr(particleCharge) * pow3(Po) /
+      (6 * PI * epsilon_o * sqr(c_mks) * particleMass);
+  data->referenceCorrection = ccbend->referenceCorrection;
   data->dxOffset = ccbend->dxOffset;
   data->xAdjust = ccbend->xAdjust;
   data->coordLimit = coordLimit;
   data->slopeLimit = slopeLimit;
   memcpy(data->referenceTrajectory, ccbend->referenceTrajectory,
          sizeof(data->referenceTrajectory));
+  memcpy(data->fringeInt1,
+         ccbend->edgeFlip ? ccbend->fringeInt2 : ccbend->fringeInt1,
+         sizeof(data->fringeInt1));
+  memcpy(data->fringeInt2,
+         ccbend->edgeFlip ? ccbend->fringeInt1 : ccbend->fringeInt2,
+         sizeof(data->fringeInt2));
+  if (ccbend->edgeFlip) {
+    data->fringeInt1[0] *= -1;
+    data->fringeInt1[3] *= -1;
+    data->fringeInt1[5] *= -1;
+    data->fringeInt2[0] *= -1;
+    data->fringeInt2[3] *= -1;
+    data->fringeInt2[5] *= -1;
+  }
   if (!isfinite(data->chordLength) || data->chordLength <= 0 ||
       !isfinite(data->angleHalf) || !isfinite(data->dxOffset) ||
       !isfinite(data->xAdjust) || !isfinite(data->coordLimit) ||
@@ -10104,7 +10882,7 @@ long gpu_track_through_ccbend(long n_part, void *eptr0, void *ccbend0,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
                           "CCBEND partial/backtracking CPU fallback");
-  if (maxamp || apContour || (apFileData && apFileData->initialized))
+  if (apContour || (apFileData && apFileData->initialized))
     return gpuCcbendOnCpu(n_part, eptr, ccbend, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
@@ -10114,11 +10892,17 @@ long gpu_track_through_ccbend(long n_part, void *eptr0, void *ccbend0,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
                           "CCBEND radiation-sigma CPU fallback");
-  if (!gpuPackCcbendTracking(&data, ccbend))
+  if (!gpuPackCcbendTracking(&data, ccbend, Po))
     return gpuCcbendOnCpu(n_part, eptr, ccbend, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
                           "CCBEND unsupported-option CPU fallback");
+  if (!gpuPackMaxamp(&data.aperture, maxamp,
+                     data.cosTilt, data.sinTilt))
+    return gpuCcbendOnCpu(n_part, eptr, ccbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "CCBEND MAXAMP CPU fallback");
 
   gpuCopyHostToDevice(n_part);
   status = gpuCudaCcbendTrackChecked(gpuBase.deviceCoord, n_part,
@@ -10139,7 +10923,8 @@ long gpu_track_through_ccbend(long n_part, void *eptr0, void *ccbend0,
   return n_part;
 }
 
-static long gpuPackLgbendTracking(GPU_LGBEND_DATA *data, LGBEND *lgbend) {
+static long gpuPackLgbendTracking(GPU_LGBEND_DATA *data, LGBEND *lgbend,
+                                  double Po) {
   long i, j;
 
   if (!data || !gpuLgbendCommonSupported(lgbend))
@@ -10147,12 +10932,25 @@ static long gpuPackLgbendTracking(GPU_LGBEND_DATA *data, LGBEND *lgbend) {
   memset(data, 0, sizeof(*data));
   data->nSegments = lgbend->nSegments;
   data->nSlices = lgbend->nSlices;
+  data->integrationOrder = lgbend->integration_order;
+  data->edgeOrder = lgbend->edgeOrder;
   data->predrift = lgbend->predrift;
   data->postdrift = lgbend->postdrift;
   data->entryPosition = lgbend->segment[0].entryX;
   data->entryAngle = lgbend->segment[0].entryAngle;
+  data->entryPlaneTan = tan(data->entryAngle);
+  data->entryPlaneCos = cos(data->entryAngle);
+  data->entryPlaneSin = sin(data->entryAngle);
   data->exitPosition = lgbend->segment[lgbend->nSegments - 1].exitX;
   data->exitAngle = lgbend->segment[lgbend->nSegments - 1].exitAngle;
+  data->exitPlaneTan = tan(-data->exitAngle);
+  data->exitPlaneCos = cos(-data->exitAngle);
+  data->exitPlaneSin = sin(-data->exitAngle);
+  data->Po = Po;
+  if (lgbend->synch_rad)
+    data->radCoef =
+      sqr(particleCharge) * pow3(Po) /
+      (6 * PI * epsilon_o * sqr(c_mks) * particleMass);
   data->coordLimit = coordLimit;
   data->slopeLimit = slopeLimit;
   for (i = 0; i < lgbend->nSegments; i++) {
@@ -10166,12 +10964,39 @@ static long gpuPackLgbendTracking(GPU_LGBEND_DATA *data, LGBEND *lgbend) {
     data->segment[i].length = segment->length;
     data->segment[i].entryAngle = segment->entryAngle;
     data->segment[i].exitAngle = segment->exitAngle;
+    data->segment[i].fringe1Tan = tan(segment->entryAngle);
+    data->segment[i].fringe1Sin = sin(segment->entryAngle);
+    data->segment[i].fringe1Sec = 1.0 / cos(segment->entryAngle);
+    data->segment[i].fringe2Tan = tan(segment->exitAngle);
+    data->segment[i].fringe2Sin = sin(segment->exitAngle);
+    data->segment[i].fringe2Sec = 1.0 / cos(segment->exitAngle);
     data->segment[i].invRho = 1 / rho0;
     data->segment[i].KnL[0] = scale / rho0 * segment->length;
     data->segment[i].KnL[1] =
       scale * segment->K1 * segment->length / denominator;
     data->segment[i].KnL[2] =
       scale * segment->K2 * segment->length / denominator;
+    data->segment[i].K1 =
+      data->segment[i].KnL[1] / segment->length;
+    data->segment[i].angleSign = 1;
+    data->segment[i].has1 = segment->has1 ? 1 : 0;
+    data->segment[i].has2 = segment->has2 ? 1 : 0;
+    data->segment[i].fringe1[0] = segment->fringeInt1K0;
+    data->segment[i].fringe1[1] = segment->fringeInt1I0;
+    data->segment[i].fringe1[2] = segment->fringeInt1K2;
+    data->segment[i].fringe1[3] = segment->fringeInt1I1;
+    data->segment[i].fringe1[4] = segment->fringeInt1K4;
+    data->segment[i].fringe1[5] = segment->fringeInt1K5;
+    data->segment[i].fringe1[6] = segment->fringeInt1K6;
+    data->segment[i].fringe1[7] = segment->fringeInt1K7;
+    data->segment[i].fringe2[0] = segment->fringeInt2K0;
+    data->segment[i].fringe2[1] = segment->fringeInt2I0;
+    data->segment[i].fringe2[2] = segment->fringeInt2K2;
+    data->segment[i].fringe2[3] = segment->fringeInt2I1;
+    data->segment[i].fringe2[4] = segment->fringeInt2K4;
+    data->segment[i].fringe2[5] = segment->fringeInt2K5;
+    data->segment[i].fringe2[6] = segment->fringeInt2K6;
+    data->segment[i].fringe2[7] = segment->fringeInt2K7;
     if (!isfinite(data->segment[i].length))
       return 0;
     for (j = 0; j < 3; j++)
@@ -10228,7 +11053,7 @@ long gpu_track_through_lgbend(long n_part, void *eptr0, void *lgbend0,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
                           "LGBEND partial/backtracking CPU fallback");
-  if (maxamp || apContour || (apFileData && apFileData->initialized))
+  if (apContour || (apFileData && apFileData->initialized))
     return gpuLgbendOnCpu(n_part, eptr, lgbend, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
@@ -10238,11 +11063,16 @@ long gpu_track_through_lgbend(long n_part, void *eptr0, void *lgbend0,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
                           "LGBEND radiation-sigma CPU fallback");
-  if (!gpuPackLgbendTracking(&data, lgbend))
+  if (!gpuPackLgbendTracking(&data, lgbend, Po))
     return gpuLgbendOnCpu(n_part, eptr, lgbend, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
                           "LGBEND unsupported-option CPU fallback");
+  if (!gpuPackMaxamp(&data.aperture, maxamp, 1, 0))
+    return gpuLgbendOnCpu(n_part, eptr, lgbend, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour,
+                          apFileData, iPart, iFinalSlice,
+                          "LGBEND MAXAMP CPU fallback");
 
   gpuCopyHostToDevice(n_part);
   status = gpuCudaLgbendTrackChecked(gpuBase.deviceCoord, n_part,
@@ -10276,13 +11106,15 @@ static long gpuCsbendEdgesSupported(CSBEND *csbend) {
   if (flags & BEND_EDGE1_EFFECTS) {
     long index = csbend->e1Index;
 
-    if (csbend->edge_effects[index] != 1)
+    if (csbend->edge_effects[index] != 1 &&
+        csbend->edge_effects[index] != 5)
       return 0;
   }
   if (flags & BEND_EDGE2_EFFECTS) {
     long index = csbend->e2Index;
 
-    if (csbend->edge_effects[index] != 1)
+    if (csbend->edge_effects[index] != 1 &&
+        csbend->edge_effects[index] != 5)
       return 0;
   }
   return 1;
@@ -10487,6 +11319,7 @@ static long gpuPackCsbendTracking(GPU_CSBEND_DATA *data, CSBEND *csbend,
   data->expansionOrder1 = (int)expansionOrder1;
   data->length = csbend->length;
   data->rho0 = rho;
+  data->invRho0 = 1. / rho;
   data->rhoActual = 1 / ((1 + fse) * h);
   data->Po = Po;
   if (csbend->synch_rad)
@@ -10511,9 +11344,23 @@ static long gpuPackCsbendTracking(GPU_CSBEND_DATA *data, CSBEND *csbend,
   }
   data->edge1 = (csbend->edgeFlags & BEND_EDGE1_EFFECTS) ? 1 : 0;
   data->edge2 = (csbend->edgeFlags & BEND_EDGE2_EFFECTS) ? 1 : 0;
+  data->edgeEffect1 = csbend->edge_effects[csbend->e1Index];
+  data->edgeEffect2 = csbend->edge_effects[csbend->e2Index];
   data->edgeOrder = csbend->edge_order;
+  data->edgeFlip = csbend->edgeFlip ? 1 : 0;
   data->e1 = e1;
   data->e2 = e2;
+  /*
+   * Use the coefficients prepared above, not csbend->b.  The host tracker
+   * fills csbend->b lazily, so reading it here made the resident fringe map
+   * depend on whether some earlier matrix calculation happened to initialize
+   * the element.
+   */
+  data->K1 = b[1] / rho;
+  memcpy(data->fringeInt1, csbend->fringeInt[csbend->e1Index],
+         sizeof(data->fringeInt1));
+  memcpy(data->fringeInt2, csbend->fringeInt[csbend->e2Index],
+         sizeof(data->fringeInt2));
   data->he1 = csbend->h[csbend->e1Index];
   data->he2 = csbend->h[csbend->e2Index];
   data->psi1 = psi1;
@@ -10598,7 +11445,7 @@ long gpu_track_through_csbend(long n_part, void *csbend0, double p_error,
     return gpuCsbendOnCpu(n_part, csbend, p_error, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour, apFileData,
                           iSlice, eptr, "track_through_csbend slice fallback");
-  if (maxamp || apContour || (apFileData && apFileData->initialized))
+  if (apContour || (apFileData && apFileData->initialized))
     return gpuCsbendOnCpu(n_part, csbend, p_error, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour, apFileData,
                           iSlice, eptr, "track_through_csbend aperture fallback");
@@ -10610,6 +11457,12 @@ long gpu_track_through_csbend(long n_part, void *csbend0, double p_error,
     return gpuCsbendOnCpu(n_part, csbend, p_error, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour, apFileData,
                           iSlice, eptr, "track_through_csbend unsupported option");
+  if (!gpuPackMaxamp(&data.aperture, maxamp,
+                     data.cosTilt, data.sinTilt))
+    return gpuCsbendOnCpu(n_part, csbend, p_error, Po, accepted, z_start,
+                          sigmaDelta2, rootname, maxamp, apContour, apFileData,
+                          iSlice, eptr, "track_through_csbend MAXAMP fallback");
+  data.lossZStart = z_start;
 
   gpuCopyHostToDevice(n_part);
   status = gpuCudaCsbendTrackChecked(gpuBase.deviceCoord, n_part,
@@ -10629,6 +11482,28 @@ long gpu_track_through_csbend(long n_part, void *csbend0, double p_error,
         multipoleKicksDone +=
           n_part * data.nSlices * (data.integrationOrder == 4 ? 4 : 1);
       return remaining;
+    }
+#else
+    {
+      long remaining = gpuVerifyCsbendStableCompact(
+        &data, n_part,
+        "track_through_csbend GPU-VERIFY stable magnet loss compaction");
+      long cpuRemaining;
+
+      startCpuTimer();
+      cpuRemaining = track_through_csbend(
+        gpuBase.coord, n_part, csbend, p_error, Po, accepted, z_start,
+        sigmaDelta2, rootname, maxamp, apContour, apFileData, iSlice, eptr);
+      if (cpuRemaining != remaining) {
+        fprintf(stderr,
+                "elegant CUDA VERIFY failed for CSBEND element=%s: CPU survivors=%ld GPU survivors=%ld\n",
+                eptr && eptr->name ? eptr->name : "(unknown)",
+                cpuRemaining, remaining);
+        exit(1);
+      }
+      compareGpuCpu(n_part, "track_through_csbend stable loss tracking");
+      gpuRecordWallSeconds();
+      return cpuRemaining;
     }
 #endif
     return gpuCsbendOnCpu(n_part, csbend, p_error, Po, accepted, z_start,
@@ -13936,6 +14811,8 @@ long gpu_trackRfCavityWithWakes(long np, RFCA *rfca, double **accepted,
 
   if (!rfca || !P_central)
     gpuRequiredFailure("NULL RFCA input in CUDA path");
+  if (gpuRfcaNoOpElementSupported(eptr))
+    return np;
   if (wake || trwake || LSCKick || run || charge || iPass || wakesAtEnd) {
     return gpuRfcaOnCpu(np, rfca, accepted, P_central, zEnd, iPass,
                         run, charge, wake, trwake, LSCKick, wakesAtEnd,

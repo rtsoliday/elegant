@@ -28,6 +28,67 @@ __constant__ GPU_CSBEND_DATA gpuCsbendData;
 #define GPU_OPEN_MINUS_X 3
 #define GPU_OPEN_MINUS_Y 4
 
+/*
+ * Elegant removes a lost particle by swapping the last active row into its
+ * slot, then immediately testing that replacement.  Build the exact source
+ * to destination permutation from the exclusive survivor prefix.  This is a
+ * rare loss-path operation, so a single device thread is preferable to a
+ * parallel approximation that changes particle-ID or loss-tail ordering.
+ */
+__global__ void gpuBuildCpuLossOrderDestinationKernel(
+  const long *survivorPrefix, long *destination, long nParticles,
+  long survivors) {
+  long activeIndex = 0;
+  long activeTop = nParticles - 1;
+  long source = 0;
+  long rightPrefix = survivors;
+  int survives;
+
+  if (blockIdx.x || threadIdx.x || nParticles <= 0)
+    return;
+  survives = ((nParticles == 1) ? survivors : survivorPrefix[1]) -
+             survivorPrefix[0];
+  while (activeIndex <= activeTop) {
+    if (survives) {
+      destination[source] = activeIndex++;
+      if (activeIndex > activeTop)
+        break;
+      source = activeIndex;
+      survives =
+        ((activeIndex == activeTop) ? rightPrefix :
+                                      survivorPrefix[activeIndex + 1]) -
+        survivorPrefix[activeIndex];
+    } else {
+      long tailSource;
+      long tailPrefix;
+
+      destination[source] = activeTop;
+      if (source == activeIndex && activeIndex == activeTop)
+        break;
+      tailSource = activeTop--;
+      tailPrefix = survivorPrefix[tailSource];
+      source = tailSource;
+      survives = rightPrefix - tailPrefix;
+      rightPrefix = tailPrefix;
+    }
+  }
+}
+
+static cudaError_t gpuBuildCpuLossOrderDestination(long *survivorPrefix,
+                                                    long nParticles,
+                                                    long survivors) {
+  gpuBuildCpuLossOrderDestinationKernel<<<1, 1>>>(
+    survivorPrefix, survivorPrefix + nParticles, nParticles, survivors);
+  return cudaGetLastError();
+}
+
+static cudaError_t gpuPublishCpuLossOrderDestination(long *survivorPrefix,
+                                                     long nParticles) {
+  return cudaMemcpy(survivorPrefix, survivorPrefix + nParticles,
+                    static_cast<size_t>(nParticles) * sizeof(*survivorPrefix),
+                    cudaMemcpyDeviceToDevice);
+}
+
 __global__ void gpuBeamStatisticsPartialKernel(
   double *coord, long nParticles, int stride, double pCentral, double cMks,
   GPU_BEAM_SUM_DATA *partial, double *timeValue);
@@ -1316,15 +1377,13 @@ __global__ void gpuKickMapStableTrackScatterKernel(
   const double *xpMap, const double *ypMap, double zStart, double pRef) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
-  long prefix, destination;
+  long destination;
   int survives;
 
   if (ip >= nParticles)
     return;
-  prefix = survivorPrefix[ip];
-  survives = (ip + 1 < nParticles) ? survivorPrefix[ip + 1] > prefix :
-                                     survivors > prefix;
-  destination = survives ? prefix : survivors + (ip - prefix);
+  destination = survivorPrefix[ip];
+  survives = destination < survivors;
   part = coord + ip * stride;
   target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
@@ -1432,7 +1491,221 @@ __device__ __forceinline__ void gpuMultipoleApplyKick(double *qx, double *qy,
   *deltaQy += KnL * sumFx;
 }
 
-template <bool Radiation>
+__device__ __forceinline__ double gpuIntegerPower(double value,
+                                                   int exponent) {
+  double result = 1;
+  for (int i = 0; i < exponent; i++)
+    result *= value;
+  return result;
+}
+
+__device__ __forceinline__ int gpuApertureOpenSideLoses(
+  int openSide, double x, double y, double xMax, double yMax) {
+  switch (openSide) {
+  case GPU_OPEN_PLUS_X:
+    if (x > 0 && (fabs(y) < yMax || yMax <= 0))
+      return 0;
+    break;
+  case GPU_OPEN_MINUS_X:
+    if (x < 0 && (fabs(y) < yMax || yMax <= 0))
+      return 0;
+    break;
+  case GPU_OPEN_PLUS_Y:
+    if (y > 0 && (fabs(x) < xMax || xMax <= 0))
+      return 0;
+    break;
+  case GPU_OPEN_MINUS_Y:
+    if (y < 0 && (fabs(x) < xMax || xMax <= 0))
+      return 0;
+    break;
+  default:
+    break;
+  }
+  return 1;
+}
+
+__device__ __forceinline__ int gpuInsideApertureLimit(
+  double xInput, double yInput, const GPU_APERTURE_LIMIT_DATA &aperture) {
+  double x = xInput, y = yInput;
+  int outside = 0;
+
+  if (!aperture.present)
+    return 1;
+  if (aperture.sinReverseTilt ||
+      aperture.cosReverseTilt != 1) {
+    double x0 = x, y0 = y;
+    x = x0 * aperture.cosReverseTilt +
+        y0 * aperture.sinReverseTilt;
+    y = -x0 * aperture.sinReverseTilt +
+        y0 * aperture.cosReverseTilt;
+  }
+  if (!isfinite(x) || !isfinite(y))
+    return 0;
+  if (!aperture.elliptical ||
+      aperture.xMax <= 0 || aperture.yMax <= 0) {
+    outside = (aperture.xMax > 0 && fabs(x) > aperture.xMax) ||
+              (aperture.yMax > 0 && fabs(y) > aperture.yMax);
+  } else {
+    outside =
+      gpuIntegerPower(x / aperture.xMax, aperture.xExponent) +
+      gpuIntegerPower(y / aperture.yMax, aperture.yExponent) >= 1;
+  }
+  if (!outside)
+    return 1;
+  return aperture.openSide &&
+         !gpuApertureOpenSideLoses(aperture.openSide, x, y,
+                                   aperture.xMax, aperture.yMax);
+}
+
+__device__ __forceinline__ void gpuExactDriftLocal(
+  double &x, double xp, double &y, double yp, double &path,
+  double length) {
+  x += xp * length;
+  y += yp * length;
+  path += length * sqrt(1 + xp * xp + yp * yp);
+}
+
+__device__ __forceinline__ void gpuApplyQuadFringeMatrix(
+  double &x, double &px, double &y, double &py,
+  const double matrix[8]) {
+  double x0 = x, px0 = px, y0 = y, py0 = py;
+  x = matrix[0] * x0 + matrix[1] * px0;
+  px = matrix[2] * x0 + matrix[3] * px0;
+  y = matrix[4] * y0 + matrix[5] * py0;
+  py = matrix[6] * y0 + matrix[7] * py0;
+}
+
+__device__ int gpuQuadFringeParticle(
+  double &x, double &xp, double &y, double &yp, double &path,
+  double delta, double K1, int inFringe, int higherOrder,
+  int linearFlag, double nonlinearFactor,
+  const double matrix1[8], const double matrix2[8]) {
+  double px, py, denom;
+  double a, dx = 0, dpx = 0, dy = 0, dpy = 0, ds = 0;
+
+  denom = sqrt(1 + xp * xp + yp * yp);
+  px = (1 + delta) * xp / denom;
+  py = (1 + delta) * yp / denom;
+  if (linearFlag)
+    gpuApplyQuadFringeMatrix(x, px, y, py, matrix1);
+
+  a = -inFringe * K1 / (12 * (1 + delta));
+  if (abs(higherOrder) > 1) {
+    double xpow[9], ypow[9], apow[4];
+    xpow[0] = ypow[0] = apow[0] = 1;
+    if (abs(higherOrder) > 2) {
+      for (int i = 1; i < 9; i++) {
+        xpow[i] = xpow[i - 1] * x;
+        ypow[i] = ypow[i - 1] * y;
+      }
+      for (int i = 1; i < 4; i++)
+        apow[i] = apow[i - 1] * a;
+      dpx =
+        (a *
+         (12 * a *
+              (-4 * py * x * y + px * (xpow[2] - 5 * ypow[2])) *
+              (xpow[2] - ypow[2]) -
+          24 * (-2 * py * x * y + px * (xpow[2] + ypow[2])) +
+          4 * apow[2] *
+            (-2 * py * x * y *
+               (3 * xpow[4] + 50 * xpow[2] * ypow[2] - 21 * ypow[4]) +
+             px *
+               (xpow[6] + 75 * xpow[4] * ypow[2] -
+                105 * xpow[2] * ypow[4] - 35 * ypow[6])) +
+          3 * apow[3] *
+            (-8 * py * x * y *
+               (xpow[6] - 27 * xpow[4] * ypow[2] +
+                83 * xpow[2] * ypow[4] + 7 * ypow[6]) +
+             px *
+               (xpow[8] - 108 * xpow[6] * ypow[2] +
+                830 * xpow[4] * ypow[4] + 196 * xpow[2] * ypow[6] +
+                105 * ypow[8])))) /
+        8;
+      dpy =
+        (a *
+         (-8 * px * x * y *
+            (6 - 6 * a * (xpow[2] - ypow[2]) +
+             apow[2] *
+               (21 * xpow[4] - 50 * xpow[2] * ypow[2] - 3 * ypow[4]) +
+             3 * apow[3] *
+               (7 * xpow[6] + 83 * xpow[4] * ypow[2] -
+                27 * xpow[2] * ypow[4] + ypow[6])) +
+          py *
+            (315 * apow[3] * xpow[8] +
+             28 * apow[2] * xpow[6] * (5 + 21 * a * ypow[2]) +
+             30 * a * xpow[4] *
+               (2 + 14 * a * ypow[2] + 83 * apow[2] * ypow[4]) +
+             ypow[2] *
+               (24 + 12 * a * ypow[2] - 4 * apow[2] * ypow[4] +
+                3 * apow[3] * ypow[6]) -
+             12 * xpow[2] *
+               (-2 + 6 * a * ypow[2] + 25 * apow[2] * ypow[4] +
+                27 * apow[3] * ypow[6])))) /
+        8;
+      if (higherOrder > 0) {
+        double squareDifference =
+          (xpow[2] - ypow[2]) * (xpow[2] - ypow[2]);
+        dx =
+          (a * x *
+           (8 * (xpow[2] + 3 * ypow[2]) +
+            4 * apow[2] *
+              (5 * xpow[6] + 21 * xpow[4] * ypow[2] -
+               25 * xpow[2] * ypow[4] - ypow[6]) +
+            apow[3] *
+              (35 * xpow[8] + 84 * xpow[6] * ypow[2] +
+               498 * xpow[4] * ypow[4] - 108 * xpow[2] * ypow[6] +
+               3 * ypow[8]) +
+            12 * a * squareDifference)) /
+          8;
+        dy =
+          (a * y *
+           (-8 * (3 * xpow[2] + ypow[2]) +
+            4 * apow[2] *
+              (xpow[6] + 25 * xpow[4] * ypow[2] -
+               21 * xpow[2] * ypow[4] - 5 * ypow[6]) +
+            apow[3] *
+              (3 * xpow[8] - 108 * xpow[6] * ypow[2] +
+               498 * xpow[4] * ypow[4] + 84 * xpow[2] * ypow[6] +
+               35 * ypow[8]) +
+            12 * a * squareDifference)) /
+          8;
+      }
+    } else {
+      for (int i = 1; i < 4; i++) {
+        xpow[i] = xpow[i - 1] * x;
+        ypow[i] = ypow[i - 1] * y;
+      }
+      dpx = 3 * a * (-px * xpow[2] + 2 * py * x * y - px * ypow[2]);
+      dpy = 3 * a * (py * xpow[2] - 2 * px * x * y + py * ypow[2]);
+      if (higherOrder > 0) {
+        dx = a * (xpow[3] + 3 * x * ypow[2]);
+        dy = a * (-3 * xpow[2] * y - ypow[3]);
+      }
+    }
+    ds = (a / (1 + delta)) *
+         (3 * py * y * x * x - px * x * x * x -
+          3 * px * x * y * y + py * y * y * y);
+  }
+
+  x += nonlinearFactor * dx;
+  px += nonlinearFactor * dpx;
+  y += nonlinearFactor * dy;
+  py += nonlinearFactor * dpy;
+  if (linearFlag)
+    gpuApplyQuadFringeMatrix(x, px, y, py, matrix2);
+  path -= nonlinearFactor * ds;
+
+  denom = (1 + delta) * (1 + delta) - px * px - py * py;
+  if (denom <= 0)
+    return 0;
+  denom = sqrt(denom);
+  xp = px / denom;
+  yp = py / denom;
+  return isfinite(x) && isfinite(xp) && isfinite(y) && isfinite(yp) &&
+         isfinite(path);
+}
+
+template <bool Radiation, bool Aperture>
 __device__ int gpuMultipoleTrackParticleData(
   double *part, int stride, int writeOutput,
   const GPU_MULTIPOLE_DATA *data) {
@@ -1445,7 +1718,9 @@ __device__ int gpuMultipoleTrackParticleData(
   double y = part[2];
   double yp = part[3];
   double dp = part[5];
+  double initialDp = dp;
   double qx, qy, s = 0;
+  double lossDistance = 0;
   double timeCoordinate = part[4];
   double beta0 = 0;
   double drift, xkick, ykick;
@@ -1475,6 +1750,20 @@ __device__ int gpuMultipoleTrackParticleData(
     xp = xp0 * data->cosTilt + yp0 * data->sinTilt;
     yp = -xp0 * data->sinTilt + yp0 * data->cosTilt;
   }
+  if (data->endDrift) {
+    if (Radiation)
+      gpuExactDriftLocal(x, xp, y, yp, timeCoordinate, data->endDrift);
+    else
+      gpuExactDriftLocal(x, xp, y, yp, s, data->endDrift);
+  }
+  if (data->edge1Effects &&
+      !gpuQuadFringeParticle(x, xp, y, yp,
+                             Radiation ? timeCoordinate : s,
+                             dp, data->k1, -1, data->edge1Effects,
+                             data->edge1Linear,
+                             data->edge1NonlinearFactor,
+                             data->edge1M1, data->edge1M2))
+    return 0;
   if (!isfinite(x) || !isfinite(xp) || !isfinite(y) || !isfinite(yp))
     return 0;
   if (fabs(x) > data->coordLimit || fabs(y) > data->coordLimit ||
@@ -1551,6 +1840,17 @@ __device__ int gpuMultipoleTrackParticleData(
     double deltaQx = 0;
     double deltaQy = 0;
 
+    if (Aperture &&
+        !gpuInsideApertureLimit(x + data->dx, y + data->dy,
+                                data->aperture)) {
+      if (writeOutput) {
+        part[0] = x;
+        part[2] = y;
+        part[4] = data->lossZStart + lossDistance;
+        part[5] = data->Po * (1 + initialDp);
+      }
+      return 0;
+    }
     for (int step = 0; step < nSubsteps; step++) {
       double dsh;
 
@@ -1562,6 +1862,8 @@ __device__ int gpuMultipoleTrackParticleData(
           s += dsh * (1 + (xp * xp + yp * yp) / 2);
         else
           s += dsh * sqrt(1 + xp * xp + yp * yp);
+        if (Aperture)
+          lossDistance += dsh;
       }
 
       if (!kickFrac[step])
@@ -1617,6 +1919,17 @@ __device__ int gpuMultipoleTrackParticleData(
     }
   }
 
+  if (Aperture &&
+      !gpuInsideApertureLimit(x + data->dx, y + data->dy,
+                              data->aperture)) {
+    if (writeOutput) {
+      part[0] = x;
+      part[2] = y;
+      part[4] = data->lossZStart + lossDistance;
+      part[5] = data->Po * (1 + initialDp);
+    }
+    return 0;
+  }
   if (!gpuMultipoleConvertMomentaToSlopes(&xp, &yp, qx, qy, dp,
                                           data->expandHamiltonian))
     return 0;
@@ -1629,6 +1942,20 @@ __device__ int gpuMultipoleTrackParticleData(
       beta1 * (timeCoordinate / beta0 + 2 * s / (beta0 + beta1));
   }
 
+  if (data->edge2Effects &&
+      !gpuQuadFringeParticle(x, xp, y, yp,
+                             Radiation ? timeCoordinate : s,
+                             dp, data->k1, 1, data->edge2Effects,
+                             data->edge2Linear,
+                             data->edge2NonlinearFactor,
+                             data->edge2M1, data->edge2M2))
+    return 0;
+  if (data->endDrift) {
+    if (Radiation)
+      gpuExactDriftLocal(x, xp, y, yp, timeCoordinate, data->endDrift);
+    else
+      gpuExactDriftLocal(x, xp, y, yp, s, data->endDrift);
+  }
   if (!isfinite(x) || !isfinite(xp) || !isfinite(y) || !isfinite(yp))
     return 0;
   if (fabs(x) > data->coordLimit || fabs(y) > data->coordLimit ||
@@ -1668,14 +1995,14 @@ __device__ int gpuMultipoleTrackParticleData(
   return 1;
 }
 
-template <bool Radiation>
+template <bool Radiation, bool Aperture>
 __device__ int gpuMultipoleTrackParticle(double *part, int stride,
                                          int writeOutput) {
-  return gpuMultipoleTrackParticleData<Radiation>(
+  return gpuMultipoleTrackParticleData<Radiation, Aperture>(
     part, stride, writeOutput, &gpuMultipoleData);
 }
 
-template <bool Radiation>
+template <bool Radiation, bool Aperture>
 __global__ void gpuMultipolePredicateKernel(double *coord, long nParticles,
                                             int stride, long *lostCount) {
   __shared__ long partial[GPU_REDUCTION_THREADS];
@@ -1684,7 +2011,7 @@ __global__ void gpuMultipolePredicateKernel(double *coord, long nParticles,
 
   for (long ip = thread; ip < nParticles; ip += blockDim.x) {
     double *part = coord + ip * stride;
-    if (!gpuMultipoleTrackParticle<Radiation>(part, stride, 0))
+    if (!gpuMultipoleTrackParticle<Radiation, Aperture>(part, stride, 0))
       localCount++;
   }
 
@@ -1699,17 +2026,18 @@ __global__ void gpuMultipolePredicateKernel(double *coord, long nParticles,
     *lostCount = partial[0];
 }
 
-template <bool Radiation>
+template <bool Radiation, bool Aperture>
 __global__ void gpuMultipoleTrackKernel(double *coord, long nParticles,
                                         int stride) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
-  gpuMultipoleTrackParticle<Radiation>(coord + ip * stride, stride, 1);
+  gpuMultipoleTrackParticle<Radiation, Aperture>(
+    coord + ip * stride, stride, 1);
 }
 
-template <bool Radiation>
+template <bool Radiation, bool Aperture>
 __global__ void gpuMultipoleTrackCheckedKernel(
   double *coord, long nParticles, int stride,
   unsigned long long *lostCount) {
@@ -1718,7 +2046,7 @@ __global__ void gpuMultipoleTrackCheckedKernel(
   unsigned long long localCount = 0;
 
   if (ip < nParticles) {
-    if (!gpuMultipoleTrackParticle<Radiation>(
+    if (!gpuMultipoleTrackParticle<Radiation, Aperture>(
           coord + ip * stride, stride, 1))
       localCount = 1;
   }
@@ -1734,7 +2062,7 @@ __global__ void gpuMultipoleTrackCheckedKernel(
     atomicAdd(lostCount, partial[0]);
 }
 
-template <bool Radiation>
+template <bool Radiation, bool Aperture>
 __global__ void gpuMultipoleSurvivorFlagKernel(
   double *coord, long nParticles, int stride, long *survivorPrefix) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1742,39 +2070,396 @@ __global__ void gpuMultipoleSurvivorFlagKernel(
   if (ip >= nParticles)
     return;
   survivorPrefix[ip] =
-    gpuMultipoleTrackParticle<Radiation>(
+    gpuMultipoleTrackParticle<Radiation, Aperture>(
       coord + ip * stride, stride, 0) ? 1 : 0;
 }
 
-template <bool Radiation>
+template <bool Radiation, bool Aperture>
 __global__ void gpuMultipoleStableTrackScatterKernel(
   double *coord, double *scratch, const long *survivorPrefix,
   long nParticles, int stride, long survivors) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
-  long prefix, destination;
+  long destination;
   int survives;
 
   if (ip >= nParticles)
     return;
-  prefix = survivorPrefix[ip];
-  survives = (ip + 1 < nParticles) ? survivorPrefix[ip + 1] > prefix :
-                                     survivors > prefix;
-  destination = survives ? prefix : survivors + (ip - prefix);
+  destination = survivorPrefix[ip];
+  survives = destination < survivors;
   part = coord + ip * stride;
   target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
-  if (survives)
-    gpuMultipoleTrackParticle<Radiation>(target, stride, 1);
+  gpuMultipoleTrackParticle<Radiation, Aperture>(target, stride, 1);
+}
+
+__device__ __forceinline__ void gpuExactCorrectorRotate(
+  double *x, double *xp, double *y, double *yp, double cosTilt,
+  double sinTilt) {
+  double x0 = *x, xp0 = *xp, y0 = *y, yp0 = *yp;
+  *x = x0 * cosTilt + y0 * sinTilt;
+  *y = -x0 * sinTilt + y0 * cosTilt;
+  *xp = xp0 * cosTilt + yp0 * sinTilt;
+  *yp = -xp0 * sinTilt + yp0 * cosTilt;
+}
+
+__device__ int gpuExactCorrectorTrackParticle(
+  double *part, int writeOutput, const GPU_EXACT_CORRECTOR_DATA &data) {
+  double tx = tan(data.xkick);
+  double ty = tan(data.ykick);
+  double theta0 = atan(sqrt(tx * tx + ty * ty));
+  double x = part[0], xp = part[1], y = part[2], yp = part[3];
+  double s = part[4], dp = part[5];
+  int survives = 1;
+
+  if (theta0 == 0) {
+    if (writeOutput)
+      gpuExactDriftParticle(part, data.length);
+    return 1;
+  }
+
+  if (data.dx || data.dy || data.dz) {
+    s += data.dz * sqrt(1 + xp * xp + yp * yp);
+    x = x - data.dx + data.dz * xp;
+    y = y - data.dy + data.dz * yp;
+  }
+  if (data.sinTilt || data.cosTilt != 1)
+    gpuExactCorrectorRotate(&x, &xp, &y, &yp,
+                            data.cosTilt, data.sinTilt);
+
+  {
+    double rho0 = fabs(data.length) / sin(theta0);
+    if (rho0 == 0 || data.length == 0) {
+      xp = tan(theta0 / (1 + dp) + atan(xp));
+    } else {
+      double alpha = atan(xp);
+      double rho = rho0 * (1 + dp);
+      double arg = data.length / rho + sin(alpha);
+      if (rho > 0 && arg <= 1 && arg >= -1) {
+        double theta = asin(arg) - alpha;
+        double denominator = sqrt(1 + xp * xp - yp * yp);
+        if (denominator > 0) {
+          double dyf = yp / denominator;
+          double lprod = theta * rho * sqrt(1 + dyf * dyf);
+          if (lprod < data.length)
+            lprod = data.length;
+          y += dyf * theta * rho;
+          s += lprod;
+          x += rho * (cos(alpha) - cos(theta + alpha));
+          xp = tan(theta + alpha);
+        } else {
+          survives = 0;
+        }
+      } else {
+        survives = 0;
+      }
+    }
+  }
+
+  if (data.sinTilt || data.cosTilt != 1)
+    gpuExactCorrectorRotate(&x, &xp, &y, &yp,
+                            data.cosTilt, -data.sinTilt);
+  if (data.dx || data.dy || data.dz) {
+    s -= data.dz * sqrt(1 + xp * xp + yp * yp);
+    x = x + data.dx - data.dz * xp;
+    y = y + data.dy - data.dz * yp;
+  }
+
+  if (writeOutput) {
+    part[0] = x;
+    part[1] = xp;
+    part[2] = y;
+    part[3] = yp;
+    if (survives) {
+      part[4] = s;
+      part[5] = dp;
+    } else {
+      part[4] = data.zStart;
+      part[5] = data.pCentral * (1 + dp);
+    }
+  }
+  return survives;
+}
+
+__global__ void gpuExactCorrectorSurvivorFlagKernel(
+  double *coord, long nParticles, int stride,
+  GPU_EXACT_CORRECTOR_DATA data, long *survivorPrefix) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  if (ip < nParticles)
+    survivorPrefix[ip] = gpuExactCorrectorTrackParticle(
+      coord + ip * stride, 0, data) ? 1 : 0;
+}
+
+__global__ void gpuExactCorrectorStableTrackScatterKernel(
+  double *coord, double *scratch, const long *survivorPrefix,
+  long nParticles, int stride, long survivors,
+  GPU_EXACT_CORRECTOR_DATA data) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  if (ip >= nParticles)
+    return;
+  long destination = survivorPrefix[ip];
+  double *part = coord + ip * stride;
+  double *target = scratch + destination * stride;
+  for (int ic = 0; ic < stride; ic++)
+    target[ic] = part[ic];
+  gpuExactCorrectorTrackParticle(target, 1, data);
+}
+
+__device__ __forceinline__ void gpuTaperRectangularPlaneHit(
+  double coordinate, double slope, double start, double end,
+  double length, double sign, int *lost, double *zLost) {
+  if (start <= 0 || end <= 0)
+    return;
+  if (sign * coordinate > start) {
+    *lost = 1;
+    *zLost = 0;
+    return;
+  }
+  double denominator = sign * end - sign * start - slope * length;
+  double candidate =
+    (coordinate - sign * start) * length / denominator;
+  if (candidate >= 0 && candidate <= length) {
+    *lost = 1;
+    if (candidate < *zLost)
+      *zLost = candidate;
+  }
+}
+
+__device__ int gpuTaperApertureTrackParticle(
+  double *part, int writeOutput, const GPU_TAPER_APERTURE_DATA &data) {
+  double x = part[0], xp = part[1], y = part[2], yp = part[3];
+  double zLost = 0;
+  int lost = 0;
+
+  if (data.type == GPU_TAPER_APERTURE_CIRCULAR) {
+    double xLocal = x - data.dx;
+    double yLocal = y - data.dy;
+    double rho = 0, rho2 = 0, rStart = 0, rStart2 = 0;
+    double r = data.xStart < data.xEnd ? data.xStart : data.xEnd;
+    double r2Limit = r * r;
+    if (data.length > 0) {
+      rho = (data.xEnd - data.xStart) / data.length;
+      rho2 = rho * rho;
+      rStart = data.xStart;
+      rStart2 = rStart * rStart;
+    }
+    if (xLocal * xLocal + yLocal * yLocal >= rStart2) {
+      lost = 1;
+    } else if (rho) {
+      double a = xp * xp + yp * yp - rho2;
+      double b = 2 * xLocal * xp + 2 * yLocal * yp -
+                 2 * rStart * rho;
+      double c = xLocal * xLocal + yLocal * yLocal - rStart2;
+      double determinant = b * b - 4 * a * c;
+      if (determinant >= 0) {
+        zLost = (-b + sqrt(determinant)) / (2 * a);
+        if (zLost >= 0 && zLost <= data.length)
+          lost = 1;
+      }
+    } else if (xLocal * xLocal + yLocal * yLocal >= r2Limit) {
+      lost = 1;
+    }
+  } else if (data.type == GPU_TAPER_APERTURE_RECTANGULAR) {
+    x -= data.dx;
+    y -= data.dy;
+    if (data.sinTilt || data.cosTilt != 1)
+      gpuExactCorrectorRotate(&x, &xp, &y, &yp,
+                              data.cosTilt, data.sinTilt);
+    zLost = DBL_MAX;
+    gpuTaperRectangularPlaneHit(x, xp, data.xStart, data.xEnd,
+                                data.length, 1, &lost, &zLost);
+    gpuTaperRectangularPlaneHit(x, xp, data.xStart, data.xEnd,
+                                data.length, -1, &lost, &zLost);
+    gpuTaperRectangularPlaneHit(y, yp, data.yStart, data.yEnd,
+                                data.length, 1, &lost, &zLost);
+    gpuTaperRectangularPlaneHit(y, yp, data.yStart, data.yEnd,
+                                data.length, -1, &lost, &zLost);
+    if (!lost)
+      zLost = data.length;
+    x += zLost * xp;
+    y += zLost * yp;
+    if (data.sinTilt || data.cosTilt != 1)
+      gpuExactCorrectorRotate(&x, &xp, &y, &yp,
+                              data.cosTilt, -data.sinTilt);
+    x += data.dx;
+    y += data.dy;
+  } else {
+    return 0;
+  }
+
+  if (writeOutput) {
+    if (data.type == GPU_TAPER_APERTURE_CIRCULAR) {
+      double length = lost ? zLost : data.length;
+      x += length * xp;
+      y += length * yp;
+    }
+    part[0] = x;
+    part[1] = xp;
+    part[2] = y;
+    part[3] = yp;
+    if (lost) {
+      part[4] = data.zStart + zLost;
+      part[5] = data.pCentral * (1 + part[5]);
+    } else {
+      part[4] += data.length * sqrt(1 + xp * xp + yp * yp);
+    }
+  }
+  return !lost;
+}
+
+__global__ void gpuTaperApertureSurvivorFlagKernel(
+  double *coord, long nParticles, int stride,
+  GPU_TAPER_APERTURE_DATA data, long *survivorPrefix) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  if (ip < nParticles)
+    survivorPrefix[ip] = gpuTaperApertureTrackParticle(
+      coord + ip * stride, 0, data) ? 1 : 0;
+}
+
+__global__ void gpuTaperApertureStableTrackScatterKernel(
+  double *coord, double *scratch, const long *survivorPrefix,
+  long nParticles, int stride, long survivors,
+  GPU_TAPER_APERTURE_DATA data) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  if (ip >= nParticles)
+    return;
+  long destination = survivorPrefix[ip];
+  double *part = coord + ip * stride;
+  double *target = scratch + destination * stride;
+  for (int ic = 0; ic < stride; ic++)
+    target[ic] = part[ic];
+  gpuTaperApertureTrackParticle(target, 1, data);
+}
+
+__device__ int gpuSpeedbumpTrackParticle(
+  double *part, int writeOutput, const GPU_SPEEDBUMP_DATA &data) {
+  double xiHit = DBL_MAX, yiHit = DBL_MAX;
+  int phit = 0;
+
+  for (int idir = 0; idir < 2; idir++) {
+    int directionEnabled = idir ? data.minusDirection : data.plusDirection;
+    int dsign = idir ? -1 : 1;
+    double position, xi = 0, yi = 0;
+    double dxPlane = 2 * data.length;
+    int hit = 0;
+
+    if (!directionEnabled)
+      continue;
+    position = data.scraperConvention ?
+      dsign * data.position : data.position;
+    if (dsign * part[data.plane] >=
+        position + data.height + data.offset * dsign) {
+      dxPlane = 0;
+      xi = 0;
+      yi = part[data.plane];
+      hit = 1;
+    } else if (part[data.plane + 1]) {
+      dxPlane =
+        (dsign * (position + data.height + data.offset * dsign) -
+         part[data.plane]) /
+        part[data.plane + 1];
+      if (dxPlane >= 0 &&
+          dxPlane <=
+            data.length / 2 + data.dzCenter - data.chord / 2) {
+        hit = 1;
+        xi = dxPlane;
+        yi = (position + data.height) * dsign + data.offset;
+      }
+    }
+    if (!hit && data.radius) {
+      double x1 = -(data.length / 2 + data.dzCenter);
+      double dx = data.length;
+      double x2 = x1 + dx;
+      double y1 =
+        position + data.radius + data.offset * dsign -
+        dsign * part[data.plane];
+      double dy = -data.length * dsign * part[data.plane + 1];
+      double y2 = y1 + dy;
+      double D = x1 * y2 - x2 * y1;
+      double dr2 = dx * dx + dy * dy;
+      double disc = data.radius * data.radius * dr2 - D * D;
+
+      if (disc >= 0) {
+        if (disc == 0) {
+          xi = D * dy / dr2;
+          yi = -D * dx / dr2;
+        } else {
+          double root = sqrt(disc);
+          double dySign = dy < 0 ? -1 : (dy > 0 ? 1 : 0);
+          double xi1 = (D * dy + dySign * dx * root) / dr2;
+          double yi1 = (-D * dx + fabs(dy) * root) / dr2;
+          double xi2 = (D * dy - dySign * dx * root) / dr2;
+          double yi2 = (-D * dx - fabs(dy) * root) / dr2;
+          if (xi1 < xi2) {
+            xi = xi1;
+            yi = yi1;
+          } else {
+            xi = xi2;
+            yi = yi2;
+          }
+        }
+        hit = 1;
+        xi += data.length / 2 + data.dzCenter;
+        yi = (yi - (position + data.radius + data.offset * dsign)) /
+             (-dsign);
+      }
+      if (!hit &&
+          dxPlane >= data.length / 2 + data.dzCenter &&
+          dxPlane <= data.length) {
+        xi = dxPlane;
+        yi = (position + data.height) * dsign + data.offset;
+        hit = 1;
+      }
+    }
+    if (hit && xi < xiHit) {
+      xiHit = xi;
+      yiHit = yi;
+      phit = 1;
+    }
+  }
+
+  if (writeOutput) {
+    if (!phit) {
+      gpuExactDriftParticle(part, data.length);
+    } else {
+      int otherPlane = data.plane == 0 ? 2 : 0;
+      part[data.plane] = yiHit;
+      part[otherPlane] += xiHit * part[otherPlane + 1];
+      part[4] = data.zStart + xiHit;
+      part[5] = data.pCentral * (1 + part[5]);
+    }
+  }
+  return !phit;
+}
+
+__global__ void gpuSpeedbumpSurvivorFlagKernel(
+  double *coord, long nParticles, int stride,
+  GPU_SPEEDBUMP_DATA data, long *survivorPrefix) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  if (ip < nParticles)
+    survivorPrefix[ip] = gpuSpeedbumpTrackParticle(
+      coord + ip * stride, 0, data) ? 1 : 0;
+}
+
+__global__ void gpuSpeedbumpStableTrackScatterKernel(
+  double *coord, double *scratch, const long *survivorPrefix,
+  long nParticles, int stride, long survivors,
+  GPU_SPEEDBUMP_DATA data) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  if (ip >= nParticles)
+    return;
+  long destination = survivorPrefix[ip];
+  double *part = coord + ip * stride;
+  double *target = scratch + destination * stride;
+  for (int ic = 0; ic < stride; ic++)
+    target[ic] = part[ic];
+  gpuSpeedbumpTrackParticle(target, 1, data);
 }
 
 __device__ __forceinline__ int gpuCcbendSwitchPlane(
   double *x, double *xp, double *y, double *yp, double *s,
-  double dp, double angle) {
-  double tanAngle = tan(angle);
-  double cosAngle = cos(angle);
-  double sinAngle = sin(angle);
+  double dp, double tanAngle, double cosAngle, double sinAngle) {
   double denominator = 1 - *xp * tanAngle;
   double ds, norm, qx0, qy0, qz0, qx, qy, qz;
 
@@ -1799,9 +2484,21 @@ __device__ __forceinline__ int gpuCcbendSwitchPlane(
          isfinite(*yp) && isfinite(*s);
 }
 
-__device__ int gpuCcbendTrackParticle(double *part, int stride,
-                                      GPU_CCBEND_DATA data,
-                                      int writeOutput) {
+__device__ int gpuLgbendFringe(
+  double *x, double *xp, double *y, double *yp, double *path, double dp,
+  double tant, double sint, double sect,
+  double invRhoPlus, double K1plus,
+  double invRhoMinus, double K1minus,
+  const GPU_LGBEND_SEGMENT_DATA &segment, int isExit, int edgeOrder);
+__device__ __forceinline__ int gpuLgbendBody(
+  double *x, double *xp, double *y, double *yp, double *path, double *dp,
+  const GPU_LGBEND_SEGMENT_DATA &segment, long nSlices,
+  int integrationOrder, double Po, double radCoef,
+  const GPU_APERTURE_LIMIT_DATA &aperture,
+  double coordLimit, double slopeLimit);
+
+__device__ int gpuCcbendTrackNoFringeOrder2(
+  double *part, const GPU_CCBEND_DATA &data, int writeOutput) {
   double x = part[0];
   double xp = part[1];
   double y = part[2];
@@ -1812,12 +2509,14 @@ __device__ int gpuCcbendTrackParticle(double *part, int stride,
   double xpow[3], ypow[3];
   double halfDrift = data.chordLength / data.nSlices * 0.5;
 
-  (void)stride;
   if (!isfinite(x) || !isfinite(xp) || !isfinite(y) ||
       !isfinite(yp) || !isfinite(path) || !isfinite(dp))
     return 0;
+  if (data.sinTilt || data.cosTilt != 1)
+    gpuExactCorrectorRotate(&x, &xp, &y, &yp,
+                            data.cosTilt, data.sinTilt);
   if (!gpuCcbendSwitchPlane(&x, &xp, &y, &yp, &path, dp,
-                             data.angleHalf))
+                             data.planeTan, data.planeCos, data.planeSin))
     return 0;
   x -= data.dxOffset;
   if (fabs(x) > data.coordLimit || fabs(y) > data.coordLimit ||
@@ -1859,12 +2558,6 @@ __device__ int gpuCcbendTrackParticle(double *part, int stride,
     y += yp * halfDrift;
   }
 
-  denominator = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
-  if (denominator <= 0)
-    return 0;
-  denominator = sqrt(denominator);
-  xp = qx / denominator;
-  yp = qy / denominator;
   path += bodyPath;
   if (!isfinite(x) || !isfinite(xp) || !isfinite(y) || !isfinite(yp) ||
       fabs(x) > data.coordLimit || fabs(y) > data.coordLimit ||
@@ -1873,8 +2566,96 @@ __device__ int gpuCcbendTrackParticle(double *part, int stride,
 
   x -= data.xAdjust;
   if (!gpuCcbendSwitchPlane(&x, &xp, &y, &yp, &path, dp,
-                             data.angleHalf))
+                             data.planeTan, data.planeCos, data.planeSin))
     return 0;
+  if (data.sinTilt || data.cosTilt != 1)
+    gpuExactCorrectorRotate(&x, &xp, &y, &yp,
+                            data.cosTilt, -data.sinTilt);
+  if (data.referenceCorrection & 2) {
+    x -= data.referenceTrajectory[0];
+    xp -= data.referenceTrajectory[1];
+    y -= data.referenceTrajectory[2];
+    yp -= data.referenceTrajectory[3];
+  }
+  if (data.referenceCorrection & 1)
+    path -= data.referenceTrajectory[4];
+  if (!isfinite(x) || !isfinite(xp) || !isfinite(y) ||
+      !isfinite(yp) || !isfinite(path))
+    return 0;
+  if (writeOutput) {
+    part[0] = x;
+    part[1] = xp;
+    part[2] = y;
+    part[3] = yp;
+    part[4] = path;
+    part[5] = dp;
+  }
+  return 1;
+}
+
+__device__ int gpuCcbendTrackParticle(double *part, int stride,
+                                      GPU_CCBEND_DATA data,
+                                      int writeOutput) {
+  double x = part[0];
+  double xp = part[1];
+  double y = part[2];
+  double yp = part[3];
+  double path = part[4];
+  double dp = part[5];
+  GPU_LGBEND_SEGMENT_DATA segment = {};
+
+  (void)stride;
+  if (data.fringeModel == -1 && data.integrationOrder == 2 &&
+      data.radCoef == 0 && !data.aperture.present)
+    return gpuCcbendTrackNoFringeOrder2(part, data, writeOutput);
+  if (!isfinite(x) || !isfinite(xp) || !isfinite(y) ||
+      !isfinite(yp) || !isfinite(path) || !isfinite(dp))
+    return 0;
+  if (data.sinTilt || data.cosTilt != 1)
+    gpuExactCorrectorRotate(&x, &xp, &y, &yp,
+                            data.cosTilt, data.sinTilt);
+  if (!gpuCcbendSwitchPlane(&x, &xp, &y, &yp, &path, dp,
+                             data.planeTan, data.planeCos, data.planeSin))
+    return 0;
+  x -= data.dxOffset;
+
+  segment.length = data.chordLength;
+  segment.invRho = 1 / data.rho0;
+  segment.K1 = data.KnL[1] / data.chordLength;
+  segment.angleSign = data.angleSign;
+  for (int i = 0; i < 3; i++)
+    segment.KnL[i] = data.KnL[i];
+  for (int i = 0; i < 8; i++) {
+    segment.fringe1[i] = data.fringeInt1[i];
+    segment.fringe2[i] = data.fringeInt2[i];
+  }
+  if (data.fringeModel != -1 &&
+      !gpuLgbendFringe(
+        &x, &xp, &y, &yp, &path, dp,
+        data.fringe1Tan, data.fringe1Sin, data.fringe1Sec,
+        segment.invRho, segment.K1, 0, 0,
+        segment, 0, data.edgeOrder))
+      return 0;
+  if (!gpuLgbendBody(
+        &x, &xp, &y, &yp, &path, &dp, segment, data.nSlices,
+        data.integrationOrder, data.Po, data.radCoef, data.aperture,
+        data.coordLimit, data.slopeLimit))
+    return 0;
+  if (data.fringeModel != -1 &&
+      !gpuLgbendFringe(
+        &x, &xp, &y, &yp, &path, dp,
+        data.fringe2Tan, data.fringe2Sin, data.fringe2Sec,
+        0, 0, segment.invRho, segment.K1,
+        segment, 1, data.edgeOrder))
+      return 0;
+
+  x -= data.xAdjust;
+  if (!gpuCcbendSwitchPlane(&x, &xp, &y, &yp, &path, dp,
+                             data.planeTan, data.planeCos, data.planeSin))
+    return 0;
+  if (data.sinTilt || data.cosTilt != 1)
+    gpuExactCorrectorRotate(&x, &xp, &y, &yp,
+                            data.cosTilt, -data.sinTilt);
   if (data.referenceCorrection & 2) {
     x -= data.referenceTrajectory[0];
     xp -= data.referenceTrajectory[1];
@@ -1920,10 +2701,8 @@ __global__ void gpuCcbendTrackCheckedKernel(
 
 __device__ __forceinline__ int gpuLgbendSwitchPlane(
   double *x, double *xp, double *y, double *yp, double *path,
-  double dp, double dx, double angle, int exitPlane) {
-  double tanAngle = tan(angle);
-  double cosAngle = cos(angle);
-  double sinAngle = sin(angle);
+  double dp, double dx, double tanAngle, double cosAngle, double sinAngle,
+  int exitPlane) {
   double denominator, ds, norm, qx0, qy0, qz0, qx, qy, qz;
 
   if (exitPlane)
@@ -1952,41 +2731,127 @@ __device__ __forceinline__ int gpuLgbendSwitchPlane(
          isfinite(*yp) && isfinite(*path);
 }
 
-/* The narrow LGBEND subset has no supplied fringe integrals and edge order
- * at most one.  Retain the CPU routine's canonical slope round trip and its
- * zeroth-order path-length term instead of silently dropping the nominal
- * hard-edge operation. */
-__device__ __forceinline__ int gpuLgbendZeroIntegralFringe(
-  double *x, double *xp, double *y, double *yp, double *path,
-  double dp, double alpha, double invRhoPlus, double invRhoMinus) {
-  double x1 = *x, y1 = *y, tau1, px1, py1;
-  double x2, y2, tau2, px2, py2;
-  double tant = tan(alpha);
-  double sint = sin(alpha);
-  double sect = 1.0 / cos(alpha);
-  double focY0 = -tant * (invRhoPlus - invRhoMinus);
+__device__ int gpuLgbendFringe(
+  double *x, double *xp, double *y, double *yp, double *path, double dp,
+  double tant, double sint, double sect,
+  double invRhoPlus, double K1plus,
+  double invRhoMinus, double K1minus,
+  const GPU_LGBEND_SEGMENT_DATA &segment, int isExit, int edgeOrder) {
+  const double *fringe = isExit ? segment.fringe2 : segment.fringe1;
+  double intK0 = fringe[0] * segment.angleSign;
+  double intI0 = fringe[1];
+  double intK2 = fringe[2];
+  double intI1 = fringe[3];
+  double intK4 = fringe[4] * segment.angleSign;
+  double intK5 = fringe[5] * segment.angleSign;
+  double intK6 = fringe[6] * segment.angleSign;
+  double intK7 = fringe[7];
+  double x1 = *x, y1 = *y, px1, py1, tau1;
+  double x2, y2, px2, py2, tau2;
+  double sect3 = sect * sect * sect;
   double invP = 1.0 / (1.0 + dp);
-  double temp, expT;
+  double focX0 =
+    -tant * intK5 - 0.5 * intI0 * (2.0 - tant * tant);
+  double focY0 =
+    -tant * (invRhoPlus - invRhoMinus) +
+    tant * sect * sect * intK5 +
+    0.5 * intI0 * (2.0 + tant * tant);
+  double focYd =
+    sect3 * ((1.0 + sint * sint) * intK2 - intK7);
+  double temp = sqrt(1.0 + *xp * *xp + *yp * *yp);
+  double dispX, kickPx, expT;
 
-  temp = sqrt(1.0 + *xp * *xp + *yp * *yp);
   px1 = (1.0 + dp) * *xp / temp;
   py1 = (1.0 + dp) * *yp / temp;
   tau1 = -*path + sint * x1;
   px1 -= (1.0 + dp) * sint;
 
-  temp = sect * 0.0 * invP;
+  temp = sect * intI1 * invP;
   if (fabs(temp) < 1.0e-20)
     temp = 1.0e-20;
+  dispX = -sect * intK0 * invP;
+  kickPx = -tant * (intI1 + 0.5 * intK4);
   expT = exp(temp);
-  x2 = expT * x1;
+
+  x2 = expT * x1 + dispX * (expT - 1.0) / temp;
   y2 = y1 / expT;
-  px2 = px1 / expT;
-  py2 = expT * py1 +
-        y1 * focY0 * (expT - 1.0 / expT) / (2.0 * temp);
-  tau2 = tau1 + invP *
-    (-(px1 * x1 - py1 * y1) * temp +
-     focY0 * (1.0 / (expT * expT) - 1.0 + 2.0 * temp) /
-       (4.0 * temp) * y1 * y1);
+  px2 =
+    px1 / expT +
+    kickPx * (1.0 - 1.0 / expT) / temp +
+    focX0 *
+      (x1 * (expT - 1.0 / expT) / (2.0 * temp) +
+       dispX * (expT + 1.0 / expT - 2.0) /
+         (2.0 * temp * temp));
+  py2 =
+    expT * py1 +
+    y1 * (focY0 + focYd * invP) *
+      (expT - 1.0 / expT) / (2.0 * temp);
+  tau2 =
+    tau1 +
+    invP *
+      (kickPx * (temp * x1 + dispX) * (1.0 + temp - expT) /
+         (temp * temp) -
+       px1 * dispX - (px1 * x1 - py1 * y1) * temp +
+       (0.5 * focYd * invP +
+        focY0 * (1.0 / (expT * expT) - 1.0 + 2.0 * temp) /
+          (4.0 * temp)) *
+         y1 * y1 -
+       x1 * x1 * focX0 *
+         (expT * expT - 1.0 - 2.0 * temp) / (4.0 * temp) -
+       x1 * dispX * focX0 *
+         (expT * expT - 2.0 * expT + 1.0) /
+         (2.0 * temp * temp) -
+       dispX * dispX * focX0 *
+         (expT * expT - 4.0 * expT + 2.0 * temp + 3.0) /
+         (4.0 * temp * temp * temp));
+
+  if (edgeOrder >= 2) {
+    x1 = x2;
+    y1 = y2 * exp(-sect * intK5 * x2 * invP);
+    px1 =
+      px2 -
+      (0.5 * intK6 + 0.25 * tant * (K1plus - K1minus)) *
+        x2 * x2 +
+      sect * intK5 * invP * py2 * y2;
+    py1 = py2 * exp(sect * intK5 * x2 * invP);
+    tau1 = tau2 + sect * intK5 * invP * invP * py2 * x2 * y2;
+
+    x2 =
+      x1 -
+      0.5 * sect3 *
+        (intK5 - (invRhoPlus - invRhoMinus)) *
+        invP * y1 * y1;
+    y2 = y1;
+    px2 =
+      px1 +
+      (0.5 * sect * sect * intK6 -
+       0.25 * tant * (K1plus - K1minus)) *
+        y1 * y1;
+    py2 =
+      py1 +
+      sect3 * (intK5 - (invRhoPlus - invRhoMinus)) *
+        invP * px1 * y1 +
+      (sect * sect * intK6 -
+       0.5 * tant * (K1plus - K1minus)) *
+        x1 * y1;
+    tau2 =
+      tau1 +
+      0.5 * sect3 *
+        (intK5 - (invRhoPlus - invRhoMinus)) *
+        invP * invP * y1 * y1 *
+        (px1 +
+         (0.25 * sect * sect * intK6 -
+          0.125 * tant * (K1plus - K1minus)) *
+           y1 * y1);
+
+    temp = -0.5 * sect3 * intK5 * invP * x2;
+    tau2 += temp * invP * px2 * x2;
+    temp = 1.0 + temp;
+    if (temp == 0)
+      return 0;
+    x2 /= temp;
+    px2 *= temp * temp;
+  }
 
   px2 += (1.0 + dp) * sint;
   temp = (1.0 + dp) * (1.0 + dp) - px2 * px2 - py2 * py2;
@@ -2002,21 +2867,40 @@ __device__ __forceinline__ int gpuLgbendZeroIntegralFringe(
          isfinite(*yp) && isfinite(*path);
 }
 
+__device__ __forceinline__ int gpuLoadSymplecticFractions(
+  int integrationOrder, double *driftFrac, double *kickFrac,
+  int *nSubsteps);
+
 __device__ __forceinline__ int gpuLgbendBody(
-  double *x, double *xp, double *y, double *yp, double *path, double dp,
+  double *x, double *xp, double *y, double *yp, double *path, double *dp,
   const GPU_LGBEND_SEGMENT_DATA &segment, long nSlices,
+  int integrationOrder, double Po, double radCoef,
+  const GPU_APERTURE_LIMIT_DATA &aperture,
   double coordLimit, double slopeLimit) {
+  double driftFrac[8], kickFrac[8];
   double qx, qy, denominator, bodyPath = 0;
   double xpow[3], ypow[3];
-  double halfDrift = segment.length / nSlices * 0.5;
+  double inputPath = *path;
+  double beta0 = 1;
+  double drift = segment.length / nSlices;
+  int nSubsteps = 0;
 
+  if (!gpuLoadSymplecticFractions(integrationOrder, driftFrac,
+                                  kickFrac, &nSubsteps))
+    return 0;
   if (fabs(*x) > coordLimit || fabs(*y) > coordLimit ||
       fabs(*xp) > slopeLimit || fabs(*yp) > slopeLimit)
     return 0;
+  if (radCoef) {
+    double p = Po * (1 + *dp);
+    beta0 = p / sqrt(p * p + 1);
+    if (beta0 == 0)
+      return 0;
+  }
   denominator = sqrt(1 + *xp * *xp + *yp * *yp);
-  qx = (1 + dp) * *xp / denominator;
-  qy = (1 + dp) * *yp / denominator;
-  denominator = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
+  qx = (1 + *dp) * *xp / denominator;
+  qy = (1 + *dp) * *yp / denominator;
+  denominator = (1 + *dp) * (1 + *dp) - qx * qx - qy * qy;
   if (denominator <= 0)
     return 0;
   denominator = sqrt(denominator);
@@ -2025,37 +2909,75 @@ __device__ __forceinline__ int gpuLgbendBody(
 
   for (long slice = 0; slice < nSlices; slice++) {
     double deltaQx = 0, deltaQy = 0;
-    bodyPath += halfDrift * sqrt(1 + *xp * *xp + *yp * *yp);
-    *x += *xp * halfDrift;
-    *y += *yp * halfDrift;
-    gpuMultipoleFillPowerArray(*x, xpow, 2);
-    gpuMultipoleFillPowerArray(*y, ypow, 2);
-    for (int order = 0; order < 3; order++) {
-      if (segment.KnL[order])
-        gpuMultipoleApplyKick(&qx, &qy, &deltaQx, &deltaQy,
-                              xpow, ypow, order,
-                              segment.KnL[order] / nSlices, 0);
-    }
-    denominator = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
-    if (denominator <= 0)
+
+    if (!gpuInsideApertureLimit(*x, *y, aperture))
       return 0;
-    denominator = sqrt(denominator);
-    *xp = qx / denominator;
-    *yp = qy / denominator;
-    bodyPath += halfDrift * sqrt(1 + *xp * *xp + *yp * *yp);
-    *x += *xp * halfDrift;
-    *y += *yp * halfDrift;
+    for (int step = 0; step < nSubsteps; step++) {
+      double dsh = drift * driftFrac[step];
+
+      bodyPath += dsh * sqrt(1 + *xp * *xp + *yp * *yp);
+      *x += *xp * dsh;
+      *y += *yp * dsh;
+      if (step == nSubsteps - 1)
+        break;
+
+      gpuMultipoleFillPowerArray(*x, xpow, 2);
+      gpuMultipoleFillPowerArray(*y, ypow, 2);
+      deltaQx = deltaQy = 0;
+      for (int order = 0; order < 3; order++) {
+        if (segment.KnL[order])
+          gpuMultipoleApplyKick(
+            &qx, &qy, &deltaQx, &deltaQy, xpow, ypow, order,
+            segment.KnL[order] / nSlices * kickFrac[step], 0);
+      }
+      denominator =
+        (1 + *dp) * (1 + *dp) - qx * qx - qy * qy;
+      if (denominator <= 0)
+        return 0;
+      denominator = sqrt(denominator);
+      *xp = qx / denominator;
+      *yp = qy / denominator;
+    }
+
+    if (radCoef && drift) {
+      double deltaFactor = (1 + *dp) * (1 + *dp);
+      double normalizedDeltaQx =
+        deltaQx / kickFrac[nSubsteps - 2];
+      double normalizedDeltaQy =
+        deltaQy / kickFrac[nSubsteps - 2];
+      double F2 =
+        (normalizedDeltaQx / drift) * (normalizedDeltaQx / drift) +
+        (normalizedDeltaQy / drift) * (normalizedDeltaQy / drift);
+      double dsFactor =
+        sqrt(1 + *xp * *xp + *yp * *yp) * drift;
+
+      qx /= (1 + *dp);
+      qy /= (1 + *dp);
+      *dp -= radCoef * deltaFactor * F2 * dsFactor;
+      qx *= (1 + *dp);
+      qy *= (1 + *dp);
+    }
   }
 
-  denominator = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
+  if (!gpuInsideApertureLimit(*x, *y, aperture))
+    return 0;
+  denominator = (1 + *dp) * (1 + *dp) - qx * qx - qy * qy;
   if (denominator <= 0)
     return 0;
   denominator = sqrt(denominator);
   *xp = qx / denominator;
   *yp = qy / denominator;
-  *path += bodyPath;
+  if (radCoef) {
+    double p = Po * (1 + *dp);
+    double beta1 = p / sqrt(p * p + 1);
+    *path = beta1 *
+      (inputPath / beta0 + 2 * bodyPath / (beta0 + beta1));
+  } else {
+    *path = inputPath + bodyPath;
+  }
   return isfinite(*x) && isfinite(*xp) && isfinite(*y) &&
          isfinite(*yp) && isfinite(*path) &&
+         isfinite(*dp) &&
          fabs(*x) <= coordLimit && fabs(*y) <= coordLimit &&
          fabs(*xp) <= slopeLimit && fabs(*yp) <= slopeLimit;
 }
@@ -2075,29 +2997,47 @@ __device__ int gpuLgbendTrackParticle(double *part, int stride,
     path += data.predrift * sqrt(1 + xp * xp + yp * yp);
   }
   if (!gpuLgbendSwitchPlane(&x, &xp, &y, &yp, &path, dp,
-                             data.entryPosition, data.entryAngle, 0))
+                             data.entryPosition,
+                             data.entryPlaneTan, data.entryPlaneCos,
+                             data.entryPlaneSin, 0))
     return 0;
   for (long i = 0; i < data.nSegments; i++) {
     double invRhoMinus = i ? data.segment[i - 1].invRho : 0.0;
     double invRhoPlus = i + 1 < data.nSegments ?
                           data.segment[i + 1].invRho : 0.0;
-    if (i == 0 &&
-        !gpuLgbendZeroIntegralFringe(&x, &xp, &y, &yp, &path, dp,
-                                     data.segment[i].entryAngle,
-                                     data.segment[i].invRho,
-                                     invRhoMinus))
+    double K1minus = i ? data.segment[i - 1].K1 : 0.0;
+    double K1plus = i + 1 < data.nSegments ?
+                      data.segment[i + 1].K1 : 0.0;
+
+    if (data.segment[i].has1 &&
+        !gpuLgbendFringe(
+          &x, &xp, &y, &yp, &path, dp,
+          data.segment[i].fringe1Tan,
+          data.segment[i].fringe1Sin,
+          data.segment[i].fringe1Sec,
+          data.segment[i].invRho, data.segment[i].K1,
+          invRhoMinus, K1minus, data.segment[i], 0, data.edgeOrder))
       return 0;
-    if (!gpuLgbendBody(&x, &xp, &y, &yp, &path, dp, data.segment[i],
-                       data.nSlices, data.coordLimit, data.slopeLimit))
+    if (!gpuLgbendBody(
+          &x, &xp, &y, &yp, &path, &dp, data.segment[i],
+          data.nSlices, data.integrationOrder, data.Po, data.radCoef,
+          data.aperture, data.coordLimit, data.slopeLimit))
       return 0;
-    if (!gpuLgbendZeroIntegralFringe(&x, &xp, &y, &yp, &path, dp,
-                                     data.segment[i].exitAngle,
-                                     invRhoPlus,
-                                     data.segment[i].invRho))
+    if (data.segment[i].has2 &&
+        !gpuLgbendFringe(
+          &x, &xp, &y, &yp, &path, dp,
+          data.segment[i].fringe2Tan,
+          data.segment[i].fringe2Sin,
+          data.segment[i].fringe2Sec,
+          invRhoPlus, K1plus,
+          data.segment[i].invRho, data.segment[i].K1,
+          data.segment[i], 1, data.edgeOrder))
       return 0;
   }
   if (!gpuLgbendSwitchPlane(&x, &xp, &y, &yp, &path, dp,
-                             -data.exitPosition, -data.exitAngle, 1))
+                             -data.exitPosition,
+                             data.exitPlaneTan, data.exitPlaneCos,
+                             data.exitPlaneSin, 1))
     return 0;
   if (data.postdrift) {
     x += xp * data.postdrift;
@@ -4153,15 +5093,15 @@ __global__ void gpuLimitAmplitudesStableScatterKernel(double *coord,
                                                       long survivors) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
-  long prefix, lost;
+  long destination, lost;
   double dz = 0;
 
   if (ip >= nParticles)
     return;
   part = coord + ip * stride;
-  prefix = survivorPrefix[ip];
+  destination = survivorPrefix[ip];
   lost = gpuLimitAmplitudeLost(part, xmax, ymax);
-  target = scratch + (lost ? survivors + (ip - prefix) : prefix) * stride;
+  target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
   if (!lost)
@@ -4279,15 +5219,15 @@ __global__ void gpuELimitAmplitudesStableScatterKernel(double *coord,
                                                        long survivors) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
-  long prefix, lost;
+  long destination, lost;
   double dz = 0;
 
   if (ip >= nParticles)
     return;
   part = coord + ip * stride;
-  prefix = survivorPrefix[ip];
+  destination = survivorPrefix[ip];
   lost = gpuELimitAmplitudeLost(part, xmax, ymax, exponent, yExponent);
-  target = scratch + (lost ? survivors + (ip - prefix) : prefix) * stride;
+  target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
   if (!lost)
@@ -4367,14 +5307,14 @@ __global__ void gpuRemoveInvalidParticlesStableScatterKernel(
   long nParticles, int stride, double z, double pCentral, long survivors) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
-  long prefix, lost;
+  long destination, lost;
 
   if (ip >= nParticles)
     return;
   part = coord + ip * stride;
-  prefix = survivorPrefix[ip];
+  destination = survivorPrefix[ip];
   lost = gpuInvalidParticleLost(part);
-  target = scratch + (lost ? survivors + (ip - prefix) : prefix) * stride;
+  target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
   if (!lost)
@@ -4389,15 +5329,11 @@ __global__ void gpuStableScatterRowsKernel(double *coord, double *scratch,
                                            long survivors) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
-  long prefix, destination;
-  int survives;
+  long destination;
 
   if (ip >= nParticles)
     return;
-  prefix = survivorPrefix[ip];
-  survives = (ip + 1 < nParticles) ? survivorPrefix[ip + 1] > prefix :
-                                     survivors > prefix;
-  destination = survives ? prefix : survivors + (ip - prefix);
+  destination = survivorPrefix[ip];
   part = coord + ip * stride;
   target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
@@ -4677,7 +5613,7 @@ __global__ void gpuBatchedApertureTrackKernel(
           alive = 0;
         break;
       case GPU_BATCHED_APERTURE_MULTIPOLE:
-        if (!gpuMultipoleTrackParticleData<false>(
+        if (!gpuMultipoleTrackParticleData<false, true>(
               part, stride, 1, &item->data.multipole))
           alive = 0;
         break;
@@ -4793,18 +5729,18 @@ __global__ void gpuRectangularCollimatorStableScatterKernel(double *coord,
                                                             long survivors) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
-  long prefix, lost, entranceLost;
+  long destination, lost, entranceLost;
   double x1, y1;
 
   if (ip >= nParticles)
     return;
   part = coord + ip * stride;
-  prefix = survivorPrefix[ip];
+  destination = survivorPrefix[ip];
   entranceLost = gpuRectangularCollimatorLostAt(part, xmax, ymax, xCenter, yCenter, 0, openCode);
   lost = entranceLost;
   if (!lost && length > 0)
     lost = gpuRectangularCollimatorLostAt(part, xmax, ymax, xCenter, yCenter, length, openCode);
-  target = scratch + (lost ? survivors + (ip - prefix) : prefix) * stride;
+  target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
 
@@ -4924,19 +5860,19 @@ __global__ void gpuEllipticalCollimatorStableScatterKernel(double *coord,
                                                            long survivors) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
-  long prefix, lost, entranceLost;
+  long destination, lost, entranceLost;
 
   if (ip >= nParticles)
     return;
   part = coord + ip * stride;
-  prefix = survivorPrefix[ip];
+  destination = survivorPrefix[ip];
   entranceLost = gpuEllipticalCollimatorLostAt(part, xmax, ymax, xCenter, yCenter,
                                                exponent, yExponent, 0, openCode);
   lost = entranceLost;
   if (!lost && length > 0)
     lost = gpuEllipticalCollimatorLostAt(part, xmax, ymax, xCenter, yCenter,
                                          exponent, yExponent, length, openCode);
-  target = scratch + (lost ? survivors + (ip - prefix) : prefix) * stride;
+  target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
 
@@ -5033,17 +5969,17 @@ __global__ void gpuScraperStableScatterKernel(double *coord,
                                               long survivors) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
-  long prefix, lost, entranceLost;
+  long destination, lost, entranceLost;
 
   if (ip >= nParticles)
     return;
   part = coord + ip * stride;
-  prefix = survivorPrefix[ip];
+  destination = survivorPrefix[ip];
   entranceLost = gpuScraperLostAt(part, plane, center, position, sideSign, 0);
   lost = entranceLost;
   if (!lost && length > 0)
     lost = gpuScraperLostAt(part, plane, center, position, sideSign, length);
-  target = scratch + (lost ? survivors + (ip - prefix) : prefix) * stride;
+  target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
 
@@ -5144,14 +6080,14 @@ __global__ void gpuApertureDataStableScatterKernel(double *coord,
                                                    long survivors) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
-  long prefix, lost;
+  long destination, lost;
 
   if (ip >= nParticles)
     return;
   part = coord + ip * stride;
-  prefix = survivorPrefix[ip];
+  destination = survivorPrefix[ip];
   lost = gpuApertureDataLost(part, xCenter, yCenter, xSize, ySize);
-  target = scratch + (lost ? survivors + (ip - prefix) : prefix) * stride;
+  target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
   if (!lost)
@@ -8010,15 +8946,22 @@ extern "C" int gpuCudaKickMapTrackStableCompact(
                                thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
   } else {
     survivors = nParticles;
   }
   if (cudaStatus == cudaSuccess) {
     gpuKickMapStableTrackScatterKernel<<<gridSize, blockSize>>>(
       static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-      devicePrefix, nParticles, stride, survivors, *data, xpFactor, ypFactor,
+      devicePrefix + nParticles, nParticles, stride, survivors, *data,
+      xpFactor, ypFactor,
       zStart, pRef);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))
@@ -8069,19 +9012,37 @@ extern "C" int gpuCudaMultipoleTrack(void *coord, long nParticles, int stride,
     return status;
   }
   if (writeOutput) {
-    if (multipole->radCoef)
-      gpuMultipoleTrackKernel<true><<<blocks, threads>>>(
-        static_cast<double *>(coord), nParticles, stride);
-    else
-      gpuMultipoleTrackKernel<false><<<blocks, threads>>>(
-        static_cast<double *>(coord), nParticles, stride);
+    if (multipole->radCoef) {
+      if (multipole->aperture.present)
+        gpuMultipoleTrackKernel<true, true><<<blocks, threads>>>(
+          static_cast<double *>(coord), nParticles, stride);
+      else
+        gpuMultipoleTrackKernel<true, false><<<blocks, threads>>>(
+          static_cast<double *>(coord), nParticles, stride);
+    } else {
+      if (multipole->aperture.present)
+        gpuMultipoleTrackKernel<false, true><<<blocks, threads>>>(
+          static_cast<double *>(coord), nParticles, stride);
+      else
+        gpuMultipoleTrackKernel<false, false><<<blocks, threads>>>(
+          static_cast<double *>(coord), nParticles, stride);
+    }
   } else {
-    if (multipole->radCoef)
-      gpuMultipolePredicateKernel<true><<<blocks, threads>>>(
-        static_cast<double *>(coord), nParticles, stride, deviceLostCount);
-    else
-      gpuMultipolePredicateKernel<false><<<blocks, threads>>>(
-        static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+    if (multipole->radCoef) {
+      if (multipole->aperture.present)
+        gpuMultipolePredicateKernel<true, true><<<blocks, threads>>>(
+          static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+      else
+        gpuMultipolePredicateKernel<true, false><<<blocks, threads>>>(
+          static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+    } else {
+      if (multipole->aperture.present)
+        gpuMultipolePredicateKernel<false, true><<<blocks, threads>>>(
+          static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+      else
+        gpuMultipolePredicateKernel<false, false><<<blocks, threads>>>(
+          static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+    }
   }
   status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
   if (status != static_cast<int>(cudaSuccess)) {
@@ -8155,14 +9116,25 @@ extern "C" int gpuCudaMultipoleTrackChecked(void *coord, long nParticles,
     cudaFree(deviceLostCount);
     return static_cast<int>(cudaStatus);
   }
-  if (multipole->radCoef)
-    gpuMultipoleTrackCheckedKernel<true>
-      <<<blocks, threads, threads * sizeof(unsigned long long)>>>(
-        static_cast<double *>(coord), nParticles, stride, deviceLostCount);
-  else
-    gpuMultipoleTrackCheckedKernel<false>
-      <<<blocks, threads, threads * sizeof(unsigned long long)>>>(
-        static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+  if (multipole->radCoef) {
+    if (multipole->aperture.present)
+      gpuMultipoleTrackCheckedKernel<true, true>
+        <<<blocks, threads, threads * sizeof(unsigned long long)>>>(
+          static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+    else
+      gpuMultipoleTrackCheckedKernel<true, false>
+        <<<blocks, threads, threads * sizeof(unsigned long long)>>>(
+          static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+  } else {
+    if (multipole->aperture.present)
+      gpuMultipoleTrackCheckedKernel<false, true>
+        <<<blocks, threads, threads * sizeof(unsigned long long)>>>(
+          static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+    else
+      gpuMultipoleTrackCheckedKernel<false, false>
+        <<<blocks, threads, threads * sizeof(unsigned long long)>>>(
+          static_cast<double *>(coord), nParticles, stride, deviceLostCount);
+  }
   status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
   if (status != static_cast<int>(cudaSuccess)) {
     cudaFree(backup);
@@ -8336,6 +9308,177 @@ extern "C" int gpuCudaLgbendTrackChecked(void *coord, long nParticles,
   return static_cast<int>(cudaSuccess);
 }
 
+extern "C" int gpuCudaExactCorrectorTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_EXACT_CORRECTOR_DATA *corrector, long *remaining,
+  float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  long survivors;
+  long *devicePrefix = static_cast<long *>(prefix);
+  thrust::device_ptr<long> flags(devicePrefix);
+  const int blockSize = 256;
+  int gridSize;
+  int status;
+
+  if (!remaining)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *remaining = nParticles;
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+  if (!coord || !scratchCoord || !prefix || !corrector || stride <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+
+  gridSize = static_cast<int>((nParticles + blockSize - 1) / blockSize);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuExactCorrectorSurvivorFlagKernel<<<gridSize, blockSize>>>(
+    static_cast<double *>(coord), nParticles, stride, *corrector,
+    devicePrefix);
+  cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess) {
+    survivors = thrust::reduce(flags, flags + nParticles, 0L,
+                               thrust::plus<long>());
+    thrust::exclusive_scan(flags, flags + nParticles, flags);
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
+  } else {
+    survivors = nParticles;
+  }
+  if (cudaStatus == cudaSuccess) {
+    gpuExactCorrectorStableTrackScatterKernel<<<gridSize, blockSize>>>(
+      static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+      devicePrefix + nParticles, nParticles, stride, survivors, *corrector);
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
+  }
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  if (status == static_cast<int>(cudaSuccess))
+    *remaining = survivors;
+  return status;
+}
+
+extern "C" int gpuCudaTaperApertureTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_TAPER_APERTURE_DATA *taper, long *remaining,
+  float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  long survivors;
+  long *devicePrefix = static_cast<long *>(prefix);
+  thrust::device_ptr<long> flags(devicePrefix);
+  const int blockSize = 256;
+  int gridSize;
+  int status;
+
+  if (!remaining)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *remaining = nParticles;
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+  if (!coord || !scratchCoord || !prefix || !taper || stride <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+
+  gridSize = static_cast<int>((nParticles + blockSize - 1) / blockSize);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuTaperApertureSurvivorFlagKernel<<<gridSize, blockSize>>>(
+    static_cast<double *>(coord), nParticles, stride, *taper,
+    devicePrefix);
+  cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess) {
+    survivors = thrust::reduce(flags, flags + nParticles, 0L,
+                               thrust::plus<long>());
+    thrust::exclusive_scan(flags, flags + nParticles, flags);
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
+  } else {
+    survivors = nParticles;
+  }
+  if (cudaStatus == cudaSuccess) {
+    gpuTaperApertureStableTrackScatterKernel<<<gridSize, blockSize>>>(
+      static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+      devicePrefix + nParticles, nParticles, stride, survivors, *taper);
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
+  }
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  if (status == static_cast<int>(cudaSuccess))
+    *remaining = survivors;
+  return status;
+}
+
+extern "C" int gpuCudaSpeedbumpTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_SPEEDBUMP_DATA *speedbump, long *remaining,
+  float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  long survivors;
+  long *devicePrefix = static_cast<long *>(prefix);
+  thrust::device_ptr<long> flags(devicePrefix);
+  const int blockSize = 256;
+  int gridSize;
+  int status;
+
+  if (!remaining)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *remaining = nParticles;
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+  if (!coord || !scratchCoord || !prefix || !speedbump || stride <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+
+  gridSize = static_cast<int>((nParticles + blockSize - 1) / blockSize);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuSpeedbumpSurvivorFlagKernel<<<gridSize, blockSize>>>(
+    static_cast<double *>(coord), nParticles, stride, *speedbump,
+    devicePrefix);
+  cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess) {
+    survivors = thrust::reduce(flags, flags + nParticles, 0L,
+                               thrust::plus<long>());
+    thrust::exclusive_scan(flags, flags + nParticles, flags);
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
+  } else {
+    survivors = nParticles;
+  }
+  if (cudaStatus == cudaSuccess) {
+    gpuSpeedbumpStableTrackScatterKernel<<<gridSize, blockSize>>>(
+      static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+      devicePrefix + nParticles, nParticles, stride, survivors, *speedbump);
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
+  }
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  if (status == static_cast<int>(cudaSuccess))
+    *remaining = survivors;
+  return status;
+}
+
 extern "C" int gpuCudaMultipoleTrackStableCompact(
   void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
   const GPU_MULTIPOLE_DATA *multipole, long *remaining, float *milliseconds) {
@@ -8368,31 +9511,61 @@ extern "C" int gpuCudaMultipoleTrackStableCompact(
   if (status != static_cast<int>(cudaSuccess))
     return status;
 
-  if (multipole->radCoef)
-    gpuMultipoleSurvivorFlagKernel<true><<<gridSize, blockSize>>>(
-      static_cast<double *>(coord), nParticles, stride, devicePrefix);
-  else
-    gpuMultipoleSurvivorFlagKernel<false><<<gridSize, blockSize>>>(
-      static_cast<double *>(coord), nParticles, stride, devicePrefix);
+  if (multipole->radCoef) {
+    if (multipole->aperture.present)
+      gpuMultipoleSurvivorFlagKernel<true, true><<<gridSize, blockSize>>>(
+        static_cast<double *>(coord), nParticles, stride, devicePrefix);
+    else
+      gpuMultipoleSurvivorFlagKernel<true, false><<<gridSize, blockSize>>>(
+        static_cast<double *>(coord), nParticles, stride, devicePrefix);
+  } else {
+    if (multipole->aperture.present)
+      gpuMultipoleSurvivorFlagKernel<false, true><<<gridSize, blockSize>>>(
+        static_cast<double *>(coord), nParticles, stride, devicePrefix);
+    else
+      gpuMultipoleSurvivorFlagKernel<false, false><<<gridSize, blockSize>>>(
+        static_cast<double *>(coord), nParticles, stride, devicePrefix);
+  }
   cudaStatus = cudaGetLastError();
   if (cudaStatus == cudaSuccess) {
     survivors = thrust::reduce(flags, flags + nParticles, 0L,
                                thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
   } else {
     survivors = nParticles;
   }
   if (cudaStatus == cudaSuccess) {
-    if (multipole->radCoef)
-      gpuMultipoleStableTrackScatterKernel<true><<<gridSize, blockSize>>>(
-        static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-        devicePrefix, nParticles, stride, survivors);
-    else
-      gpuMultipoleStableTrackScatterKernel<false><<<gridSize, blockSize>>>(
-        static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-        devicePrefix, nParticles, stride, survivors);
+    if (multipole->radCoef) {
+      if (multipole->aperture.present)
+        gpuMultipoleStableTrackScatterKernel<true, true>
+          <<<gridSize, blockSize>>>(
+            static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+            devicePrefix + nParticles, nParticles, stride, survivors);
+      else
+        gpuMultipoleStableTrackScatterKernel<true, false>
+          <<<gridSize, blockSize>>>(
+            static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+            devicePrefix + nParticles, nParticles, stride, survivors);
+    } else {
+      if (multipole->aperture.present)
+        gpuMultipoleStableTrackScatterKernel<false, true>
+          <<<gridSize, blockSize>>>(
+            static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+            devicePrefix + nParticles, nParticles, stride, survivors);
+      else
+        gpuMultipoleStableTrackScatterKernel<false, false>
+          <<<gridSize, blockSize>>>(
+            static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+            devicePrefix + nParticles, nParticles, stride, survivors);
+    }
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))
@@ -8582,20 +9755,253 @@ __device__ __forceinline__ int gpuCsbendApplyHigherOrderEdge(double *x,
   return isfinite(*x) && isfinite(*xp) && isfinite(*y) && isfinite(*yp);
 }
 
+__device__ int gpuCsbendApplyCurvedDipoleFringe(
+  double *x, double *xp, double *y, double *yp, double *path, double dp,
+  double edge, int inFringe, const double *integrals) {
+  const GPU_CSBEND_DATA *data = &gpuCsbendData;
+  double x0 = *x, y0 = *y, px0, py0;
+  double x1, px1, y1, py1, x2, px2, y2, py2;
+  double dtau, mx, my, delX, focX, focY;
+  double secEdge = 1 / cos(edge);
+  double tanEdge = tan(edge);
+  double onePlusDp = 1 + dp;
+  double intK0 = integrals[0] * (data->edgeFlip ? -1 : 1);
+  double intK1 = integrals[1];
+  double intK2 = integrals[2];
+  double intK3 = integrals[3] * (data->edgeFlip ? -1 : 1);
+  double intK4 = integrals[4] * (data->edgeFlip ? -1 : 1);
+  double intK5 = integrals[5];
+  double intK6 = integrals[6];
+
+  if (onePlusDp == 0 ||
+      !gpuMultipoleConvertSlopesToMomenta(
+        &px0, &py0, *xp, *yp, dp, data->expandHamiltonian))
+    return 0;
+
+  mx = (intK3 + intK4) / onePlusDp;
+  my = intK3 / onePlusDp;
+  delX = intK0 / onePlusDp;
+  focX = intK1 + tanEdge / data->rhoActual;
+  focY = intK2 / onePlusDp;
+
+  if (fabs(mx) < 1e-5) {
+    x1 = x0 * exp(-mx) +
+         dp * delX * (1 - 0.5 * mx * (1 - mx / 3 + mx * mx / 12));
+    px1 =
+      px0 * exp(mx) +
+      focX * (x0 * (1 + mx * mx / 6) +
+              dp * delX * (0.5 + mx * mx / 24));
+    dtau =
+      px0 * (mx * x0 + delX) / onePlusDp +
+      delX * px0 * 0.5 * mx * (1 + mx / 3 + mx * mx / 12) +
+      focX * x0 * x0 * mx * (0.5 - (mx - 0.5 * mx * mx) / 3) /
+        onePlusDp +
+      dp * focX * delX * (delX + mx * x0 / onePlusDp) *
+        (1 + 0.05 * mx * mx) / 6 +
+      focX * delX * x0 * 0.5 * (1 + mx * mx / 12) / onePlusDp +
+      dp * focX * delX * (2 * mx * x0 - dp * delX) *
+        (1 - mx * (0.75 - mx * (0.35 - 0.125 * mx))) /
+        (6 * onePlusDp);
+  } else {
+    x1 = x0 * exp(-mx) + dp * delX * (1 - exp(-mx)) / mx;
+    px1 = px0 * exp(mx) +
+          focX * (x0 * sinh(mx) / mx +
+                  dp * delX * (cosh(mx) - 1) / (mx * mx));
+    dtau =
+      px0 * (mx * x0 + delX) / onePlusDp +
+      delX * px0 * (exp(mx) - 1 - mx) / mx +
+      focX * x0 * x0 * 0.25 *
+        ((exp(-2 * mx) - 1) / mx + 2) / onePlusDp +
+      dp * focX * delX * (delX + mx * x0 / onePlusDp) *
+        (sinh(mx) - mx) / (mx * mx * mx) +
+      focX * delX * x0 * (cosh(mx) - 1) /
+        (mx * mx * onePlusDp) +
+      dp * focX * delX * (2 * mx * x0 - dp * delX) * 0.25 *
+        (2 - (3 + exp(-2 * mx) - 4 * exp(-mx)) / mx) /
+        (mx * mx * onePlusDp);
+  }
+  if (fabs(my) < 1e-5) {
+    y1 = y0 * exp(my);
+    py1 = py0 * exp(-my) +
+          y0 * (focY - focX) * (1 + my * my / 6);
+    dtau +=
+      (-my * py0 * y0 +
+       0.5 * (focY + focX * (my + my * my * (2 + my) / 3) *
+                         y0 * y0)) /
+      onePlusDp;
+  } else {
+    y1 = y0 * exp(my);
+    py1 = py0 * exp(-my) +
+          y0 * (focY - focX) * sinh(my) / my;
+    dtau +=
+      (-my * py0 * y0 +
+       0.5 * (focY +
+              0.5 * focX * ((exp(2 * my) - 1) / my - 2)) *
+         y0 * y0) /
+      onePlusDp;
+  }
+
+  if (data->edgeOrder > 1) {
+    double sec2Rho =
+      secEdge * secEdge / (data->rhoActual * onePlusDp);
+    double tanRho = tanEdge / (data->rhoActual * onePlusDp);
+
+    if (inFringe == -1) {
+      x2 = x1;
+      y2 = y1 * exp(tanEdge * tanRho * x1);
+      px2 =
+        px1 - tanEdge * tanRho * y1 * py1 -
+        (tanEdge * (tanEdge * tanRho / data->rhoActual - data->K1) -
+         0.5 * intK6) *
+          x1 * x1;
+      py2 = py1 * exp(-tanEdge * tanRho * x1);
+      dtau +=
+        -tanEdge * tanRho * tanRho * x1 * x1 * x1 / 3 -
+        tanRho * tanRho * data->rhoActual * x1 * y1 * py1;
+
+      x1 = x2 + 0.5 * sec2Rho * y2 * y2;
+      y1 = y2;
+      px1 =
+        px2 +
+        (0.5 * tanRho / data->rhoActual - 0.5 * intK5 -
+         data->K1 * tanEdge + 0.25 * intK1 * sec2Rho) *
+          y2 * y2;
+      py1 =
+        py2 +
+        (tanRho / data->rhoActual - intK5 -
+         2 * data->K1 * tanEdge + 0.5 * intK1 * sec2Rho) *
+          x2 * y2 -
+        sec2Rho * y2 * px2;
+      dtau +=
+        (0.5 * sec2Rho *
+           (0.25 * (2 * tanEdge * data->K1 + intK5) * y2 * y2 -
+            px2) +
+         (0.5 * tanRho / data->rhoActual +
+          0.25 * intK1 * sec2Rho) *
+           x2) *
+        y2 * y2 / onePlusDp;
+
+      {
+        double factor = 1 + 0.5 * tanEdge * tanRho * x1;
+        if (factor == 0)
+          return 0;
+        x2 = x1 / factor;
+        y2 = y1;
+        px2 = px1 * factor * factor;
+        py2 = py1;
+      }
+      dtau += 0.5 * tanRho * tanRho * data->rhoActual *
+               x1 * x1 * px1;
+    } else {
+      x2 = x1;
+      y2 = y1 * exp(-tanEdge * tanRho * x1);
+      px2 =
+        px1 + tanEdge * tanRho * y1 * py1 +
+        (tanEdge *
+           (0.5 * tanEdge * tanRho / data->rhoActual + data->K1) +
+         0.5 * intK6) *
+          x1 * x1;
+      py2 = py1 * exp(tanEdge * tanRho * x1);
+      dtau +=
+        tanEdge * tanRho * tanRho * x1 * x1 * x1 / 6 +
+        tanRho * tanRho * data->rhoActual * x1 * y1 * py1;
+
+      x1 = x2 - 0.5 * sec2Rho * y2 * y2;
+      y1 = y2;
+      px1 =
+        px2 +
+        (0.5 * tanEdge * tanEdge * tanRho / data->rhoActual -
+         0.5 * intK5 - data->K1 * tanEdge -
+         0.25 * intK1 * sec2Rho) *
+          y2 * y2;
+      py1 =
+        py2 +
+        (tanEdge * tanEdge * tanRho / data->rhoActual - intK5 -
+         2 * data->K1 * tanEdge - 0.5 * intK1 * sec2Rho) *
+          x2 * y2 +
+        sec2Rho * y2 * px2;
+      dtau +=
+        (-0.5 * sec2Rho *
+           (0.25 * (2 * tanEdge * data->K1 + intK5) * y2 * y2 -
+            px2) +
+         (0.5 * tanEdge * tanEdge * tanRho / data->rhoActual -
+          0.25 * intK1 * sec2Rho) *
+           x2) *
+        y2 * y2 / onePlusDp;
+
+      {
+        double factor = 1 - 0.5 * tanEdge * tanRho * x1;
+        if (factor == 0)
+          return 0;
+        x2 = x1 / factor;
+        y2 = y1;
+        px2 = px1 * factor * (1 + 0.5 * tanEdge * tanRho * x1);
+        py2 = py1;
+      }
+      dtau -= 0.5 * tanRho * tanRho * data->rhoActual *
+               x1 * x1 * px1;
+    }
+  } else {
+    x2 = x1;
+    px2 = px1;
+    y2 = y1;
+    py2 = py1;
+  }
+
+  /*
+   * curvedDipoleFringe returns each canonical coordinate as q0+(q2-q0).
+   * Preserve that subtraction/addition sequence instead of assigning q2
+   * directly: it is observable at one ulp for near-zero exit slopes.
+   */
+  x2 = x0 + (x2 - x0);
+  px2 = px0 + (px2 - px0);
+  y2 = y0 + (y2 - y0);
+  py2 = py0 + (py2 - py0);
+  if (!gpuMultipoleConvertMomentaToSlopes(
+        xp, yp, px2, py2, dp, data->expandHamiltonian))
+    return 0;
+  *x = x2;
+  *y = y2;
+  *path -= dtau;
+  return isfinite(*x) && isfinite(*xp) && isfinite(*y) &&
+         isfinite(*yp) && isfinite(*path);
+}
+
 __device__ __forceinline__ int gpuCsbendApplyConfiguredEdge(double *x,
                                                             double *xp,
                                                             double *y,
                                                             double *yp,
+                                                            double *path,
                                                             double dp,
                                                             double e,
                                                             double he,
                                                             double psi,
                                                             double kickLimit,
                                                             int whichEdge) {
+  int effect = whichEdge < 0 ?
+    gpuCsbendData.edgeEffect1 : gpuCsbendData.edgeEffect2;
+  if (effect == 5)
+    return gpuCsbendApplyCurvedDipoleFringe(
+      x, xp, y, yp, path, dp, e, whichEdge,
+      whichEdge < 0 ? gpuCsbendData.fringeInt1 :
+                      gpuCsbendData.fringeInt2);
   if (gpuCsbendData.edgeOrder > 1)
     return gpuCsbendApplyHigherOrderEdge(x, xp, y, yp, dp, e, he, psi,
                                          whichEdge);
   return gpuCsbendApplyEdge(xp, yp, *x, *y, dp, e, psi, kickLimit);
+}
+
+__device__ __forceinline__ void gpuCsbendWriteLoss(
+  double *part, double x, double xp, double y, double yp, double dp,
+  double lossDistance) {
+  const GPU_CSBEND_DATA *data = &gpuCsbendData;
+
+  part[0] = x * data->cosTilt - y * data->sinTilt;
+  part[2] = x * data->sinTilt + y * data->cosTilt;
+  part[1] = xp * data->cosTilt - yp * data->sinTilt;
+  part[3] = xp * data->sinTilt + yp * data->cosTilt;
+  part[4] = data->lossZStart + lossDistance;
+  part[5] = data->Po * (1 + dp);
 }
 
 __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput) {
@@ -8611,6 +10017,7 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
   double dp0 = dp;
   double x, xp, y, yp, qx, qy, dist;
   double trackedS;
+  double lossDistance = 0;
   double onePlusDp = 1 + dp;
   double dsSlice;
   int nSubsteps = 0;
@@ -8638,8 +10045,13 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
   xp = xp0 * data->cosTilt + yp0 * data->sinTilt;
   yp = -xp0 * data->sinTilt + yp0 * data->cosTilt;
 
+  if (!gpuInsideApertureLimit(x, y, data->aperture)) {
+    if (writeOutput)
+      gpuCsbendWriteLoss(part, x, xp, y, yp, dp, lossDistance);
+    return 0;
+  }
   if (data->edge1 &&
-      !gpuCsbendApplyConfiguredEdge(&x, &xp, &y, &yp, dp, data->e1,
+      !gpuCsbendApplyConfiguredEdge(&x, &xp, &y, &yp, &s0, dp, data->e1,
                                     data->he1, data->psi1,
                                     data->edgeKickLimit1, -1))
     return 0;
@@ -8663,8 +10075,15 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
     return 0;
 
   dist = 0;
-  dsSlice = data->length / data->nSlices;
+  dsSlice = __ddiv_rn(data->length, (double)data->nSlices);
   for (long i = 0; i < data->nSlices; i++) {
+    if (!gpuInsideApertureLimit(x, y, data->aperture)) {
+      if (writeOutput &&
+          gpuMultipoleConvertMomentaToSlopes(
+            &xp, &yp, qx, qy, dp, data->expandHamiltonian))
+        gpuCsbendWriteLoss(part, x, xp, y, yp, dp, lossDistance);
+      return 0;
+    }
     for (int j = 0; j < nSubsteps; j++) {
       double dsh = dsSlice * driftFrac[j];
 
@@ -8683,22 +10102,24 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
         f = sqrt(f);
         if (fabs(qx / f) > 1)
           return 0;
-        sinPhi = qx / f;
+        sinPhi = __ddiv_rn(qx, f);
         phi = asin(sinPhi);
-        sine = sin(dsh / data->rho0 + phi);
-        cosi = cos(dsh / data->rho0 + phi);
+        sine = sin(__ddiv_rn(dsh, data->rho0) + phi);
+        cosi = cos(__ddiv_rn(dsh, data->rho0) + phi);
         if (cosi == 0)
           return 0;
-        tang = sine / cosi;
+        tang = __ddiv_rn(sine, cosi);
         cosPhi = cos(phi);
         qx = f * sine;
-        factor = (data->rho0 + x) * cosPhi / f *
-                 (tang - sinPhi / cosPhi);
+        factor =
+          __ddiv_rn((data->rho0 + x) * cosPhi, f) *
+          (tang - __ddiv_rn(sinPhi, cosPhi));
         y += qy * factor;
         dist += factor * (1 + dp);
-        f = cosPhi / cosi;
+        f = __ddiv_rn(cosPhi, cosi);
         x = data->rho0 * (f - 1) + f * x;
       }
+      lossDistance += dsh;
       if (!isfinite(x) || !isfinite(y) || !isfinite(qx) ||
           !isfinite(qy) || !isfinite(dist))
         return 0;
@@ -8708,24 +10129,27 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
       double ds = dsSlice * kickFrac[j];
       double Fx, Fy;
       gpuCsbendFields(&Fx, &Fy, x, y);
-      qx += -ds * (1 + x / data->rho0) * Fy / data->rhoActual;
-      qy += ds * (1 + x / data->rho0) * Fx / data->rhoActual;
+      qx += __ddiv_rn(-ds * (1 + __ddiv_rn(x, data->rho0)) * Fy,
+                      data->rhoActual);
+      qy += __ddiv_rn(ds * (1 + __ddiv_rn(x, data->rho0)) * Fx,
+                      data->rhoActual);
       if (data->radCoef) {
-        double momentum2 = (1 + dp) * (1 + dp) - qx * qx - qy * qy;
-        double factor, radXp, radYp, dsFactor, F2, deltaFactor;
-
-        if (momentum2 <= 0)
-          return 0;
-        factor = (1 + x / data->rho0) / sqrt(momentum2);
-        radXp = qx * factor;
-        radYp = qy * factor;
-        dsFactor =
-          sqrt((1 + x / data->rho0) * (1 + x / data->rho0) +
+        double f =
+          __ddiv_rn(1 + x * data->invRho0,
+                    sqrt((1 + dp) * (1 + dp) - qx * qx - qy * qy));
+        double radXp = qx * f;
+        double radYp = qy * f;
+        double dsFactor =
+          sqrt((1 + x * data->invRho0) *
+                 (1 + x * data->invRho0) +
                radXp * radXp + radYp * radYp);
-        F2 = Fx * Fx + Fy * Fy;
-        deltaFactor = (1 + dp) * (1 + dp);
-        qx /= (1 + dp);
-        qy /= (1 + dp);
+        double F2 = Fx * Fx + Fy * Fy;
+        double deltaFactor = (1 + dp) * (1 + dp);
+
+        if (!isfinite(f))
+          return 0;
+        qx = __ddiv_rn(qx, 1 + dp);
+        qy = __ddiv_rn(qy, 1 + dp);
         dp -= data->radCoef * deltaFactor * F2 * ds * dsFactor;
         onePlusDp = 1 + dp;
         if (onePlusDp == 0)
@@ -8739,6 +10163,11 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
   if (!gpuMultipoleConvertMomentaToSlopes(&xp, &yp, qx, qy, dp,
                                           data->expandHamiltonian))
     return 0;
+  if (!gpuInsideApertureLimit(x, y, data->aperture)) {
+    if (writeOutput)
+      gpuCsbendWriteLoss(part, x, xp, y, yp, dp, lossDistance);
+    return 0;
+  }
 
   if (data->radCoef && data->edge2 && data->e2 != 0) {
     double Fx, Fy, dpPrime;
@@ -8763,7 +10192,7 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
   }
 
   if (data->edge2 &&
-      !gpuCsbendApplyConfiguredEdge(&x, &xp, &y, &yp, dp, data->e2,
+      !gpuCsbendApplyConfiguredEdge(&x, &xp, &y, &yp, &trackedS, dp, data->e2,
                                     data->he2, data->psi2,
                                     data->edgeKickLimit2, 1))
     return 0;
@@ -8940,21 +10369,16 @@ __global__ void gpuCsbendStableTrackScatterKernel(
   long nParticles, int stride, long survivors) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
-  long prefix, destination;
-  int survives;
+  long destination;
 
   if (ip >= nParticles)
     return;
-  prefix = survivorPrefix[ip];
-  survives = (ip + 1 < nParticles) ? survivorPrefix[ip + 1] > prefix :
-                                     survivors > prefix;
-  destination = survives ? prefix : survivors + (ip - prefix);
+  destination = survivorPrefix[ip];
   part = coord + ip * stride;
   target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
-  if (survives)
-    gpuCsbendTrackParticle(target, stride, 1);
+  gpuCsbendTrackParticle(target, stride, 1);
 }
 
 __global__ void gpuCsrCsbendBodySliceCheckedKernel(double *coord,
@@ -9202,14 +10626,20 @@ extern "C" int gpuCudaCsbendTrackStableCompact(
                                thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
   } else {
     survivors = nParticles;
   }
   if (cudaStatus == cudaSuccess) {
     gpuCsbendStableTrackScatterKernel<<<gridSize, blockSize>>>(
       static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-      devicePrefix, nParticles, stride, survivors);
+      devicePrefix + nParticles, nParticles, stride, survivors);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))
@@ -12791,15 +14221,21 @@ extern "C" int gpuCudaLimitAmplitudesStableCompact(
     survivors = thrust::reduce(flags, flags + nParticles, 0L, thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
   } else {
     survivors = nParticles;
   }
   if (cudaStatus == cudaSuccess) {
     gpuLimitAmplitudesStableScatterKernel<<<gridSize, blockSize>>>(
       static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-      devicePrefix, nParticles, stride, xmax, ymax, z, pCentral, extrapolateZ,
-      survivors);
+      devicePrefix + nParticles, nParticles, stride, xmax, ymax, z, pCentral,
+      extrapolateZ, survivors);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))
@@ -12883,15 +14319,21 @@ extern "C" int gpuCudaELimitAmplitudesStableCompact(
     survivors = thrust::reduce(flags, flags + nParticles, 0L, thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
   } else {
     survivors = nParticles;
   }
   if (cudaStatus == cudaSuccess) {
     gpuELimitAmplitudesStableScatterKernel<<<gridSize, blockSize>>>(
       static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-      devicePrefix, nParticles, stride, xmax, ymax, exponent, yExponent,
-      z, pCentral, extrapolateZ, survivors);
+      devicePrefix + nParticles, nParticles, stride, xmax, ymax,
+      exponent, yExponent, z, pCentral, extrapolateZ, survivors);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))
@@ -12975,14 +14417,20 @@ extern "C" int gpuCudaRemoveInvalidParticlesStableCompact(
     survivors = thrust::reduce(flags, flags + nParticles, 0L, thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
   } else {
     survivors = nParticles;
   }
   if (cudaStatus == cudaSuccess) {
     gpuRemoveInvalidParticlesStableScatterKernel<<<gridSize, blockSize>>>(
       static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-      devicePrefix, nParticles, stride, z, pCentral, survivors);
+      devicePrefix + nParticles, nParticles, stride, z, pCentral, survivors);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))
@@ -13068,15 +14516,21 @@ extern "C" int gpuCudaRectangularCollimatorStableCompact(
     survivors = thrust::reduce(flags, flags + nParticles, 0L, thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
   } else {
     survivors = nParticles;
   }
   if (cudaStatus == cudaSuccess) {
     gpuRectangularCollimatorStableScatterKernel<<<gridSize, blockSize>>>(
       static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-      devicePrefix, nParticles, stride, xmax, ymax, xCenter, yCenter,
-      length, openCode, z, pCentral, survivors);
+      devicePrefix + nParticles, nParticles, stride, xmax, ymax,
+      xCenter, yCenter, length, openCode, z, pCentral, survivors);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))
@@ -13164,15 +14618,22 @@ extern "C" int gpuCudaEllipticalCollimatorStableCompact(
     survivors = thrust::reduce(flags, flags + nParticles, 0L, thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
   } else {
     survivors = nParticles;
   }
   if (cudaStatus == cudaSuccess) {
     gpuEllipticalCollimatorStableScatterKernel<<<gridSize, blockSize>>>(
       static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-      devicePrefix, nParticles, stride, xmax, ymax, xCenter, yCenter,
-      exponent, yExponent, length, openCode, z, pCentral, survivors);
+      devicePrefix + nParticles, nParticles, stride, xmax, ymax,
+      xCenter, yCenter, exponent, yExponent, length, openCode,
+      z, pCentral, survivors);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))
@@ -13257,15 +14718,21 @@ extern "C" int gpuCudaScraperStableCompact(
     survivors = thrust::reduce(flags, flags + nParticles, 0L, thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
   } else {
     survivors = nParticles;
   }
   if (cudaStatus == cudaSuccess) {
     gpuScraperStableScatterKernel<<<gridSize, blockSize>>>(
       static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-      devicePrefix, nParticles, stride, plane, center, position,
+      devicePrefix + nParticles, nParticles, stride, plane, center, position,
       sideSign, length, z, pCentral, survivors);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))
@@ -13351,15 +14818,22 @@ extern "C" int gpuCudaApertureDataStableCompact(
     survivors = thrust::reduce(flags, flags + nParticles, 0L, thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
   } else {
     survivors = nParticles;
   }
   if (cudaStatus == cudaSuccess) {
     gpuApertureDataStableScatterKernel<<<gridSize, blockSize>>>(
       static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-      devicePrefix, nParticles, stride, xCenter, yCenter, xSize, ySize,
+      devicePrefix + nParticles, nParticles, stride,
+      xCenter, yCenter, xSize, ySize,
       z, pCentral, survivors);
     cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))

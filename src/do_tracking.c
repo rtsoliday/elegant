@@ -1532,7 +1532,15 @@ long do_tracking(
                   if (flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES))
                     drift_beam(coord, nToTrack, ((TAPERAPC *)eptr->p_elem)->length, run->default_order);
                   else {
-                    nLeft = trackThroughTaperApCirc(coord, (TAPERAPC *)eptr->p_elem, nToTrack, accepted, last_z, *P_central, eptr);
+#ifdef HAVE_GPU
+                    if (getElementOnGpu())
+                      nLeft = gpu_track_through_taper_aperture(
+                        nToTrack, eptr, *P_central, accepted, last_z);
+                    else
+#endif
+                      nLeft = trackThroughTaperApCirc(
+                        coord, (TAPERAPC *)eptr->p_elem, nToTrack,
+                        accepted, last_z, *P_central, eptr);
                     if (taperapc->sticky) {
                       maxamp = &maxampBuf; /* needed by KQUAD, CSBEND, etc */
                       maxamp->x_max = maxamp->y_max = x_max = y_max = taperapc->r[taperapc->e2Index];
@@ -1566,7 +1574,15 @@ long do_tracking(
                   if (flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES))
                     drift_beam(coord, nToTrack, taperapr->length, run->default_order);
                   else {
-                    nLeft = trackThroughTaperApRectangular(coord, taperapr, nToTrack, accepted, last_z, *P_central, eptr);
+#ifdef HAVE_GPU
+                    if (getElementOnGpu())
+                      nLeft = gpu_track_through_taper_aperture(
+                        nToTrack, eptr, *P_central, accepted, last_z);
+                    else
+#endif
+                      nLeft = trackThroughTaperApRectangular(
+                        coord, taperapr, nToTrack, accepted, last_z,
+                        *P_central, eptr);
                     if (taperapr->sticky) {
                       maxamp = &maxampBuf; /* needed by KQUAD, CSBEND, etc */
                       maxamp->x_max = x_max = taperapr->xmax[taperapr->e2Index];
@@ -1613,6 +1629,12 @@ long do_tracking(
                   break;
                 case T_SPEEDBUMP:
                   if (!(flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES))) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu())
+                      nLeft = gpu_track_through_speedbump(
+                        nToTrack, eptr, *P_central, accepted, last_z);
+                    else
+#endif
                     nLeft = track_through_speedbump(coord, (SPEEDBUMP *)eptr->p_elem, nToTrack, accepted, last_z, *P_central, eptr);
                   } else {
                     exactDrift(coord, nToTrack, ((SPEEDBUMP *)eptr->p_elem)->length);
@@ -2661,8 +2683,17 @@ long do_tracking(
                   case T_EVCOR:
                   case T_EHVCOR:
                     /* Only the slave CPUs will track */
-                    if ((!USE_MPI || !distributedBeam) || (USE_MPI && (myid != 0)))
-                      trackThroughExactCorrector(coord, nToTrack, eptr, *P_central, accepted, last_z, NULL);
+                    if ((!USE_MPI || !distributedBeam) || (USE_MPI && (myid != 0))) {
+#ifdef HAVE_GPU
+                      if (getElementOnGpu())
+                        nLeft = gpu_track_through_exact_corrector(
+                          nToTrack, eptr, *P_central, accepted, last_z);
+                      else
+#endif
+                        trackThroughExactCorrector(
+                          coord, nToTrack, eptr, *P_central, accepted,
+                          last_z, NULL);
+                    }
                     break;
                     /* INSERT ENTRIES FOR NEW ELEMENTS ABOVE THIS LINE */
                   default:
