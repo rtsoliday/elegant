@@ -799,10 +799,10 @@ void setupResultsFile(SDDS_TABLE *resultsPage, char *resultsFile, long points) {
       0 > SDDS_DefineParameter(resultsPage, "SuperPeriods", NULL, NULL,
                                "Superperiods of the lattice selected", NULL,
                                SDDS_LONG, NULL) ||
-      0 > SDDS_DefineParameter(resultsPage, "DesiredEnergy", NULL, "Mev",
+      0 > SDDS_DefineParameter(resultsPage, "DesiredEnergy", NULL, "MeV",
                                "Desired Energy from the command line", NULL,
                                SDDS_DOUBLE, NULL) ||
-      0 > SDDS_DefineParameter(resultsPage, "Energy", NULL, "Mev",
+      0 > SDDS_DefineParameter(resultsPage, "Energy", NULL, "MeV",
                                "Energy", NULL,
                                SDDS_DOUBLE, NULL) ||
       0 > SDDS_DefineParameter(resultsPage, "AverageTau", "C$gt$r", "s",
