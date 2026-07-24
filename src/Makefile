@@ -256,7 +256,6 @@ ifneq ($(CUDA_REQUESTED),)
     endif
   endif
   CUDA_HOME ?= $(patsubst %/bin/nvcc,%,$(NVCC))
-  CUDA_ARCH ?= sm_86
   NVCC_OPT ?= -O0
   OBJ_DIR := $(OBJ_DIR).gpu
   BIN_DIR := $(BIN_DIR)-gpu

@@ -194,6 +194,11 @@ ifneq ($(findstring swing,$(BASH_ENV)),)
   MPI_BIN = /soft/openmpi/4.1.1/swing/bin
 endif
 
+ifeq ($(SWING_BUILD),1)
+  CUDA_ARCH ?= sm_80
+else
+  CUDA_ARCH ?= sm_86
+endif
 
 ifeq ($(words $(wildcard /usr/local/oag/3rdParty/intel/oneapi/mkl/latest)),1)
  MKLROOT = /usr/local/oag/3rdParty/intel/oneapi/mkl/latest
