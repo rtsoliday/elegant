@@ -4567,7 +4567,8 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
                                    const double *deltaOffset,
                                    long particles, long turns,
                                    long turnOffset, double **endingCoord,
-                                   long *valid, double *lowerLimit,
+                                   long *valid, long *survived,
+                                   double *lowerLimit,
                                    double *upperLimit, long allowLosses,
                                    long nPeriods, unsigned long flags);
 double adjustTuneHalfPlane(double frequency, double phase0, double phase1);

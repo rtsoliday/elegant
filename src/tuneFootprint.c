@@ -469,7 +469,7 @@ static long batchTuneFootprintDelta(RUN *run, double *referenceCoord,
   computeTunesFromTrackingBatch(
     firstTune, firstAmplitude, beamline->matrix, beamline, run,
     startingCoord, xAmplitude, yAmplitude, deltaOffset, ndelta, turns, 0,
-    endingCoord, firstValid, NULL, NULL, 1, 1,
+    endingCoord, firstValid, NULL, NULL, NULL, 1, 1,
     CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
   if (compute_diffusion) {
     memset(xAmplitude, 0, ndelta * sizeof(*xAmplitude));
@@ -478,7 +478,7 @@ static long batchTuneFootprintDelta(RUN *run, double *referenceCoord,
     computeTunesFromTrackingBatch(
       secondTune, secondAmplitude, beamline->matrix, beamline, run,
       endingCoord, xAmplitude, yAmplitude, deltaOffset, ndelta, turns, turns,
-      secondEndingCoord, secondValid, NULL, NULL, 1, 1,
+      secondEndingCoord, secondValid, NULL, NULL, NULL, 1, 1,
       CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
   }
 
@@ -602,7 +602,7 @@ static long batchTuneFootprintXy(RUN *run, double *referenceCoord,
   computeTunesFromTrackingBatch(
     firstTune, firstAmplitude, beamline->matrix, beamline, run,
     startingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, 0,
-    endingCoord, firstValid, NULL, NULL, 1, 1,
+    endingCoord, firstValid, NULL, NULL, NULL, 1, 1,
     CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
   if (compute_diffusion) {
     memset(xAmplitude, 0, points * sizeof(*xAmplitude));
@@ -610,7 +610,7 @@ static long batchTuneFootprintXy(RUN *run, double *referenceCoord,
     computeTunesFromTrackingBatch(
       secondTune, secondAmplitude, beamline->matrix, beamline, run,
       endingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, turns,
-      secondEndingCoord, secondValid, NULL, NULL, 1, 1,
+      secondEndingCoord, secondValid, NULL, NULL, NULL, 1, 1,
       CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
   }
 

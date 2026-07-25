@@ -67,16 +67,20 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
   double *firstTune, *secondTune, *firstAmplitude, *secondAmplitude;
   double *xAmplitude, *yAmplitude, *deltaOffset;
   double *gridX, *gridY, *gridDelta;
-  double dx = 0, dy = 0, ddelta = 0, diffusion;
-  long *firstValid, *secondValid;
+  double dx = 0, dy = 0, ddelta = 0, diffusion, scalarEndingS;
+  long cpuTracking;
+  long *firstValid, *secondValid, *firstSurvived, *secondSurvived;
   long idelta, ix, iy, ip, points, row;
 
   points = ndelta * nx * ny;
-  if (turns <= 1 || quadratic_spacing || include_changes ||
+  if (turns <= 1 || quadratic_spacing ||
       !full_grid_output ||
       !gpu_batched_tune_tracking_enabled(points) ||
-      !gpu_batched_tune_beamline_supported(beamline))
+      !gpu_batched_frequency_map_beamline_supported(beamline))
     return 0;
+  gpu_batched_tune_tracking_report(
+    "frequency map", points, turns, include_changes ? 2 : 1);
+  cpuTracking = gpu_batched_frequency_map_cpu_tracking_required(beamline);
   startingCoord = (double **)czarray_2d(
     sizeof(**startingCoord), points, totalPropertiesPerParticle);
   endingCoord = (double **)czarray_2d(
@@ -97,14 +101,17 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
   gridY = (double *)calloc(points, sizeof(*gridY));
   gridDelta = (double *)calloc(points, sizeof(*gridDelta));
   firstValid = (long *)calloc(points, sizeof(*firstValid));
+  firstSurvived = (long *)calloc(points, sizeof(*firstSurvived));
   secondValid = include_changes ?
     (long *)calloc(points, sizeof(*secondValid)) : NULL;
+  secondSurvived = include_changes ?
+    (long *)calloc(points, sizeof(*secondSurvived)) : NULL;
   if (!startingCoord || !endingCoord || !firstTune || !firstAmplitude ||
       !xAmplitude || !yAmplitude || !deltaOffset ||
-      !gridX || !gridY || !gridDelta || !firstValid ||
+      !gridX || !gridY || !gridDelta || !firstValid || !firstSurvived ||
       (include_changes &&
        (!secondEndingCoord || !secondTune || !secondAmplitude ||
-        !secondValid)))
+        !secondValid || !secondSurvived)))
     bombElegant("memory allocation failure (doFrequencyMapBatched)", NULL);
 
   if (!quadratic_spacing) {
@@ -132,10 +139,11 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
       }
     }
   }
+  gpu_batched_tune_tracking_set_cpu_only(cpuTracking);
   computeTunesFromTrackingBatch(
     firstTune, firstAmplitude, beamline->matrix, beamline, run,
     startingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, 0,
-    endingCoord, firstValid, NULL, NULL, 1, 1,
+    endingCoord, firstValid, firstSurvived, NULL, NULL, 1, 1,
     CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
 
   if (include_changes) {
@@ -145,19 +153,28 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
     computeTunesFromTrackingBatch(
       secondTune, secondAmplitude, beamline->matrix, beamline, run,
       endingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, turns,
-      secondEndingCoord, secondValid, NULL, NULL, 1, 1,
+      secondEndingCoord, secondValid, secondSurvived, NULL, NULL, 1, 1,
       CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
   }
+  gpu_batched_tune_tracking_set_cpu_only(0);
 
+  scalarEndingS = referenceCoord ? referenceCoord[4] : 0;
   for (ip = row = 0; ip < points; ip++) {
     if (!firstValid[ip] && !full_grid_output)
       continue;
+    /* Scalar frequency-map tracking reuses one ending-coordinate buffer.
+     * A loss returns before updating it, while a complete interval updates it
+     * even if NAFF subsequently fails.  Reproduce that row-order behavior,
+     * but define leading loss rows from the reference coordinate instead of
+     * propagating the scalar path's uninitialized stack value. */
+    if (firstSurvived[ip])
+      scalarEndingS = endingCoord[ip][4];
     if (!SDDS_SetRowValues(
           &SDDS_fmap, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row,
           IC_X, gridX[ip], IC_Y, gridY[ip], IC_DELTA, gridDelta[ip],
           IC_NUX, firstValid[ip] ? firstTune[2 * ip] : -1.0,
           IC_NUY, firstValid[ip] ? firstTune[2 * ip + 1] : -1.0,
-          IC_S, firstValid[ip] ? endingCoord[ip][4] / turns : 0.0,
+          IC_S, scalarEndingS / turns,
           -1)) {
       SDDS_SetError("Problem setting SDDS row values "
                     "(doFrequencyMapBatched)");
@@ -193,6 +210,8 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
         SDDS_PrintErrors(stderr,
                          SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
       }
+      if (firstValid[ip] && secondSurvived[ip])
+        scalarEndingS = secondEndingCoord[ip][4];
     }
     row++;
   }
@@ -208,7 +227,9 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
   free(gridY);
   free(gridDelta);
   free(firstValid);
+  free(firstSurvived);
   free(secondValid);
+  free(secondSurvived);
   free_czarray_2d((void **)startingCoord, points,
                   totalPropertiesPerParticle);
   free_czarray_2d((void **)endingCoord, points,

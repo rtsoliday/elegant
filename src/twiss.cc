@@ -4268,7 +4268,8 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
                                    const double *deltaOffset,
                                    long particles, long turns,
                                    long turnOffset, double **endingCoord,
-                                   long *valid, double *tuneLowerLimit,
+                                   long *valid, long *survived,
+                                   double *tuneLowerLimit,
                                    double *tuneUpperLimit, long allowLosses,
                                    long nPeriods, unsigned long flags) {
   double **particle = NULL;
@@ -4311,6 +4312,8 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
     if (endingCoord && endingCoord[ip])
       memcpy(endingCoord[ip], particle[ip], 6 * sizeof(**endingCoord));
     valid[ip] = 1;
+    if (survived)
+      survived[ip] = 1;
     x[ip * turns] = particle[ip][0];
     xp[ip * turns] = particle[ip][1];
     y[ip * turns] = particle[ip][2];
@@ -4345,8 +4348,11 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
       yp[id * turns + i] = particle[ip][3];
     }
     for (id = 0; id < particles; id++)
-      if (valid[id] && !seen[id])
+      if (valid[id] && !seen[id]) {
         valid[id] = 0;
+        if (survived)
+          survived[id] = 0;
+      }
   }
 
   if (endingCoord) {

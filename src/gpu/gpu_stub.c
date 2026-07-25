@@ -5628,6 +5628,141 @@ long gpu_batched_tune_beamline_supported(void *beamline0) {
 #endif
 }
 
+long gpu_batched_frequency_map_beamline_supported(void *beamline0) {
+#if USE_MPI
+  (void)beamline0;
+  return 0;
+#else
+  LINE_LIST *beamline = (LINE_LIST *)beamline0;
+  ELEMENT_LIST *eptr;
+
+  if (!gpuEnableBatchedTuneTracking || !beamline)
+    return 0;
+  for (eptr = beamline->elem; eptr; eptr = eptr->succ) {
+    unsigned long flags;
+
+    if (eptr->ignore)
+      continue;
+    flags = entity_description[eptr->type].flags;
+    if (flags & (COLLECTIVE_EFFECTS | UNIPROCESSOR)) {
+      if (gpuVerbose)
+        fprintf(stderr,
+                "elegant CUDA: batched tune tracking disabled by "
+                "%s %s#%ld flags.\n",
+                gpuElementTypeName(eptr), eptr->name ? eptr->name : "?",
+                eptr->occurence);
+      return 0;
+    }
+
+    /* Batched tune tracking records each particle after every turn.  Admit
+     * the deterministic CUDA subset plus narrow deterministic CPU islands
+     * handled below.  The normal CUDA option guards exclude ISR, random
+     * multipoles, unsupported radiation modes, and other CPU-only physics. */
+    if (gpuElementEligible(eptr, LONG_MAX / 4) ||
+        gpuPassiveElementSupported(eptr, LONG_MAX / 4))
+      continue;
+    if (eptr->type == T_LGBEND && eptr->p_elem) {
+      LGBEND *lgbend = (LGBEND *)eptr->p_elem;
+
+      /* An LGBEND aperture-data file is evaluated by the deterministic CPU
+       * implementation.  Keep the frequency-map particles batched across
+       * this small CPU island; do_tracking will synchronize the ensemble at
+       * the element and resume CUDA tracking afterward. */
+      if (gpuStringSet(lgbend->apertureDataFile) &&
+          !lgbend->isr && !lgbend->distributionBasedRadiation &&
+          !gpuStringSet(lgbend->centroidOutputFile) &&
+          !lgbend->centroidsRequested && !lgbend->SDDScen)
+        continue;
+    }
+    if (gpuVerbose)
+      fprintf(stderr,
+              "elegant CUDA: batched tune tracking disabled by unsupported "
+              "%s %s#%ld.\n",
+              gpuElementTypeName(eptr), eptr->name ? eptr->name : "?",
+              eptr->occurence);
+    return 0;
+  }
+  if (gpuVerbose)
+    fprintf(stderr,
+            "elegant CUDA: full beamline is eligible for batched tune "
+            "tracking.\n");
+  return 1;
+#endif
+}
+
+long gpu_batched_frequency_map_cpu_tracking_required(void *beamline0) {
+#if USE_MPI
+  (void)beamline0;
+  return 1;
+#else
+  LINE_LIST *beamline = (LINE_LIST *)beamline0;
+  ELEMENT_LIST *eptr;
+
+  if (!beamline)
+    return 1;
+  for (eptr = beamline->elem; eptr; eptr = eptr->succ) {
+    if (eptr->ignore)
+      continue;
+    if (eptr->type == T_LGBEND && eptr->p_elem &&
+        gpuStringSet(((LGBEND *)eptr->p_elem)->apertureDataFile)) {
+      if (gpuVerbose)
+        fprintf(stderr,
+                "elegant CUDA: loss-sensitive frequency map uses batched "
+                "CPU tracking because of LGBEND aperture data in %s#%ld.\n",
+                eptr->name ? eptr->name : "?", eptr->occurence);
+      return 1;
+    }
+    switch (eptr->type) {
+    case T_APCONTOUR:
+    case T_CLEAN:
+    case T_ECOL:
+    case T_MAXAMP:
+    case T_RCOL:
+    case T_SCRAPER:
+    case T_SPEEDBUMP:
+    case T_TAPERAPC:
+    case T_TAPERAPE:
+    case T_TAPERAPR:
+      if (gpuVerbose)
+        fprintf(stderr,
+                "elegant CUDA: loss-sensitive frequency map uses batched "
+                "CPU tracking because of %s %s#%ld.\n",
+                gpuElementTypeName(eptr), eptr->name ? eptr->name : "?",
+                eptr->occurence);
+      return 1;
+    default:
+      break;
+    }
+  }
+  return 0;
+#endif
+}
+
+void gpu_batched_tune_tracking_set_cpu_only(long cpuOnly) {
+#if USE_MPI
+  (void)cpuOnly;
+#else
+  gpuSetTrackingSuppressed(cpuOnly);
+#endif
+}
+
+void gpu_batched_tune_tracking_report(const char *operation, long particles,
+                                      long turns, long intervals) {
+#if USE_MPI
+  (void)operation;
+  (void)particles;
+  (void)turns;
+  (void)intervals;
+#else
+  if (gpuVerbose)
+    fprintf(stderr,
+            "elegant CUDA: batched %s tracking %ld particles for %ld "
+            "interval%s of %ld turns.\n",
+            operation ? operation : "tune", particles, intervals,
+            intervals == 1 ? "" : "s", turns);
+#endif
+}
+
 long gpu_batched_search_tracking_enabled(long particles) {
 #if USE_MPI
   (void)particles;
