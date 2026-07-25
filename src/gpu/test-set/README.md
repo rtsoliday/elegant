@@ -91,9 +91,10 @@ tracking rather than accepting amplified tune differences.
 to deterministic GPU-supported magnet lattices and enables
 `include_changes=1`, which tracks two consecutive tune intervals without
 returning to point-by-point tracking.  `run-loss.ele` checks the loss-sensitive
-batched CPU policy and stable grid-row mapping after entrance losses, while
-`run-isr-fallback.ele` confirms that ISR and other unsupported magnet options
-retain the scalar point-by-point fallback.
+batched CPU policy, stable grid-row mapping after entrance losses, and the
+defined `s=0` output for lost particles.  `run-isr-fallback.ele` confirms that
+ISR and other unsupported magnet options retain the scalar point-by-point
+fallback.
 
 `dynamic-aperture-batched-heavy` exercises deterministic n-line dynamic
 aperture refinement through GPU-supported multipoles and a compact aperture.

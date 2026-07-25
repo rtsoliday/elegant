@@ -1,0 +1,27 @@
+&run_setup
+  lattice = "lattice-isr.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  rootname = "run-isr-fallback",
+  final = "%s.fin",
+  semaphore_file = "%s.done",
+  random_number_seed = 987654321,
+  tracking_updates = 0,
+&end
+
+&run_control
+  n_passes = 1,
+&end
+
+&bunched_beam
+  n_particles_per_bunch = 256,
+  emit_x = 1e-9,
+  beta_x = 8,
+  emit_y = 8e-10,
+  beta_y = 6,
+  sigma_dp = 8e-5,
+  sigma_s = 8e-4,
+&end
+
+&track
+&end

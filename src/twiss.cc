@@ -3958,6 +3958,12 @@ long computeTunesFromTracking(double *tune, double *amp, VMATRIX *M, LINE_LIST *
   long i, one = 1;
   double CSave[6];
 
+  /* A tracking loss returns before the final coordinates are copied below.
+   * Define the output in that case so callers never read an uninitialized or
+   * stale ending coordinate. */
+  if (endingCoord)
+    fill_double_array(endingCoord, 6, 0.0);
+
 #ifdef DEBUG1
   static FILE *fpdeb = NULL;
   if (!fpdeb) {

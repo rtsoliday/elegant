@@ -1,0 +1,28 @@
+! Stable compaction and grid-order coverage for losses in a batched map.
+
+&run_setup
+    lattice = "lattice-loss.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 32
+&end
+
+&frequency_map
+    output = "%s.fma",
+    ndelta = 1,
+    nx = 17,
+    ny = 17,
+    xmin = 1e-6,
+    xmax = 0.0012,
+    ymin = 1e-6,
+    ymax = 0.0012,
+    full_grid_output = 1,
+    include_changes = 1,
+    verbosity = 0
+&end

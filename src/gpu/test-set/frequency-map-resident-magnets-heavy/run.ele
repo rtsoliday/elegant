@@ -1,0 +1,28 @@
+! Batched frequency-map coverage for a deterministic resident magnet lattice.
+
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 64
+&end
+
+&frequency_map
+    output = "%s.fma",
+    ndelta = 1,
+    nx = 33,
+    ny = 33,
+    xmin = 1e-6,
+    xmax = 0.001,
+    ymin = 1e-6,
+    ymax = 0.001,
+    full_grid_output = 1,
+    include_changes = 1,
+    verbosity = 0
+&end
