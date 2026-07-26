@@ -256,7 +256,7 @@ ifneq ($(CUDA_REQUESTED),)
     endif
   endif
   CUDA_HOME ?= $(patsubst %/bin/nvcc,%,$(NVCC))
-  NVCC_OPT ?= -O0
+  NVCC_OPT ?= -O3
   OBJ_DIR := $(OBJ_DIR).gpu
   BIN_DIR := $(BIN_DIR)-gpu
   ifeq ($(GPU_VERIFY),1)
@@ -272,7 +272,7 @@ ifneq ($(CUDA_REQUESTED),)
     CFLAGS += -fopenmp
     CCFLAGS += -fopenmp
   endif
-  NVCCFLAGS += $(NVCC_OPT) -g -arch=$(CUDA_ARCH) --fmad=false -Xcompiler -fPIC -I$(SDDS_REPO)/include -I$(OBJ_DIR) -Igpu -I$(CUDA_HOME)/include -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -DHAVE_GPU=1
+  NVCCFLAGS += $(NVCC_OPT) -g -arch=$(CUDA_ARCH) --fmad=false --prec-div=true --prec-sqrt=true -Xcompiler -fPIC -I$(SDDS_REPO)/include -I$(OBJ_DIR) -Igpu -I$(CUDA_HOME)/include -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -DHAVE_GPU=1
   NVCCDEPFLAGS ?= $(DEPFLAGS)
   LDFLAGS += -L$(CUDA_HOME)/lib64 -Wl,-rpath,$(CUDA_HOME)/lib64
   PROD_SYS_LIBS += -lcudart -lcufft

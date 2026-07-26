@@ -2106,9 +2106,7 @@ __device__ __forceinline__ void gpuExactCorrectorRotate(
 
 __device__ int gpuExactCorrectorTrackParticle(
   double *part, int writeOutput, const GPU_EXACT_CORRECTOR_DATA &data) {
-  double tx = tan(data.xkick);
-  double ty = tan(data.ykick);
-  double theta0 = atan(sqrt(tx * tx + ty * ty));
+  double theta0 = data.theta0;
   double x = part[0], xp = part[1], y = part[2], yp = part[3];
   double s = part[4], dp = part[5];
   int survives = 1;
@@ -2129,7 +2127,7 @@ __device__ int gpuExactCorrectorTrackParticle(
                             data.cosTilt, data.sinTilt);
 
   {
-    double rho0 = fabs(data.length) / sin(theta0);
+    double rho0 = data.rho0;
     if (rho0 == 0 || data.length == 0) {
       xp = tan(theta0 / (1 + dp) + atan(xp));
     } else {
@@ -2188,13 +2186,12 @@ __global__ void gpuExactCorrectorSurvivorFlagKernel(
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   if (ip < nParticles)
     survivorPrefix[ip] = gpuExactCorrectorTrackParticle(
-      coord + ip * stride, 0, data) ? 1 : 0;
+      coord + ip * stride, 1, data) ? 1 : 0;
 }
 
 __global__ void gpuExactCorrectorStableTrackScatterKernel(
   double *coord, double *scratch, const long *survivorPrefix,
-  long nParticles, int stride, long survivors,
-  GPU_EXACT_CORRECTOR_DATA data) {
+  long nParticles, int stride) {
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   if (ip >= nParticles)
     return;
@@ -2203,7 +2200,6 @@ __global__ void gpuExactCorrectorStableTrackScatterKernel(
   double *target = scratch + destination * stride;
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
-  gpuExactCorrectorTrackParticle(target, 1, data);
 }
 
 __device__ __forceinline__ void gpuTaperRectangularPlaneHit(
@@ -2495,6 +2491,8 @@ __device__ __forceinline__ int gpuLgbendBody(
   const GPU_LGBEND_SEGMENT_DATA &segment, long nSlices,
   int integrationOrder, double Po, double radCoef,
   const GPU_APERTURE_LIMIT_DATA &aperture,
+  const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
+  long segmentIndex,
   double coordLimit, double slopeLimit);
 
 __device__ int gpuCcbendTrackNoFringeOrder2(
@@ -2639,6 +2637,7 @@ __device__ int gpuCcbendTrackParticle(double *part, int stride,
   if (!gpuLgbendBody(
         &x, &xp, &y, &yp, &path, &dp, segment, data.nSlices,
         data.integrationOrder, data.Po, data.radCoef, data.aperture,
+        NULL, -1,
         data.coordLimit, data.slopeLimit))
     return 0;
   if (data.fringeModel != -1 &&
@@ -2697,6 +2696,32 @@ __global__ void gpuCcbendTrackCheckedKernel(
   }
   if (threadIdx.x == 0 && partial[0])
     atomicAdd(lostCount, partial[0]);
+}
+
+__global__ void gpuCcbendSurvivorFlagKernel(
+  double *coord, long nParticles, int stride, GPU_CCBEND_DATA data,
+  long *survivorPrefix) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (ip >= nParticles)
+    return;
+  survivorPrefix[ip] =
+    gpuCcbendTrackParticle(coord + ip * stride, stride, data, 0) ? 1 : 0;
+}
+
+__global__ void gpuCcbendStableTrackScatterKernel(
+  double *coord, double *scratch, const long *destination,
+  long nParticles, int stride, GPU_CCBEND_DATA data) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part, *target;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  target = scratch + destination[ip] * stride;
+  for (int ic = 0; ic < stride; ic++)
+    target[ic] = part[ic];
+  gpuCcbendTrackParticle(target, stride, data, 1);
 }
 
 __device__ __forceinline__ int gpuLgbendSwitchPlane(
@@ -2876,6 +2901,8 @@ __device__ __forceinline__ int gpuLgbendBody(
   const GPU_LGBEND_SEGMENT_DATA &segment, long nSlices,
   int integrationOrder, double Po, double radCoef,
   const GPU_APERTURE_LIMIT_DATA &aperture,
+  const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
+  long segmentIndex,
   double coordLimit, double slopeLimit) {
   double driftFrac[8], kickFrac[8];
   double qx, qy, denominator, bodyPath = 0;
@@ -2910,6 +2937,13 @@ __device__ __forceinline__ int gpuLgbendBody(
   for (long slice = 0; slice < nSlices; slice++) {
     double deltaQx = 0, deltaQy = 0;
 
+    if (localAperture && localAperture->present) {
+      const GPU_LGBEND_LOCAL_APERTURE_POINT &point =
+        localAperture->point[segmentIndex][slice];
+      if (fabs(*x - point.xCenter) >= point.xMax ||
+          fabs(*y - point.yCenter) >= point.yMax)
+        return 0;
+    }
     if (!gpuInsideApertureLimit(*x, *y, aperture))
       return 0;
     for (int step = 0; step < nSubsteps; step++) {
@@ -2959,6 +2993,13 @@ __device__ __forceinline__ int gpuLgbendBody(
     }
   }
 
+  if (localAperture && localAperture->present) {
+    const GPU_LGBEND_LOCAL_APERTURE_POINT &point =
+      localAperture->point[segmentIndex][nSlices];
+    if (fabs(*x - point.xCenter) >= point.xMax ||
+        fabs(*y - point.yCenter) >= point.yMax)
+      return 0;
+  }
   if (!gpuInsideApertureLimit(*x, *y, aperture))
     return 0;
   denominator = (1 + *dp) * (1 + *dp) - qx * qx - qy * qy;
@@ -2982,8 +3023,10 @@ __device__ __forceinline__ int gpuLgbendBody(
          fabs(*xp) <= slopeLimit && fabs(*yp) <= slopeLimit;
 }
 
-__device__ int gpuLgbendTrackParticle(double *part, int stride,
-                                      const GPU_LGBEND_DATA &data) {
+__device__ int gpuLgbendTrackParticle(
+  double *part, int stride, const GPU_LGBEND_DATA &data,
+  const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
+  int writeOutput) {
   double x = part[0], xp = part[1], y = part[2], yp = part[3];
   double path = part[4], dp = part[5];
 
@@ -3021,7 +3064,8 @@ __device__ int gpuLgbendTrackParticle(double *part, int stride,
     if (!gpuLgbendBody(
           &x, &xp, &y, &yp, &path, &dp, data.segment[i],
           data.nSlices, data.integrationOrder, data.Po, data.radCoef,
-          data.aperture, data.coordLimit, data.slopeLimit))
+          data.aperture, localAperture, i,
+          data.coordLimit, data.slopeLimit))
       return 0;
     if (data.segment[i].has2 &&
         !gpuLgbendFringe(
@@ -3047,24 +3091,28 @@ __device__ int gpuLgbendTrackParticle(double *part, int stride,
   if (!isfinite(x) || !isfinite(xp) || !isfinite(y) ||
       !isfinite(yp) || !isfinite(path))
     return 0;
-  part[0] = x;
-  part[1] = xp;
-  part[2] = y;
-  part[3] = yp;
-  part[4] = path;
-  part[5] = dp;
+  if (writeOutput) {
+    part[0] = x;
+    part[1] = xp;
+    part[2] = y;
+    part[3] = yp;
+    part[4] = path;
+    part[5] = dp;
+  }
   return 1;
 }
 
 __global__ void gpuLgbendTrackCheckedKernel(
   double *coord, long nParticles, int stride, GPU_LGBEND_DATA data,
+  const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
   unsigned long long *lostCount) {
   extern __shared__ unsigned long long partial[];
   long ip = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long localCount = 0;
 
   if (ip < nParticles &&
-      !gpuLgbendTrackParticle(coord + ip * stride, stride, data))
+      !gpuLgbendTrackParticle(coord + ip * stride, stride, data,
+                              localAperture, 1))
     localCount = 1;
   partial[threadIdx.x] = localCount;
   __syncthreads();
@@ -3075,6 +3123,35 @@ __global__ void gpuLgbendTrackCheckedKernel(
   }
   if (threadIdx.x == 0 && partial[0])
     atomicAdd(lostCount, partial[0]);
+}
+
+__global__ void gpuLgbendSurvivorFlagKernel(
+  double *coord, long nParticles, int stride, GPU_LGBEND_DATA data,
+  const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
+  long *survivorPrefix) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (ip >= nParticles)
+    return;
+  survivorPrefix[ip] =
+    gpuLgbendTrackParticle(coord + ip * stride, stride, data,
+                           localAperture, 0) ? 1 : 0;
+}
+
+__global__ void gpuLgbendStableTrackScatterKernel(
+  double *coord, double *scratch, const long *destination,
+  long nParticles, int stride, GPU_LGBEND_DATA data,
+  const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture) {
+  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part, *target;
+
+  if (ip >= nParticles)
+    return;
+  part = coord + ip * stride;
+  target = scratch + destination[ip] * stride;
+  for (int ic = 0; ic < stride; ic++)
+    target[ic] = part[ic];
+  gpuLgbendTrackParticle(target, stride, data, localAperture, 1);
 }
 
 __global__ void gpuAddCoordinateKernel(double *coord, long nParticles, int stride,
@@ -9234,6 +9311,8 @@ extern "C" int gpuCudaCcbendTrackChecked(void *coord, long nParticles,
 extern "C" int gpuCudaLgbendTrackChecked(void *coord, long nParticles,
                                            int stride,
                                            const GPU_LGBEND_DATA *lgbend,
+                                           const GPU_LGBEND_LOCAL_APERTURE_DATA
+                                             *localAperture,
                                            long *lostCount,
                                            float *milliseconds) {
   cudaEvent_t start, stop;
@@ -9241,6 +9320,7 @@ extern "C" int gpuCudaLgbendTrackChecked(void *coord, long nParticles,
   unsigned long long *deviceLostCount = NULL;
   unsigned long long hostLostCount = 0;
   double *backup = NULL;
+  GPU_LGBEND_LOCAL_APERTURE_DATA *deviceLocalAperture = NULL;
   unsigned long long count;
   int threads = 256;
   int blocks = static_cast<int>((nParticles + threads - 1) / threads);
@@ -9255,11 +9335,31 @@ extern "C" int gpuCudaLgbendTrackChecked(void *coord, long nParticles,
     *milliseconds = 0;
   if (nParticles <= 0)
     return static_cast<int>(cudaSuccess);
+  if (localAperture && localAperture->present) {
+    if (localAperture->nSegments != lgbend->nSegments ||
+        localAperture->nSlices != lgbend->nSlices ||
+        localAperture->nSlices > GPU_LGBEND_MAX_LOCAL_APERTURE_SLICES)
+      return static_cast<int>(cudaErrorInvalidValue);
+    cudaStatus =
+      cudaMalloc(&deviceLocalAperture, sizeof(*deviceLocalAperture));
+    if (cudaStatus != cudaSuccess)
+      return static_cast<int>(cudaStatus);
+    cudaStatus = cudaMemcpy(deviceLocalAperture, localAperture,
+                            sizeof(*deviceLocalAperture),
+                            cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+      cudaFree(deviceLocalAperture);
+      return static_cast<int>(cudaStatus);
+    }
+  }
   cudaStatus = cudaMalloc(&deviceLostCount, sizeof(*deviceLostCount));
-  if (cudaStatus != cudaSuccess)
+  if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceLocalAperture);
     return static_cast<int>(cudaStatus);
+  }
   cudaStatus = cudaMemset(deviceLostCount, 0, sizeof(*deviceLostCount));
   if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceLocalAperture);
     cudaFree(deviceLostCount);
     return static_cast<int>(cudaStatus);
   }
@@ -9267,11 +9367,13 @@ extern "C" int gpuCudaLgbendTrackChecked(void *coord, long nParticles,
           static_cast<unsigned long long>(stride);
   cudaStatus = cudaMalloc(&backup, count * sizeof(*backup));
   if (cudaStatus != cudaSuccess) {
+    cudaFree(deviceLocalAperture);
     cudaFree(deviceLostCount);
     return static_cast<int>(cudaStatus);
   }
   status = prepareTimedLaunch(&start, &stop, milliseconds);
   if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceLocalAperture);
     cudaFree(backup);
     cudaFree(deviceLostCount);
     return status;
@@ -9281,6 +9383,7 @@ extern "C" int gpuCudaLgbendTrackChecked(void *coord, long nParticles,
   if (cudaStatus != cudaSuccess) {
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
+    cudaFree(deviceLocalAperture);
     cudaFree(backup);
     cudaFree(deviceLostCount);
     return static_cast<int>(cudaStatus);
@@ -9288,9 +9391,11 @@ extern "C" int gpuCudaLgbendTrackChecked(void *coord, long nParticles,
   gpuLgbendTrackCheckedKernel<<<blocks, threads,
                                 threads * sizeof(unsigned long long)>>>(
     static_cast<double *>(coord), nParticles, stride, *lgbend,
+    deviceLocalAperture,
     deviceLostCount);
   status = launchTimedKernel(cudaSuccess, start, stop, milliseconds);
   if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceLocalAperture);
     cudaFree(backup);
     cudaFree(deviceLostCount);
     return status;
@@ -9300,6 +9405,7 @@ extern "C" int gpuCudaLgbendTrackChecked(void *coord, long nParticles,
   if (cudaStatus == cudaSuccess && hostLostCount)
     cudaStatus = cudaMemcpy(coord, backup, count * sizeof(*backup),
                             cudaMemcpyDeviceToDevice);
+  cudaFree(deviceLocalAperture);
   cudaFree(backup);
   cudaFree(deviceLostCount);
   if (cudaStatus != cudaSuccess)
@@ -9308,13 +9414,12 @@ extern "C" int gpuCudaLgbendTrackChecked(void *coord, long nParticles,
   return static_cast<int>(cudaSuccess);
 }
 
-extern "C" int gpuCudaExactCorrectorTrackStableCompact(
+extern "C" int gpuCudaCcbendTrackStableCompact(
   void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
-  const GPU_EXACT_CORRECTOR_DATA *corrector, long *remaining,
-  float *milliseconds) {
+  const GPU_CCBEND_DATA *ccbend, long *remaining, float *milliseconds) {
   cudaEvent_t start, stop;
   cudaError_t cudaStatus;
-  long survivors;
+  long survivors = nParticles;
   long *devicePrefix = static_cast<long *>(prefix);
   thrust::device_ptr<long> flags(devicePrefix);
   const int blockSize = 256;
@@ -9324,6 +9429,142 @@ extern "C" int gpuCudaExactCorrectorTrackStableCompact(
   if (!remaining)
     return static_cast<int>(cudaErrorInvalidValue);
   *remaining = nParticles;
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+  if (!coord || !scratchCoord || !prefix || !ccbend || stride <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+
+  gridSize = static_cast<int>((nParticles + blockSize - 1) / blockSize);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuCcbendSurvivorFlagKernel<<<gridSize, blockSize>>>(
+    static_cast<double *>(coord), nParticles, stride, *ccbend, devicePrefix);
+  cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess) {
+    survivors = thrust::reduce(flags, flags + nParticles, 0L,
+                               thrust::plus<long>());
+    thrust::exclusive_scan(flags, flags + nParticles, flags);
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
+  }
+  if (cudaStatus == cudaSuccess) {
+    gpuCcbendStableTrackScatterKernel<<<gridSize, blockSize>>>(
+      static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+      devicePrefix + nParticles, nParticles, stride, *ccbend);
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
+  }
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  if (status == static_cast<int>(cudaSuccess))
+    *remaining = survivors;
+  return status;
+}
+
+extern "C" int gpuCudaLgbendTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_LGBEND_DATA *lgbend,
+  const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
+  long *remaining, float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  GPU_LGBEND_LOCAL_APERTURE_DATA *deviceLocalAperture = NULL;
+  long survivors = nParticles;
+  long *devicePrefix = static_cast<long *>(prefix);
+  thrust::device_ptr<long> flags(devicePrefix);
+  const int blockSize = 256;
+  int gridSize;
+  int status;
+
+  if (!remaining)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *remaining = nParticles;
+  if (milliseconds)
+    *milliseconds = 0;
+  if (nParticles <= 0)
+    return static_cast<int>(cudaSuccess);
+  if (!coord || !scratchCoord || !prefix || !lgbend || stride <= 0 ||
+      lgbend->nSegments <= 0 ||
+      lgbend->nSegments > GPU_LGBEND_MAX_SEGMENTS ||
+      lgbend->nSlices <= 0)
+    return static_cast<int>(cudaErrorInvalidValue);
+  if (localAperture && localAperture->present) {
+    if (localAperture->nSegments != lgbend->nSegments ||
+        localAperture->nSlices != lgbend->nSlices ||
+        localAperture->nSlices > GPU_LGBEND_MAX_LOCAL_APERTURE_SLICES)
+      return static_cast<int>(cudaErrorInvalidValue);
+    cudaStatus =
+      cudaMalloc(&deviceLocalAperture, sizeof(*deviceLocalAperture));
+    if (cudaStatus != cudaSuccess)
+      return static_cast<int>(cudaStatus);
+    cudaStatus = cudaMemcpy(deviceLocalAperture, localAperture,
+                            sizeof(*deviceLocalAperture),
+                            cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+      cudaFree(deviceLocalAperture);
+      return static_cast<int>(cudaStatus);
+    }
+  }
+
+  gridSize = static_cast<int>((nParticles + blockSize - 1) / blockSize);
+  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaFree(deviceLocalAperture);
+    return status;
+  }
+  gpuLgbendSurvivorFlagKernel<<<gridSize, blockSize>>>(
+    static_cast<double *>(coord), nParticles, stride, *lgbend,
+    deviceLocalAperture, devicePrefix);
+  cudaStatus = cudaGetLastError();
+  if (cudaStatus == cudaSuccess) {
+    survivors = thrust::reduce(flags, flags + nParticles, 0L,
+                               thrust::plus<long>());
+    thrust::exclusive_scan(flags, flags + nParticles, flags);
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuBuildCpuLossOrderDestination(
+        devicePrefix, nParticles, survivors);
+  }
+  if (cudaStatus == cudaSuccess) {
+    gpuLgbendStableTrackScatterKernel<<<gridSize, blockSize>>>(
+      static_cast<double *>(coord), static_cast<double *>(scratchCoord),
+      devicePrefix + nParticles, nParticles, stride, *lgbend,
+      deviceLocalAperture);
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus == cudaSuccess)
+      cudaStatus = gpuPublishCpuLossOrderDestination(
+        devicePrefix, nParticles);
+  }
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  cudaFree(deviceLocalAperture);
+  if (status == static_cast<int>(cudaSuccess))
+    *remaining = survivors;
+  return status;
+}
+
+extern "C" int gpuCudaExactCorrectorTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_EXACT_CORRECTOR_DATA *corrector, long *remaining,
+  long *usedScratch, float *milliseconds) {
+  cudaEvent_t start, stop;
+  cudaError_t cudaStatus;
+  long survivors;
+  long *devicePrefix = static_cast<long *>(prefix);
+  thrust::device_ptr<long> flags(devicePrefix);
+  const int blockSize = 256;
+  int gridSize;
+  int status;
+
+  if (!remaining || !usedScratch)
+    return static_cast<int>(cudaErrorInvalidValue);
+  *remaining = nParticles;
+  *usedScratch = 0;
   if (milliseconds)
     *milliseconds = 0;
   if (nParticles <= 0)
@@ -9342,22 +9583,26 @@ extern "C" int gpuCudaExactCorrectorTrackStableCompact(
   if (cudaStatus == cudaSuccess) {
     survivors = thrust::reduce(flags, flags + nParticles, 0L,
                                thrust::plus<long>());
-    thrust::exclusive_scan(flags, flags + nParticles, flags);
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus == cudaSuccess)
-      cudaStatus = gpuBuildCpuLossOrderDestination(
-        devicePrefix, nParticles, survivors);
+    if (survivors != nParticles) {
+      thrust::exclusive_scan(flags, flags + nParticles, flags);
+      cudaStatus = cudaGetLastError();
+      if (cudaStatus == cudaSuccess)
+        cudaStatus = gpuBuildCpuLossOrderDestination(
+          devicePrefix, nParticles, survivors);
+    }
   } else {
     survivors = nParticles;
   }
-  if (cudaStatus == cudaSuccess) {
+  if (cudaStatus == cudaSuccess && survivors != nParticles) {
     gpuExactCorrectorStableTrackScatterKernel<<<gridSize, blockSize>>>(
       static_cast<double *>(coord), static_cast<double *>(scratchCoord),
-      devicePrefix + nParticles, nParticles, stride, survivors, *corrector);
+      devicePrefix + nParticles, nParticles, stride);
     cudaStatus = cudaGetLastError();
     if (cudaStatus == cudaSuccess)
       cudaStatus = gpuPublishCpuLossOrderDestination(
         devicePrefix, nParticles);
+    if (cudaStatus == cudaSuccess)
+      *usedScratch = 1;
   }
   status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
   if (status == static_cast<int>(cudaSuccess))
@@ -9624,8 +9869,8 @@ __device__ __forceinline__ int gpuLoadSymplecticFractions(int integrationOrder,
 }
 
 __device__ __forceinline__ void gpuCsbendFields(double *Fx, double *Fy,
-                                                double x, double y) {
-  const GPU_CSBEND_DATA *data = &gpuCsbendData;
+                                                double x, double y,
+                                                const GPU_CSBEND_DATA *data) {
   double yp[11];
   double sumFx = 0;
   double sumFy = 0;
@@ -9666,12 +9911,17 @@ __device__ __forceinline__ void gpuCsbendFields(double *Fx, double *Fy,
   *Fy = sumFy;
 }
 
+__device__ __forceinline__ void gpuCsbendFields(double *Fx, double *Fy,
+                                                double x, double y) {
+  gpuCsbendFields(Fx, Fy, x, y, &gpuCsbendData);
+}
+
 __device__ __forceinline__ int gpuCsbendApplyEdge(double *xp, double *yp,
                                                   double x, double y,
                                                   double dp, double e,
                                                   double psi,
-                                                  double kickLimit) {
-  const GPU_CSBEND_DATA *data = &gpuCsbendData;
+                                                  double kickLimit,
+                                                  const GPU_CSBEND_DATA *data) {
   double onePlusDp = 1 + dp;
   double rho;
   double deltaXp;
@@ -9697,8 +9947,8 @@ __device__ __forceinline__ int gpuCsbendApplyHigherOrderEdge(double *x,
                                                              double beta,
                                                              double he,
                                                              double psi,
-                                                             int whichEdge) {
-  const GPU_CSBEND_DATA *data = &gpuCsbendData;
+                                                             int whichEdge,
+                                                             const GPU_CSBEND_DATA *data) {
   double onePlusDp = 1 + dp;
   double rho, h, h2, tanBeta, tan2Beta, cosBeta, secBeta, sec2Beta;
   double R21, R43;
@@ -9757,8 +10007,8 @@ __device__ __forceinline__ int gpuCsbendApplyHigherOrderEdge(double *x,
 
 __device__ int gpuCsbendApplyCurvedDipoleFringe(
   double *x, double *xp, double *y, double *yp, double *path, double dp,
-  double edge, int inFringe, const double *integrals) {
-  const GPU_CSBEND_DATA *data = &gpuCsbendData;
+  double edge, int inFringe, const double *integrals,
+  const GPU_CSBEND_DATA *data) {
   double x0 = *x, y0 = *y, px0, py0;
   double x1, px1, y1, py1, x2, px2, y2, py2;
   double dtau, mx, my, delX, focX, focY;
@@ -9977,24 +10227,23 @@ __device__ __forceinline__ int gpuCsbendApplyConfiguredEdge(double *x,
                                                             double he,
                                                             double psi,
                                                             double kickLimit,
-                                                            int whichEdge) {
+                                                            int whichEdge,
+                                                            const GPU_CSBEND_DATA *data) {
   int effect = whichEdge < 0 ?
-    gpuCsbendData.edgeEffect1 : gpuCsbendData.edgeEffect2;
+    data->edgeEffect1 : data->edgeEffect2;
   if (effect == 5)
     return gpuCsbendApplyCurvedDipoleFringe(
       x, xp, y, yp, path, dp, e, whichEdge,
-      whichEdge < 0 ? gpuCsbendData.fringeInt1 :
-                      gpuCsbendData.fringeInt2);
-  if (gpuCsbendData.edgeOrder > 1)
+      whichEdge < 0 ? data->fringeInt1 : data->fringeInt2, data);
+  if (data->edgeOrder > 1)
     return gpuCsbendApplyHigherOrderEdge(x, xp, y, yp, dp, e, he, psi,
-                                         whichEdge);
-  return gpuCsbendApplyEdge(xp, yp, *x, *y, dp, e, psi, kickLimit);
+                                         whichEdge, data);
+  return gpuCsbendApplyEdge(xp, yp, *x, *y, dp, e, psi, kickLimit, data);
 }
 
 __device__ __forceinline__ void gpuCsbendWriteLoss(
   double *part, double x, double xp, double y, double yp, double dp,
-  double lossDistance) {
-  const GPU_CSBEND_DATA *data = &gpuCsbendData;
+  double lossDistance, const GPU_CSBEND_DATA *data) {
 
   part[0] = x * data->cosTilt - y * data->sinTilt;
   part[2] = x * data->sinTilt + y * data->cosTilt;
@@ -10004,8 +10253,8 @@ __device__ __forceinline__ void gpuCsbendWriteLoss(
   part[5] = data->Po * (1 + dp);
 }
 
-__device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput) {
-  const GPU_CSBEND_DATA *data = &gpuCsbendData;
+__device__ int gpuCsbendTrackParticleData(
+  double *part, int stride, int writeOutput, const GPU_CSBEND_DATA *data) {
   double driftFrac[8];
   double kickFrac[8];
   double x0 = part[0];
@@ -10047,20 +10296,20 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
 
   if (!gpuInsideApertureLimit(x, y, data->aperture)) {
     if (writeOutput)
-      gpuCsbendWriteLoss(part, x, xp, y, yp, dp, lossDistance);
+      gpuCsbendWriteLoss(part, x, xp, y, yp, dp, lossDistance, data);
     return 0;
   }
   if (data->edge1 &&
       !gpuCsbendApplyConfiguredEdge(&x, &xp, &y, &yp, &s0, dp, data->e1,
                                     data->he1, data->psi1,
-                                    data->edgeKickLimit1, -1))
+                                    data->edgeKickLimit1, -1, data))
     return 0;
 
   if (data->radCoef && data->edge1 && data->e1 != 0) {
     double Fx, Fy, dpPrime;
     double onePlusXh = 1 + x / data->rho0;
 
-    gpuCsbendFields(&Fx, &Fy, x, y);
+    gpuCsbendFields(&Fx, &Fy, x, y, data);
     dpPrime =
       -data->radCoef * (Fx * Fx + Fy * Fy) * (1 + dp) * (1 + dp) *
       sqrt(onePlusXh * onePlusXh + xp * xp + yp * yp);
@@ -10079,9 +10328,9 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
   for (long i = 0; i < data->nSlices; i++) {
     if (!gpuInsideApertureLimit(x, y, data->aperture)) {
       if (writeOutput &&
-          gpuMultipoleConvertMomentaToSlopes(
+        gpuMultipoleConvertMomentaToSlopes(
             &xp, &yp, qx, qy, dp, data->expandHamiltonian))
-        gpuCsbendWriteLoss(part, x, xp, y, yp, dp, lossDistance);
+        gpuCsbendWriteLoss(part, x, xp, y, yp, dp, lossDistance, data);
       return 0;
     }
     for (int j = 0; j < nSubsteps; j++) {
@@ -10128,7 +10377,7 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
         break;
       double ds = dsSlice * kickFrac[j];
       double Fx, Fy;
-      gpuCsbendFields(&Fx, &Fy, x, y);
+      gpuCsbendFields(&Fx, &Fy, x, y, data);
       qx += __ddiv_rn(-ds * (1 + __ddiv_rn(x, data->rho0)) * Fy,
                       data->rhoActual);
       qy += __ddiv_rn(ds * (1 + __ddiv_rn(x, data->rho0)) * Fx,
@@ -10165,7 +10414,7 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
     return 0;
   if (!gpuInsideApertureLimit(x, y, data->aperture)) {
     if (writeOutput)
-      gpuCsbendWriteLoss(part, x, xp, y, yp, dp, lossDistance);
+      gpuCsbendWriteLoss(part, x, xp, y, yp, dp, lossDistance, data);
     return 0;
   }
 
@@ -10173,7 +10422,7 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
     double Fx, Fy, dpPrime;
     double onePlusXh = 1 + x / data->rho0;
 
-    gpuCsbendFields(&Fx, &Fy, x, y);
+    gpuCsbendFields(&Fx, &Fy, x, y, data);
     dpPrime =
       -data->radCoef * (Fx * Fx + Fy * Fy) * (1 + dp) * (1 + dp) *
       sqrt(onePlusXh * onePlusXh + xp * xp + yp * yp);
@@ -10194,7 +10443,7 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
   if (data->edge2 &&
       !gpuCsbendApplyConfiguredEdge(&x, &xp, &y, &yp, &trackedS, dp, data->e2,
                                     data->he2, data->psi2,
-                                    data->edgeKickLimit2, 1))
+                                    data->edgeKickLimit2, 1, data))
     return 0;
 
   if (!isfinite(x) || !isfinite(xp) || !isfinite(y) || !isfinite(yp))
@@ -10227,6 +10476,12 @@ __device__ int gpuCsbendTrackParticle(double *part, int stride, int writeOutput)
     part[5] = dp;
   }
   return 1;
+}
+
+__device__ int gpuCsbendTrackParticle(double *part, int stride,
+                                      int writeOutput) {
+  return gpuCsbendTrackParticleData(
+    part, stride, writeOutput, &gpuCsbendData);
 }
 
 __device__ int gpuCsrCsbendTrackBodySliceParticle(double *part, int stride,
@@ -10379,6 +10634,166 @@ __global__ void gpuCsbendStableTrackScatterKernel(
   for (int ic = 0; ic < stride; ic++)
     target[ic] = part[ic];
   gpuCsbendTrackParticle(target, stride, 1);
+}
+
+__global__ void gpuTuneProgramInitializeKernel(
+  double *coordinate, long particles, int stride,
+  GPU_TUNE_PARTICLE_STATUS *status, double *history, long turns) {
+  long id = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (id >= particles)
+    return;
+  status[id].alive = 1;
+  status[id].lossTurn = -1;
+  status[id].lossElement = -1;
+  if (history) {
+    double *part = coordinate + id * stride;
+    long block = particles * turns;
+    history[id * turns] = part[0];
+    history[block + id * turns] = part[1];
+    history[2 * block + id * turns] = part[2];
+    history[3 * block + id * turns] = part[3];
+  }
+}
+
+__device__ __forceinline__ int gpuTuneProgramCollimatorTrack(
+  double *part, const GPU_TUNE_COLLIMATOR_DATA &data, int elliptical) {
+  int lost;
+
+  if (elliptical) {
+    lost = gpuEllipticalCollimatorLostAt(
+      part, data.xMax, data.yMax, data.xCenter, data.yCenter,
+      data.xExponent, data.yExponent, 0, data.openCode);
+    if (!lost && data.length > 0)
+      lost = gpuEllipticalCollimatorLostAt(
+        part, data.xMax, data.yMax, data.xCenter, data.yCenter,
+        data.xExponent, data.yExponent, data.length, data.openCode);
+  } else {
+    lost = gpuRectangularCollimatorLostAt(
+      part, data.xMax, data.yMax, data.xCenter, data.yCenter, 0,
+      data.openCode);
+    if (!lost && data.length > 0)
+      lost = gpuRectangularCollimatorLostAt(
+        part, data.xMax, data.yMax, data.xCenter, data.yCenter,
+        data.length, data.openCode);
+  }
+  if (!lost && data.length)
+    gpuExactDriftParticle(part, data.length);
+  return !lost;
+}
+
+__device__ __forceinline__ int gpuTuneProgramScraperTrack(
+  double *part, const GPU_TUNE_SCRAPER_DATA &data) {
+  int lost = 0;
+
+  if (data.sideSign)
+    lost = gpuScraperLostAt(
+      part, data.plane, data.center, data.position, data.sideSign, 0);
+  if (!lost && data.secondSideSign)
+    lost = gpuScraperLostAt(
+      part, data.plane, data.center, data.position,
+      data.secondSideSign, 0);
+  if (!lost && data.length > 0 && data.sideSign)
+    lost = gpuScraperLostAt(
+      part, data.plane, data.center, data.position, data.sideSign,
+      data.length);
+  if (!lost && data.length > 0 && data.secondSideSign)
+    lost = gpuScraperLostAt(
+      part, data.plane, data.center, data.position,
+      data.secondSideSign, data.length);
+  if (!lost && data.length)
+    gpuExactDriftParticle(part, data.length);
+  return !lost;
+}
+
+__global__ void gpuTuneProgramTurnKernel(
+  double *coordinate, long particles, int stride, GPU_TUNE_PROGRAM program,
+  GPU_TUNE_PARTICLE_STATUS *status, double *history, long turns, long turn,
+  long turnOffset) {
+  long id = blockIdx.x * blockDim.x + threadIdx.x;
+  double *part;
+  int alive;
+
+  if (id >= particles || !status[id].alive)
+    return;
+  part = coordinate + id * stride;
+  alive = 1;
+  for (long ie = 0; ie < program.opCount && alive; ie++) {
+    const GPU_TUNE_PROGRAM_OP &op = program.op[ie];
+
+    switch (op.opcode) {
+    case GPU_TUNE_OP_NOP:
+      break;
+    case GPU_TUNE_OP_EXACT_DRIFT:
+      gpuExactDriftParticle(part, program.drift[op.dataIndex].length);
+      break;
+    case GPU_TUNE_OP_MATRIX:
+      gpuApplyPackedMatrixData(part, program.matrix + op.dataIndex);
+      break;
+    case GPU_TUNE_OP_MULTIPOLE:
+      alive = gpuMultipoleTrackParticleData<false, true>(
+        part, stride, 1, program.multipole + op.dataIndex);
+      break;
+    case GPU_TUNE_OP_EXACT_CORRECTOR:
+      alive = gpuExactCorrectorTrackParticle(
+        part, 1, program.exactCorrector[op.dataIndex]);
+      break;
+    case GPU_TUNE_OP_CSBEND:
+      alive = gpuCsbendTrackParticleData(
+        part, stride, 1, program.csbend + op.dataIndex);
+      break;
+    case GPU_TUNE_OP_CCBEND:
+      alive = gpuCcbendTrackParticle(
+        part, stride, program.ccbend[op.dataIndex], 1);
+      break;
+    case GPU_TUNE_OP_LGBEND: {
+      const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture =
+        op.auxiliaryIndex >= 0 ?
+          program.lgbendLocalAperture + op.auxiliaryIndex : NULL;
+      alive = gpuLgbendTrackParticle(
+        part, stride, program.lgbend[op.dataIndex], localAperture, 1);
+      break;
+    }
+    case GPU_TUNE_OP_RCOL:
+      alive = gpuTuneProgramCollimatorTrack(
+        part, program.collimator[op.dataIndex], 0);
+      break;
+    case GPU_TUNE_OP_ECOL:
+      alive = gpuTuneProgramCollimatorTrack(
+        part, program.collimator[op.dataIndex], 1);
+      break;
+    case GPU_TUNE_OP_SCRAPER:
+      alive = gpuTuneProgramScraperTrack(
+        part, program.scraper[op.dataIndex]);
+      break;
+    case GPU_TUNE_OP_TAPER_APERTURE:
+      alive = gpuTaperApertureTrackParticle(
+        part, 1, program.taperAperture[op.dataIndex]);
+      break;
+    case GPU_TUNE_OP_SPEEDBUMP:
+      alive = gpuSpeedbumpTrackParticle(
+        part, 1, program.speedbump[op.dataIndex]);
+      break;
+    default:
+      alive = 0;
+      break;
+    }
+    if (alive && op.postApertureIndex >= 0)
+      alive = gpuInsideApertureLimit(
+        part[0], part[2], program.postAperture[op.postApertureIndex]);
+    if (!alive) {
+      status[id].alive = 0;
+      status[id].lossTurn = turn - 1 + turnOffset;
+      status[id].lossElement = op.elementIndex;
+    }
+  }
+  if (alive && history) {
+    long block = particles * turns;
+    history[id * turns + turn] = part[0];
+    history[block + id * turns + turn] = part[1];
+    history[2 * block + id * turns + turn] = part[2];
+    history[3 * block + id * turns + turn] = part[3];
+  }
 }
 
 __global__ void gpuCsrCsbendBodySliceCheckedKernel(double *coord,
@@ -12600,6 +13015,203 @@ extern "C" int gpuCudaClearBatchedSearchHistory(
   if (status == cudaSuccess)
     status = cudaMemset(turnCount, 0, particles * sizeof(double));
   return static_cast<int>(status);
+}
+
+extern "C" int gpuCudaTuneProgramTrack(
+  const GPU_TUNE_PROGRAM *program, const double *coordinate, long particles,
+  int stride, long turns, long turnOffset, double *endingCoordinate,
+  GPU_TUNE_PARTICLE_STATUS *particleStatus, double *history,
+  float *milliseconds, long *launches, long *transfers) {
+  GPU_TUNE_PROGRAM deviceProgram;
+  double *deviceCoordinate = NULL, *deviceHistory = NULL;
+  GPU_TUNE_PARTICLE_STATUS *deviceStatus = NULL;
+  cudaEvent_t start = NULL, stop = NULL;
+  cudaDeviceProp deviceProperties;
+  cudaError_t cudaStatus = cudaSuccess;
+  int currentDevice = 0, threads = 32, blocks, status;
+  size_t coordinateValues, historyValues = 0;
+
+#define GPU_TUNE_DEVICE_POINTERS(action)               \
+  action(op);                                          \
+  action(drift);                                       \
+  action(matrix);                                      \
+  action(multipole);                                   \
+  action(exactCorrector);                              \
+  action(csbend);                                      \
+  action(ccbend);                                      \
+  action(lgbend);                                      \
+  action(lgbendLocalAperture);                         \
+  action(collimator);                                  \
+  action(scraper);                                     \
+  action(taperAperture);                               \
+  action(speedbump);                                   \
+  action(postAperture)
+#define GPU_TUNE_NULL(member) deviceProgram.member = NULL
+#define GPU_TUNE_FREE(member) cudaFree(deviceProgram.member)
+#define GPU_TUNE_UPLOAD(member, count)                                  \
+  do {                                                                   \
+    if ((count) > 0) {                                                   \
+      cudaStatus = cudaMalloc(                                           \
+        (void **)&deviceProgram.member,                                  \
+        (size_t)(count) * sizeof(*deviceProgram.member));                \
+      if (cudaStatus != cudaSuccess)                                     \
+        goto cleanup;                                                    \
+      cudaStatus = cudaMemcpy(                                           \
+        deviceProgram.member, program->member,                           \
+        (size_t)(count) * sizeof(*deviceProgram.member),                 \
+        cudaMemcpyHostToDevice);                                         \
+      if (cudaStatus != cudaSuccess)                                     \
+        goto cleanup;                                                    \
+    }                                                                    \
+  } while (0)
+
+  if (milliseconds)
+    *milliseconds = 0;
+  if (launches)
+    *launches = 0;
+  if (transfers)
+    *transfers = 0;
+  if (!program || program->opCount <= 0 || !program->op ||
+      !coordinate || particles <= 0 || stride < 6 || turns <= 1 ||
+      !endingCoordinate || !particleStatus)
+    return static_cast<int>(cudaErrorInvalidValue);
+  if ((size_t)particles > SIZE_MAX / (size_t)stride)
+    return static_cast<int>(cudaErrorInvalidValue);
+  coordinateValues = (size_t)particles * (size_t)stride;
+  if (history) {
+    if ((size_t)particles > SIZE_MAX / (size_t)turns / 4)
+      return static_cast<int>(cudaErrorInvalidValue);
+    historyValues = 4 * (size_t)particles * (size_t)turns;
+  }
+  /*
+   * The fused interpreter has a deliberately large per-thread register
+   * footprint.  Spread a small fixed-slot grid across the available SMs,
+   * even when this means partially filled warps.  Full-size grids retain
+   * one-warp blocks and therefore do not sacrifice steady-state throughput.
+   */
+  if (cudaGetDevice(&currentDevice) == cudaSuccess &&
+      cudaGetDeviceProperties(&deviceProperties, currentDevice) ==
+        cudaSuccess &&
+      deviceProperties.multiProcessorCount > 0) {
+    long slotsPerSm =
+      (particles + deviceProperties.multiProcessorCount - 1) /
+      deviceProperties.multiProcessorCount;
+    if (slotsPerSm < threads)
+      threads = slotsPerSm > 0 ? (int)slotsPerSm : 1;
+  }
+  blocks = (int)((particles + threads - 1) / threads);
+
+  deviceProgram = *program;
+  GPU_TUNE_DEVICE_POINTERS(GPU_TUNE_NULL);
+  GPU_TUNE_UPLOAD(op, program->opCount);
+  GPU_TUNE_UPLOAD(drift, program->driftCount);
+  GPU_TUNE_UPLOAD(matrix, program->matrixCount);
+  GPU_TUNE_UPLOAD(multipole, program->multipoleCount);
+  GPU_TUNE_UPLOAD(exactCorrector, program->exactCorrectorCount);
+  GPU_TUNE_UPLOAD(csbend, program->csbendCount);
+  GPU_TUNE_UPLOAD(ccbend, program->ccbendCount);
+  GPU_TUNE_UPLOAD(lgbend, program->lgbendCount);
+  GPU_TUNE_UPLOAD(lgbendLocalAperture,
+                  program->lgbendLocalApertureCount);
+  GPU_TUNE_UPLOAD(collimator, program->collimatorCount);
+  GPU_TUNE_UPLOAD(scraper, program->scraperCount);
+  GPU_TUNE_UPLOAD(taperAperture, program->taperApertureCount);
+  GPU_TUNE_UPLOAD(speedbump, program->speedbumpCount);
+  GPU_TUNE_UPLOAD(postAperture, program->postApertureCount);
+
+  cudaStatus = cudaMalloc(
+    &deviceCoordinate, coordinateValues * sizeof(*deviceCoordinate));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  cudaStatus = cudaMalloc(
+    &deviceStatus, (size_t)particles * sizeof(*deviceStatus));
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  if (historyValues) {
+    cudaStatus = cudaMalloc(
+      &deviceHistory, historyValues * sizeof(*deviceHistory));
+    if (cudaStatus != cudaSuccess)
+      goto cleanup;
+    cudaStatus = cudaMemset(
+      deviceHistory, 0, historyValues * sizeof(*deviceHistory));
+    if (cudaStatus != cudaSuccess)
+      goto cleanup;
+  }
+  cudaStatus = cudaMemcpy(
+    deviceCoordinate, coordinate,
+    coordinateValues * sizeof(*deviceCoordinate), cudaMemcpyHostToDevice);
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  if (transfers)
+    (*transfers)++;
+
+  cudaStatus = cudaEventCreate(&start);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaEventCreate(&stop);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaEventRecord(start, 0);
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  gpuTuneProgramInitializeKernel<<<blocks, threads>>>(
+    deviceCoordinate, particles, stride, deviceStatus, deviceHistory, turns);
+  cudaStatus = cudaGetLastError();
+  if (launches)
+    (*launches)++;
+  for (long turn = 1; cudaStatus == cudaSuccess && turn < turns; turn++) {
+    gpuTuneProgramTurnKernel<<<blocks, threads>>>(
+      deviceCoordinate, particles, stride, deviceProgram, deviceStatus,
+      deviceHistory, turns, turn, turnOffset);
+    cudaStatus = cudaGetLastError();
+    if (launches)
+      (*launches)++;
+  }
+  status = launchTimedKernel(cudaStatus, start, stop, milliseconds);
+  cudaEventDestroy(start);
+  cudaEventDestroy(stop);
+  start = stop = NULL;
+  if (status != static_cast<int>(cudaSuccess)) {
+    cudaStatus = static_cast<cudaError_t>(status);
+    goto cleanup;
+  }
+
+  cudaStatus = cudaMemcpy(
+    endingCoordinate, deviceCoordinate,
+    coordinateValues * sizeof(*deviceCoordinate), cudaMemcpyDeviceToHost);
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  if (transfers)
+    (*transfers)++;
+  cudaStatus = cudaMemcpy(
+    particleStatus, deviceStatus,
+    (size_t)particles * sizeof(*deviceStatus), cudaMemcpyDeviceToHost);
+  if (cudaStatus != cudaSuccess)
+    goto cleanup;
+  if (transfers)
+    (*transfers)++;
+  if (historyValues) {
+    cudaStatus = cudaMemcpy(
+      history, deviceHistory, historyValues * sizeof(*deviceHistory),
+      cudaMemcpyDeviceToHost);
+    if (cudaStatus != cudaSuccess)
+      goto cleanup;
+    if (transfers)
+      (*transfers)++;
+  }
+
+cleanup:
+  if (start)
+    cudaEventDestroy(start);
+  if (stop)
+    cudaEventDestroy(stop);
+  cudaFree(deviceHistory);
+  cudaFree(deviceStatus);
+  cudaFree(deviceCoordinate);
+  GPU_TUNE_DEVICE_POINTERS(GPU_TUNE_FREE);
+#undef GPU_TUNE_UPLOAD
+#undef GPU_TUNE_FREE
+#undef GPU_TUNE_NULL
+#undef GPU_TUNE_DEVICE_POINTERS
+  return static_cast<int>(cudaStatus);
 }
 
 extern "C" int gpuCudaBatchedApertureSearch(

@@ -206,6 +206,8 @@ typedef struct GPU_EXACT_CORRECTOR_DATA {
   double length;
   double xkick;
   double ykick;
+  double theta0;
+  double rho0;
   double dx;
   double dy;
   double dz;
@@ -282,6 +284,65 @@ typedef struct GPU_BATCHED_APERTURE_ELEMENT {
   long elementIndex;
   GPU_BATCHED_APERTURE_ELEMENT_DATA data;
 } GPU_BATCHED_APERTURE_ELEMENT;
+
+/*
+ * A tune program is rebuilt for each batched tune-tracking invocation after
+ * element alteration and lazy aperture-file loading have completed.  The
+ * opcode stream is deliberately small; immutable element data lives in
+ * type-specific arrays so a fixed CUDA thread can follow one particle through
+ * a complete turn without per-element launches, allocation, or compaction.
+ */
+#define GPU_TUNE_OP_NOP 0
+#define GPU_TUNE_OP_EXACT_DRIFT 1
+#define GPU_TUNE_OP_MATRIX 2
+#define GPU_TUNE_OP_MULTIPOLE 3
+#define GPU_TUNE_OP_EXACT_CORRECTOR 4
+#define GPU_TUNE_OP_CSBEND 5
+#define GPU_TUNE_OP_CCBEND 6
+#define GPU_TUNE_OP_LGBEND 7
+#define GPU_TUNE_OP_RCOL 8
+#define GPU_TUNE_OP_ECOL 9
+#define GPU_TUNE_OP_SCRAPER 10
+#define GPU_TUNE_OP_TAPER_APERTURE 11
+#define GPU_TUNE_OP_SPEEDBUMP 12
+
+typedef struct GPU_TUNE_PROGRAM_OP {
+  int opcode;
+  int dataIndex;
+  int auxiliaryIndex;
+  int postApertureIndex;
+  long elementIndex;
+} GPU_TUNE_PROGRAM_OP;
+
+typedef struct GPU_TUNE_DRIFT_DATA {
+  double length;
+} GPU_TUNE_DRIFT_DATA;
+
+typedef struct GPU_TUNE_COLLIMATOR_DATA {
+  double length;
+  double xMax;
+  double yMax;
+  double xCenter;
+  double yCenter;
+  long xExponent;
+  long yExponent;
+  long openCode;
+} GPU_TUNE_COLLIMATOR_DATA;
+
+typedef struct GPU_TUNE_SCRAPER_DATA {
+  double length;
+  double center;
+  double position;
+  int plane;
+  int sideSign;
+  int secondSideSign;
+} GPU_TUNE_SCRAPER_DATA;
+
+typedef struct GPU_TUNE_PARTICLE_STATUS {
+  long lossTurn;
+  long lossElement;
+  int alive;
+} GPU_TUNE_PARTICLE_STATUS;
 
 typedef struct GPU_CSBEND_DATA {
   long nSlices;
@@ -367,6 +428,7 @@ typedef struct GPU_CCBEND_DATA {
 } GPU_CCBEND_DATA;
 
 #define GPU_LGBEND_MAX_SEGMENTS 16
+#define GPU_LGBEND_MAX_LOCAL_APERTURE_SLICES 32
 
 typedef struct GPU_LGBEND_SEGMENT_DATA {
   double length;
@@ -412,6 +474,60 @@ typedef struct GPU_LGBEND_DATA {
   GPU_APERTURE_LIMIT_DATA aperture;
   GPU_LGBEND_SEGMENT_DATA segment[GPU_LGBEND_MAX_SEGMENTS];
 } GPU_LGBEND_DATA;
+
+typedef struct GPU_LGBEND_LOCAL_APERTURE_POINT {
+  double xCenter;
+  double yCenter;
+  double xMax;
+  double yMax;
+} GPU_LGBEND_LOCAL_APERTURE_POINT;
+
+/*
+ * LGBEND aperture-data is sampled at each integration-slice boundary, just
+ * as checkMultAperture() does on the CPU.  Keep this separate from
+ * GPU_LGBEND_DATA so ordinary bends don't pay the per-element copy cost.
+ */
+typedef struct GPU_LGBEND_LOCAL_APERTURE_DATA {
+  long nSegments;
+  long nSlices;
+  int present;
+  GPU_LGBEND_LOCAL_APERTURE_POINT
+    point[GPU_LGBEND_MAX_SEGMENTS]
+         [GPU_LGBEND_MAX_LOCAL_APERTURE_SLICES + 1];
+} GPU_LGBEND_LOCAL_APERTURE_DATA;
+
+typedef struct GPU_TUNE_PROGRAM {
+  long opCount;
+  long driftCount;
+  long matrixCount;
+  long multipoleCount;
+  long exactCorrectorCount;
+  long csbendCount;
+  long ccbendCount;
+  long lgbendCount;
+  long lgbendLocalApertureCount;
+  long collimatorCount;
+  long scraperCount;
+  long taperApertureCount;
+  long speedbumpCount;
+  long postApertureCount;
+  long historyCertified;
+  long lossCertified;
+  GPU_TUNE_PROGRAM_OP *op;
+  GPU_TUNE_DRIFT_DATA *drift;
+  GPU_MATRIX_DATA *matrix;
+  GPU_MULTIPOLE_DATA *multipole;
+  GPU_EXACT_CORRECTOR_DATA *exactCorrector;
+  GPU_CSBEND_DATA *csbend;
+  GPU_CCBEND_DATA *ccbend;
+  GPU_LGBEND_DATA *lgbend;
+  GPU_LGBEND_LOCAL_APERTURE_DATA *lgbendLocalAperture;
+  GPU_TUNE_COLLIMATOR_DATA *collimator;
+  GPU_TUNE_SCRAPER_DATA *scraper;
+  GPU_TAPER_APERTURE_DATA *taperAperture;
+  GPU_SPEEDBUMP_DATA *speedbump;
+  GPU_APERTURE_LIMIT_DATA *postAperture;
+} GPU_TUNE_PROGRAM;
 
 typedef struct GPU_WAKE_LONGITUDINAL_DATA {
   long bins;
@@ -717,6 +833,7 @@ void gpuDescribeUsageSettings(char *buffer, unsigned long bufferSize);
 long gpuSetOmpTrackingThreads(long threads);
 long gpuGetOmpTrackingThreads(void);
 long gpuOmpTrackingEnabled(long particles);
+long gpuOmpTrackingScopeActive(void);
 GPU_OMP_TRACKING_WORKSPACE *gpuGetOmpTrackingWorkspace(long particles);
 long gpuStableCompactParticles(double **particle, long particles,
                                const unsigned char *survived);

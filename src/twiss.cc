@@ -32,6 +32,9 @@
 #include "chromDefs.h"
 #include "fftpackC.h"
 #include "twiss.h"
+#if defined(HAVE_GPU) && !USE_MPI
+#  include "gpu/gpu_tune.h"
+#endif
 #include <stddef.h>
 #ifndef M_PI
 #  define M_PI 3.14159265358979323846
@@ -4279,10 +4282,13 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
                                    double *tuneUpperLimit, long allowLosses,
                                    long nPeriods, unsigned long flags) {
   double **particle = NULL;
+  double **trackingParticle = NULL;
   double *history = NULL, *x, *xp, *y, *yp;
   double CSave[6], p;
   unsigned char *seen = NULL;
+  long *prepassSurvived = NULL;
   long i, ip, id, nActive, nValid;
+  long fusedPrepass = 0;
 
   if (!tune || !beamline || !run || !valid || particles <= 0 || turns <= 1)
     return 0;
@@ -4328,14 +4334,51 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
 
   p = run->p_central;
   nActive = particles;
+#if defined(HAVE_GPU) && !USE_MPI
+  if (!(flags & CTFT_USE_MATRIX) && allowLosses && nPeriods == 1) {
+    long prepassCount = 0;
+
+    prepassSurvived = (long *)calloc(
+      (size_t)particles, sizeof(*prepassSurvived));
+    if (!prepassSurvived)
+      bombElegant((char *)"memory allocation failure for fused tune "
+                  "prepass status", NULL);
+    fusedPrepass = gpu_batched_tune_loss_prepass(
+      beamline, p, particle[0], particles, totalPropertiesPerParticle,
+      turns, turnOffset, prepassSurvived, &prepassCount);
+    if (fusedPrepass) {
+      trackingParticle = (double **)calloc(
+        (size_t)(prepassCount > 0 ? prepassCount : 1),
+        sizeof(*trackingParticle));
+      if (!trackingParticle)
+        bombElegant((char *)"memory allocation failure for fused tune "
+                    "repair rows", NULL);
+      for (ip = nActive = 0; ip < particles; ip++) {
+        if (prepassSurvived[ip])
+          trackingParticle[nActive++] = particle[ip];
+        else {
+          valid[ip] = 0;
+          if (survived)
+            survived[ip] = 0;
+        }
+      }
+      if (nActive != prepassCount)
+        bombElegant((char *)"inconsistent fused tune prepass survivor "
+                    "count", NULL);
+    }
+  }
+#endif
+  if (!trackingParticle)
+    trackingParticle = particle;
   for (i = 1; i < turns && nActive > 0; i++) {
     if (flags & CTFT_USE_MATRIX) {
       long period;
       for (period = 0; period < nPeriods; period++)
-        track_particles(particle, M, particle, nActive);
+        track_particles(trackingParticle, M, trackingParticle, nActive);
     } else {
       nActive = do_tracking(
-        NULL, particle, nActive, NULL, beamline, &p, (double **)NULL,
+        NULL, trackingParticle, nActive, NULL, beamline, &p,
+        (double **)NULL,
         (BEAM_SUMS **)NULL, (long *)NULL, (TRAJECTORY *)NULL, run, 0,
         TEST_PARTICLES + (allowLosses ? TEST_PARTICLE_LOSSES : 0) +
           TIME_DEPENDENCE_OFF,
@@ -4343,15 +4386,15 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
     }
     memset(seen, 0, particles * sizeof(*seen));
     for (ip = 0; ip < nActive; ip++) {
-      id = (long)particle[ip][particleIDIndex] - 1;
+      id = (long)trackingParticle[ip][particleIDIndex] - 1;
       if (id < 0 || id >= particles || seen[id])
         bombElegant((char *)"invalid or duplicate particle ID in batched "
                     "tune tracking", NULL);
       seen[id] = 1;
-      x[id * turns + i] = particle[ip][0];
-      xp[id * turns + i] = particle[ip][1];
-      y[id * turns + i] = particle[ip][2];
-      yp[id * turns + i] = particle[ip][3];
+      x[id * turns + i] = trackingParticle[ip][0];
+      xp[id * turns + i] = trackingParticle[ip][1];
+      y[id * turns + i] = trackingParticle[ip][2];
+      yp[id * turns + i] = trackingParticle[ip][3];
     }
     for (id = 0; id < particles; id++)
       if (valid[id] && !seen[id]) {
@@ -4363,9 +4406,10 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
 
   if (endingCoord) {
     for (ip = 0; ip < nActive; ip++) {
-      id = (long)particle[ip][particleIDIndex] - 1;
+      id = (long)trackingParticle[ip][particleIDIndex] - 1;
       if (id >= 0 && id < particles && endingCoord[id])
-        memcpy(endingCoord[id], particle[ip], 6 * sizeof(**endingCoord));
+        memcpy(endingCoord[id], trackingParticle[ip],
+               6 * sizeof(**endingCoord));
     }
   }
 
@@ -4419,6 +4463,9 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
   if (flags & CTFT_USE_MATRIX)
     for (i = 0; i < 6; i++)
       M->C[i] = CSave[i];
+  if (fusedPrepass)
+    free(trackingParticle);
+  free(prepassSurvived);
   free(seen);
   free(history);
   free_czarray_2d((void **)particle, particles,

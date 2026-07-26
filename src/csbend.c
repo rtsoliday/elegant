@@ -184,6 +184,128 @@ static void computeCSBENDFields(double *restrict Fx, double *restrict Fy, const 
   *Fy = sumFy;
 }
 
+#ifdef HAVE_GPU
+typedef struct {
+  CSBEND *csbend;
+  MULT_APERTURE_DATA *apertureData;
+  ELEMENT_LIST *eptr;
+  double Po;
+  double zStart;
+  double rho0;
+  double rhoActual;
+  double e1;
+  double e2;
+  double cosTilt;
+  double sinTilt;
+} CSBEND_OMP_TRACK_DATA;
+
+/*
+ * Deterministic, full-element CSBEND particle tracking for the batched tune
+ * path. Beam-wide setup and misalignment transforms remain in
+ * track_through_csbend(). Losses are flagged here and compacted in original
+ * particle order after the parallel region.
+ */
+static long trackCsbendParticleOmp(double *coord,
+                                   const CSBEND_OMP_TRACK_DATA *data,
+                                   double *dzLost) {
+  CSBEND *csbend = data->csbend;
+  double Qi[MAX_PROPERTIES_PER_PARTICLE];
+  double Qf[MAX_PROPERTIES_PER_PARTICLE];
+  double x = coord[0], xp = coord[1];
+  double y = coord[2], yp = coord[3];
+  double s = coord[4], dp = coord[5];
+  double *singleParticle = coord;
+  long particleLost;
+
+  if (csbend->edgeFlags & BEND_EDGE1_EFFECTS) {
+    Qi[0] = x;
+    Qi[1] = xp;
+    Qi[2] = y;
+    Qi[3] = yp;
+    Qi[4] = 0;
+    Qi[5] = dp;
+    convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
+    curvedDipoleFringe(
+      Qf, Qi, data->rhoActual, -1, csbend->edge_order,
+      csbend->b[1] / data->rho0, data->e1,
+      csbend->fringeInt[csbend->e1Index], csbend->edgeFlip);
+    convertFromDipoleCanonicalCoordinates(Qf, csbend->expandHamiltonian);
+    x = Qf[0];
+    xp = Qf[1];
+    y = Qf[2];
+    yp = Qf[3];
+    s += Qf[4];
+    dp = Qf[5];
+  }
+
+  Qi[0] = x;
+  Qi[1] = xp;
+  Qi[2] = y;
+  Qi[3] = yp;
+  Qi[4] = 0;
+  Qi[5] = dp;
+  convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
+  if (csbend->expandHamiltonian)
+    particleLost = !integrate_csbend_ordn_expanded(
+      Qf, Qi, NULL, csbend->length, csbend->nSlices, -1, data->rho0,
+      data->Po, dzLost, data->apertureData, csbend->integration_order,
+      data->eptr);
+  else
+    particleLost = !integrate_csbend_ordn(
+      Qf, Qi, NULL, NULL, csbend->length, csbend->nSlices, -1,
+      data->rho0, data->Po, dzLost, data->apertureData,
+      csbend->integration_order, data->eptr);
+
+  if (csbend->fseCorrection == 1)
+    Qf[4] -= csbend->fseCorrectionPathError;
+  convertFromDipoleCanonicalCoordinates(Qf, csbend->expandHamiltonian);
+  if (particleLost) {
+    memcpy(coord, Qf, sizeof(*coord) * 6);
+    convertFromCSBendCoords(
+      &singleParticle, 1, data->rho0, data->cosTilt, data->sinTilt, 0);
+    coord[4] = data->zStart + *dzLost;
+    coord[5] = data->Po * (1 + coord[5]);
+    return 0;
+  }
+
+  s += Qf[4];
+  x = Qf[0];
+  xp = Qf[1];
+  y = Qf[2];
+  yp = Qf[3];
+  dp = Qf[5];
+
+  if (csbend->edgeFlags & BEND_EDGE2_EFFECTS) {
+    Qi[0] = x;
+    Qi[1] = xp;
+    Qi[2] = y;
+    Qi[3] = yp;
+    Qi[4] = 0;
+    Qi[5] = dp;
+    convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
+    curvedDipoleFringe(
+      Qf, Qi, data->rhoActual, 1, csbend->edge_order,
+      csbend->b[1] / data->rho0, data->e2,
+      csbend->fringeInt[csbend->e2Index], csbend->edgeFlip);
+    convertFromDipoleCanonicalCoordinates(Qf, csbend->expandHamiltonian);
+    x = Qf[0];
+    xp = Qf[1];
+    y = Qf[2];
+    yp = Qf[3];
+    s += Qf[4];
+    dp = Qf[5];
+  }
+
+  coord[0] = x;
+  coord[1] = xp;
+  coord[2] = y;
+  coord[3] = yp;
+  coord[4] = s;
+  coord[5] = dp;
+  return 1;
+}
+#endif
+
 
 void computeCSBENDFieldCoefficients(double *b, double *c,
                                     double h1, const long nonlinear, long expansionOrder) {
@@ -1154,6 +1276,53 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
   if (sigmaDelta2)
     *sigmaDelta2 = 0;
 
+#ifdef HAVE_GPU
+  if (gpuOmpTrackingEnabled(n_part) && !accepted &&
+      globalLossCoordOffset <= 0 && !sigmaDelta2 && !spinCoordOffset &&
+      !csbend->synch_rad && !csbend->isr &&
+      !csbend->distributionBasedRadiation &&
+      (!csbend->photonOutputFile || !csbend->photonOutputFile[0]) &&
+      !csbend->referenceCorrection && refTrajectoryMode == 0 &&
+      iSlice < 0 && csbend->malignMethod != 0 &&
+      (!(csbend->edgeFlags & BEND_EDGE1_EFFECTS) ||
+       csbend->edge_effects[csbend->e1Index] == 5) &&
+      (!(csbend->edgeFlags & BEND_EDGE2_EFFECTS) ||
+       csbend->edge_effects[csbend->e2Index] == 5)) {
+    CSBEND_OMP_TRACK_DATA ompData;
+    GPU_OMP_TRACKING_WORKSPACE *ompWorkspace;
+    long ompParticles = n_part;
+    long ompThreads = gpuGetOmpTrackingThreads();
+
+    ompWorkspace = gpuGetOmpTrackingWorkspace(ompParticles);
+    memset(ompWorkspace->survived, 0,
+           ompParticles * sizeof(*ompWorkspace->survived));
+    ompData.csbend = csbend;
+    ompData.apertureData = &apertureData;
+    ompData.eptr = eptr;
+    ompData.Po = Po;
+    ompData.zStart = z_start;
+    ompData.rho0 = rho0;
+    ompData.rhoActual = rho_actual;
+    ompData.e1 = e1;
+    ompData.e2 = e2;
+    ompData.cosTilt = cos_ttilt;
+    ompData.sinTilt = sin_ttilt;
+#  if defined(_OPENMP)
+#    pragma omp parallel for num_threads(ompThreads) schedule(static)
+#  endif
+    for (i_part = 0; i_part < ompParticles; i_part++) {
+      double localDzLost = 0;
+      ompWorkspace->survived[i_part] =
+        trackCsbendParticleOmp(
+          part[i_part], &ompData, &localDzLost) ? 1 : 0;
+      ompWorkspace->lossOffset[i_part] = localDzLost;
+    }
+    i_top = gpuStableCompactParticles(
+              part, ompParticles, ompWorkspace->survived) - 1;
+    goto csbend_particle_loop_done;
+  }
+#endif
+
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!part) {
       printf("error: null particle array found (working on particle %ld) (track_through_csbend)\n", i_part);
@@ -1520,6 +1689,9 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
     }
   }
 
+#ifdef HAVE_GPU
+csbend_particle_loop_done:
+#endif
   if (iSlice < 0 || iSlice == (csbend->nSlices - 1)) {
     if (csbend->malignMethod != 0)
       offsetParticlesForMisalignment(csbend->malignMethod, part, n_part,

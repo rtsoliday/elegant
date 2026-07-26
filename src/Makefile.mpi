@@ -249,7 +249,7 @@ ifneq ($(CUDA_REQUESTED),)
     endif
   endif
   CUDA_HOME ?= $(patsubst %/bin/nvcc,%,$(NVCC))
-  NVCC_OPT ?= -O0
+  NVCC_OPT ?= -O3
   OBJ_DIR := $(OBJ_DIR).gpu.mpi
   BIN_DIR := $(BIN_DIR)-gpu
   ifeq ($(GPU_VERIFY),1)
@@ -261,7 +261,7 @@ ifneq ($(CUDA_REQUESTED),)
   endif
   CFLAGS += $(OG_OPT_FLAG) -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
   CCFLAGS += $(OG_OPT_FLAG) -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
-  NVCCFLAGS += $(NVCC_OPT) -g -arch=$(CUDA_ARCH) --fmad=false -Xcompiler -fPIC -I$(SDDS_REPO)/include -I$(SDDS_REPO)/pgapack -I$(OBJ_DIR) -Igpu -I$(CUDA_HOME)/include -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DUSE_MPI=1 -DSDDS_MPI_IO=1 -DWL=32 -DSVN_VERSION=\"$(SVN_VERSION)\" -DHAVE_GPU=1
+  NVCCFLAGS += $(NVCC_OPT) -g -arch=$(CUDA_ARCH) --fmad=false --prec-div=true --prec-sqrt=true -Xcompiler -fPIC -I$(SDDS_REPO)/include -I$(SDDS_REPO)/pgapack -I$(OBJ_DIR) -Igpu -I$(CUDA_HOME)/include -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DUSE_MPI=1 -DSDDS_MPI_IO=1 -DWL=32 -DSVN_VERSION=\"$(SVN_VERSION)\" -DHAVE_GPU=1
   NVCCDEPFLAGS ?= $(DEPFLAGS)
   LDFLAGS += -L$(CUDA_HOME)/lib64 -Wl,-rpath,$(CUDA_HOME)/lib64
   PROD_SYS_LIBS += -Wl,-Bdynamic -lcudart -lcufft

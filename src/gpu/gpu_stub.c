@@ -34,6 +34,7 @@
 #pragma weak getFiducializationPidRange
 #pragma weak determineOpenSideCode
 #pragma weak interpolateApertureData
+#pragma weak readLGBendApertureData
 #pragma weak convertLocalCoordinatesToGlobal
 #pragma weak multipole_tracking
 #pragma weak multipole_tracking2
@@ -84,6 +85,7 @@ extern double **Fy_xy;
 extern long expansionOrder1;
 extern long hasSkew;
 extern long hasNormal;
+extern void readLGBendApertureData(LGBEND *lgbend);
 extern void set_up_wake(WAKE *wakeData, RUN *run, long pass, long particles,
                         CHARGE *charge);
 extern void set_up_trwake(TRWAKE *wakeData, RUN *run, long pass,
@@ -228,6 +230,11 @@ extern int gpuCudaBatchedApertureSearch(
   double *xLimit, double *yLimit, double *xLost, double *yLost,
   double *sLost, long *lossPass, long *lossElement,
   long *originStable, float *milliseconds);
+extern int gpuCudaTuneProgramTrack(
+  const GPU_TUNE_PROGRAM *program, const double *coordinate, long particles,
+  int stride, long turns, long turnOffset, double *endingCoordinate,
+  GPU_TUNE_PARTICLE_STATUS *particleStatus, double *history,
+  float *milliseconds, long *launches, long *transfers);
 extern int gpuCudaSetCentralMomentum(void *coord, long nParticles, int stride,
                                      double oldP, double newP, float *milliseconds);
 extern int gpuCudaMatchEnergy(void *coord, long nParticles, int stride,
@@ -502,7 +509,7 @@ extern int gpuCudaMultipoleTrackStableCompact(void *coord, void *scratchCoord,
 extern int gpuCudaExactCorrectorTrackStableCompact(
   void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
   const GPU_EXACT_CORRECTOR_DATA *corrector, long *remaining,
-  float *milliseconds);
+  long *usedScratch, float *milliseconds);
 extern int gpuCudaTaperApertureTrackStableCompact(
   void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
   const GPU_TAPER_APERTURE_DATA *taper, long *remaining,
@@ -523,9 +530,19 @@ extern int gpuCudaCsbendTrackStableCompact(void *coord, void *scratchCoord,
 extern int gpuCudaCcbendTrackChecked(void *coord, long nParticles, int stride,
                                      const GPU_CCBEND_DATA *ccbend,
                                      long *lostCount, float *milliseconds);
+extern int gpuCudaCcbendTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_CCBEND_DATA *ccbend, long *remaining, float *milliseconds);
 extern int gpuCudaLgbendTrackChecked(void *coord, long nParticles, int stride,
                                      const GPU_LGBEND_DATA *lgbend,
+                                     const GPU_LGBEND_LOCAL_APERTURE_DATA
+                                       *localAperture,
                                      long *lostCount, float *milliseconds);
+extern int gpuCudaLgbendTrackStableCompact(
+  void *coord, void *scratchCoord, void *prefix, long nParticles, int stride,
+  const GPU_LGBEND_DATA *lgbend,
+  const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
+  long *remaining, float *milliseconds);
 extern int gpuCudaCsrCsbendBodySliceChecked(void *coord, long nParticles,
                                             int stride,
                                             const GPU_CSBEND_DATA *csbend,
@@ -933,6 +950,25 @@ static long gpuPackMatrix(GPU_MATRIX_DATA *packed, VMATRIX *M);
 static long gpuMatrixSupported(VMATRIX *M);
 static long gpuPackMultipoleTracking(GPU_MULTIPOLE_DATA *data,
                                      ELEMENT_LIST *elem, double Po);
+static long gpuPackExactCorrector(GPU_EXACT_CORRECTOR_DATA *data,
+                                  ELEMENT_LIST *elem, double pCentral,
+                                  double zStart);
+static long gpuPackMaxamp(GPU_APERTURE_LIMIT_DATA *data, MAXAMP *maxamp,
+                          double cosTilt, double sinTilt);
+static long gpuPackTaperAperture(GPU_TAPER_APERTURE_DATA *data,
+                                 ELEMENT_LIST *element, double pCentral,
+                                 double zStart);
+static long gpuPackSpeedbump(GPU_SPEEDBUMP_DATA *data,
+                             ELEMENT_LIST *element, double pCentral,
+                             double zStart);
+static long gpuPackCsbendTracking(GPU_CSBEND_DATA *data, CSBEND *csbend,
+                                  double Po);
+static long gpuPackCcbendTracking(GPU_CCBEND_DATA *data, CCBEND *ccbend,
+                                  double Po);
+static long gpuPackLgbendTracking(
+  GPU_LGBEND_DATA *data,
+  GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
+  LGBEND *lgbend, double Po);
 static void gpuReleaseKickMapCache(void);
 static void gpuEnsureRfcwKickScratch(long nParticles);
 static void gpuEnsureLscScratch(long bins);
@@ -2318,8 +2354,16 @@ static long gpuLgbendCommonSupported(LGBEND *lgbend) {
 
   if (!lgbend || !gpuEnableLgbend || spinCoordOffset || gpuBase.backtrack)
     return 0;
+  if (gpuStringSet(lgbend->apertureDataFile) &&
+      !lgbend->localApertureData) {
+    if (!readLGBendApertureData)
+      return 0;
+    readLGBendApertureData(lgbend);
+  }
   if (!lgbend->initialized || lgbend->nSegments <= 0 ||
       lgbend->nSegments > GPU_LGBEND_MAX_SEGMENTS || lgbend->nSlices <= 0 ||
+      (lgbend->localApertureData &&
+       lgbend->nSlices > GPU_LGBEND_MAX_LOCAL_APERTURE_SLICES) ||
       (lgbend->integration_order != 2 &&
        lgbend->integration_order != 4 &&
        lgbend->integration_order != 6) ||
@@ -2331,8 +2375,7 @@ static long gpuLgbendCommonSupported(LGBEND *lgbend) {
   if (lgbend->tilt || lgbend->dx || lgbend->dy || lgbend->dz ||
       lgbend->eyaw || lgbend->epitch || lgbend->etilt)
     return 0;
-  if (gpuStringSet(lgbend->apertureDataFile) ||
-      gpuStringSet(lgbend->centroidOutputFile) || lgbend->localApertureData ||
+  if (gpuStringSet(lgbend->centroidOutputFile) ||
       lgbend->centroidsRequested || lgbend->SDDScen)
     return 0;
   if (!isfinite(lgbend->predrift) || !isfinite(lgbend->postdrift) ||
@@ -4198,6 +4241,72 @@ static long gpuCsbendStableCompact(GPU_CSBEND_DATA *data, long nParticles,
   return remaining;
 }
 
+static long gpuCcbendStableCompact(GPU_CCBEND_DATA *data, long nParticles,
+                                   double **accepted, const char *name) {
+  long remaining = nParticles;
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0)
+    return nParticles;
+  gpuEnsureApertureScratch(nParticles);
+  status = gpuCudaCcbendTrackStableCompact(
+    gpuBase.deviceCoord, gpuApertureScratch.coord, gpuApertureScratch.prefix,
+    nParticles, (int)gpuBase.deviceStride, data, &remaining, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus(name ? name : "CCBEND stable magnet loss compaction",
+                   status);
+  gpuRecordMagnetKernel(milliseconds);
+  if (accepted) {
+    if (!gpuStablePartitionAcceptedOnDevice(
+          accepted, nParticles, remaining,
+          "CCBEND CUDA accepted stable compaction")) {
+      gpuCopyAperturePrefixToHost(
+        nParticles, "CCBEND CUDA stable compaction accepted map");
+      gpuStablePartitionAccepted(accepted, nParticles, remaining);
+    }
+  }
+  gpuPromoteApertureScratchCoord();
+  gpuMarkDeviceChanged(remaining);
+  gpuRecordWallSeconds();
+  return remaining;
+}
+
+static long gpuLgbendStableCompact(
+  GPU_LGBEND_DATA *data,
+  GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
+  long nParticles, double **accepted, const char *name) {
+  long remaining = nParticles;
+  float milliseconds = 0;
+  int status;
+
+  if (nParticles <= 0)
+    return nParticles;
+  gpuEnsureApertureScratch(nParticles);
+  status = gpuCudaLgbendTrackStableCompact(
+    gpuBase.deviceCoord, gpuApertureScratch.coord, gpuApertureScratch.prefix,
+    nParticles, (int)gpuBase.deviceStride, data,
+    localAperture && localAperture->present ? localAperture : NULL,
+    &remaining, &milliseconds);
+  if (status != 0)
+    gpuFatalStatus(name ? name : "LGBEND stable magnet loss compaction",
+                   status);
+  gpuRecordMagnetKernel(milliseconds);
+  if (accepted) {
+    if (!gpuStablePartitionAcceptedOnDevice(
+          accepted, nParticles, remaining,
+          "LGBEND CUDA accepted stable compaction")) {
+      gpuCopyAperturePrefixToHost(
+        nParticles, "LGBEND CUDA stable compaction accepted map");
+      gpuStablePartitionAccepted(accepted, nParticles, remaining);
+    }
+  }
+  gpuPromoteApertureScratchCoord();
+  gpuMarkDeviceChanged(remaining);
+  gpuRecordWallSeconds();
+  return remaining;
+}
+
 static long gpuKickMapStableCompact(GPU_KICKMAP_DATA *data, long nParticles,
                                     double **accepted, double zStart,
                                     double pRef, const double *xpFactor,
@@ -5040,6 +5149,10 @@ long gpuOmpTrackingEnabled(long particles) {
   return gpuOmpTrackingScope && gpuOmpTrackingThreads > 1 && particles >= 64;
 }
 
+long gpuOmpTrackingScopeActive(void) {
+  return gpuOmpTrackingScope;
+}
+
 GPU_OMP_TRACKING_WORKSPACE *gpuGetOmpTrackingWorkspace(long particles) {
   void *memory;
 
@@ -5703,6 +5816,441 @@ long gpu_batched_tune_beamline_supported(void *beamline0) {
 #endif
 }
 
+static void gpuTuneProgramRelease(GPU_TUNE_PROGRAM *program) {
+  if (!program)
+    return;
+  free(program->op);
+  free(program->drift);
+  free(program->matrix);
+  free(program->multipole);
+  free(program->exactCorrector);
+  free(program->csbend);
+  free(program->ccbend);
+  free(program->lgbend);
+  free(program->lgbendLocalAperture);
+  free(program->collimator);
+  free(program->scraper);
+  free(program->taperAperture);
+  free(program->speedbump);
+  free(program->postAperture);
+  memset(program, 0, sizeof(*program));
+}
+
+static long gpuTuneProgramCountElement(GPU_TUNE_PROGRAM *program,
+                                       ELEMENT_LIST *eptr) {
+  if (!program || !eptr || eptr->ignore)
+    return 1;
+  switch (eptr->type) {
+  case T_MARK:
+  case T_RECIRC:
+  case T_HMON:
+  case T_VMON:
+  case T_MONI:
+    return 1;
+  case T_EDRIFT:
+  case T_RFCA:
+    program->driftCount++;
+    break;
+  case T_DRIF:
+  case T_HCOR:
+  case T_VCOR:
+    program->matrixCount++;
+    break;
+  case T_MULT:
+  case T_KQUAD:
+  case T_KSEXT:
+  case T_KOCT:
+  case T_DQCOR:
+    program->multipoleCount++;
+    break;
+  case T_EHCOR:
+  case T_EVCOR:
+  case T_EHVCOR:
+    program->exactCorrectorCount++;
+    break;
+  case T_CSBEND:
+    program->csbendCount++;
+    break;
+  case T_CCBEND:
+    program->ccbendCount++;
+    break;
+  case T_LGBEND:
+    program->lgbendCount++;
+    program->lgbendLocalApertureCount++;
+    break;
+  case T_RCOL:
+  case T_ECOL:
+    program->collimatorCount++;
+    break;
+  case T_SCRAPER:
+    program->scraperCount++;
+    break;
+  case T_TAPERAPC:
+  case T_TAPERAPR:
+    program->taperApertureCount++;
+    break;
+  case T_SPEEDBUMP:
+    program->speedbumpCount++;
+    break;
+  case T_MAXAMP:
+    break;
+  default:
+    return 0;
+  }
+  program->opCount++;
+  return 1;
+}
+
+static long gpuTuneProgramAllocate(GPU_TUNE_PROGRAM *program) {
+#define GPU_TUNE_ALLOC(member, count)                                      \
+  do {                                                                     \
+    if ((count) > 0) {                                                     \
+      program->member = calloc((size_t)(count), sizeof(*program->member)); \
+      if (!program->member)                                                \
+        goto failed;                                                       \
+    }                                                                      \
+  } while (0)
+
+  if (!program || program->opCount <= 0)
+    return 0;
+  GPU_TUNE_ALLOC(op, program->opCount);
+  GPU_TUNE_ALLOC(drift, program->driftCount);
+  GPU_TUNE_ALLOC(matrix, program->matrixCount);
+  GPU_TUNE_ALLOC(multipole, program->multipoleCount);
+  GPU_TUNE_ALLOC(exactCorrector, program->exactCorrectorCount);
+  GPU_TUNE_ALLOC(csbend, program->csbendCount);
+  GPU_TUNE_ALLOC(ccbend, program->ccbendCount);
+  GPU_TUNE_ALLOC(lgbend, program->lgbendCount);
+  GPU_TUNE_ALLOC(lgbendLocalAperture,
+                 program->lgbendLocalApertureCount);
+  GPU_TUNE_ALLOC(collimator, program->collimatorCount);
+  GPU_TUNE_ALLOC(scraper, program->scraperCount);
+  GPU_TUNE_ALLOC(taperAperture, program->taperApertureCount);
+  GPU_TUNE_ALLOC(speedbump, program->speedbumpCount);
+  program->postApertureCount = program->opCount;
+  GPU_TUNE_ALLOC(postAperture, program->postApertureCount);
+#undef GPU_TUNE_ALLOC
+  return 1;
+
+failed:
+#undef GPU_TUNE_ALLOC
+  gpuTuneProgramRelease(program);
+  return 0;
+}
+
+static long gpuTuneProgramPackCollimator(GPU_TUNE_COLLIMATOR_DATA *data,
+                                         ELEMENT_LIST *eptr) {
+  if (!data || !eptr || !eptr->p_elem)
+    return 0;
+  memset(data, 0, sizeof(*data));
+  if (eptr->type == T_RCOL) {
+    RCOL *rcol = (RCOL *)eptr->p_elem;
+    if (rcol->invert ||
+        ((rcol->openSide && *rcol->openSide) && !determineOpenSideCode))
+      return 0;
+    data->length = rcol->length;
+    data->xMax = rcol->x_max;
+    data->yMax = rcol->y_max;
+    data->xCenter = rcol->dx;
+    data->yCenter = rcol->dy;
+    data->openCode =
+      determineOpenSideCode ? determineOpenSideCode(rcol->openSide) : 0;
+  } else if (eptr->type == T_ECOL) {
+    ECOL *ecol = (ECOL *)eptr->p_elem;
+    long yExponent =
+      ecol->yExponent ? ecol->yExponent : ecol->exponent;
+    if (ecol->invert || ecol->x_max <= 0 || ecol->y_max <= 0 ||
+        ecol->exponent < 2 || (ecol->exponent & 1) ||
+        yExponent < 2 || (yExponent & 1) ||
+        ((ecol->openSide && *ecol->openSide) && !determineOpenSideCode))
+      return 0;
+    data->length = ecol->length;
+    data->xMax = ecol->x_max;
+    data->yMax = ecol->y_max;
+    data->xCenter = ecol->dx;
+    data->yCenter = ecol->dy;
+    data->xExponent = ecol->exponent;
+    data->yExponent = yExponent;
+    data->openCode =
+      determineOpenSideCode ? determineOpenSideCode(ecol->openSide) : 0;
+  } else {
+    return 0;
+  }
+  return data->length >= 0 && isfinite(data->length) &&
+         isfinite(data->xMax) && isfinite(data->yMax) &&
+         isfinite(data->xCenter) && isfinite(data->yCenter);
+}
+
+static long gpuTuneProgramPackScraper(GPU_TUNE_SCRAPER_DATA *data,
+                                      ELEMENT_LIST *eptr) {
+  SCRAPER *scraper;
+  unsigned long direction;
+
+  if (!data || !eptr || eptr->type != T_SCRAPER || !eptr->p_elem)
+    return 0;
+  scraper = (SCRAPER *)eptr->p_elem;
+  if (scraper->length < 0 ||
+      (scraper->length && (scraper->Xo || scraper->Z)))
+    return 0;
+  direction =
+    interpretScraperDirection(scraper->insert_from, scraper->oldDirection);
+  memset(data, 0, sizeof(*data));
+  data->length = scraper->length;
+  data->position = scraper->position;
+  if (direction & DIRECTION_X) {
+    data->plane = 0;
+    data->center = scraper->dx;
+    if (direction & DIRECTION_PLUS_X)
+      data->sideSign = 1;
+    if (direction & DIRECTION_MINUS_X) {
+      if (data->sideSign)
+        data->secondSideSign = -1;
+      else
+        data->sideSign = -1;
+    }
+  } else if (direction & DIRECTION_Y) {
+    data->plane = 2;
+    data->center = scraper->dy;
+    if (direction & DIRECTION_PLUS_Y)
+      data->sideSign = 1;
+    if (direction & DIRECTION_MINUS_Y) {
+      if (data->sideSign)
+        data->secondSideSign = -1;
+      else
+        data->sideSign = -1;
+    }
+  } else {
+    return scraper->length == 0;
+  }
+  if (data->secondSideSign && data->position <= 0)
+    return 0;
+  return isfinite(data->length) && isfinite(data->center) &&
+         isfinite(data->position);
+}
+
+static void gpuTuneProgramSetStickyFromTaper(MAXAMP *sticky,
+                                             ELEMENT_LIST *eptr) {
+  memset(sticky, 0, sizeof(*sticky));
+  if (eptr->type == T_TAPERAPC) {
+    TAPERAPC *taper = (TAPERAPC *)eptr->p_elem;
+    sticky->x_max = sticky->y_max = taper->r[taper->e2Index];
+    sticky->elliptical = 1;
+    sticky->exponent = sticky->yExponent = 2;
+  } else {
+    TAPERAPR *taper = (TAPERAPR *)eptr->p_elem;
+    sticky->x_max = taper->xmax[taper->e2Index];
+    sticky->y_max = taper->ymax[taper->e2Index];
+  }
+}
+
+static long gpuTuneProgramBuild(GPU_TUNE_PROGRAM *program,
+                                LINE_LIST *beamline, double pCentral) {
+  ELEMENT_LIST *eptr;
+  MAXAMP stickyBuffer, *sticky = NULL;
+  long opIndex = 0, driftIndex = 0, matrixIndex = 0;
+  long multipoleIndex = 0, exactCorrectorIndex = 0, csbendIndex = 0;
+  long ccbendIndex = 0, lgbendIndex = 0, collimatorIndex = 0;
+  long scraperIndex = 0, taperIndex = 0, speedbumpIndex = 0;
+  long elementIndex = 0;
+
+  if (!program || !beamline)
+    return 0;
+  memset(program, 0, sizeof(*program));
+  for (eptr = beamline->elem; eptr; eptr = eptr->succ)
+    if (!gpuTuneProgramCountElement(program, eptr))
+      goto unsupported;
+  if (!gpuTuneProgramAllocate(program))
+    return 0;
+
+  for (eptr = beamline->elem; eptr; eptr = eptr->succ, elementIndex++) {
+    GPU_TUNE_PROGRAM_OP *op;
+    unsigned long classFlags;
+
+    if (eptr->ignore)
+      continue;
+    switch (eptr->type) {
+    case T_MARK:
+    case T_RECIRC:
+    case T_HMON:
+    case T_VMON:
+    case T_MONI:
+      continue;
+    default:
+      break;
+    }
+    if (opIndex >= program->opCount)
+      goto unsupported;
+    op = program->op + opIndex;
+    op->dataIndex = -1;
+    op->auxiliaryIndex = -1;
+    op->postApertureIndex = -1;
+    op->elementIndex = elementIndex;
+
+    switch (eptr->type) {
+    case T_EDRIFT:
+      op->opcode = GPU_TUNE_OP_EXACT_DRIFT;
+      op->dataIndex = driftIndex;
+      program->drift[driftIndex++].length =
+        ((EDRIFT *)eptr->p_elem)->length;
+      break;
+    case T_RFCA: {
+      RFCA *rfca = (RFCA *)eptr->p_elem;
+      if (!rfca || rfca->volt != 0 || rfca->change_p0 ||
+          rfca->change_t || rfca->Q || rfca->backtrack)
+        goto unsupported;
+      op->opcode = rfca->length ? GPU_TUNE_OP_EXACT_DRIFT :
+                                 GPU_TUNE_OP_NOP;
+      op->dataIndex = driftIndex;
+      program->drift[driftIndex++].length = rfca->length;
+      break;
+    }
+    case T_DRIF:
+    case T_HCOR:
+    case T_VCOR:
+      if (!eptr->matrix ||
+          !gpuPackMatrix(program->matrix + matrixIndex, eptr->matrix))
+        goto unsupported;
+      op->opcode = GPU_TUNE_OP_MATRIX;
+      op->dataIndex = matrixIndex++;
+      break;
+    case T_MULT:
+    case T_KQUAD:
+    case T_KSEXT:
+    case T_KOCT:
+    case T_DQCOR:
+      if (!gpuPackMultipoleTracking(
+            program->multipole + multipoleIndex, eptr, pCentral) ||
+          !gpuPackMaxamp(
+            &program->multipole[multipoleIndex].aperture, sticky,
+            program->multipole[multipoleIndex].cosTilt,
+            program->multipole[multipoleIndex].sinTilt))
+        goto unsupported;
+      op->opcode = GPU_TUNE_OP_MULTIPOLE;
+      op->dataIndex = multipoleIndex++;
+      break;
+    case T_EHCOR:
+    case T_EVCOR:
+    case T_EHVCOR:
+      if (!gpuPackExactCorrector(
+            program->exactCorrector + exactCorrectorIndex, eptr, pCentral,
+            eptr->beg_pos))
+        goto unsupported;
+      op->opcode = GPU_TUNE_OP_EXACT_CORRECTOR;
+      op->dataIndex = exactCorrectorIndex++;
+      break;
+    case T_CSBEND:
+      if (!gpuPackCsbendTracking(
+            program->csbend + csbendIndex, (CSBEND *)eptr->p_elem,
+            pCentral) ||
+          !gpuPackMaxamp(&program->csbend[csbendIndex].aperture, sticky,
+                         program->csbend[csbendIndex].cosTilt,
+                         program->csbend[csbendIndex].sinTilt))
+        goto unsupported;
+      program->csbend[csbendIndex].lossZStart = eptr->beg_pos;
+      op->opcode = GPU_TUNE_OP_CSBEND;
+      op->dataIndex = csbendIndex++;
+      break;
+    case T_CCBEND:
+      if (!gpuPackCcbendTracking(
+            program->ccbend + ccbendIndex, (CCBEND *)eptr->p_elem,
+            pCentral) ||
+          !gpuPackMaxamp(&program->ccbend[ccbendIndex].aperture, sticky,
+                         program->ccbend[ccbendIndex].cosTilt,
+                         program->ccbend[ccbendIndex].sinTilt))
+        goto unsupported;
+      op->opcode = GPU_TUNE_OP_CCBEND;
+      op->dataIndex = ccbendIndex++;
+      break;
+    case T_LGBEND:
+      if (!gpuPackLgbendTracking(
+            program->lgbend + lgbendIndex,
+            program->lgbendLocalAperture + lgbendIndex,
+            (LGBEND *)eptr->p_elem, pCentral) ||
+          !gpuPackMaxamp(&program->lgbend[lgbendIndex].aperture, sticky,
+                         1, 0))
+        goto unsupported;
+      op->opcode = GPU_TUNE_OP_LGBEND;
+      op->dataIndex = lgbendIndex;
+      op->auxiliaryIndex = lgbendIndex++;
+      break;
+    case T_RCOL:
+    case T_ECOL:
+      if (!gpuTuneProgramPackCollimator(
+            program->collimator + collimatorIndex, eptr))
+        goto unsupported;
+      op->opcode = eptr->type == T_RCOL ? GPU_TUNE_OP_RCOL :
+                                         GPU_TUNE_OP_ECOL;
+      op->dataIndex = collimatorIndex++;
+      break;
+    case T_SCRAPER:
+      if (!gpuTuneProgramPackScraper(
+            program->scraper + scraperIndex, eptr))
+        goto unsupported;
+      op->opcode = GPU_TUNE_OP_SCRAPER;
+      op->dataIndex = scraperIndex++;
+      break;
+    case T_TAPERAPC:
+    case T_TAPERAPR:
+      if (!gpuPackTaperAperture(
+            program->taperAperture + taperIndex, eptr, pCentral,
+            eptr->beg_pos))
+        goto unsupported;
+      op->opcode = GPU_TUNE_OP_TAPER_APERTURE;
+      op->dataIndex = taperIndex++;
+      if ((eptr->type == T_TAPERAPC &&
+           ((TAPERAPC *)eptr->p_elem)->sticky) ||
+          (eptr->type == T_TAPERAPR &&
+           ((TAPERAPR *)eptr->p_elem)->sticky)) {
+        gpuTuneProgramSetStickyFromTaper(&stickyBuffer, eptr);
+        sticky = &stickyBuffer;
+      }
+      break;
+    case T_SPEEDBUMP:
+      if (!gpuPackSpeedbump(
+            program->speedbump + speedbumpIndex, eptr, pCentral,
+            eptr->beg_pos))
+        goto unsupported;
+      op->opcode = GPU_TUNE_OP_SPEEDBUMP;
+      op->dataIndex = speedbumpIndex++;
+      break;
+    case T_MAXAMP:
+      sticky = (MAXAMP *)eptr->p_elem;
+      op->opcode = GPU_TUNE_OP_NOP;
+      break;
+    default:
+      goto unsupported;
+    }
+
+    classFlags = entity_description[eptr->type].flags;
+    if (!(classFlags & NO_APERTURE) && sticky) {
+      op->postApertureIndex = opIndex;
+      if (!gpuPackMaxamp(
+            program->postAperture + opIndex, sticky, 1, 0))
+        goto unsupported;
+    }
+    opIndex++;
+  }
+  if (opIndex != program->opCount)
+    goto unsupported;
+  /*
+   * Loss parity is certified for this deliberately narrow deterministic
+   * subset.  Native histories remain disabled until the ULP diagnostic
+   * certifies every opcode; hybrid output therefore remains CPU-authored.
+   */
+  program->lossCertified = 1;
+  program->historyCertified = 0;
+  return 1;
+
+unsupported:
+  if (gpuVerbose && eptr)
+    fprintf(stderr,
+            "elegant CUDA: fused tune program rejected %s %s#%ld.\n",
+            gpuElementTypeName(eptr), eptr->name ? eptr->name : "?",
+            eptr->occurence);
+  gpuTuneProgramRelease(program);
+  return 0;
+}
+
 long gpu_batched_frequency_map_beamline_supported(void *beamline0) {
 #if USE_MPI
   (void)beamline0;
@@ -5739,11 +6287,15 @@ long gpu_batched_frequency_map_beamline_supported(void *beamline0) {
     if (eptr->type == T_LGBEND && eptr->p_elem) {
       LGBEND *lgbend = (LGBEND *)eptr->p_elem;
 
-      /* An LGBEND aperture-data file is evaluated by the deterministic CPU
-       * implementation.  Keep the frequency-map particles batched across
-       * this small CPU island; do_tracking will synchronize the ensemble at
-       * the element and resume CUDA tracking afterward. */
+      /*
+       * LGBEND initialization can be deferred until first tracking.  Admit
+       * the narrow deterministic aperture-data case here; the subsequent
+       * CPU-tracking predicate rechecks the complete CUDA option guard after
+       * loading the table.
+       */
       if (gpuStringSet(lgbend->apertureDataFile) &&
+          lgbend->nSlices > 0 &&
+          lgbend->nSlices <= GPU_LGBEND_MAX_LOCAL_APERTURE_SLICES &&
           !lgbend->isr && !lgbend->distributionBasedRadiation &&
           !gpuStringSet(lgbend->centroidOutputFile) &&
           !lgbend->centroidsRequested && !lgbend->SDDScen)
@@ -5771,45 +6323,159 @@ long gpu_batched_frequency_map_cpu_tracking_required(void *beamline0) {
   return 1;
 #else
   LINE_LIST *beamline = (LINE_LIST *)beamline0;
-  ELEMENT_LIST *eptr;
 
   if (!beamline)
     return 1;
-  for (eptr = beamline->elem; eptr; eptr = eptr->succ) {
-    if (eptr->ignore)
-      continue;
-    if (eptr->type == T_LGBEND && eptr->p_elem &&
-        gpuStringSet(((LGBEND *)eptr->p_elem)->apertureDataFile)) {
-      if (gpuVerbose)
-        fprintf(stderr,
-                "elegant CUDA: loss-sensitive frequency map uses batched "
-                "CPU tracking because of LGBEND aperture data in %s#%ld.\n",
-                eptr->name ? eptr->name : "?", eptr->occurence);
-      return 1;
-    }
-    switch (eptr->type) {
-    case T_APCONTOUR:
-    case T_CLEAN:
-    case T_ECOL:
-    case T_MAXAMP:
-    case T_RCOL:
-    case T_SCRAPER:
-    case T_SPEEDBUMP:
-    case T_TAPERAPC:
-    case T_TAPERAPE:
-    case T_TAPERAPR:
-      if (gpuVerbose)
-        fprintf(stderr,
-                "elegant CUDA: loss-sensitive frequency map uses batched "
-                "CPU tracking because of %s %s#%ld.\n",
-                gpuElementTypeName(eptr), eptr->name ? eptr->name : "?",
-                eptr->occurence);
-      return 1;
-    default:
-      break;
-    }
+  /*
+   * The fused backend is presently loss-certified but not history-certified.
+   * Its loss-only prepass also cost more than it saved on the reduced
+   * frequency-map gates.  Keep ordinary element dispatch suppressed so the
+   * authoritative CPU arithmetic (and -ompThreads, when requested) supplies
+   * the published histories.  GPU_VERIFY still exercises the fused prepass
+   * below as a certification diagnostic.
+  */
+  if (gpuVerbose) {
+#ifdef GPU_VERIFY
+    fprintf(stderr,
+            "elegant CUDA: frequency map selected GPU prepass + OpenMP "
+            "certification backend; published histories remain "
+            "CPU-authored.\n");
+#else
+    fprintf(stderr,
+            "elegant CUDA: frequency map selected CPU/OpenMP backend; "
+            "native GPU histories are not certified and the loss-only "
+            "prepass is diagnostic-only.\n");
+#endif
   }
+  return 1;
+#endif
+}
+
+long gpu_batched_tune_loss_prepass(
+  void *beamline0, double pCentral, const double *coordinate, long particles,
+  long stride, long turns, long turnOffset, long *survived,
+  long *survivorCount) {
+#if USE_MPI
+  (void)beamline0;
+  (void)pCentral;
+  (void)coordinate;
+  (void)particles;
+  (void)stride;
+  (void)turns;
+  (void)turnOffset;
+  (void)survived;
+  (void)survivorCount;
   return 0;
+#else
+  GPU_TUNE_PROGRAM program;
+  GPU_TUNE_PARTICLE_STATUS *status = NULL;
+  double *ending = NULL;
+  float milliseconds = 0;
+  long launches = 0, transfers = 0, count = 0, ip;
+  long lossByOpcode[GPU_TUNE_OP_SPEEDBUMP + 1] = {0};
+  int cudaStatus;
+
+  if (survivorCount)
+    *survivorCount = 0;
+  if (!beamline0 || !coordinate || particles <= 0 || stride < 6 ||
+      turns <= 1 || !survived || !survivorCount ||
+      !gpuEnableBatchedTuneTracking ||
+      particles < gpuBatchedTuneMinParticles ||
+      !gpuBase.initialized || gpuBase.activeDevice < 0)
+    return 0;
+#ifndef GPU_VERIFY
+  /*
+   * Do not charge production frequency maps for a prepass that has not yet
+   * demonstrated a net saving.  This is intentionally independent of the
+   * generic per-element magnet threshold.
+   */
+  return 0;
+#endif
+  memset(&program, 0, sizeof(program));
+  if (!gpuTuneProgramBuild(
+        &program, (LINE_LIST *)beamline0, pCentral) ||
+      !program.lossCertified)
+    return 0;
+  status = (GPU_TUNE_PARTICLE_STATUS *)calloc(
+    (size_t)particles, sizeof(*status));
+  ending = (double *)malloc(
+    (size_t)particles * (size_t)stride * sizeof(*ending));
+  if (!status || !ending) {
+    free(status);
+    free(ending);
+    gpuTuneProgramRelease(&program);
+    bombElegant("memory allocation failure for fused tune prepass", NULL);
+  }
+
+  startGpuTimer();
+  cudaStatus = gpuCudaTuneProgramTrack(
+    &program, coordinate, particles, (int)stride, turns, turnOffset,
+    ending, status, NULL, &milliseconds, &launches, &transfers);
+  if (cudaStatus != 0) {
+    if (gpuBase.requiredMode)
+      gpuFatalStatus("fused tune-program prepass", cudaStatus);
+    if (gpuVerbose)
+      fprintf(stderr,
+              "elegant CUDA: fused tune-program prepass failed (%s); "
+              "using complete CPU/OpenMP fallback.\n",
+              gpuCudaRuntimeGetErrorString(cudaStatus));
+    free(status);
+    free(ending);
+    gpuTuneProgramRelease(&program);
+    return 0;
+  }
+  for (ip = 0; ip < particles; ip++) {
+    long ie;
+    survived[ip] = status[ip].alive ? 1 : 0;
+    count += survived[ip];
+    if (status[ip].alive || status[ip].lossElement < 0)
+      continue;
+    for (ie = 0; ie < program.opCount; ie++)
+      if (program.op[ie].elementIndex == status[ip].lossElement) {
+        if (program.op[ie].opcode >= 0 &&
+            program.op[ie].opcode <= GPU_TUNE_OP_SPEEDBUMP)
+          lossByOpcode[program.op[ie].opcode]++;
+        break;
+      }
+  }
+  *survivorCount = count;
+  gpuRecordHelperKernel(milliseconds);
+  if (gpuVerbose)
+    fprintf(stderr,
+            "elegant CUDA: GPU prepass + OpenMP packed ops=%ld "
+            "(drift=%ld matrix=%ld multipole=%ld exactCorrector=%ld "
+            "CSBEND=%ld CCBEND=%ld LGBEND=%ld collimator=%ld scraper=%ld "
+            "taper=%ld speedbump=%ld), launches=%ld transfers=%ld, "
+            "survivors=%ld/%ld, repair=%ld, GPU=%.6gs.\n",
+            program.opCount, program.driftCount, program.matrixCount,
+            program.multipoleCount, program.exactCorrectorCount,
+            program.csbendCount, program.ccbendCount, program.lgbendCount,
+            program.collimatorCount, program.scraperCount,
+            program.taperApertureCount, program.speedbumpCount,
+            launches, transfers, count, particles, count,
+            milliseconds / 1000.0);
+  if (gpuVerbose)
+    fprintf(stderr,
+            "elegant CUDA: fused prepass losses by opcode: "
+            "drift=%ld matrix=%ld multipole=%ld exactCorrector=%ld "
+            "CSBEND=%ld CCBEND=%ld LGBEND=%ld RCOL=%ld ECOL=%ld "
+            "scraper=%ld taper=%ld speedbump=%ld.\n",
+            lossByOpcode[GPU_TUNE_OP_EXACT_DRIFT],
+            lossByOpcode[GPU_TUNE_OP_MATRIX],
+            lossByOpcode[GPU_TUNE_OP_MULTIPOLE],
+            lossByOpcode[GPU_TUNE_OP_EXACT_CORRECTOR],
+            lossByOpcode[GPU_TUNE_OP_CSBEND],
+            lossByOpcode[GPU_TUNE_OP_CCBEND],
+            lossByOpcode[GPU_TUNE_OP_LGBEND],
+            lossByOpcode[GPU_TUNE_OP_RCOL],
+            lossByOpcode[GPU_TUNE_OP_ECOL],
+            lossByOpcode[GPU_TUNE_OP_SCRAPER],
+            lossByOpcode[GPU_TUNE_OP_TAPER_APERTURE],
+            lossByOpcode[GPU_TUNE_OP_SPEEDBUMP]);
+  free(status);
+  free(ending);
+  gpuTuneProgramRelease(&program);
+  return 1;
 #endif
 }
 
@@ -10353,8 +11019,10 @@ static long gpuPackExactCorrector(GPU_EXACT_CORRECTOR_DATA *data,
   {
     double tx = tan(data->xkick);
     double ty = tan(data->ykick);
-    double theta = atan(sqrt(tx * tx + ty * ty));
-    if (theta)
+    data->theta0 = atan(sqrt(tx * tx + ty * ty));
+    data->rho0 =
+      data->theta0 ? fabs(data->length) / sin(data->theta0) : 0;
+    if (data->theta0)
       tilt += atan2(ty, tx);
     if (data->length < 0)
       tilt += PI;
@@ -10689,6 +11357,7 @@ long gpu_track_through_exact_corrector(long nParticles, void *element0,
   ELEMENT_LIST *element = (ELEMENT_LIST *)element0;
   GPU_EXACT_CORRECTOR_DATA data;
   long remaining = nParticles;
+  long usedScratch = 0;
   float milliseconds = 0;
   int status;
 
@@ -10712,7 +11381,8 @@ long gpu_track_through_exact_corrector(long nParticles, void *element0,
   gpuEnsureApertureScratch(nParticles);
   status = gpuCudaExactCorrectorTrackStableCompact(
     gpuBase.deviceCoord, gpuApertureScratch.coord, gpuApertureScratch.prefix,
-    nParticles, (int)gpuBase.deviceStride, &data, &remaining, &milliseconds);
+    nParticles, (int)gpuBase.deviceStride, &data, &remaining, &usedScratch,
+    &milliseconds);
   if (status != 0)
     gpuFatalStatus("exact corrector CUDA stable tracking", status);
   gpuRecordMagnetKernel(milliseconds);
@@ -10727,7 +11397,8 @@ long gpu_track_through_exact_corrector(long nParticles, void *element0,
     }
   }
 #endif
-  gpuPromoteApertureScratchCoord();
+  if (usedScratch)
+    gpuPromoteApertureScratchCoord();
 #ifndef GPU_VERIFY
   if (remaining != nParticles)
     gpuCopyApertureLossRowsToHost(
@@ -11127,11 +11798,22 @@ long gpu_track_through_ccbend(long n_part, void *eptr0, void *ccbend0,
   if (status != 0)
     gpuFatalStatus("CCBEND tracking CUDA checked kernel", status);
   gpuRecordMagnetKernel(milliseconds);
-  if (lostCount)
+  if (lostCount) {
+#ifndef GPU_VERIFY
+    if (gpuMagnetLossCompactionAllowed()) {
+      long remaining =
+        gpuCcbendStableCompact(&data, n_part, accepted,
+                               "CCBEND stable particle-loss compaction");
+      if (&multipoleKicksDone)
+        multipoleKicksDone += n_part * data.nSlices;
+      return remaining;
+    }
+#endif
     return gpuCcbendOnCpu(n_part, eptr, ccbend, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
                           "CCBEND particle-loss CPU fallback");
+  }
   gpuMarkDeviceChanged(n_part);
   gpuRecordWallSeconds();
   if (&multipoleKicksDone)
@@ -11139,13 +11821,16 @@ long gpu_track_through_ccbend(long n_part, void *eptr0, void *ccbend0,
   return n_part;
 }
 
-static long gpuPackLgbendTracking(GPU_LGBEND_DATA *data, LGBEND *lgbend,
-                                  double Po) {
+static long gpuPackLgbendTracking(
+  GPU_LGBEND_DATA *data,
+  GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
+  LGBEND *lgbend, double Po) {
   long i, j;
 
-  if (!data || !gpuLgbendCommonSupported(lgbend))
+  if (!data || !localAperture || !gpuLgbendCommonSupported(lgbend))
     return 0;
   memset(data, 0, sizeof(*data));
+  memset(localAperture, 0, sizeof(*localAperture));
   data->nSegments = lgbend->nSegments;
   data->nSlices = lgbend->nSlices;
   data->integrationOrder = lgbend->integration_order;
@@ -11219,6 +11904,38 @@ static long gpuPackLgbendTracking(GPU_LGBEND_DATA *data, LGBEND *lgbend,
       if (!isfinite(data->segment[i].KnL[j]))
         return 0;
   }
+  if (lgbend->localApertureData) {
+    double dZOffset0;
+
+    if (!interpolateApertureData ||
+        lgbend->nSlices > GPU_LGBEND_MAX_LOCAL_APERTURE_SLICES)
+      return 0;
+    localAperture->present = 1;
+    localAperture->nSegments = lgbend->nSegments;
+    localAperture->nSlices = lgbend->nSlices;
+    dZOffset0 =
+      lgbend->predrift * cos(lgbend->segment[0].entryAngle);
+    for (i = 0; i < lgbend->nSegments; i++) {
+      double dZOffset =
+        dZOffset0 +
+        (i > 0 ? lgbend->segment[i - 1].zAccumulated : 0);
+      double drift = lgbend->segment[i].length / lgbend->nSlices;
+
+      for (j = 0; j <= lgbend->nSlices; j++) {
+        GPU_LGBEND_LOCAL_APERTURE_POINT *point =
+          &localAperture->point[i][j];
+        if (!interpolateApertureData(
+              dZOffset + j * drift, lgbend->localApertureData,
+              &point->xCenter, &point->yCenter,
+              &point->xMax, &point->yMax))
+          return 0;
+        if (!isfinite(point->xCenter) || !isfinite(point->yCenter) ||
+            !isfinite(point->xMax) || !isfinite(point->yMax) ||
+            point->xMax < 0 || point->yMax < 0)
+          return 0;
+      }
+    }
+  }
   return isfinite(data->entryPosition) && isfinite(data->entryAngle) &&
          isfinite(data->exitPosition) && isfinite(data->exitAngle) &&
          isfinite(data->coordLimit) && isfinite(data->slopeLimit);
@@ -11256,6 +11973,7 @@ long gpu_track_through_lgbend(long n_part, void *eptr0, void *lgbend0,
   APCONTOUR *apContour = (APCONTOUR *)apContour0;
   APERTURE_DATA *apFileData = (APERTURE_DATA *)apFileData0;
   GPU_LGBEND_DATA data;
+  GPU_LGBEND_LOCAL_APERTURE_DATA localAperture;
   long lostCount = 0;
   float milliseconds = 0;
   int status;
@@ -11279,7 +11997,7 @@ long gpu_track_through_lgbend(long n_part, void *eptr0, void *lgbend0,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
                           "LGBEND radiation-sigma CPU fallback");
-  if (!gpuPackLgbendTracking(&data, lgbend, Po))
+  if (!gpuPackLgbendTracking(&data, &localAperture, lgbend, Po))
     return gpuLgbendOnCpu(n_part, eptr, lgbend, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
@@ -11293,15 +12011,29 @@ long gpu_track_through_lgbend(long n_part, void *eptr0, void *lgbend0,
   gpuCopyHostToDevice(n_part);
   status = gpuCudaLgbendTrackChecked(gpuBase.deviceCoord, n_part,
                                      (int)gpuBase.deviceStride, &data,
+                                     localAperture.present ? &localAperture :
+                                                             NULL,
                                      &lostCount, &milliseconds);
   if (status != 0)
     gpuFatalStatus("LGBEND tracking CUDA checked kernel", status);
   gpuRecordMagnetKernel(milliseconds);
-  if (lostCount)
+  if (lostCount) {
+#ifndef GPU_VERIFY
+    if (gpuMagnetLossCompactionAllowed()) {
+      long remaining =
+        gpuLgbendStableCompact(&data, &localAperture, n_part, accepted,
+                               "LGBEND stable particle-loss compaction");
+      if (&multipoleKicksDone)
+        multipoleKicksDone +=
+          n_part * data.nSlices * data.nSegments;
+      return remaining;
+    }
+#endif
     return gpuLgbendOnCpu(n_part, eptr, lgbend, Po, accepted, z_start,
                           sigmaDelta2, rootname, maxamp, apContour,
                           apFileData, iPart, iFinalSlice,
                           "LGBEND particle-loss CPU fallback");
+  }
   gpuMarkDeviceChanged(n_part);
   gpuRecordWallSeconds();
   if (&multipoleKicksDone)

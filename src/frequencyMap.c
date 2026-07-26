@@ -135,6 +135,8 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
     }
   }
   gpu_batched_tune_tracking_set_cpu_only(cpuTracking);
+  if (run->showElementTiming)
+    resetElementTiming();
   computeTunesFromTrackingBatch(
     firstTune, firstAmplitude, beamline->matrix, beamline, run,
     startingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, 0,
@@ -186,6 +188,8 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
     }
   }
   gpu_batched_tune_tracking_set_cpu_only(0);
+  if (run->showElementTiming)
+    reportElementTiming();
 
   for (ip = row = 0; ip < points; ip++) {
     if (!firstValid[ip] && !full_grid_output)

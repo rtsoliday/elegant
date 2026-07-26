@@ -103,6 +103,12 @@ jobs.
 mapping after entrance losses, and the defined `s=0` output for lost particles.
 `run-isr-fallback.ele` confirms that ISR and other unsupported magnet options
 retain the scalar point-by-point fallback.
+`run-fused-opcodes.ele` is a compact GPU_VERIFY companion for the internal
+frequency-map program. It covers exact and matrix drifts, thin and thick
+multipoles, exact correctors, CSBEND/CCBEND/LGBEND, circular and rectangular
+sticky apertures, collimators, a scraper, SPEEDBUMP, zero-voltage RFCA, passive
+elements, and fixed-slot loss bookkeeping. `run-fused-isr-fallback.ele`
+verifies that stochastic radiation rejects the program before tracking.
 
 `dynamic-aperture-batched-heavy` exercises deterministic n-line dynamic
 aperture refinement through GPU-supported multipoles and a compact aperture.

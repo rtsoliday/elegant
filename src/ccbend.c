@@ -804,10 +804,12 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
 		       GLOBAL_BEAM_SUMS *beamSums) {
   double p, qx, qy, denom, beta0, beta1, dp, s;
   double x, y, xp, yp, delta_qx, delta_qy;
+  double lastXForRho;
   double xSum;
   long i_kick, step, iMult, nSum;
   double dsh;
   long maxOrder;
+  long recordCcbendDiagnostics;
 
   // Only go up to K8 => 9 terms max length (same as in parent methods)
 #  define MAX_MULT_ORDER 9
@@ -921,6 +923,17 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
   xp = coord[1];
   y = coord[2];
   yp = coord[3];
+  lastXForRho = x;
+  recordCcbendDiagnostics = !eptr || eptr->type == T_CCBEND;
+#ifdef HAVE_GPU
+  /*
+   * The CCBEND trajectory-optimization diagnostics are intentionally
+   * single-particle state.  They are not consumed during batched tune
+   * tracking and would otherwise create shared writes in the OpenMP loop.
+   */
+  if (gpuOmpTrackingScopeActive())
+    recordCcbendDiagnostics = 0;
+#endif
   s = 0;
   dp = coord[5];
   p = Po * (1 + dp);
@@ -987,8 +1000,10 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
   *dsLoss = 0;
   if (iFinalSlice <= 0)
     iFinalSlice = n_parts;
-  xMin = DBL_MAX;
-  xMax = -DBL_MAX;
+  if (recordCcbendDiagnostics) {
+    xMin = DBL_MAX;
+    xMax = -DBL_MAX;
+  }
   xSum = x;
   nSum = 1;
   for (i_kick = 0; i_kick < iFinalSlice; i_kick++) {
@@ -1105,9 +1120,10 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
           if (nTerms == 1)
             *lastRho = 1 / (KnL[0] / drift);
           else if (nTerms == 2)
-            *lastRho = 1 / (KnL[0] / drift + lastX * (KnL[1] / drift));
+            *lastRho = 1 / (KnL[0] / drift + lastXForRho * (KnL[1] / drift));
           else if (nTerms > 2)
-            *lastRho = 1 / (KnL[0] / drift + lastX * (KnL[1] / drift) + lastX * lastX * (KnL[2] / drift) / 2);
+            *lastRho = 1 / (KnL[0] / drift + lastXForRho * (KnL[1] / drift) +
+                            lastXForRho * lastXForRho * (KnL[2] / drift) / 2);
         }
         return 0;
       }
@@ -1174,8 +1190,11 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
           *lastRho = 1 / (KnL[0] / drift + x * (KnL[1] / drift) + x * x * (KnL[2] / drift) / 2);
 #endif
       }
-      lastX = x;
-      lastXp = xp;
+      lastXForRho = x;
+      if (recordCcbendDiagnostics) {
+        lastX = x;
+        lastXp = xp;
+      }
     }
     if ((rad_coef || isr_coef) && drift) {
       double deltaFactor, F2, dsFactor;
@@ -1202,15 +1221,19 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
     }
     xSum += x;
     nSum++;
-    if (x > xMax)
-      xMax = x;
-    if (x < xMin)
-      xMin = x;
+    if (recordCcbendDiagnostics) {
+      if (x > xMax)
+        xMax = x;
+      if (x < xMin)
+        xMin = x;
+    }
     if (iPart >= 0)
       break;
   }
-  xFinal = x; /* may be needed for fringeModel==0, for backward compatibility */
-  xAve = xSum / nSum;
+  if (recordCcbendDiagnostics) {
+    xFinal = x; /* may be needed for fringeModel==0, for backward compatibility */
+    xAve = xSum / nSum;
+  }
 
   /*
     printf("x init, min, max, fin = %le, %le, %le, %le\n", x0, xMin, xMax, x);

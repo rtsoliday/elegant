@@ -1,0 +1,30 @@
+! Unsupported stochastic physics must bypass the fused program and retain the
+! established point-at-a-time CPU path.
+
+&run_setup
+    lattice = "lattice-fused-isr-fallback.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done",
+    random_number_seed = 987654321
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 8
+&end
+
+&frequency_map
+    output = "%s.fma",
+    ndelta = 1,
+    nx = 3,
+    ny = 3,
+    xmin = 1e-6,
+    xmax = 0.001,
+    ymin = 1e-6,
+    ymax = 0.001,
+    full_grid_output = 1,
+    include_changes = 1,
+    verbosity = 0
+&end

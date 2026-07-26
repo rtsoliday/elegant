@@ -1,0 +1,29 @@
+! GPU_VERIFY companion: exercises every fused frequency-map opcode, sticky
+! aperture transitions, fixed-slot losses, and CPU-authored output repair.
+
+&run_setup
+    lattice = "lattice-fused-opcodes.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 8
+&end
+
+&frequency_map
+    output = "%s.fma",
+    ndelta = 1,
+    nx = 5,
+    ny = 5,
+    xmin = 1e-6,
+    xmax = 0.005,
+    ymin = 1e-6,
+    ymax = 0.004,
+    full_grid_output = 1,
+    include_changes = 1,
+    verbosity = 0
+&end
