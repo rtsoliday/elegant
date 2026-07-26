@@ -63,14 +63,16 @@ static SDDS_DATASET SDDS_fmap;
 static long doFrequencyMapBatched(RUN *run, VARY *control,
                                   double *referenceCoord,
                                   LINE_LIST *beamline, long turns) {
-  double **startingCoord, **endingCoord, **secondEndingCoord;
+  double **startingCoord, **endingCoord, **secondStartingCoord = NULL;
   double *firstTune, *secondTune, *firstAmplitude, *secondAmplitude;
+  double *activeSecondTune = NULL, *activeSecondAmplitude = NULL;
   double *xAmplitude, *yAmplitude, *deltaOffset;
   double *gridX, *gridY, *gridDelta;
   double dx = 0, dy = 0, ddelta = 0, diffusion;
   long cpuTracking;
   long *firstValid, *secondValid, *firstSurvived;
-  long idelta, ix, iy, ip, points, row;
+  long *activeSecondValid = NULL, *secondIndex = NULL;
+  long idelta, ix, iy, ip, points, row, secondParticles = 0, secondSlot;
 
   points = ndelta * nx * ny;
   if (turns <= 1 || quadratic_spacing ||
@@ -78,16 +80,12 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
       !gpu_batched_tune_tracking_enabled(points) ||
       !gpu_batched_frequency_map_beamline_supported(beamline))
     return 0;
-  gpu_batched_tune_tracking_report(
-    "frequency map", points, turns, include_changes ? 2 : 1);
+  gpu_batched_tune_tracking_report("frequency map", points, turns, 1);
   cpuTracking = gpu_batched_frequency_map_cpu_tracking_required(beamline);
   startingCoord = (double **)czarray_2d(
     sizeof(**startingCoord), points, totalPropertiesPerParticle);
   endingCoord = (double **)czarray_2d(
     sizeof(**endingCoord), points, totalPropertiesPerParticle);
-  secondEndingCoord = include_changes ?
-    (double **)czarray_2d(sizeof(**secondEndingCoord), points,
-                         totalPropertiesPerParticle) : NULL;
   firstTune = (double *)calloc(2 * points, sizeof(*firstTune));
   secondTune = include_changes ?
     (double *)calloc(2 * points, sizeof(*secondTune)) : NULL;
@@ -108,8 +106,7 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
       !xAmplitude || !yAmplitude || !deltaOffset ||
       !gridX || !gridY || !gridDelta || !firstValid || !firstSurvived ||
       (include_changes &&
-       (!secondEndingCoord || !secondTune || !secondAmplitude ||
-        !secondValid)))
+       (!secondTune || !secondAmplitude || !secondValid)))
     bombElegant("memory allocation failure (doFrequencyMapBatched)", NULL);
 
   if (!quadratic_spacing) {
@@ -145,14 +142,48 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
     CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
 
   if (include_changes) {
-    memset(xAmplitude, 0, points * sizeof(*xAmplitude));
-    memset(yAmplitude, 0, points * sizeof(*yAmplitude));
-    memset(deltaOffset, 0, points * sizeof(*deltaOffset));
-    computeTunesFromTrackingBatch(
-      secondTune, secondAmplitude, beamline->matrix, beamline, run,
-      endingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, turns,
-      secondEndingCoord, secondValid, NULL, NULL, NULL, 1, 1,
-      CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
+    for (ip = 0; ip < points; ip++)
+      if (firstValid[ip])
+        secondParticles++;
+    gpu_batched_tune_tracking_report(
+      "frequency map second interval", secondParticles, turns, 1);
+    if (secondParticles) {
+      secondStartingCoord = (double **)calloc(
+        secondParticles, sizeof(*secondStartingCoord));
+      activeSecondTune = (double *)calloc(
+        2 * secondParticles, sizeof(*activeSecondTune));
+      activeSecondAmplitude = (double *)calloc(
+        2 * secondParticles, sizeof(*activeSecondAmplitude));
+      activeSecondValid = (long *)calloc(
+        secondParticles, sizeof(*activeSecondValid));
+      secondIndex = (long *)calloc(secondParticles, sizeof(*secondIndex));
+      if (!secondStartingCoord || !activeSecondTune ||
+          !activeSecondAmplitude || !activeSecondValid || !secondIndex)
+        bombElegant("memory allocation failure "
+                    "(doFrequencyMapBatched second interval)", NULL);
+      for (ip = secondSlot = 0; ip < points; ip++) {
+        if (!firstValid[ip])
+          continue;
+        secondStartingCoord[secondSlot] = endingCoord[ip];
+        secondIndex[secondSlot++] = ip;
+      }
+      computeTunesFromTrackingBatch(
+        activeSecondTune, activeSecondAmplitude, beamline->matrix, beamline,
+        run, secondStartingCoord, NULL, NULL, NULL, secondParticles, turns,
+        turns, NULL, activeSecondValid, NULL, NULL, NULL, 1, 1,
+        CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
+      for (secondSlot = 0; secondSlot < secondParticles; secondSlot++) {
+        ip = secondIndex[secondSlot];
+        if (!(secondValid[ip] = activeSecondValid[secondSlot]))
+          continue;
+        secondTune[2 * ip] = activeSecondTune[2 * secondSlot];
+        secondTune[2 * ip + 1] = activeSecondTune[2 * secondSlot + 1];
+        secondAmplitude[2 * ip] =
+          activeSecondAmplitude[2 * secondSlot];
+        secondAmplitude[2 * ip + 1] =
+          activeSecondAmplitude[2 * secondSlot + 1];
+      }
+    }
   }
   gpu_batched_tune_tracking_set_cpu_only(0);
 
@@ -217,13 +248,15 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
   free(firstValid);
   free(firstSurvived);
   free(secondValid);
+  free(activeSecondTune);
+  free(activeSecondAmplitude);
+  free(activeSecondValid);
+  free(secondIndex);
+  free(secondStartingCoord);
   free_czarray_2d((void **)startingCoord, points,
                   totalPropertiesPerParticle);
   free_czarray_2d((void **)endingCoord, points,
                   totalPropertiesPerParticle);
-  if (secondEndingCoord)
-    free_czarray_2d((void **)secondEndingCoord, points,
-                    totalPropertiesPerParticle);
   return 1;
 }
 #endif

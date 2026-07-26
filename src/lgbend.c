@@ -82,6 +82,10 @@ long track_through_lgbend(
   GLOBAL_BEAM_SUMS *beamSums = NULL;
   short disableSums = 1;
   TRACKING_CONTEXT context;
+#ifdef HAVE_GPU
+  GPU_OMP_TRACKING_WORKSPACE *ompWorkspace = NULL;
+  long ompActive = 0, ompParticles = 0, ompThreads = 1;
+#endif
   getTrackingContext(&context);
   
 #ifdef DEBUG
@@ -420,6 +424,45 @@ long track_through_lgbend(
       nTerms = 1; /* might happen if FSE=-1 */
 
     dZOffset = dZOffset0 + (iSegment > 0 ? lgbend->segment[iSegment - 1].zAccumulated : 0);
+#ifdef HAVE_GPU
+    ompActive = gpuOmpTrackingEnabled(i_top + 1) && !accepted &&
+      globalLossCoordOffset <= 0 && !sigmaDelta2 && disableSums &&
+      isr_coef <= 0;
+    if (ompActive) {
+      ompParticles = i_top + 1;
+      ompWorkspace = gpuGetOmpTrackingWorkspace(ompParticles);
+      ompThreads = gpuGetOmpTrackingThreads();
+      memset(ompWorkspace->survived, 0,
+             ompParticles * sizeof(*ompWorkspace->survived));
+#  if defined(_OPENMP)
+#    pragma omp parallel for num_threads(ompThreads) schedule(static)
+#  endif
+      for (i_part = 0; i_part < ompParticles; i_part++) {
+        double localDzLoss = 0, localLastRho = 0;
+        ompWorkspace->survived[i_part] =
+          integrate_kick_KnL(
+            particle[i_part], dx, dy, Po, rad_coef, isr_coef, KnL, nTerms,
+            integ_order, nSlices, iPart,
+            iSegment == (nSegments - 1) ? iFinalSlice : 0,
+            length, NULL, NULL, NULL, &apertureData, &localDzLoss, NULL,
+            &localLastRho, tilt, dZOffset, eptr, NULL) ? 1 : 0;
+        ompWorkspace->lossOffset[i_part] = localDzLoss;
+        ompWorkspace->auxiliary[i_part] = localLastRho;
+      }
+      lastRho1 = ompWorkspace->auxiliary[ompParticles - 1];
+      for (i_part = 0; i_part < ompParticles; i_part++) {
+        if (ompWorkspace->survived[i_part])
+          continue;
+        particle[i_part][4] =
+          z_start + lgbend->segment[iSegment].arcLengthStart +
+          ompWorkspace->lossOffset[i_part];
+        particle[i_part][5] = Po * (1 + particle[i_part][5]);
+      }
+      i_top = gpuStableCompactParticles(
+        particle, ompParticles, ompWorkspace->survived) - 1;
+    } else
+#endif
+    {
     for (i_part = 0; i_part <= i_top; i_part++) {
       if (!integrate_kick_KnL(particle[i_part], dx, dy, Po, rad_coef, isr_coef, KnL, nTerms,
                               integ_order, nSlices, iPart,
@@ -436,6 +479,7 @@ long track_through_lgbend(
         i_part--;
         continue;
       }
+    }
     }
     lastRho = lastRho1; /* make available for radiation integral calculation */
 #ifdef DEBUG

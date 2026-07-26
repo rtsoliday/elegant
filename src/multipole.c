@@ -740,6 +740,10 @@ long multipole_tracking2(
   MULTIPOLE_DATA *multData = NULL, *steeringMultData = NULL, *edgeMultData = NULL;
   long freeMultData = 0;
   MULT_APERTURE_DATA apertureData;
+#ifdef HAVE_GPU
+  GPU_OMP_TRACKING_WORKSPACE *ompWorkspace = NULL;
+  long ompActive = 0, ompThreads = 1;
+#endif
 
 #ifdef HAVE_GPU
   if (getElementOnGpu()) {
@@ -1132,6 +1136,40 @@ long multipole_tracking2(
 
   if (sigmaDelta2)
     *sigmaDelta2 = 0;
+#ifdef HAVE_GPU
+  ompActive = gpuOmpTrackingEnabled(i_top + 1) && !accepted &&
+    globalLossCoordOffset <= 0 && !sigmaDelta2 && isr_coef <= 0;
+  if (ompActive) {
+    ompWorkspace = gpuGetOmpTrackingWorkspace(i_top + 1);
+    ompThreads = gpuGetOmpTrackingThreads();
+    memset(ompWorkspace->survived, 0,
+           (i_top + 1) * sizeof(*ompWorkspace->survived));
+#  if defined(_OPENMP)
+#    pragma omp parallel for num_threads(ompThreads) schedule(static)
+#  endif
+    for (i_part = 0; i_part <= i_top; i_part++) {
+      double localDzLoss = 0;
+      double *localCoord = particle[i_part];
+      ompWorkspace->survived[i_part] =
+        integrate_kick_multipole_ordn(
+          localCoord, dx, dy, xkick, ykick, Po, rad_coef, isr_coef,
+          order, KnL, skew, nSlices, iSlice, drift, integ_order,
+          multData, edgeMultData, steeringMultData, &apertureData,
+          &localDzLoss, NULL,
+          elem->type == T_KQUAD ? kquad->radial : 0, tilt) ? 1 : 0;
+      ompWorkspace->lossOffset[i_part] = localDzLoss;
+    }
+    for (i_part = 0; i_part <= i_top; i_part++) {
+      if (ompWorkspace->survived[i_part])
+        continue;
+      particle[i_part][4] = z_start + ompWorkspace->lossOffset[i_part];
+      particle[i_part][5] = Po * (1 + particle[i_part][5]);
+    }
+    i_top = gpuStableCompactParticles(
+      particle, i_top + 1, ompWorkspace->survived) - 1;
+  } else
+#endif
+  {
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!(coord = particle[i_part])) {
       printf("null coordinate pointer for particle %ld (multipole_tracking)", i_part);
@@ -1168,6 +1206,7 @@ long multipole_tracking2(
       i_part--;
       continue;
     }
+  }
   }
   if (sigmaDelta2)
     *sigmaDelta2 /= i_top + 1;

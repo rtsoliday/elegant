@@ -268,6 +268,10 @@ ifneq ($(CUDA_REQUESTED),)
   endif
   CFLAGS += $(OG_OPT_FLAG) -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
   CCFLAGS += $(OG_OPT_FLAG) -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
+  ifeq ($(OS), Linux)
+    CFLAGS += -fopenmp
+    CCFLAGS += -fopenmp
+  endif
   NVCCFLAGS += $(NVCC_OPT) -g -arch=$(CUDA_ARCH) --fmad=false -Xcompiler -fPIC -I$(SDDS_REPO)/include -I$(OBJ_DIR) -Igpu -I$(CUDA_HOME)/include -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -DHAVE_GPU=1
   NVCCDEPFLAGS ?= $(DEPFLAGS)
   LDFLAGS += -L$(CUDA_HOME)/lib64 -Wl,-rpath,$(CUDA_HOME)/lib64

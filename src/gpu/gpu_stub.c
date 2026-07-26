@@ -791,6 +791,11 @@ static GPU_BASE gpuBase;
  * search.  The surrounding do_tracking call still initializes normal GPU
  * bookkeeping, but no element is dispatched to CUDA while this is set. */
 static long gpuTrackingSuppressed = 0;
+/* OpenMP tracking is deliberately opt-in and is active only while a
+ * loss-sensitive batched frequency map is using the CPU fallback. */
+static long gpuOmpTrackingThreads = 1;
+static long gpuOmpTrackingScope = 0;
+static GPU_OMP_TRACKING_WORKSPACE gpuOmpTrackingWorkspace;
 static GPU_CSR_SCRATCH gpuCsrScratch;
 static GPU_APERTURE_SCRATCH gpuApertureScratch;
 static GPU_ACCEPTED_BUFFER gpuAcceptedBuffer;
@@ -5016,6 +5021,76 @@ GPU_BASE *getGpuBase(void) {
   return &gpuBase;
 }
 
+long gpuSetOmpTrackingThreads(long threads) {
+  if (threads < 1)
+    return 0;
+#if !defined(_OPENMP)
+  if (threads > 1)
+    return 0;
+#endif
+  gpuOmpTrackingThreads = threads;
+  return 1;
+}
+
+long gpuGetOmpTrackingThreads(void) {
+  return gpuOmpTrackingThreads;
+}
+
+long gpuOmpTrackingEnabled(long particles) {
+  return gpuOmpTrackingScope && gpuOmpTrackingThreads > 1 && particles >= 64;
+}
+
+GPU_OMP_TRACKING_WORKSPACE *gpuGetOmpTrackingWorkspace(long particles) {
+  void *memory;
+
+  if (particles <= gpuOmpTrackingWorkspace.capacity)
+    return &gpuOmpTrackingWorkspace;
+  memory = realloc(gpuOmpTrackingWorkspace.survived,
+                   particles * sizeof(*gpuOmpTrackingWorkspace.survived));
+  if (!memory)
+    bombElegant("memory allocation failure for OpenMP survivor flags", NULL);
+  gpuOmpTrackingWorkspace.survived = (unsigned char *)memory;
+  memory = realloc(gpuOmpTrackingWorkspace.lossOffset,
+                   particles * sizeof(*gpuOmpTrackingWorkspace.lossOffset));
+  if (!memory)
+    bombElegant("memory allocation failure for OpenMP loss offsets", NULL);
+  gpuOmpTrackingWorkspace.lossOffset = (double *)memory;
+  memory = realloc(gpuOmpTrackingWorkspace.auxiliary,
+                   particles * sizeof(*gpuOmpTrackingWorkspace.auxiliary));
+  if (!memory)
+    bombElegant("memory allocation failure for OpenMP tracking workspace",
+                NULL);
+  gpuOmpTrackingWorkspace.auxiliary = (double *)memory;
+  memory = realloc(gpuOmpTrackingWorkspace.particleOrder,
+                   particles * sizeof(*gpuOmpTrackingWorkspace.particleOrder));
+  if (!memory)
+    bombElegant("memory allocation failure for OpenMP particle ordering",
+                NULL);
+  gpuOmpTrackingWorkspace.particleOrder = (double **)memory;
+  gpuOmpTrackingWorkspace.capacity = particles;
+  return &gpuOmpTrackingWorkspace;
+}
+
+long gpuStableCompactParticles(double **particle, long particles,
+                               const unsigned char *survived) {
+  GPU_OMP_TRACKING_WORKSPACE *workspace;
+  long i, output = 0, survivors;
+
+  if (!particle || !survived || particles <= 0)
+    return particles > 0 ? particles : 0;
+  workspace = gpuGetOmpTrackingWorkspace(particles);
+  for (i = 0; i < particles; i++)
+    if (survived[i])
+      workspace->particleOrder[output++] = particle[i];
+  survivors = output;
+  for (i = 0; i < particles; i++)
+    if (!survived[i])
+      workspace->particleOrder[output++] = particle[i];
+  memcpy(particle, workspace->particleOrder,
+         particles * sizeof(*particle));
+  return survivors;
+}
+
 void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **lostPart,
                  long isMaster, long lossOutputNeeded,
                  long orderSensitiveOutputNeeded, long reductionOutputNeeded,
@@ -5743,6 +5818,12 @@ void gpu_batched_tune_tracking_set_cpu_only(long cpuOnly) {
   (void)cpuOnly;
 #else
   gpuSetTrackingSuppressed(cpuOnly);
+  gpuOmpTrackingScope = cpuOnly ? 1 : 0;
+  if (cpuOnly && gpuVerbose && gpuOmpTrackingThreads > 1)
+    fprintf(stderr,
+            "elegant CUDA: loss-sensitive batched CPU tracking will use "
+            "%ld OpenMP threads for supported magnet particle loops.\n",
+            gpuOmpTrackingThreads);
 #endif
 }
 

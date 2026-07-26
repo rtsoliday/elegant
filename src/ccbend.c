@@ -111,6 +111,10 @@ long track_through_ccbend(
   GLOBAL_BEAM_SUMS *beamSums = NULL;
   short disableSums = 1;
   TRACKING_CONTEXT context;
+#ifdef HAVE_GPU
+  GPU_OMP_TRACKING_WORKSPACE *ompWorkspace = NULL;
+  long ompActive = 0, ompParticles = 0, ompThreads = 1;
+#endif
   getTrackingContext(&context);
 
   if (!particle)
@@ -552,6 +556,42 @@ long track_through_ccbend(
     *sigmaDelta2 = 0;
   i_top = n_part - 1;
   edgeMultActive[0] = edgeMultActive[1] = 0;
+#ifdef HAVE_GPU
+  ompActive = gpuOmpTrackingEnabled(i_top + 1) && !accepted &&
+    globalLossCoordOffset <= 0 && !sigmaDelta2 && disableSums &&
+    !edge1MultData && !edge2MultData && isr_coef <= 0;
+  if (ompActive) {
+    ompParticles = i_top + 1;
+    ompWorkspace = gpuGetOmpTrackingWorkspace(ompParticles);
+    ompThreads = gpuGetOmpTrackingThreads();
+    memset(ompWorkspace->survived, 0,
+           ompParticles * sizeof(*ompWorkspace->survived));
+#  if defined(_OPENMP)
+#    pragma omp parallel for num_threads(ompThreads) schedule(static)
+#  endif
+    for (i_part = 0; i_part < ompParticles; i_part++) {
+      double localDzLoss = 0, localLastRho = 0;
+      ompWorkspace->survived[i_part] =
+        integrate_kick_KnL(
+          particle[i_part], dx, dy, Po, rad_coef, isr_coef, KnL, nTerms,
+          integ_order, nSlices, iPart, iFinalSlice, length, multData,
+          edge1MultData, edge2MultData, &apertureData, &localDzLoss, NULL,
+          &localLastRho, tilt, 0.0, eptr, NULL) ? 1 : 0;
+      ompWorkspace->lossOffset[i_part] = localDzLoss;
+      ompWorkspace->auxiliary[i_part] = localLastRho;
+    }
+    lastRho1 = ompWorkspace->auxiliary[ompParticles - 1];
+    for (i_part = 0; i_part < ompParticles; i_part++) {
+      if (ompWorkspace->survived[i_part])
+        continue;
+      particle[i_part][4] = z_start + ompWorkspace->lossOffset[i_part];
+      particle[i_part][5] = Po * (1 + particle[i_part][5]);
+    }
+    i_top = gpuStableCompactParticles(
+      particle, ompParticles, ompWorkspace->survived) - 1;
+  } else
+#endif
+  {
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!integrate_kick_KnL(particle[i_part], dx, dy, Po, rad_coef, isr_coef, KnL, nTerms,
                             integ_order, nSlices, iPart, iFinalSlice, length, multData, edge1MultData, edge2MultData,
@@ -570,6 +610,7 @@ long track_through_ccbend(
       if (i_part==0 && ccbend->verbose && ccbend->optimized!=-1)
       printf("Edge multipoles active: %ld, %ld\n", edgeMultActive[0], edgeMultActive[1]);
     */
+  }
   }
   lastRho = lastRho1; /* make available for radiation integral calculations */
   multipoleKicksDone += (i_top + 1) * nSlices;
@@ -771,8 +812,13 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
   // Only go up to K8 => 9 terms max length (same as in parent methods)
 #  define MAX_MULT_ORDER 9
   // ccbend2 has maxOrder=19...
+#ifdef HAVE_GPU
+  double xpow[MAX_EXTRA_ORDER];
+  double ypow[MAX_EXTRA_ORDER];
+#else
   static double xpow[MAX_EXTRA_ORDER];
   static double ypow[MAX_EXTRA_ORDER];
+#endif
 
   double KnL[MAX_MULT_ORDER];
   double KnLActive[MAX_MULT_ORDER];
@@ -812,7 +858,11 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
     0.784513610477560, 0.235573213359357, -1.17767998417887, 1.3151863206839063,
     -1.17767998417887, 0.235573213359357, 0.784513610477560, 0};
 
+#ifdef HAVE_GPU
+  double driftBuf[8] = {0};
+#else
   static double driftBuf[8] = {0};
+#endif
 
 #ifdef DEBUG1
   static FILE *fpdeb = NULL;

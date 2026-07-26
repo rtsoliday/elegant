@@ -69,7 +69,12 @@ void runFiducialParticle(RUN *run, VARY *control, double *startCoord, LINE_LIST 
 #define DEFINE_RPN_DEFNS 4
 #define DEFINE_VERBOSE 5
 #define DEFINE_CONFIGURATION 6
-#define N_OPTIONS 7
+#if HAVE_GPU && !USE_MPI
+#  define DEFINE_OMP_THREADS 7
+#  define N_OPTIONS 8
+#else
+#  define N_OPTIONS 7
+#endif
 char *option[N_OPTIONS] = {
   "describeinput",
   "macro",
@@ -78,6 +83,9 @@ char *option[N_OPTIONS] = {
   "rpndefns",
   "verbose",
   "configuration",
+#if HAVE_GPU && !USE_MPI
+  "ompthreads",
+#endif
 };
 
 #define SHOW_USAGE 0x0001
@@ -96,7 +104,7 @@ void showUsageOrGreeting(unsigned long mode) {
 #  endif
 #else
 #  if HAVE_GPU
-  char *USAGE = "usage: gpu-elegant {<inputfile>|-pipe=in} [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
+  char *USAGE = "usage: gpu-elegant {<inputfile>|-pipe=in} [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>] [-ompThreads=<positive-integer>]";
   char *GREETING = "This is gpu-elegant 2026.4Beta1 ALPHA RELEASE, "__DATE__
     ", by M. Borland, K. Amyx, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, J.R. King, N. Kuklev, R. Lindberg, I.V. Pogorelov, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.";
 #  else
@@ -742,6 +750,29 @@ int main(int argc, char **argv)
         if (scanned[i].n_items != 2 || !strlen(configurationFile = scanned[i].list[1]))
           bombElegant("invalid -configurationFile syntax", NULL);
         break;
+#if HAVE_GPU && !USE_MPI
+      case DEFINE_OMP_THREADS:
+        {
+          long ompThreads;
+          char trailing;
+          if (scanned[i].n_items != 2 ||
+              sscanf(scanned[i].list[1], "%ld%c",
+                     &ompThreads, &trailing) != 1 ||
+              ompThreads < 1)
+            bombElegant("invalid -ompThreads syntax: expected a positive integer",
+                        NULL);
+          if (!gpuSetOmpTrackingThreads(ompThreads))
+            bombElegant("-ompThreads requires OpenMP support in gpu-elegant",
+                        NULL);
+          if (ompThreads > 1)
+            fprintf(stderr,
+                    "gpu-elegant: experimental loss-sensitive CPU tracking "
+                    "enabled with %ld OpenMP threads. Use only on a GPU node "
+                    "whose requested CPU cores are not shared with other jobs.\n",
+                    ompThreads);
+        }
+        break;
+#endif
       default:
         printf("Unknown option given.\n");
         showUsageOrGreeting(SHOW_USAGE);

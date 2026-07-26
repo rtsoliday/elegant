@@ -8,6 +8,14 @@ extern "C" {
 #define ELEGANT_GPU_DEFAULT_MODE "auto"
 #define ELEGANT_GPU_DEFAULT_MIN_PARTICLES 10000L
 
+typedef struct GPU_OMP_TRACKING_WORKSPACE {
+  unsigned char *survived;
+  double *lossOffset;
+  double *auxiliary;
+  double **particleOrder;
+  long capacity;
+} GPU_OMP_TRACKING_WORKSPACE;
+
 #ifndef GPU_BUNCHED_WAKE_UNSUPPORTED
 #  define GPU_BUNCHED_WAKE_UNSUPPORTED 0
 #  define GPU_BUNCHED_WAKE_TRACK 1
@@ -706,6 +714,12 @@ typedef struct GPU_KICKMAP_DATA {
 
 GPU_BASE *getGpuBase(void);
 void gpuDescribeUsageSettings(char *buffer, unsigned long bufferSize);
+long gpuSetOmpTrackingThreads(long threads);
+long gpuGetOmpTrackingThreads(void);
+long gpuOmpTrackingEnabled(long particles);
+GPU_OMP_TRACKING_WORKSPACE *gpuGetOmpTrackingWorkspace(long particles);
+long gpuStableCompactParticles(double **particle, long particles,
+                               const unsigned char *survived);
 void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **lostPart,
                  long isMaster, long lossOutputNeeded,
                  long orderSensitiveOutputNeeded, long reductionOutputNeeded,
