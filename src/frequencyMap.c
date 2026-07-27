@@ -17,6 +17,7 @@
 #include "track.h"
 #include "frequencyMap.h"
 #if defined(HAVE_GPU) && !USE_MPI
+#  include "gpu_base.h"
 #  include "gpu_tune.h"
 #endif
 
@@ -137,11 +138,24 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
   gpu_batched_tune_tracking_set_cpu_only(cpuTracking);
   if (run->showElementTiming)
     resetElementTiming();
+#if defined(_OPENMP)
+  /* Keep one worker team alive for the complete tracking interval.  The
+   * deterministic magnet trackers below submit particle taskloops to this
+   * team and retain serial element setup and ordered loss compaction. */
+#  pragma omp parallel if(gpuOmpTrackingEnabled(points)) num_threads(gpuGetOmpTrackingThreads())
+  {
+#  pragma omp single
+    {
+#endif
   computeTunesFromTrackingBatch(
     firstTune, firstAmplitude, beamline->matrix, beamline, run,
     startingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, 0,
     endingCoord, firstValid, firstSurvived, NULL, NULL, 1, 1,
     CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
+#if defined(_OPENMP)
+    }
+  }
+#endif
 
   if (include_changes) {
     for (ip = 0; ip < points; ip++)
@@ -169,11 +183,22 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
         secondStartingCoord[secondSlot] = endingCoord[ip];
         secondIndex[secondSlot++] = ip;
       }
+#if defined(_OPENMP)
+      /* The surviving-particle interval has its own persistent worker team. */
+#  pragma omp parallel if(gpuOmpTrackingEnabled(secondParticles)) num_threads(gpuGetOmpTrackingThreads())
+      {
+#  pragma omp single
+        {
+#endif
       computeTunesFromTrackingBatch(
         activeSecondTune, activeSecondAmplitude, beamline->matrix, beamline,
         run, secondStartingCoord, NULL, NULL, NULL, secondParticles, turns,
         turns, NULL, activeSecondValid, NULL, NULL, NULL, 1, 1,
         CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
+#if defined(_OPENMP)
+        }
+      }
+#endif
       for (secondSlot = 0; secondSlot < secondParticles; secondSlot++) {
         ip = secondIndex[secondSlot];
         if (!(secondValid[ip] = activeSecondValid[secondSlot]))

@@ -295,6 +295,9 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
         fflush(stdout);
 #endif
 
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
 
@@ -331,13 +334,18 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
 void applyLongitudinalWakeKicks(double **part, double *time, long *pbin, long np, double Po,
                                 double *Vtime, long nb, double tmin, double dt,
                                 long interpolate) {
-  long ip, ib;
-  double dt1, dgam;
+  long ip;
 
   /* change particle momentum offsets to reflect voltage in relevant bin */
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
   for (ip = 0; ip < np; ip++) {
+    long ib;
     if ((ib = pbin[ip]) >= 0 && ib <= nb - 1) {
+      double dgam;
       if (interpolate) {
+        double dt1;
         dt1 = time[ip] - (tmin + dt * ib); /* distance to bin center */
         if ((dt1 < 0 && ib) || ib == nb - 1) {
           ib--;

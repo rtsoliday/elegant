@@ -40,9 +40,8 @@ void track_through_ftrfmode(
   long max_np = 0;
   double *VxPrevious = NULL, *VyPrevious = NULL, *xPhasePrevious = NULL, *yPhasePrevious = NULL, tPrevious;
   long ip, ib;
-  double tmin, tmax, last_tmax, tmean, dt, P;
+  double tmin, tmax, last_tmax, tmean, dt;
   double Vxb, Vyb, V, omega, phase, t, k, omegaOverC, damping_factor, tau;
-  double Px, Py, Pz;
   double Q, Qrp;
   long firstBin, lastBin, imode;
   double rampFactor;
@@ -525,15 +524,19 @@ void track_through_ftrfmode(
             Vxbin, Vybin, Vzbin);
       } else
 #endif
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
       for (ip = 0; ip < np; ip++) {
         if (pbin[ip] >= 0) {
-          ib = pbin[ip];
-          if (ib < firstBin || ib > lastBin)
+          long particleBin = pbin[ip];
+          double P, Px, Py, Pz;
+          if (particleBin < firstBin || particleBin > lastBin)
             bombElegant("particle bin index outside of expected range---please report this bug", NULL);
           P = Po * (1 + part[ip][5]);
-          Pz = P / sqrt(1 + sqr(part[ip][1]) + sqr(part[ip][3])) + trfmode->n_cavities * Vzbin[ib] / (1e6 * particleMassMV * particleRelSign);
-          Px = part[ip][1] * Pz + trfmode->n_cavities * Vxbin[ib] / (1e6 * particleMassMV * particleRelSign);
-          Py = part[ip][3] * Pz + trfmode->n_cavities * Vybin[ib] / (1e6 * particleMassMV * particleRelSign);
+          Pz = P / sqrt(1 + sqr(part[ip][1]) + sqr(part[ip][3])) + trfmode->n_cavities * Vzbin[particleBin] / (1e6 * particleMassMV * particleRelSign);
+          Px = part[ip][1] * Pz + trfmode->n_cavities * Vxbin[particleBin] / (1e6 * particleMassMV * particleRelSign);
+          Py = part[ip][3] * Pz + trfmode->n_cavities * Vybin[particleBin] / (1e6 * particleMassMV * particleRelSign);
           P = sqrt(Pz * Pz + Px * Px + Py * Py);
           part[ip][1] = Px / Pz;
           part[ip][3] = Py / Pz;
@@ -543,6 +546,9 @@ void track_through_ftrfmode(
       }
 
       if (nBuckets != 1) {
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
       }

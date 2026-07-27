@@ -261,6 +261,9 @@ void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
           fflush(stdout);
 #endif
 
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
           for (ip = 0; ip < np; ip++)
             memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
 
@@ -299,13 +302,18 @@ void applyTransverseWakeKicks(double **part, double *time, double *pz, long *pbi
                               double Po, long plane,
                               double *Vtime, long nb, double tmin, double dt,
                               long interpolate, long exponent) {
-  long ip, ib, offset;
-  double dt1, Vinterp;
+  long ip, offset;
 
   offset = 2 * plane + 1; /* xp or yp index */
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
   for (ip = 0; ip < np; ip++) {
+    long ib;
     if ((ib = pbin[ip]) >= 0 && ib <= nb - 1) {
+      double Vinterp;
       if (interpolate) {
+        double dt1;
         dt1 = time[ip] - (tmin + dt * ib); /* distance to bin center */
         if ((dt1 < 0 && ib) || ib == nb - 1) {
           ib--;
@@ -527,10 +535,12 @@ void set_up_trwake(TRWAKE *wakeData, RUN *run, long pass, long particles, CHARGE
 
 void computeTimeCoordinatesOnly(double *time, double Po, double **part, long np) {
   long ip;
-  double P;
 
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
   for (ip = 0; ip < np; ip++) {
-    P = Po * (part[ip][5] + 1);
+    double P = Po * (part[ip][5] + 1);
     time[ip] = part[ip][4] * sqrt(sqr(P) + 1) / (c_mks * P);
   }
 }
@@ -606,12 +616,14 @@ double computeTimeCoordinates(double *time, double Po, double **part, long np) {
 }
 
 void computeDistanceCoordinates(double *time, double Po, double **part, long np) {
-  double P, beta;
   long ip;
 
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
   for (ip = 0; ip < np; ip++) {
-    P = Po * (part[ip][5] + 1);
-    beta = P / sqrt(sqr(P) + 1);
+    double P = Po * (part[ip][5] + 1);
+    double beta = P / sqrt(sqr(P) + 1);
     part[ip][4] = c_mks * beta * time[ip];
   }
 }

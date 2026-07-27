@@ -66,7 +66,7 @@ void track_through_rfmode(
   double Vb, V, omega = 0, phase, t, k, damping_factor, tau;
   double VPrevious, tPrevious, phasePrevious;
   double V_sum, Vr_sum, Vi_sum, Vg_sum, Vgr_sum, Vgi_sum, Vci_sum, Vcr_sum, Vc_sum;
-  double Q_sum, dgamma;
+  double Q_sum;
   long n_summed, max_hist=0, n_occupied;
   double Qrp, VbImagFactor, Q = 0;
   long deltaPass;
@@ -921,7 +921,6 @@ void track_through_rfmode(
 #endif
 
       if (rfmode->rigid_until_pass <= pass) {
-        double dt1;
         /* change particle momentum offsets to reflect voltage in relevant bin */
         /* also recompute slopes for new momentum to conserve transverse momentum */
 #ifdef HAVE_GPU
@@ -933,18 +932,24 @@ void track_through_rfmode(
               rfmode->n_cavities, Vbin);
         } else
 #endif
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
         for (ip = 0; ip < np; ip++) {
+          double particleV;
           /* compute voltage seen by this particle */
           if (rfmode->interpolate) {
             long ib1, ib2;
-            ib = pbin[ip];
-            dt1 = time[ip] + tOffset - (tmin + dt * (ib + 0.5));
+            long particleBin;
+            double dt1;
+            particleBin = pbin[ip];
+            dt1 = time[ip] + tOffset - (tmin + dt * (particleBin + 0.5));
             if (dt1 < 0) {
-              ib1 = ib - 1;
-              ib2 = ib;
+              ib1 = particleBin - 1;
+              ib2 = particleBin;
             } else {
-              ib1 = ib;
-              ib2 = ib + 1;
+              ib1 = particleBin;
+              ib2 = particleBin + 1;
             }
             if (ib2 > lastBin) {
               ib2--;
@@ -955,13 +960,14 @@ void track_through_rfmode(
               ib2++;
             }
             dt1 = time[ip] + tOffset - (tmin + dt * (ib1 + 0.5));
-            V = Vbin[ib1] + (Vbin[ib2] - Vbin[ib1]) / dt * dt1;
+            particleV = Vbin[ib1] + (Vbin[ib2] - Vbin[ib1]) / dt * dt1;
           } else {
-            V = Vbin[pbin[ip]];
+            particleV = Vbin[pbin[ip]];
           }
-          dgamma = rfmode->n_cavities * V / (1e6 * particleMassMV * particleRelSign);
-          if (iBucket == jBucket)
-            add_to_particle_energy(part[ip], time[ip], Po, dgamma);
+          if (iBucket == jBucket) {
+            double particleDgamma = rfmode->n_cavities * particleV / (1e6 * particleMassMV * particleRelSign);
+            add_to_particle_energy(part[ip], time[ip], Po, particleDgamma);
+          }
         }
       }
 
@@ -971,6 +977,9 @@ void track_through_rfmode(
 #endif
 
       if (nBuckets != 1 && iBucket == jBucket) {
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
       }

@@ -409,6 +409,9 @@ void track_through_cwake(double **part0, long np0, CWAKE *cw, double *PoInput,
              * stacked WAKE + TRWAKE layout (each TRWAKE element recomputes
              * pz from the post-WAKE particle state). */
             if (needTransverse) {
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
               for (ip = 0; ip < np; ip++)
                 pz[ip] = Po * (1 + part[ip][5]) /
                          sqrt(1 + sqr(part[ip][1]) + sqr(part[ip][3]));
@@ -427,6 +430,9 @@ void track_through_cwake(double **part0, long np0, CWAKE *cw, double *PoInput,
           rotateBeamCoordinatesForMisalignment(part, np, -cw->tilt);
 
         if (nBuckets != 1 && np > 0) {
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
           for (ip = 0; ip < np; ip++)
             memcpy(part0[ipBucket[iBucket][ip]], part[ip],
                    sizeof(double) * totalPropertiesPerParticle);

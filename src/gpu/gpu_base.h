@@ -832,6 +832,7 @@ GPU_BASE *getGpuBase(void);
 void gpuDescribeUsageSettings(char *buffer, unsigned long bufferSize);
 long gpuSetOmpTrackingThreads(long threads);
 long gpuGetOmpTrackingThreads(void);
+long gpuOmpTrackingRequested(long particles);
 long gpuOmpTrackingEnabled(long particles);
 long gpuOmpTrackingScopeActive(void);
 GPU_OMP_TRACKING_WORKSPACE *gpuGetOmpTrackingWorkspace(long particles);

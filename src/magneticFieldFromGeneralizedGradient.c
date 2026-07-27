@@ -546,6 +546,17 @@ long trackBGGExpansion(double **part, long np, BGGEXP *bgg, double pCentral, dou
 
     scaleA = -bgg->strength * particleCharge * particleRelSign / (pCentral * particleMass * c_mks); /** [factor in parentheses of a = (q/p_0)*A] **/
     /* Element body */
+#if defined(HAVE_GPU) && defined(_OPENMP) && !defined(DEBUG)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) \
+    if(gpuOmpTrackingRequested(np) && !bgg->SDDSpo && !bgg->synchRad && \
+       !bgg->isr && !sigmaDelta2) \
+    firstprivate(ux, uy) \
+    private(ip, iz, irow, isLost, ds, x, y, delta, s, phi, denom, \
+            iImpLoop, xMid, yMid, xNext, yNext, xLoop, yLoop, delta_s, \
+            px, py, pxNext, pyNext, pxLoop, pyLoop, sin_phi, \
+            cos_phi, Ax, dAx_dx, dAx_dy, Ay, dAy_dx, dAy_dy, dAz_dx, \
+            dAz_dy, Bx, By, Bz, magnet_s)
+#endif
     for (ip = 0; ip < np; ip++) {
 #if !USE_MPI
       if (bgg->SDDSpo && np < 1000) {
@@ -826,6 +837,15 @@ long trackBGGExpansion(double **part, long np, BGGEXP *bgg, double pCentral, dou
     double xTemp, yTemp, xNew, yNew, preFactorDz, deltaTemp;
     double magnet_s;
 
+#if defined(HAVE_GPU) && defined(_OPENMP) && !defined(DEBUG)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) \
+    if(gpuOmpTrackingRequested(np) && !bgg->SDDSpo && !bgg->synchRad && \
+       !bgg->isr && !sigmaDelta2) \
+    firstprivate(dz) \
+    private(ip, iz, irow, isLost, ds, x, y, xp, yp, delta, s, phi, denom, \
+            B, p, B2Max, pErr, pOrig, xpTemp, ypTemp, xpNew, ypNew, \
+            xTemp, yTemp, xNew, yNew, preFactorDz, deltaTemp, magnet_s)
+#endif
     for (ip = 0; ip < np; ip++) {
       B2Max = 0;
       x = part[ip][0];

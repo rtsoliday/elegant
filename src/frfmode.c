@@ -43,7 +43,6 @@ void track_through_frfmode(
   double tmin, tmax, last_tmax, tmean, dt;
   double Vb, V, omega, phase, t, k, damping_factor, tau;
   //double V_sum, Vr_sum, phase_sum, Vc, Vcr;
-  double dgamma;
   /* long max_hist, nb2, n_occupied; */
   long imode;
   double Qrp, VbImagFactor, Q;
@@ -433,11 +432,14 @@ void track_through_frfmode(
               firstBin, lastBin, 0, rfmode->n_cavities, Vbin);
         } else
 #endif
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
         for (ip = 0; ip < np; ip++) {
           if (pbin[ip] >= 0) {
             /* compute new momentum and momentum offset for this particle */
-            dgamma = rfmode->n_cavities * Vbin[pbin[ip]] / (1e6 * particleMassMV * particleRelSign);
-            add_to_particle_energy(part[ip], time[ip], Po, dgamma);
+            double particleDgamma = rfmode->n_cavities * Vbin[pbin[ip]] / (1e6 * particleMassMV * particleRelSign);
+            add_to_particle_energy(part[ip], time[ip], Po, particleDgamma);
           }
         }
       }
@@ -459,6 +461,9 @@ void track_through_frfmode(
       }
 
       if (nBuckets != 1) {
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
       }

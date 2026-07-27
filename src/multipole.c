@@ -1145,7 +1145,7 @@ long multipole_tracking2(
     memset(ompWorkspace->survived, 0,
            (i_top + 1) * sizeof(*ompWorkspace->survived));
 #  if defined(_OPENMP)
-#    pragma omp parallel for num_threads(ompThreads) schedule(static)
+#    pragma omp taskloop num_tasks(ompThreads)
 #  endif
     for (i_part = 0; i_part <= i_top; i_part++) {
       double localDzLoss = 0;

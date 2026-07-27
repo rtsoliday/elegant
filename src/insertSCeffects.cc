@@ -50,6 +50,22 @@ static SPACE_CHARGE sc;
 void linearSCKick(double *coord, ELEMENT_LIST *eptr, double *centroid, double *sigma, double charge, long iBunch);
 int nonlinearSCKick(double *coord, ELEMENT_LIST *eptr, double *centroid, double *sigma, double *kick, double charge, long iBunch);
 
+static void applySCKick(double *coord, ELEMENT_LIST *eptr,
+                        double *centroid, double *sigma,
+                        double charge, long iBunch) {
+  if (!sc.nonlinear) {
+    linearSCKick(coord, eptr, centroid, sigma, charge, iBunch);
+  } else {
+    double kick[2];
+    if (!nonlinearSCKick(coord, eptr, centroid, sigma, kick, charge, iBunch)) {
+      linearSCKick(coord, eptr, centroid, sigma, charge, iBunch);
+      return;
+    }
+    coord[1] += kick[0];
+    coord[3] += kick[1];
+  }
+}
+
 void setupSCEffect(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
 #include "insertSCeffects.h"
   long i;
@@ -141,10 +157,7 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
   /* long ib, nb = 0, n_binned = 0; */
   long iBucket, nBuckets, max_np = 0, ip, np;
   double tmin, tmax;
-  double *coord;
-  double kick[2];
   double totalCharge;
-  int flag;
 #ifdef HAVE_GPU
   long scmultOnGpu;
 #endif
@@ -197,23 +210,12 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
                                         eptr->twiss->betax,
                                         eptr->twiss->betay);
 #  ifdef GPU_VERIFY
+#    if defined(_OPENMP)
+#      pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np0))
+#    endif
       for (i = 0; i < np0; i++) {
-        if (sc.nonlinear) {
-          flag = nonlinearSCKick(part0[i], eptr,
-                                 sc.bunchData[0].center,
-                                 sc.bunchData[0].sigma, kick,
-                                 totalCharge, 0);
-          if (flag) {
-            part0[i][1] += kick[0];
-            part0[i][3] += kick[1];
-          } else {
-            linearSCKick(part0[i], eptr, sc.bunchData[0].center,
-                         sc.bunchData[0].sigma, totalCharge, 0);
-          }
-        } else {
-          linearSCKick(part0[i], eptr, sc.bunchData[0].center,
-                       sc.bunchData[0].sigma, totalCharge, 0);
-        }
+        applySCKick(part0[i], eptr, sc.bunchData[0].center,
+                    sc.bunchData[0].sigma, totalCharge, 0);
       }
       compareGpuCpu(np0, sc.nonlinear ?
                     "trackThroughSCMULT nonlinear resident" :
@@ -268,6 +270,9 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
           pbin = (long *)trealloc(pbin, sizeof(*pbin) * np);
           max_np = np;
         }
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
         for (ip=0; ip < np; ip++) {
           time[ip] = time0[ipBucket[iBucket][ip]];
           memcpy(part[ip], part0[ipBucket[iBucket][ip]], sizeof(double) * totalPropertiesPerParticle);
@@ -344,27 +349,12 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 		                                eptr->twiss->betax,
 		                                eptr->twiss->betay);
 #  ifdef GPU_VERIFY
+#    if defined(_OPENMP)
+#      pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#    endif
 		for (i = 0; i < np; i++) {
-		  if (sc.nonlinear) {
-		    flag = nonlinearSCKick(part[i], eptr,
-		                           sc.bunchData[iBucket].center,
-		                           sc.bunchData[iBucket].sigma, kick,
-		                           totalCharge, iBucket);
-		    if (flag) {
-		      part[i][1] += kick[0];
-		      part[i][3] += kick[1];
-		    } else {
-		      linearSCKick(part[i], eptr,
-		                   sc.bunchData[iBucket].center,
-		                   sc.bunchData[iBucket].sigma,
-		                   totalCharge, iBucket);
-		    }
-		  } else {
-		    linearSCKick(part[i], eptr,
-		                 sc.bunchData[iBucket].center,
-		                 sc.bunchData[iBucket].sigma,
-		                 totalCharge, iBucket);
-		  }
+		  applySCKick(part[i], eptr, sc.bunchData[iBucket].center,
+			      sc.bunchData[iBucket].sigma, totalCharge, iBucket);
 		}
 		compareGpuCpu(np, sc.nonlinear ?
 		              "trackThroughSCMULT nonlinear" :
@@ -376,24 +366,17 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 #endif
 		if (sc.sliceDuration<=0) {
 		  /* compute kicks using unsliced method */
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
 		  for (i = 0; i < np; i++) {
-		    coord = part[i];
-		    if (!sc.nonlinear) {
-		      linearSCKick(coord, eptr, sc.bunchData[iBucket].center, sc.bunchData[iBucket].sigma, totalCharge, iBucket);
-		    } else {
-		      flag = nonlinearSCKick(coord, eptr, sc.bunchData[iBucket].center, sc.bunchData[iBucket].sigma, kick, totalCharge, iBucket);
-		      if (!flag) {
-		        linearSCKick(coord, eptr, sc.bunchData[iBucket].center, sc.bunchData[iBucket].sigma, totalCharge, iBucket);
-		        continue;
-		      }
-		      coord[1] += kick[0];
-		      coord[3] += kick[1];
-		    }
+		    applySCKick(part[i], eptr, sc.bunchData[iBucket].center,
+				sc.bunchData[iBucket].sigma, totalCharge, iBucket);
 		  }
 		} else {
 		  /* compute kicks using sliced method */
 		  long nSlices, iSlice;
-		  double *QTime, *xyCentroidTime[2], *xySizeTime[2], centroid[3], sigma[3], sliceCharge;
+		  double *QTime, *xyCentroidTime[2], *xySizeTime[2];
 		  tmin -= sc.sliceDuration/2;
 		  tmax += sc.sliceDuration/2;
 		  if ((nSlices = (tmax-tmin)/sc.sliceDuration+1)<=0)
@@ -442,22 +425,26 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 		    }
 		    QTime[iSlice] *= charge->macroParticleCharge;
 		  }
-		  centroid[2] = 0;
-		  sigma[2] = sc.sliceDuration*c_mks; /* not actually used */
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
 		  for (i = 0; i < np; i++) {
-		    coord = part[i];
-		    iSlice = pbin[i];
+		    double centroid[3], sigma[3], sliceCharge;
+		    long particleSlice = pbin[i];
+		    double *particleCoord = part[i];
+		    centroid[2] = 0;
+		    sigma[2] = sc.sliceDuration*c_mks; /* not actually used */
 		    if (sc.sliceInterpolation==0) {
 		      for (int plane=0; plane<2; plane++) {
-		        centroid[plane] = xyCentroidTime[plane][iSlice];
-		        sigma[plane] = xySizeTime[plane][iSlice];
+		        centroid[plane] = xyCentroidTime[plane][particleSlice];
+		        sigma[plane] = xySizeTime[plane][particleSlice];
 		      }
-		      sliceCharge = QTime[iSlice];
+		      sliceCharge = QTime[particleSlice];
 		    } else {
 		      double timeOffset;
 		      long ib;
 		      short interpolate = sc.sliceInterpolation;
-		      if ((ib = iSlice)<0 || ib>(nSlices-1)) {
+		      if ((ib = particleSlice)<0 || ib>(nSlices-1)) {
 		        interpolate = 0;
 		        timeOffset = 0;
 		      }
@@ -469,9 +456,9 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 		      }
 		      for (int plane=0; plane<2; plane++) {
 		        if (!interpolate) {
-			  centroid[plane] = xyCentroidTime[plane][iSlice];
-			  sigma[plane] = xySizeTime[plane][iSlice];
-			  sliceCharge = QTime[iSlice];
+			  centroid[plane] = xyCentroidTime[plane][particleSlice];
+			  sigma[plane] = xySizeTime[plane][particleSlice];
+			  sliceCharge = QTime[particleSlice];
 		        } else {
 			  centroid[plane] = xyCentroidTime[plane][ib] + (xyCentroidTime[plane][ib+1]-xyCentroidTime[plane][ib])/sc.sliceDuration*timeOffset;
 			  sigma[plane] = xySizeTime[plane][ib] + (xySizeTime[plane][ib+1]-xySizeTime[plane][ib])/sc.sliceDuration*timeOffset;
@@ -479,17 +466,8 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 		        }
 		      }
 		    }
-		    if (!sc.nonlinear) {
-		      linearSCKick(coord, eptr, centroid, sigma, sliceCharge, iBucket);
-		    } else {
-		      flag = nonlinearSCKick(coord, eptr, centroid, sigma, kick, sliceCharge, iBucket);
-		      if (!flag) {
-		        linearSCKick(coord, eptr, centroid, sigma, sliceCharge, iBucket);
-		        continue;
-		      }
-		      coord[1] += kick[0];
-		      coord[3] += kick[1];
-		    }
+		    applySCKick(particleCoord, eptr, centroid, sigma,
+				sliceCharge, iBucket);
 		  }
 		  free(QTime);
 		  free(xyCentroidTime[0]);
@@ -501,8 +479,11 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 	      }
 #endif
 
-	      if (nBuckets != 1) {
+      if (nBuckets != 1) {
 	/* Move data back to input array */
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
       }
@@ -581,19 +562,20 @@ int nonlinearSCKick(double *coord, ELEMENT_LIST *eptr, double *centroid, double 
     kick[1] = dp*sin(theta)*k0;
   } else {
     short swapXY = 0;
-    if (sigma[0]<sigma[1]) {
+    double sigmaMajor = sigma[0], sigmaMinor = sigma[1];
+    if (sigmaMajor<sigmaMinor) {
       double tmp;
       swapXY = 1;
-      SWAP_DOUBLE(sigma[0], sigma[1]);
+      SWAP_DOUBLE(sigmaMajor, sigmaMinor);
       tmp = x;
       x = y;
       y = -tmp;
     }
 
     double ay = fabs(y); // This allows handling y<0 case without numerical issues. See Ziemann SLAC-PUB-5582
-    double sd = sqrt(2.0*(sqr(sigma[0]) - sqr(sigma[1])));
+    double sd = sqrt(2.0*(sqr(sigmaMajor) - sqr(sigmaMinor)));
     w1 = std::complex<double>(x / sd, ay / sd);
-    w2 = std::complex<double>(x / sd * sigma[1] / sigma[0], ay / sd * sigma[0] / sigma[1]);
+    w2 = std::complex<double>(x / sd * sigmaMinor / sigmaMajor, ay / sd * sigmaMajor / sigmaMinor);
     
     wa = complexErf(w1, &overflow);
     if (overflow)
@@ -602,11 +584,10 @@ int nonlinearSCKick(double *coord, ELEMENT_LIST *eptr, double *centroid, double 
     if (overflow)
       return (0);
 
-    double C3 = exp(-sqr(x) / (2 * sqr(sigma[0])) - sqr(y) / (2 * sqr(sigma[1])));
+    double C3 = exp(-sqr(x) / (2 * sqr(sigmaMajor)) - sqr(y) / (2 * sqr(sigmaMinor)));
     w = wa - C3 * wb;
 
     if (swapXY) {
-      SWAP_DOUBLE(sigma[0], sigma[1]);
       kx = k0 * sc.bunchData[iBunch].dmux * sigma[0] * sqrt((sigma[0] + sigma[1]) / fabs(sigma[0] - sigma[1])) / eptr->twiss->betax;
       ky = k0 * sc.bunchData[iBunch].dmuy * sigma[1] * sqrt((sigma[0] + sigma[1]) / fabs(sigma[0] - sigma[1])) / eptr->twiss->betay;
 

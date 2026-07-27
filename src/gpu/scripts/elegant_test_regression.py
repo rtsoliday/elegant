@@ -732,15 +732,16 @@ def translate_supported_csh_helpers(root: Path) -> tuple[list[str], list[str]]:
 
 
 def prepare_commands(
-    test_dir: Path, executable: Path
+    test_dir: Path, executable: Path, executable_arguments: list[str]
 ) -> tuple[list[list[str]], bool, str]:
     run_template = test_dir / "runTemplate"
     run_script = test_dir / "runScript"
     if run_template.is_file():
         run_job = test_dir / "runJob"
         template = run_template.read_text(errors="surrogateescape")
+        executable_command = shlex.join([str(executable), *executable_arguments])
         run_job.write_text(
-            template.replace("<executable>", shlex.quote(str(executable))),
+            template.replace("<executable>", executable_command),
             errors="surrogateescape",
         )
         run_job.chmod(run_job.stat().st_mode | 0o700)
@@ -754,15 +755,22 @@ def prepare_commands(
         script = run_script.read_text(errors="surrogateescape")
         if "cat done > run.done" in script and not (test_dir / "done").exists():
             (test_dir / "done").touch()
-        command, runner_mode = prepare_runner_command(run_script, [str(executable)])
+        command, runner_mode = prepare_runner_command(
+            run_script, [str(executable), *executable_arguments]
+        )
         return [command], True, runner_mode
     run_file = test_dir / "run.ele"
     if run_file.is_file():
-        return [[str(executable), run_file.name]], False, "direct"
+        return [
+            [str(executable), run_file.name, *executable_arguments]
+        ], False, "direct"
     inputs = sorted(test_dir.glob("run*.ele"))
     if not inputs:
         raise RegressionError(f"no runnable input found in {test_dir.name}")
-    return [[str(executable), path.name] for path in inputs], False, "direct"
+    return [
+        [str(executable), path.name, *executable_arguments]
+        for path in inputs
+    ], False, "direct"
 
 
 def installed_oag_top_dir(environment: dict[str, str], test_set: Path) -> Path | None:
@@ -919,6 +927,7 @@ def run_test(
     test_set: Path,
     source_kind: str,
     executable: Path,
+    executable_arguments: list[str],
     artifact_root: Path,
     timeout: float,
     keep_work: bool,
@@ -964,7 +973,9 @@ def run_test(
                 test_set / dependency, work_root / dependency, source_kind
             )
 
-        commands, require_done, runner_mode = prepare_commands(test_dir, executable)
+        commands, require_done, runner_mode = prepare_commands(
+            test_dir, executable, executable_arguments
+        )
         result["runner_mode"] = runner_mode
         translated_helpers, unsupported_helpers = translate_supported_csh_helpers(
             work_root
@@ -1084,6 +1095,7 @@ def run_test_repeated(
     test_set: Path,
     source_kind: str,
     executable: Path,
+    executable_arguments: list[str],
     artifact_root: Path,
     timeout: float,
     keep_work: bool,
@@ -1108,6 +1120,7 @@ def run_test_repeated(
             test_set=test_set,
             source_kind=source_kind,
             executable=executable,
+            executable_arguments=executable_arguments,
             artifact_root=sample_root,
             timeout=timeout,
             keep_work=keep_work,
@@ -1267,6 +1280,7 @@ def run_tests(
     test_set: Path,
     source_kind: str,
     executable: Path,
+    executable_arguments: list[str],
     artifact_root: Path,
     timeout: float,
     jobs: int,
@@ -1289,6 +1303,7 @@ def run_tests(
                 test_set=test_set,
                 source_kind=source_kind,
                 executable=executable,
+                executable_arguments=executable_arguments,
                 artifact_root=artifact_root,
                 timeout=timeout,
                 keep_work=keep_work,
@@ -1451,6 +1466,7 @@ def baseline_command(args: argparse.Namespace) -> int:
         test_set=test_set,
         source_kind=test_set_kind(source_metadata),
         executable=executable,
+        executable_arguments=args.elegant_argument,
         artifact_root=output,
         timeout=args.timeout,
         jobs=args.jobs,
@@ -1472,6 +1488,7 @@ def baseline_command(args: argparse.Namespace) -> int:
         "run_options": {
             "jobs": args.jobs,
             "timeout_seconds": args.timeout,
+            "executable_arguments": args.elegant_argument,
             "timing_metric": "execution_seconds",
             "warmup_runs": warmup_runs,
             "repetitions": repetitions,
@@ -2676,6 +2693,7 @@ def compare_command(args: argparse.Namespace) -> int:
         test_set=test_set,
         source_kind=test_set_kind(source_metadata),
         executable=executable,
+        executable_arguments=args.elegant_argument,
         artifact_root=output,
         timeout=args.timeout,
         jobs=args.jobs,
@@ -2709,6 +2727,7 @@ def compare_command(args: argparse.Namespace) -> int:
         "run_options": {
             "jobs": args.jobs,
             "timeout_seconds": args.timeout,
+            "executable_arguments": args.elegant_argument,
             "timing_metric": "execution_seconds",
             "warmup_runs": warmup_runs,
             "repetitions": repetitions,
@@ -2965,6 +2984,15 @@ def add_run_options(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument("--elegant", required=True, help="elegant executable to run")
+    parser.add_argument(
+        "--elegant-argument",
+        action="append",
+        default=[],
+        help=(
+            "argument appended to each elegant command; repeat as needed "
+            "(for example, --elegant-argument=-ompThreads=4)"
+        ),
+    )
     parser.add_argument(
         "--output", required=True, help="new artifact directory to create"
     )

@@ -559,7 +559,8 @@ long track_through_ccbend(
 #ifdef HAVE_GPU
   ompActive = gpuOmpTrackingEnabled(i_top + 1) && !accepted &&
     globalLossCoordOffset <= 0 && !sigmaDelta2 && disableSums &&
-    !edge1MultData && !edge2MultData && isr_coef <= 0;
+    (!edge1MultData || !edge1MultData->orders) &&
+    (!edge2MultData || !edge2MultData->orders) && isr_coef <= 0;
   if (ompActive) {
     ompParticles = i_top + 1;
     ompWorkspace = gpuGetOmpTrackingWorkspace(ompParticles);
@@ -567,7 +568,7 @@ long track_through_ccbend(
     memset(ompWorkspace->survived, 0,
            ompParticles * sizeof(*ompWorkspace->survived));
 #  if defined(_OPENMP)
-#    pragma omp parallel for num_threads(ompThreads) schedule(static)
+#    pragma omp taskloop num_tasks(ompThreads)
 #  endif
     for (i_part = 0; i_part < ompParticles; i_part++) {
       double localDzLoss = 0, localLastRho = 0;

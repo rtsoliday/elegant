@@ -44,9 +44,8 @@ void track_through_trfmode(
   long max_np = 0;
   double tPrevious, VxPrevious, xPhasePrevious, VyPrevious, yPhasePrevious;
   long ip, ib;
-  double tmin, tmax, tmean, dt, P, last_tmax = -DBL_MAX;
+  double tmin, tmax, tmean, dt, last_tmax = -DBL_MAX;
   double Vxb, Vyb, V, omega, phase, t, k, omegaOverC, damping_factor, tau;
-  double Px, Py, Pz;
   double Q, Qrp;
   long n_binned, firstBin, lastBin;
 #ifdef HAVE_GPU
@@ -503,21 +502,26 @@ void track_through_trfmode(
               trfmode->n_cavities, Vxbin, Vybin, Vzbin);
         } else
 #endif
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
         for (ip = 0; ip < np; ip++) {
           double Vx, Vy, Vz;
           if (pbin[ip] >= 0) {
-            P = Po * (1 + part[ip][5]);
+            double P = Po * (1 + part[ip][5]);
+            double Px, Py, Pz;
             if (trfmode->interpolate) {
               long ib1, ib2;
+              long particleBin;
               double dt1;
-              ib = pbin[ip];
-              dt1 = time[ip] - (tmin + dt * (ib + 0.5));
+              particleBin = pbin[ip];
+              dt1 = time[ip] - (tmin + dt * (particleBin + 0.5));
               if (dt1 < 0) {
-                ib1 = ib - 1;
-                ib2 = ib;
+                ib1 = particleBin - 1;
+                ib2 = particleBin;
               } else {
-                ib1 = ib;
-                ib2 = ib + 1;
+                ib1 = particleBin;
+                ib2 = particleBin + 1;
               }
               if (ib2 > lastBin) {
                 ib2--;
@@ -549,6 +553,9 @@ void track_through_trfmode(
       }
 
       if (nBuckets != 1) {
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#endif
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
       }

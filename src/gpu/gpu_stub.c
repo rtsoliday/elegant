@@ -5145,8 +5145,12 @@ long gpuGetOmpTrackingThreads(void) {
   return gpuOmpTrackingThreads;
 }
 
+long gpuOmpTrackingRequested(long particles) {
+  return gpuOmpTrackingThreads > 1 && particles >= 64;
+}
+
 long gpuOmpTrackingEnabled(long particles) {
-  return gpuOmpTrackingScope && gpuOmpTrackingThreads > 1 && particles >= 64;
+  return gpuOmpTrackingScope && gpuOmpTrackingRequested(particles);
 }
 
 long gpuOmpTrackingScopeActive(void) {

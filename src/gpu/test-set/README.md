@@ -95,10 +95,12 @@ enter the second interval, with results scattered back into stable grid order.
 For non-MPI `gpu-elegant`, `-ompThreads=N` explicitly enables experimental
 OpenMP particle tracking in the loss-sensitive batched CPU fallback.  The
 default is one tracking thread.  The OpenMP path keeps element setup and sticky
-aperture state serial, parallelizes deterministic magnet integration, and
-performs stable ordered loss compaction after each parallel region.  Users must
-use it only on a GPU node whose requested CPU cores are not shared with other
-jobs.
+aperture state serial, keeps one worker team alive for each tune interval,
+submits deterministic magnet integration as particle taskloops, and performs
+stable ordered loss compaction after each taskloop.  The regression harness
+accepts repeatable executable options such as
+`--elegant-argument=-ompThreads=4`.  Users must use OpenMP only on a GPU node
+whose requested CPU cores are not shared with other jobs.
 `run-loss.ele` checks the loss-sensitive batched CPU policy, stable grid-row
 mapping after entrance losses, and the defined `s=0` output for lost particles.
 `run-isr-fallback.ele` confirms that ISR and other unsupported magnet options

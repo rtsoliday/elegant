@@ -20,6 +20,9 @@
 #  include "gpu_funcs.h"
 #  include "gpu_lgbend.h"
 #endif
+#ifdef _OPENMP
+#  include <omp.h>
+#endif
 
 /* Used to share data with trajectory optimization penalty function */
 static LGBEND lgbendCopy;
@@ -43,7 +46,7 @@ void storeLGBendOptimizedFSEValues(LGBEND *lgbend);
 int retrieveLGBendOptimizedFSEValues(LGBEND *lgbend);
 void readLGBendApertureData(LGBEND *lgbend);
 
-long track_through_lgbend(
+static long track_through_lgbend_impl(
   double **particle, /* initial/final phase-space coordinates */
   long n_part,       /* number of particles */
   ELEMENT_LIST *eptr,
@@ -425,7 +428,11 @@ long track_through_lgbend(
 
     dZOffset = dZOffset0 + (iSegment > 0 ? lgbend->segment[iSegment - 1].zAccumulated : 0);
 #ifdef HAVE_GPU
-    ompActive = gpuOmpTrackingEnabled(i_top + 1) && !accepted &&
+    ompActive = gpuOmpTrackingRequested(i_top + 1) &&
+#  if defined(_OPENMP)
+      omp_in_parallel() &&
+#  endif
+      !accepted &&
       globalLossCoordOffset <= 0 && !sigmaDelta2 && disableSums &&
       isr_coef <= 0;
     if (ompActive) {
@@ -435,7 +442,7 @@ long track_through_lgbend(
       memset(ompWorkspace->survived, 0,
              ompParticles * sizeof(*ompWorkspace->survived));
 #  if defined(_OPENMP)
-#    pragma omp parallel for num_threads(ompThreads) schedule(static)
+#    pragma omp taskloop num_tasks(ompThreads)
 #  endif
       for (i_part = 0; i_part < ompParticles; i_part++) {
         double localDzLoss = 0, localLastRho = 0;
@@ -641,6 +648,47 @@ long track_through_lgbend(
   log_exit("track_through_lgbend");
 
   return (i_top + 1);
+}
+
+long track_through_lgbend(
+  double **particle,
+  long n_part,
+  ELEMENT_LIST *eptr,
+  LGBEND *lgbend,
+  double Po,
+  double **accepted,
+  double z_start,
+  double *sigmaDelta2,
+  char *rootname,
+  MAXAMP *maxamp,
+  APCONTOUR *apContour,
+  APERTURE_DATA *apFileData,
+  long iPart,
+  long iFinalSlice) {
+#if defined(HAVE_GPU) && defined(_OPENMP)
+  long result = 0;
+
+  /* Direct CPU-fallback tracking otherwise creates a worker team for every
+   * segment.  Keep one team alive for the complete magnet and let the
+   * implementation submit only deterministic particle loops as tasks.
+   * Batched frequency-map tracking already owns a persistent team. */
+  if (!getElementOnGpu() && !omp_in_parallel() &&
+      gpuOmpTrackingRequested(n_part) && !accepted && !sigmaDelta2 &&
+      !spinCoordOffset && globalLossCoordOffset <= 0 &&
+      !lgbend->synch_rad && !lgbend->isr) {
+#  pragma omp parallel num_threads(gpuGetOmpTrackingThreads())
+    {
+#  pragma omp single
+      result = track_through_lgbend_impl(
+        particle, n_part, eptr, lgbend, Po, accepted, z_start, sigmaDelta2,
+        rootname, maxamp, apContour, apFileData, iPart, iFinalSlice);
+    }
+    return result;
+  }
+#endif
+  return track_through_lgbend_impl(
+    particle, n_part, eptr, lgbend, Po, accepted, z_start, sigmaDelta2,
+    rootname, maxamp, apContour, apFileData, iPart, iFinalSlice);
 }
 
 VMATRIX *determinePartialLgbendLinearMatrix(LGBEND *lgbend, double *startingCoord, double pCentral, long iFinalSlice)
@@ -936,6 +984,9 @@ void lgbendFringe(
   focX0 = -tant * intK5 - 0.5 * intI0 * (2.0 - tant * tant);
   focY0 = -tant * (invRhoPlus - invRhoMinus) + tant * sect * sect * intK5 + 0.5 * intI0 * (2.0 + tant * tant);
   focYd = sect3 * ((1.0 + sint * sint) * intK2 - intK7);
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp taskloop if(gpuOmpTrackingRequested(n_part) && omp_in_parallel() && !spinCoordOffset) num_tasks(gpuGetOmpTrackingThreads())
+#endif
   for (i = 0; i < n_part; i++) {
     x1 = particle[i][0];
     temp = sqrt(1.0 + sqr(particle[i][1]) + sqr(particle[i][3]));
@@ -1024,11 +1075,17 @@ void switchLgbendPlane(double **particle, long n_part, double dx, double alpha, 
   sin_alpha = sin(alpha);
 
   if (exitPlane)
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp taskloop if(gpuOmpTrackingRequested(n_part) && omp_in_parallel()) num_tasks(gpuGetOmpTrackingThreads())
+#endif
     for (i = 0; i < n_part; i++) {
       coord = particle[i];
       coord[0] += dx;
     }
 
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp taskloop if(gpuOmpTrackingRequested(n_part) && omp_in_parallel()) num_tasks(gpuGetOmpTrackingThreads())
+#endif
   for (i = 0; i < n_part; i++) {
     coord = particle[i];
     s = coord[0] * tan_alpha / (1 - coord[1] * tan_alpha);
@@ -1047,6 +1104,9 @@ void switchLgbendPlane(double **particle, long n_part, double dx, double alpha, 
   }
 
   if (!exitPlane)
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp taskloop if(gpuOmpTrackingRequested(n_part) && omp_in_parallel()) num_tasks(gpuGetOmpTrackingThreads())
+#endif
     for (i = 0; i < n_part; i++) {
       coord = particle[i];
       coord[0] += dx;

@@ -21,6 +21,9 @@
 #  include "gpu_csbend.h"
 #  include "gpu_funcs.h"
 #endif
+#ifdef _OPENMP
+#  include <omp.h>
+#endif
 
 #if !defined(HAVE_GPU)
 #define VT static
@@ -1308,7 +1311,7 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
     ompData.cosTilt = cos_ttilt;
     ompData.sinTilt = sin_ttilt;
 #  if defined(_OPENMP)
-#    pragma omp parallel for num_threads(ompThreads) schedule(static)
+#    pragma omp taskloop num_tasks(ompThreads)
 #  endif
     for (i_part = 0; i_part < ompParticles; i_part++) {
       double localDzLost = 0;
@@ -3593,16 +3596,20 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
               csrDgammaHostCurrent = 1;
             }
 #endif
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(n_part))
+#endif
           for (i_part = 0; i_part < n_part; i_part++) {
-            long nBins1;
+            long localBin, nBins1;
             double f;
+            double *localCoord;
             nBins1 = nBins - 1;
-            coord = part[i_part];
+            localCoord = part[i_part];
             /* apply CSR kick */
-            iBin = (f = (CT - ctLower) / dct);
-            f -= iBin;
-            if (iBin >= 0 && iBin < nBins1) {
-              DP += ((1 - f) * dGamma[iBin] + f * dGamma[iBin + 1]) / Po * (1 + X / rho0);
+            localBin = (f = (localCoord[4] - ctLower) / dct);
+            f -= localBin;
+            if (localBin >= 0 && localBin < nBins1) {
+              localCoord[5] += ((1 - f) * dGamma[localBin] + f * dGamma[localBin + 1]) / Po * (1 + localCoord[0] / rho0);
               /* This code probably should be uncommented, but makes very little difference.
               p1 = Po*(1+DP);
               beta1 = p1/sqrt(p1*p1+1);
@@ -4839,6 +4846,9 @@ void exactDrift(double **part, long np, double length) {
   }
 #endif /* HAVE_GPU */
 
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp taskloop if(gpuOmpTrackingRequested(np) && omp_in_parallel()) num_tasks(gpuGetOmpTrackingThreads())
+#endif
   for (i = 0; i < np; i++) {
     coord = part[i];
     coord[0] += coord[1] * length;

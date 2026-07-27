@@ -18,6 +18,7 @@
 #include "track.h"
 #include "momentumAperture.h"
 #if defined(HAVE_GPU) && !USE_MPI
+#  include "gpu_base.h"
 #  include "gpu_search.h"
 #endif
 
@@ -347,6 +348,14 @@ static long doMomentumApertureSearchBatched(
       if (!seen[id])
         bombElegant("missing search ID in batched momentum search", NULL);
 
+    /* Candidate histories and output slots are disjoint by task.  NAFF keeps
+     * its working state thread-local, so deterministic tune extraction can
+     * run concurrently while the loss/survivor scan within each task remains
+     * in its original order.  Restrict this to the soft-failure batched GPU
+     * path so no worker can invoke the fatal error handler. */
+#if defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(total) && soft_failure) private(ip, id)
+#endif
     for (itask = 0; itask < tasks; itask++) {
       long foundLoss = 0;
       double tune[2] = {-1, -1};

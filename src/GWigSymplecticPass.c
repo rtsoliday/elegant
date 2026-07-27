@@ -260,7 +260,7 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
                         double *ZwStart) {
 
   int c;
-  double r6[6], denom, ZwEnd, pf;
+  double ZwEnd;
   static struct gwig Wig;
   MALIGN malign;
   TRACKING_CONTEXT tContext;
@@ -343,7 +343,16 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
     cwiggler->fieldOutputRows = 1000;
   }
 
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) \
+    if(gpuOmpTrackingRequested(num_particles) && !singleStep && !ZwStart && \
+       !sigmaDelta2 && !cwiggler->fieldOutputInitialized && \
+       !cwiggler->sr && !cwiggler->isr)
+#endif
   for (c = 0; c < num_particles; c++) {
+    double r6[6], denom, pf;
+    struct gwig particleWig = Wig;
+
     /* convert from (x, x', y, y', s, delta) to Canonical coordinates 
      * (x, qx, y, qy, delta, s) 
      * d =  sqrt(1+sqr(xp)+sqr(yp))
@@ -358,24 +367,24 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
     r6[4] = coord[c][5];
     r6[5] = coord[c][4];
     if (ZwStart) {
-      Wig.Zw = *ZwStart;
-      if (singleStep && Wig.Zw != 0) {
+      particleWig.Zw = *ZwStart;
+      if (singleStep && particleWig.Zw != 0) {
         double ax, ay, axpy, aypx;
-        GWigAx(&Wig, r6, &ax, &axpy, pf = GWigPoleFactor(&Wig, *ZwStart));
-        GWigAy(&Wig, r6, &ay, &aypx, pf);
+        GWigAx(&particleWig, r6, &ax, &axpy, pf = GWigPoleFactor(&particleWig, *ZwStart));
+        GWigAy(&particleWig, r6, &ay, &aypx, pf);
         r6[1] += ax;
         r6[3] += ay;
       }
     } else
-      Wig.Zw = 0;
+      particleWig.Zw = 0;
 
     /* Track through the wiggler */
     switch (cwiggler->integrationOrder) {
     case second:
-      GWigPass_2nd(&Wig, r6, sigmaDelta2, singleStep);
+      GWigPass_2nd(&particleWig, r6, sigmaDelta2, singleStep);
       break;
     case fourth:
-      GWigPass_4th(&Wig, r6, sigmaDelta2, singleStep);
+      GWigPass_4th(&particleWig, r6, sigmaDelta2, singleStep);
       break;
     default:
       printf("Error: Invalid method integration order for CWIGGLER (use 2 or 4)\n");
@@ -386,8 +395,8 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
     if (singleStep) {
       /* convert back to elegant coordinates (special code for interior of device to account for vector potential) */
       double ax, ay, axpy, aypx;
-      GWigAx(&Wig, r6, &ax, &axpy, pf = GWigPoleFactor(&Wig, ZwEnd));
-      GWigAy(&Wig, r6, &ay, &aypx, pf);
+      GWigAx(&particleWig, r6, &ax, &axpy, pf = GWigPoleFactor(&particleWig, ZwEnd));
+      GWigAy(&particleWig, r6, &ay, &aypx, pf);
       coord[c][0] = r6[0];
       coord[c][2] = r6[2];
       coord[c][5] = r6[4];
@@ -410,15 +419,15 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
        * xp = qx/d, yp=qy/d
        */
       denom = sqrt(sqr(1 + coord[c][5]) - sqr(r6[1]) - sqr(r6[3]));
-      if (Wig.BConstant[0] || Wig.BConstant[1]) {
+      if (particleWig.BConstant[0] || particleWig.BConstant[1]) {
         /* subtract off vector-potential contribution to the momentum for the constant field component. 
          * we don't need this for the wiggler terms because they are assumed to integrate to zero.
          */
         double ax, ay, gamma0, beta0;
-        gamma0 = Wig.E0 / XMC2;
+        gamma0 = particleWig.E0 / XMC2;
         beta0 = sqrt(1e0 - 1e0 / (gamma0 * gamma0));
-        ax = -Wig.BConstant[1]*ZwEnd/(gamma0*beta0)*(q_e/m_e/clight);
-        ay = Wig.BConstant[0]*ZwEnd/(gamma0*beta0)*(q_e/m_e/clight);
+        ax = -particleWig.BConstant[1]*ZwEnd/(gamma0*beta0)*(q_e/m_e/clight);
+        ay = particleWig.BConstant[0]*ZwEnd/(gamma0*beta0)*(q_e/m_e/clight);
         r6[1] -= ax;
         r6[3] -= ay;
       }

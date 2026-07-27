@@ -14,6 +14,12 @@
  */
 #include "mdb.h"
 #include "track.h"
+#ifdef HAVE_GPU
+#  include "gpu_base.h"
+#endif
+#ifdef _OPENMP
+#  include <omp.h>
+#endif
 
 void tilt_matrices(VMATRIX *M, double tilt) {
   static VMATRIX Rot, IRot;
@@ -181,6 +187,9 @@ void rotateBeamCoordinatesForMisalignment(double **part, long np, double angle) 
     sin_a = sin(angle);
   }
 
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  pragma omp taskloop if(gpuOmpTrackingRequested(np) && omp_in_parallel() && !spinCoordOffset) num_tasks(gpuGetOmpTrackingThreads())
+#endif
   for (i = 0; i < np; i++) {
     coord = part[i];
     x = coord[0];
