@@ -1295,6 +1295,9 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
     GPU_OMP_TRACKING_WORKSPACE *ompWorkspace;
     long ompParticles = n_part;
     long ompThreads = gpuGetOmpTrackingThreads();
+#  if !defined(_OPENMP)
+    (void)ompThreads;
+#  endif
 
     ompWorkspace = gpuGetOmpTrackingWorkspace(ompParticles);
     memset(ompWorkspace->survived, 0,

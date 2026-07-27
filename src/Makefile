@@ -324,6 +324,11 @@ endif
 
 include ../Makefile.build
 
+.PHONY: FORCE_LINK_DATE
+FORCE_LINK_DATE:
+
+$(OBJ_DIR)/link_date.$(OBJEXT): FORCE_LINK_DATE
+
 $(OBJ_DIR)/elegant$(EXEEXT): $(elegant_OBJS) $(PROD_DEPS) | $(BIN_DIR)
 	$(LINKEXE) $(OUTPUTEXE) $(elegant_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
 	cp -f $@ $(BIN_DIR)/$(ELEGANT_INSTALL_NAME)

@@ -270,6 +270,11 @@ endif
 
 include ../Makefile.build
 
+.PHONY: FORCE_LINK_DATE_MPI
+FORCE_LINK_DATE_MPI:
+
+$(OBJ_DIR)/link_date.mpi.$(OBJEXT): FORCE_LINK_DATE_MPI
+
 $(OBJ_DIR)/Pelegant$(EXEEXT): $(Pelegant_OBJS) $(PROD_DEPS)
 	$(LINKEXE) $(OUTPUTEXE) $(Pelegant_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
 	cp -f $@ $(BIN_DIR)/$(PELEGANT_INSTALL_NAME)

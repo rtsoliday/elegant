@@ -1142,6 +1142,9 @@ long multipole_tracking2(
   if (ompActive) {
     ompWorkspace = gpuGetOmpTrackingWorkspace(i_top + 1);
     ompThreads = gpuGetOmpTrackingThreads();
+#  if !defined(_OPENMP)
+    (void)ompThreads;
+#  endif
     memset(ompWorkspace->survived, 0,
            (i_top + 1) * sizeof(*ompWorkspace->survived));
 #  if defined(_OPENMP)

@@ -2588,6 +2588,7 @@ static long gpuRfmodeElementSupported(ELEMENT_LIST *eptr) {
 #endif
 }
 
+#if !USE_MPI
 static long gpuTfeedbackPickupCoordinate(const TFBPICKUP *pickup) {
   if (!pickup || !pickup->plane)
     return -1;
@@ -2629,6 +2630,7 @@ static long gpuTfeedbackPickupSupported(const TFBPICKUP *pickup) {
   return pickup && pickup->bunchedBeamMode == 0 && !pickup->rmsNoise &&
          gpuTfeedbackPickupCoordinate(pickup) >= 0;
 }
+#endif
 
 static long gpuTfeedbackElementSupported(ELEMENT_LIST *eptr) {
 #if USE_MPI
@@ -5820,6 +5822,7 @@ long gpu_batched_tune_beamline_supported(void *beamline0) {
 #endif
 }
 
+#if !USE_MPI
 static void gpuTuneProgramRelease(GPU_TUNE_PROGRAM *program) {
   if (!program)
     return;
@@ -6254,6 +6257,7 @@ unsupported:
   gpuTuneProgramRelease(program);
   return 0;
 }
+#endif
 
 long gpu_batched_frequency_map_beamline_supported(void *beamline0) {
 #if USE_MPI

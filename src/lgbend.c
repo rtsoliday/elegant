@@ -439,6 +439,9 @@ static long track_through_lgbend_impl(
       ompParticles = i_top + 1;
       ompWorkspace = gpuGetOmpTrackingWorkspace(ompParticles);
       ompThreads = gpuGetOmpTrackingThreads();
+#  if !defined(_OPENMP)
+      (void)ompThreads;
+#  endif
       memset(ompWorkspace->survived, 0,
              ompParticles * sizeof(*ompWorkspace->survived));
 #  if defined(_OPENMP)
