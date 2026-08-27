@@ -81,5 +81,22 @@ epicsShareFuncOAGPHY extern double computeFluxLindberg(int radHarm, int undN, do
 epicsShareFuncOAGPHY extern void computeEffectiveBeamParameters(double *exEff, double *betaxEff, double *alphaxEff,
 								double ex, double betax, double alphax,
 								double etax, double etaxp, double Sdelta);
-#endif
 
+/* results of the coupled (eigen-)emittance analysis of the full 6x6 beam matrix;
+   mode index 0 is x-dominated, 1 is y-dominated, 2 is longitudinal-dominated
+   (see ComputeCoupledParameters).  The longitudinal coordinate is s=beta*c*t (m),
+   matching elegant's moments_output, so emit[2] is a geometric emittance in m. */
+typedef struct {
+  double emit[3];                          /* eigen-emittances e1, e2, e3 (geometric, m) */
+  double betax[3], alphax[3], gammax[3];   /* per-mode Twiss functions, x plane */
+  double betay[3], alphay[3], gammay[3];   /* per-mode Twiss functions, y plane */
+  double betaz[3], alphaz[3], gammaz[3];   /* per-mode Twiss functions, longitudinal (s,delta) plane */
+  double A_xy[3], A_xpy[3], A_xyp[3], A_xpyp[3]; /* per-mode x-y cross-plane coupling terms */
+} COUPLED_RESULTS;
+
+/* Coupled (eigen-)emittance and coupled lattice-function analysis of the 6x6 beam
+   matrix S via the Sigma.J (Wolski) method.  sLongScale=beta*c rescales row/col 4
+   from t (s) to s=beta*c*t (m); pass 1 if S is already in s.  Returns 1 on success
+   (result filled), 0 on failure.  Requires compilation with GSL (-DUSE_GSL). */
+epicsShareFuncOAGPHY extern long ComputeCoupledParameters(COUPLED_RESULTS *result, double S[6][6], double sLongScale);
+#endif
