@@ -19,7 +19,7 @@ void track_through_ramped_deflector(
   double **final,
   RMDF *ramp_param,
   double **initial,
-  long n_particles,
+  int64_t n_particles,
   double pc_central) {
   double t_null;    /* time when field is zero, relative to first particle */
   double t_part;    /* time at which a particle enters plates */
@@ -29,7 +29,8 @@ void track_through_ramped_deflector(
   double cos_tilt, sin_tilt;
   double Estrengthp;
   double length, zstart, zend, zs2, ze2, f1, Zo;
-  long ip, is;
+  int64_t ip;
+  long is;
 
   log_entry("track_through_ramped_deflector");
 

@@ -18,7 +18,7 @@
 
 long polynomial_kicks(
   double **particle, /* initial/final phase-space coordinates */
-  long n_part,       /* number of particles */
+  int64_t n_part,       /* number of particles */
   KPOLY *kpoly,      /* kick-polynomial structure */
   double p_error,    /* p_nominal/p_central */
   double Po,
@@ -28,7 +28,8 @@ long polynomial_kicks(
   double KL;
   double dx, dy, dz; /* offsets of the multipole center */
   long order;        /* order (n) */
-  long i_part, i_top, yplane;
+  int64_t i_part, i_top;
+  long yplane;
   double *coord;
   double cos_tilt, sin_tilt;
   double x, xp, y, yp;
@@ -131,14 +132,15 @@ long polynomial_kicks(
 
 long polynomial_hamiltonian(
   double **particle, /* initial/final phase-space coordinates */
-  long n_part,       /* number of particles */
+  int64_t n_part,       /* number of particles */
   HKPOLY *hkpoly,    /* kick-polynomial structure */
   double p_error,    /* p_nominal/p_central */
   double Po,
   double **accepted,
   double z_start) {
   double dx, dy, dz; /* offsets of the multipole center */
-  long i_part, i_top, ix, iy, iqx, iqy, ir, idelta;
+  int64_t i_part, i_top;
+  long ix, iy, iqx, iqy, ir, idelta;
   long ixMax, iyMax, iqxMax, iqyMax, ideltaMax;
   double *coord;
   double cos_tilt, sin_tilt;

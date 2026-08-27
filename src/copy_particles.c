@@ -18,8 +18,9 @@
 void copy_particles(
   double **copy,
   double **original,
-  long n_particles) {
-  register long ip, ic;
+  int64_t n_particles) {
+  register int64_t ip;
+  register long ic;
   double *cptr, *optr;
   char buffer[1024];
   

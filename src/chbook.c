@@ -266,7 +266,8 @@ double interpolate_bookn(ntuple *bName, double *x0, double *x, long offset,
   static long **grid = NULL, *Bit = NULL;
   static long max_nD = 0;
   double value, result;
-  long i, j, np, vIndex, temp, flag = 0;
+  long j, vIndex, temp, flag = 0;
+  int64_t i, np;
   char warningBuffer[16384];
 
   np = (long)ipow(2, bName->nD);

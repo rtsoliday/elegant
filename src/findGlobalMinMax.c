@@ -7,7 +7,7 @@
 
 #include "track.h"
 
-void find_global_min_max(double *min, double *max, long np, MPI_Comm comm) {
+void find_global_min_max(double *min, double *max, int64_t np, MPI_Comm comm) {
   double local_min, local_max;
 
   if (!np) { /* define MAX and MIN for the processors with 0 particles */

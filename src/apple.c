@@ -22,8 +22,9 @@
 void f_ijk(double *X, long End_Pole, double step,
            double factor, APPLE *apple);
 
-void APPLE_Track(double **coord, long np, double pCentral, APPLE *apple) {
-  long ipart, istep, nleft, iHarm;
+void APPLE_Track(double **coord, int64_t np, double pCentral, APPLE *apple) {
+  long istep, nleft, iHarm;
+  int64_t ipart;
   MALIGN malign;
   double X[6], denom, p, brho, eomc;
   double intBx, intBy, tmpx, tmpy, tmpg;

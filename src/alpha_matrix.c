@@ -249,11 +249,11 @@ void initialize_precalculated_matrix(
 }
 
 long alpha_magnet_tracking(
-  double **particle, VMATRIX *M, ALPH *alpha, long n_part,
+  double **particle, VMATRIX *M, ALPH *alpha, int64_t n_part,
   double **accepted, double P_central, double z) {
   float xmax, xl = 0.0, xu = 0.0;
   long do_xl, do_xu;
-  long ip, itop;
+  int64_t ip, itop;
   double *coord;
 
   log_entry("alpha_magnet_tracking");

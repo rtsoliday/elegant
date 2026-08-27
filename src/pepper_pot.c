@@ -19,9 +19,10 @@ double *temp_ptr;
 #  define SWAP_PTR(x, y) (temp_ptr = (x), (x) = (y), (y) = temp_ptr)
 #endif
 
-long pepper_pot_plate(double **initial, PEPPOT *peppot, long np, double **accepted) {
+long pepper_pot_plate(double **initial, PEPPOT *peppot, int64_t np, double **accepted) {
   double length, *ini;
-  long ip, i_hole, n_holes, itop;
+  int64_t ip, itop;
+  long i_hole, n_holes;
   double radius_2;
   double x_center, y_center;
   double transmission, scatter, rotate;

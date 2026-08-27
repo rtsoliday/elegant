@@ -15,7 +15,7 @@ int FindLineCircleIntersections1(double *x, double *y,
                                  double xc, double yc, double r);
 #define DEBUG 0
 
-long track_through_tubend(double **part, long n_part, TUBEND *tubend,
+long track_through_tubend(double **part, int64_t n_part, TUBEND *tubend,
                           double p_error, double Po, double **accepted,
                           double z_start) {
 #if DEBUG
@@ -23,7 +23,8 @@ long track_through_tubend(double **part, long n_part, TUBEND *tubend,
   double x0, X0, X1, X2, X3, X4;
   double xp0, Y0, Y1, Y2, Y3, Y4;
 #endif
-  long ip, particleLost, i_top, solutions;
+  int64_t ip, i_top;
+  long particleLost, solutions;
   double rhoRefTraj, thetaRefTraj;
   double rhoMagnet, thetaMagnet, w2, dY;
   double distanceToEdge;

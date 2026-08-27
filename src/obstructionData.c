@@ -521,8 +521,8 @@ long insideObstruction_XYZ
   return 0;
 }
 
-long filterParticlesWithObstructions(double **coord, long np, double **accepted, double z, double Po) {
-  long ip, itop;
+long filterParticlesWithObstructions(double **coord, int64_t np, double **accepted, double z, double Po) {
+  int64_t ip, itop;
   itop = np - 1;
   for (ip = 0; ip <= itop; ip++) {
     /* printf("filterParticlesWithObstructions: ip=%ld, itop=%ld\n", ip, itop); */

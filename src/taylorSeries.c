@@ -153,7 +153,7 @@ void initialize_polynomialSeries(POLYNOMIALSERIES *polynomialSeries) {
 
 long polynomialSeries_tracking(
   double **particle,                  /* initial/final phase-space coordinates */
-  long n_part,                        /* number of particles */
+  int64_t n_part,                        /* number of particles */
   POLYNOMIALSERIES *polynomialSeries, /* polynomialSeries element structure */
   double p_error,                     /* p_nominal/p_central */
   double Po,                          /* p_central */
@@ -161,7 +161,7 @@ long polynomialSeries_tracking(
   double z_start) {
   POLYNOMIALSERIES_DATA data;
   double dx, dy, dz; /* transverse offsets of the element center */
-  long i_part, i_top;
+  int64_t i_part, i_top;
   /* long is_lost=0; */
   double *coord;
   double cos_tilt, sin_tilt;

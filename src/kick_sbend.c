@@ -41,9 +41,9 @@ static double s_lost;
 #define N_METHODS 2
 static char *method[N_METHODS] = {"leap-frog", "modified-midpoint"};
 
-long track_through_kick_sbend(double **part, long n_part, KSBEND *ksbend, double p_error, double Po, double **accepted,
+long track_through_kick_sbend(double **part, int64_t n_part, KSBEND *ksbend, double p_error, double Po, double **accepted,
                               double z_start) {
-  long i_part, i_top;
+  int64_t i_part, i_top;
   double rho, s;
   double x, xp, y, yp, dp;
   double n, beta, gamma, delta, fse;

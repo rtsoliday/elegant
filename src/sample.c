@@ -16,8 +16,9 @@
 #include "mdb.h"
 #include "track.h"
 
-long sample_particles(double **initial, SAMPLE *samp, long np, double **accepted, double z, double p0) {
-  long itop, ip, ic;
+long sample_particles(double **initial, SAMPLE *samp, int64_t np, double **accepted, double z, double p0) {
+  long itop, ic;
+  int64_t ip;
 
   log_entry("sample_particles");
 
