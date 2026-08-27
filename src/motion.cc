@@ -399,7 +399,7 @@ long motion(
   }
 
 #ifdef DEBUG
-  printf("change_p0=%ld, n_part=%ld\n", change_p0, n_part);
+  printf("change_p0=%ld, n_part=%" PRId64 "\n", change_p0, n_part);
 #endif
   int64_t nTotal = n_part;
 #if USE_MPI

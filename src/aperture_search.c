@@ -2056,9 +2056,9 @@ long do_aperture_search_grid_p
     }
     npLocal = index;
 #if MPI_DEBUG
-    printf("%ld particles will be tracked\n", npLocal);
+    printf("%" PRId64 " particles will be tracked\n", npLocal);
     for (ip=0; ip<npLocal; ip++)
-      printf("%ld: %le, %le, %ld\n", ip, coord[ip][icu], coord[ip][icv], (long)coord[ip][particleIDIndex]);
+      printf("%" PRId64 ": %le, %le, %ld\n", ip, coord[ip][icu], coord[ip][icv], (long)coord[ip][particleIDIndex]);
     fflush(stdout);
 #endif
     
@@ -2133,9 +2133,9 @@ long do_aperture_search_grid_p
 #endif
     
 #if MPI_DEBUG
-    printf("%ld particles left\n", nLeftLocal);
+    printf("%" PRId64 " particles left\n", nLeftLocal);
     for (ip=0; ip<nLeftLocal; ip++)
-      printf("%ld: %le, %le, %ld\n", ip, coord[ip][0], coord[ip][2], (long)coord[ip][particleIDIndex]);
+      printf("%" PRId64 ": %le, %le, %ld\n", ip, coord[ip][0], coord[ip][2], (long)coord[ip][particleIDIndex]);
     fflush(stdout);
 #endif
     
@@ -2144,7 +2144,7 @@ long do_aperture_search_grid_p
 #if MPI_DEBUG
     if (myid==0) {
       for (ip=0; ip<n_processors; ip++)
-        printf("processor %ld reports %ld particles left, %ld particles total\n",
+        printf("processor %" PRId64 " reports %" PRId64 " particles left, %" PRId64 " particles total\n",
                ip, nLeftVector[ip], npVector[ip]);
       fflush(stdout);
     }
@@ -2164,7 +2164,7 @@ long do_aperture_search_grid_p
       }
       lostParticles = (double **)czarray_2d(sizeof(**coord), np-nLeft, totalPropertiesPerParticle);
 #if MPI_DEBUG
-      printf("totals: %ld particles left, %ld particles tracked\n", nLeft, np);
+      printf("totals: %" PRId64 " particles left, %" PRId64 " particles tracked\n", nLeft, np);
 #endif
       for (islave=0; islave<n_processors; islave++) {
         if (islave==0) {
@@ -2193,14 +2193,14 @@ long do_aperture_search_grid_p
     
     if (myid==0) {
 #if MPI_DEBUG
-      printf("%ld particles tracked in total:\n", np);
-      printf("%ld particles left in total:\n", nLeft);
+      printf("%" PRId64 " particles tracked in total:\n", np);
+      printf("%" PRId64 " particles left in total:\n", nLeft);
       for (ip=0; ip<nLeft; ip++)
-        printf("%ld: %le, %le, %ld\n", ip, coord[ip][0], coord[ip][2], (long)coord[ip][particleIDIndex]);
+        printf("%" PRId64 ": %le, %le, %ld\n", ip, coord[ip][0], coord[ip][2], (long)coord[ip][particleIDIndex]);
       fflush(stdout);
-      printf("%ld particles lost in total:\n", nLost);
+      printf("%" PRId64 " particles lost in total:\n", nLost);
       for (ip=0; ip<nLost; ip++)
-        printf("%ld: %le, %le, %ld\n", ip, lostParticles[ip][0], lostParticles[ip][2], (long)lostParticles[ip][particleIDIndex]);
+        printf("%" PRId64 ": %le, %le, %ld\n", ip, lostParticles[ip][0], lostParticles[ip][2], (long)lostParticles[ip][particleIDIndex]);
       fflush(stdout);
       fpSurvived = fopen("survived.sdds", "w");
       fprintf(fpSurvived, "SDDS1\n&column name=PID type=long &end\n");

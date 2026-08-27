@@ -75,10 +75,6 @@ static int elegant_MPI_Recv_doubles(void *buf, int64_t count, int source, int ta
 #endif /* HAVE_GPU */
 
 void flushTransverseFeedbackDriverFiles(TFBDRIVER *tfbd);
-void set_up_frfmode(FRFMODE *rfmode, char *element_name, double element_z, long n_passes, RUN *run, int64_t n_particles, double Po, double total_length);
-void track_through_frfmode(double **part, int64_t np, FRFMODE *rfmode, double Po, char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
-void set_up_ftrfmode(FTRFMODE *rfmode, char *element_name, double element_z, long n_passes, RUN *run, int64_t n_particles, double Po, double total_length);
-void track_through_ftrfmode(double **part, int64_t np, FTRFMODE *trfmode, double Po, char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
 void transformEmittances(double **coord, int64_t np, double pCentral, EMITTANCEELEMENT *ee);
 void checkRFCAChangeTConflicts(LINE_LIST *beamline);
 
@@ -369,7 +365,7 @@ long do_tracking(
   outputFiles = &(run->outputFiles);
 
 #if MPI_DEBUG && USE_MPI
-  printf("do_tracking called with nOriginal=%ld, beam=%x\n", nOriginal, beam);
+  printf("do_tracking called with nOriginal=%" PRId64 ", beam=%p\n", nOriginal, (void *)beam);
   fflush(stdout);
 #endif
 #ifdef DEBUG
@@ -431,7 +427,7 @@ long do_tracking(
   } else /* single partticle case where all the processors track the same particle(s), or particles are on master when the first beam is fiducial */
     total_nOriginal = nOriginal;
 #  if MPI_DEBUG
-  printf("nOriginal = %ld, total_nOriginal = %ld\n", nOriginal, total_nOriginal);
+  printf("nOriginal = %" PRId64 ", total_nOriginal = %" PRId64 "\n", nOriginal, total_nOriginal);
 #  endif
 #endif
 
@@ -1115,12 +1111,12 @@ long do_tracking(
               /* Particles will be scattered in startMode, bad balancing status or notParallel state */
               if ((balanceStatus == badBalance) || (parallelStatus == notParallel)) {
 #  if USE_MPI && MPI_DEBUG
-                printf("Scattering particles (1): nToTrack = %ld\n", nToTrack);
+                printf("Scattering particles (1): nToTrack = %" PRId64 "\n", nToTrack);
 #  endif
                 scatterParticles(coord, &nToTrack, accepted, n_processors, myid,
                                  balanceStatus, my_rate, nParPerElements, round, lostSinceSeqMode, &distributed, &reAllocate, P_central);
 #  if USE_MPI && MPI_DEBUG
-                printf("Scattering particles done: nToTrack = %ld\n", nToTrack);
+                printf("Scattering particles done: nToTrack = %" PRId64 "\n", nToTrack);
 #  endif
                 nLeft = nToTrack;
                 if (myid != 0) {
@@ -1133,12 +1129,12 @@ long do_tracking(
                 /* For the first pass, scatter when it is not in parallel mode */
                 if (parallelStatus != trueParallel) {
 #  if USE_MPI && MPI_DEBUG
-                  printf("Scattering particles (2): nToTrack = %ld\n", nToTrack);
+                  printf("Scattering particles (2): nToTrack = %" PRId64 "\n", nToTrack);
 #  endif
                   scatterParticles(coord, &nToTrack, accepted, n_processors, myid,
                                    balanceStatus, my_rate, nParPerElements, round, lostSinceSeqMode, &distributed, &reAllocate, P_central);
 #  if USE_MPI && MPI_DEBUG
-                  printf("Scattering particles done: nToTrack = %ld\n", nToTrack);
+                  printf("Scattering particles done: nToTrack = %" PRId64 "\n", nToTrack);
 #  endif
                   nLeft = nToTrack;
                   if (myid != 0) {
@@ -1803,13 +1799,13 @@ long do_tracking(
                           }
                           if (!partOnMaster && distributedBeam) {
 #  if USE_MPI && MPI_DEBUG
-                            printf("Scattering particles (3): nToTrack = %ld\n", nToTrack);
+                            printf("Scattering particles (3): nToTrack = %" PRId64 "\n", nToTrack);
 #  endif
                             scatterParticles(coord, &nToTrack, accepted, n_processors, myid,
                                              balanceStatus, my_rate, nParPerElements, round,
                                              lostSinceSeqMode, &distributed, &reAllocate, P_central);
 #  if USE_MPI && MPI_DEBUG
-                            printf("Scattering particles done: nToTrack = %ld\n", nToTrack);
+                            printf("Scattering particles done: nToTrack = %" PRId64 "\n", nToTrack);
 #  endif
                             nLeft = nToTrack;
                           }
@@ -2494,7 +2490,7 @@ long do_tracking(
                            nLost, beam ? beam->n_particle : -1, beam ? beam->n_to_track : -1, nLeft, nToTrack, nMaximum);
 #endif
 #if USE_MPI && MPI_DEBUG
-                  printf("Preparing to call transformBeamWithScript, nToTrack=%ld\n", nToTrack);
+                  printf("Preparing to call transformBeamWithScript, nToTrack=%" PRId64 "\n", nToTrack);
                   fflush(stdout);
 #endif
                   if ((flags & TEST_PARTICLES) && ((SCRIPT *)eptr->p_elem)->driftTestParticles) {
@@ -2511,9 +2507,9 @@ long do_tracking(
                   nToTrack = nLeft;
                   nLost = 0;
 #  if MPI_DEBUG
-                  printf("Returned from script: nToTrack = %ld\n", nToTrack);
+                  printf("Returned from script: nToTrack = %" PRId64 "\n", nToTrack);
                   if (beam)
-                    printf("beam->n_to_track_total = %ld\n", beam->n_to_track_total);
+                    printf("beam->n_to_track_total = %" PRId64 "\n", beam->n_to_track_total);
                   fflush(stdout);
 #  endif
 #endif
@@ -3357,12 +3353,12 @@ long do_tracking(
         /* Make sure that the particles are distributed to the slave processors for parallel IO */
         if (partOnMaster && distributedBeam) {
 #    if USE_MPI && MPI_DEBUG
-          printf("Scattering particles (4): nToTrack = %ld\n", nToTrack);
+          printf("Scattering particles (4): nToTrack = %" PRId64 "\n", nToTrack);
 #    endif
           scatterParticles(coord, &nToTrack, accepted, n_processors, myid,
                            balanceStatus, my_rate, nParPerElements, round, lostSinceSeqMode, &distributed, &reAllocate, P_central);
 #    if USE_MPI && MPI_DEBUG
-          printf("Scattering particles done: nToTrack = %ld\n", nToTrack);
+          printf("Scattering particles done: nToTrack = %" PRId64 "\n", nToTrack);
 #    endif
           nLeft = nToTrack;
           parallelStatus = trueParallel;
@@ -3604,9 +3600,9 @@ long do_tracking(
         log_entry("offset_beam");
 
         if (offset->startPID >= 0 && offset->startPID > offset->endPID)
-          bombElegantVA("Error: startPID (%ld) greater than endPID (%ld) for MALIGN element (offset_beam)\n", offset->startPID, offset->endPID);
+          bombElegantVA("Error: startPID (%" PRId64 ") greater than endPID (%" PRId64 ") for MALIGN element (offset_beam)\n", offset->startPID, offset->endPID);
         if ((offset->endPID >= 0 && offset->startPID < 0) || (offset->startPID >= 0 && offset->endPID < 0))
-          bombElegantVA("Error: Invalid startPID (%ld) and endPID (%ld) in MALIGN element (offset_beam)\n", offset->startPID, offset->endPID);
+          bombElegantVA("Error: Invalid startPID (%" PRId64 ") and endPID (%" PRId64 ") in MALIGN element (offset_beam)\n", offset->startPID, offset->endPID);
 
         allParticles = (offset->startPID == -1) && (offset->endPID == -1);
 
@@ -4216,7 +4212,7 @@ long do_tracking(
         accumulate_beam_sums(sums, coord, np, Po, 0.0, NULL, 0.0, 0.0, -1, -1, 0);
 #if USE_MPI
 #  if MPI_DEBUG
-        printf("myid=%d: np = %ld, parallelStatus = %d, partOnMaster = %d, distributedBeam = %d\n", myid, np,
+        printf("myid=%d: np = %" PRId64 ", parallelStatus = %d, partOnMaster = %d, distributedBeam = %ld\n", myid, np,
                parallelStatus, partOnMaster, distributedBeam);
 #  endif
         if (parallelStatus == trueParallel && !partOnMaster && distributedBeam)
@@ -4224,7 +4220,7 @@ long do_tracking(
         else
           npTotal = np;
 #  if MPI_DEBUG
-        printf("myid=%d: npTotal = %ld\n", myid, npTotal);
+        printf("myid=%d: npTotal = %" PRId64 "\n", myid, npTotal);
 #  endif
 #else
         npTotal = np;
@@ -5166,8 +5162,8 @@ long do_tracking(
 #  endif
         if (myid == 0) {
 #  if MPI_DEBUG
-          printf("Distributing %ld particles to %ld worker processors\n", *nToTrack, n_processors - 1);
-          printf("Distributing particles, %ld particles now on processor %d\n", *nToTrack, myid);
+          printf("Distributing %" PRId64 " particles to %ld worker processors\n", *nToTrack, n_processors - 1);
+          printf("Distributing particles, %" PRId64 " particles now on processor %d\n", *nToTrack, myid);
 #  endif
           fflush(stdout);
 #  if DEBUG_SCATTER
@@ -5276,7 +5272,7 @@ long do_tracking(
               else /* The last processor will be responsible for all of the remaining particles */
                 nToTrackCounts[work_processors] = *nToTrack - my_nToTrack;
 #  ifdef MPI_DEBUG
-              printf("total_rate=%lf, nToTrack=%ld, nToTrackForDistribution=%d\n",
+              printf("total_rate=%lf, nToTrack=%" PRId64 ", nToTrackForDistribution=%" PRId64 "\n",
                      total_rate, *nToTrack, my_nToTrack + nToTrackCounts[work_processors]);
 #  endif
             }
@@ -5337,7 +5333,7 @@ long do_tracking(
             /*      if ((balanceStatus == badBalance) || lostSinceSeqMode) */
             {
               MPI_Get_processor_name(processor_name, &namelen);
-              fprintf(stderr, "%d will be computed on %d (%s)\n", my_nToTrack, myid, processor_name);
+              fprintf(stderr, "%" PRId64 " will be computed on %d (%s)\n", my_nToTrack, myid, processor_name);
             }
         }
 #  endif
@@ -5368,7 +5364,7 @@ long do_tracking(
         }
 
 #  if MPI_DEBUG
-        printf("%ld particles now on processor %d\n", *nToTrack, myid);
+        printf("%" PRId64 " particles now on processor %d\n", *nToTrack, myid);
         report_stats(stdout, "Finished distributing particles: ");
 #  endif
 
@@ -5412,11 +5408,11 @@ long do_tracking(
         MPI_Allreduce(&my_nLost, &nLost_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 
 #  if MPI_DEBUG
-        printf("gatherPaticles: nToTrack = %ld, nToTrack_total = %ld, nLost = %ld, nLost_total = %ld\n",
+        printf("gatherPaticles: nToTrack = %" PRId64 ", nToTrack_total = %" PRId64 ", nLost = %" PRId64 ", nLost_total = %" PRId64 "\n",
                *nToTrack, nToTrack_total, *nLost, nLost_total);
         if (myid == 0) {
           for (i = 0; i < n_processors; i++) {
-            printf("nToTrackCounts[%ld] = %ld, nLostCounts[%ld] = %ld\n",
+            printf("nToTrackCounts[%ld] = %" PRId64 ", nLostCounts[%ld] = %" PRId64 "\n",
                    i, nToTrackCounts[i], i, nLostCounts[i]);
             fflush(stdout);
           }

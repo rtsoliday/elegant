@@ -1396,7 +1396,7 @@ long multiparticleLocalMomentumAcceptance(
     nLost = nEachProcessor - nLeft;
     setTrackingOmniWedgeFunction(NULL);
 #  if MPI_DEBUG
-    printf("Done tracking nLeft = %ld, nLost = %ld\n", nLeft, nLost);
+    printf("Done tracking nLeft = %" PRId64 ", nLost = %" PRId64 "\n", nLeft, nLost);
     fflush(stdout);
 #  endif
   } else
@@ -1422,7 +1422,7 @@ long multiparticleLocalMomentumAcceptance(
     fprintf(fpdeb, "&column name=particleID type=long &end\n");
     fprintf(fpdeb, "&column name=isLost type=short &end\n");
     fprintf(fpdeb, "&data mode=ascii &end\n");
-    fprintf(fpdeb, "%ld\n", nEachProcessor);
+    fprintf(fpdeb, "%" PRId64 "\n", nEachProcessor);
     for (ip = 0; ip < nEachProcessor; ip++) {
       fprintf(fpdeb, "%e %e %e %e %e %e %ld %d\n",
               coord[ip][0], coord[ip][1], coord[ip][2], coord[ip][3],
@@ -1459,7 +1459,7 @@ long multiparticleLocalMomentumAcceptance(
     fprintf(fpdeb, "&column name=p type=double &end\n");
     fprintf(fpdeb, "&column name=particleID type=long &end\n");
     fprintf(fpdeb, "&data mode=ascii &end\n");
-    fprintf(fpdeb, "%ld\n", nLost);
+    fprintf(fpdeb, "%" PRId64 "\n", nLost);
     for (ip = 0; ip < nLost; ip++) {
       fprintf(fpdeb, "%e %e %e %e %e %e %ld\n",
               lostParticles[ip][0], lostParticles[ip][1], lostParticles[ip][2], lostParticles[ip][3],
@@ -1504,8 +1504,8 @@ long multiparticleLocalMomentumAcceptance(
       idelta = ((long)lostParticles[ip][6]) % nDelta;
       ie = (lostParticles[ip][6] - idelta) / nDelta;
       if (ie < 0 || ie >= nElem)
-        bombElegantVA("Lost-particle accounting error: element index is %ld, out of range [%ld, %ld]\n",
-                      ie, 0, nElem - 1);
+        bombElegantVA("Lost-particle accounting error: element index is %ld, out of range [0, %ld]\n",
+                      ie, nElem - 1);
       if (idelta < ideltaCutover) {
         delta = delta_negative_limit + idelta * deltaStep;
       } else {

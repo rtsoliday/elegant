@@ -193,7 +193,7 @@ void SDDS_PhaseSpaceSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, lon
   /* set up parallel IO information */
   SDDS_MPI_Setup(SDDS_table, SDDS_table->parallel_io, n_processors, myid, MPI_COMM_WORLD, 0);
 #  if MPI_DEBUG
-  printf("SDDS_PhaseSpaceSetup, filename = %s, SDDS_MPI_Setup done with parallel_io=%ld\n", filename, SDDS_table->parallel_io);
+  printf("SDDS_PhaseSpaceSetup, filename = %s, SDDS_MPI_Setup done with parallel_io=%d\n", filename, SDDS_table->parallel_io);
   fflush(stdout);
 #  endif
 #endif
@@ -2005,19 +2005,19 @@ void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral
   }
 #endif
 #if USE_MPI && MPI_DEBUG
-  printf("checking PIDs on %ld particles\n", particles);
+  printf("checking PIDs on %" PRId64 " particles\n", particles);
   fflush(stdout);
 #endif
   for (i = badPID = 0; i < particles; i++) {
 #if USE_MPI && MPI_DEBUG
-    printf("checking PID on particle %ld of %ld\n", i, particles);
+    printf("checking PID on particle %" PRId64 " of %" PRId64 "\n", i, particles);
     fflush(stdout);
 #endif
     if (!particle[i]) {
       printf("error: coordinate slot %" PRId64 " is NULL (dump_lost_particles)\n", i);
       fflush(stdout);
 #if USE_MPI && MPI_DEBUG
-      printf("bad particle pointer for particle %ld\n", i);
+      printf("bad particle pointer for particle %" PRId64 "\n", i);
 #endif
       abort();
     }
@@ -2057,7 +2057,7 @@ void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral
   }
   for (i = row = 0; i < particles; i++) {
 #if USE_MPI && MPI_DEBUG
-    printf("Setting row values for particle %ld\n", i);
+    printf("Setting row values for particle %" PRId64 "\n", i);
     fflush(stdout);
 #endif
     if (particle[i][4] >= sLimit[0] && particle[i][4] <= sLimit[1]) {
@@ -2094,7 +2094,7 @@ void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral
     }
   }
 #if USE_MPI && MPI_DEBUG
-  printf("dump_lost_particles: set row values for %ld particles\n", particles);
+  printf("dump_lost_particles: set row values for %" PRId64 " particles\n", particles);
   fflush(stdout);
 #endif
   if (!SDDS_SetParameters(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, "Step", step, "PassLength", length,

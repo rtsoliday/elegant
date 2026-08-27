@@ -259,7 +259,7 @@ void readErrorMultipoleData(MULTIPOLE_DATA *multData,
 #ifdef DEBUG
     printf("Steering multipole data: \n");
     for (i = 0; i < multData->orders; i++)
-      printf("%ld: %e %e\n", multData->order[i],
+      printf("%" PRId32 ": %e %e\n", multData->order[i],
              multData->an[i], multData->bn[i]);
 #endif
   }
@@ -1656,16 +1656,16 @@ void computeTotalErrorMultipoleFields(MULTIPOLE_DATA *totalMult,
   rootOrder[0] = rootOrder[1] = rootOrder[2] = rootOrder0;
   if (orderCheck) {
     if (systematicMult && systematicMult->initialized && systematicMult->referenceOrder >= 0 && rootOrder0 != systematicMult->referenceOrder)
-      bombElegantVA("root order mismatch for multipole data file %s---expected %ld but found %ld in referenceOrder parameter",
+      bombElegantVA("root order mismatch for multipole data file %s---expected %ld but found %" PRId32 " in referenceOrder parameter",
                     systematicMult->filename, rootOrder0, systematicMult->referenceOrder);
     if (edge1Mult && edge1Mult->initialized && edge1Mult->referenceOrder >= 0 && rootOrder0 != edge1Mult->referenceOrder)
-      bombElegantVA("root order mismatch for multipole data file %s---expected %ld but found %ld in referenceOrder parameter",
+      bombElegantVA("root order mismatch for multipole data file %s---expected %ld but found %" PRId32 " in referenceOrder parameter",
                     edge1Mult->filename, rootOrder0, edge1Mult->referenceOrder);
     if (edge2Mult && edge2Mult->initialized && edge2Mult->referenceOrder >= 0 && rootOrder0 != edge2Mult->referenceOrder)
-      bombElegantVA("root order mismatch for multipole data file %s---expected %ld but found %ld in referenceOrder parameter",
+      bombElegantVA("root order mismatch for multipole data file %s---expected %ld but found %" PRId32 " in referenceOrder parameter",
                     edge2Mult->filename, rootOrder0, edge2Mult->referenceOrder);
     if (randomMult && randomMult->initialized && randomMult->referenceOrder >= 0 && rootOrder0 != randomMult->referenceOrder)
-      bombElegantVA("root order mismatch for multipole data file %s---expected %ld but found %ld in referenceOrder parameter",
+      bombElegantVA("root order mismatch for multipole data file %s---expected %ld but found %" PRId32 " in referenceOrder parameter",
                     randomMult->filename, rootOrder0, randomMult->referenceOrder);
   } else {
     if (systematicMult && systematicMult->referenceOrder >= 0)
@@ -1678,7 +1678,7 @@ void computeTotalErrorMultipoleFields(MULTIPOLE_DATA *totalMult,
       rootOrder[2] = randomMult->referenceOrder;
   }
   if (steeringMult && steeringMult->initialized && steeringMult->referenceOrder >= 0 && steeringMult->referenceOrder != 0)
-    bombElegantVA("root order error for multipole data file %s---expected 0 but found %ld in referenceOrder parameter",
+    bombElegantVA("root order error for multipole data file %s---expected 0 but found %" PRId32 " in referenceOrder parameter",
                   randomMult->filename, randomMult->referenceOrder);
 
   if (!totalMult->initialized) {

@@ -89,7 +89,7 @@ void track_through_lscdrift(double **part, int64_t np, LSCDRIFT *LSC, double Po,
   }
 
 #if DEBUG
-  printf("LSC: np=%ld, nb=%ld, L=%le, bt=%d\n", np, nb, LSC->length, LSC->backtrack);
+  printf("LSC: np=%" PRId64 ", nb=%ld, L=%le, bt=%d\n", np, nb, LSC->length, LSC->backtrack);
   fflush(stdout);
 #endif
 
@@ -451,7 +451,7 @@ void addLSCKick(double **part, int64_t np, LSCKICK *LSC, double Po, CHARGE *char
 #endif
   n_binned = binTimeDistribution(Itime, pbin, tmin, dt, nb, time, part, Po, np);
 #if DEBUG
-  printf("%ld of %ld particles binned\n", n_binned, np);
+  printf("%ld of %" PRId64 " particles binned\n", n_binned, np);
   fflush(stdout);
 #endif
   if (n_binned != np && !USE_MPI) { /* This will not be checked in Pelegant to avoid communications */

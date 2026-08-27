@@ -83,7 +83,7 @@ void track_through_ztransverse(double **part0, int64_t np0, ZTRANSVERSE *ztransv
     return;
 
 #if defined(DEBUG) && USE_MPI
-  printf("ZTRANSVERSE, myid = %ld\n", myid);
+  printf("ZTRANSVERSE, myid = %d\n", myid);
   fflush(stdout);
 #endif
 
@@ -107,7 +107,7 @@ void track_through_ztransverse(double **part0, int64_t np0, ZTRANSVERSE *ztransv
     if (nBuckets > 1) {
       fflush(stdout);
       for (iBucket = 0; iBucket < nBuckets; iBucket++) {
-        printf("bucket %ld: %ld particles\n", iBucket, npBucket[iBucket]);
+        printf("bucket %ld: %" PRId64 " particles\n", iBucket, npBucket[iBucket]);
         fflush(stdout);
       }
     }
@@ -143,7 +143,7 @@ void track_through_ztransverse(double **part0, int64_t np0, ZTRANSVERSE *ztransv
           continue;
 #endif
 #ifdef DEBUG
-        printf("ZTRANSVERSE: copying data to work array, iBucket=%ld, np=%ld\n", iBucket, np);
+        printf("ZTRANSVERSE: copying data to work array, iBucket=%ld, np=%" PRId64 "\n", iBucket, np);
         fflush(stdout);
 #endif
         if (np > max_np) {
@@ -200,7 +200,7 @@ void track_through_ztransverse(double **part0, int64_t np0, ZTRANSVERSE *ztransv
 #if USE_MPI
 #  if MPI_DEBUG
           for (ip = 0; ip < np; ip++)
-            printf("particle %5ld: t=%21.15e, delta=%21.15e\n", ip, time[ip], part[ip][5]);
+            printf("particle %5" PRId64 ": t=%21.15e, delta=%21.15e\n", ip, time[ip], part[ip][5]);
           printf("Issuing MPI abort from ZLONGIT\n");
           fflush(stdout);
 #  endif

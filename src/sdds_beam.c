@@ -625,7 +625,7 @@ long new_sdds_beam(
      * branch can rely on it. */
     beam->n_saved_total = beam->n_to_track_total;
 #  ifdef MPI_DEBUG
-    printf("%ld particles total\n", beam->n_to_track_total);
+    printf("%" PRId64 " particles total\n", beam->n_to_track_total);
 #  endif
   }
 
@@ -757,7 +757,7 @@ long new_sdds_beam(
     /* free the 'original' particle data array */
     if (beam->original && beam->original != beam->particle) {
 #ifdef MPI_DEBUG
-      printf("Freeing original data (beam->n_original = %ld)\n", beam->n_original);
+      printf("Freeing original data (beam->n_original = %" PRId64 ")\n", beam->n_original);
 #endif
       free_czarray_2d((void **)beam->original, beam->n_original, totalPropertiesPerParticle);
       beam->original = NULL;

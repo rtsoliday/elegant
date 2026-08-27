@@ -527,7 +527,7 @@ void readIonProperties(char *filename) {
   if (!check_sdds_column(&SDDSin, (char *)"CrossSection", (char *)"Mb") &&
       !check_sdds_column(&SDDSin, (char *)"CrossSection", (char *)"MBarns") &&
       !check_sdds_column(&SDDSin, (char *)"CrossSection", (char *)"megabarns"))
-    bombElegantVA((char *)"Column \"CrossSection\" is missing, not floating-point type, or does not have units of megabarns (or Mbarns or Mb)",
+    bombElegantVA((char *)"Column \"CrossSection\" is missing, not floating-point type, or does not have units of megabarns (or Mbarns or Mb) in %s",
                   filename);
 
   if (SDDS_ReadPage(&SDDSin) <= 0)

@@ -102,7 +102,8 @@ static void slopeOffsetFunction(double **coord, int64_t np, long pass, long i_el
     mal.startPID = mal.endPID = -1;
     for (ip = nKicksMade = 0; ip < np; ip++) {
 #  if MPI_DEBUG
-      printf("checking particle %ld of %ld, particleID=%ld\n", ip, np, (long)coord[ip][6]);
+      printf("checking particle %" PRId64 " of %" PRId64 ", particleID=%" PRId64 "\n",
+             ip, np, (int64_t)coord[ip][6]);
       fflush(stdout);
 #  endif
       if ((particleID = coord[ip][6]) < 0) {

@@ -330,7 +330,7 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, int64_t np0, LINE
                   tfbd->endPass, tfbd->pickup->endPass);
 
   if ((updateInterval = tfbd->pickup->updateInterval * tfbd->updateInterval) <= 0)
-    bombElegantVA((char *)"TFBDRIVER and TFBPICKUP with ID=%s have UPDATE_INTERVAL product of %d", tfbd->ID, updateInterval);
+    bombElegantVA((char *)"TFBDRIVER and TFBPICKUP with ID=%s have UPDATE_INTERVAL product of %ld", tfbd->ID, updateInterval);
   if (pass % updateInterval != 0) {
 #ifdef HAVE_GPU
     if (!gpuTracking)
@@ -392,7 +392,7 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, int64_t np0, LINE
     if (rpass >= tfbd->delay + tfbd->filterLength) {
       for (i = 0; i < tfbd->filterLength; i++) {
 #ifdef DEBUG
-        printf("TFBDRIVER: adding term a[%ld]=%e  *   %e\n",
+        printf("TFBDRIVER: adding term a[%" PRId64 "]=%e  *   %e\n",
                i, tfbd->a[i], tfbd->driverSignal[iBucket][(rpass - tfbd->delay - i) % (tfbd->delay + tfbd->filterLength)]);
         fflush(stdout);
 #endif
@@ -519,7 +519,7 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, int64_t np0, LINE
         } else { /* multiple buckets */
           if (npBucket) {
 #ifdef MPI_DEBUG
-            printf("ib=%ld, tAve = %le, freq = %le, phase = %le\n, rfFactor = %le, np=%ld\n",
+            printf("ib=%ld, tAve = %le, freq = %le, phase = %le\n, rfFactor = %le, np=%" PRId64 "\n",
                    iBucket, tAve, tfbd->frequency, phase, rfFactor, npBucket[iBucket]);
             fflush(stdout);
 #endif

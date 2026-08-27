@@ -87,7 +87,7 @@ void track_through_trwake(double **part0, int64_t np0, TRWAKE *wakeData, double 
         if ((np = npBucket[iBucket]) == 0)
           continue;
 #ifdef DEBUG
-        printf("WAKE: copying data to work array, iBucket=%ld, np=%ld\n", iBucket, np);
+        printf("WAKE: copying data to work array, iBucket=%ld, np=%" PRId64 "\n", iBucket, np);
         fflush(stdout);
 #endif
         if (np > max_np) {
@@ -112,7 +112,7 @@ void track_through_trwake(double **part0, int64_t np0, TRWAKE *wakeData, double 
       tmax = -(tmin = DBL_MAX);
       find_min_max(&tmin, &tmax, time, np);
 #ifdef DEBUG
-      printf("WAKE: tmin=%21.15le, tmax=%21.15le, tmax-tmin=%21.15le, np=%ld\n", tmin, tmax, tmax - tmin, np);
+      printf("WAKE: tmin=%21.15le, tmax=%21.15le, tmax-tmin=%21.15le, np=%" PRId64 "\n", tmin, tmax, tmax - tmin, np);
       fflush(stdout);
 #endif
 #if USE_MPI

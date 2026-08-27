@@ -233,7 +233,7 @@ long addBGGExpData(char *filename, char *nameFragment, short skew) {
   storedBGGExpData[nBGGExpDataSets].xMax = storedBGGExpData[nBGGExpDataSets].yMax = -1;
   while ((readCode = SDDS_ReadPage(&SDDSin)) > 0) {
     if (!SDDS_GetParameterAsLong(&SDDSin, "m", &m) || (m < 1 && !skew) || (m < 0 && skew))
-      bombElegantVA("Problem with value of m (m<%ld) for page %ld of file %s for BGGEXP %s #%ld\n",
+      bombElegantVA("Problem with value of m (m<%d) for page %ld of file %s for BGGEXP %s #%ld\n",
                     (skew ? 0 : 1), readCode, filename, tcontext.elementName, tcontext.elementOccurrence);
     if (readCode == 1) {
       long iz;
@@ -249,7 +249,7 @@ long addBGGExpData(char *filename, char *nameFragment, short skew) {
       if ((nz = SDDS_RowCount(&SDDSin)) <= 1)
         bombElegantVA("Too few z values in file %s for BGGEXP %s #%ld\n", filename, tcontext.elementName, tcontext.elementOccurrence);
       if (!(z = SDDS_GetColumnInDoubles(&SDDSin, "z")))
-        bombElegantVA("Problem reading column z from %s for BGGEXP %s #%ld\n", buffer, filename, tcontext.elementName, tcontext.elementOccurrence);
+        bombElegantVA("Problem reading column z from file %s for BGGEXP %s #%ld\n", filename, tcontext.elementName, tcontext.elementOccurrence);
       find_min_max(&zMin, &zMax, z, nz);
       if (zMin < storedBGGExpData[nBGGExpDataSets].zMin)
         storedBGGExpData[nBGGExpDataSets].zMin = zMin;
@@ -512,7 +512,7 @@ long trackBGGExpansion(double **part, int64_t np, BGGEXP *bgg, double pCentral, 
     rotateBeamCoordinatesForMisalignment(part, np, bgg->tilt);
 
   if (bgg->zInterval <= 0)
-    bombElegantVA("zInterval %ld is invalid for BGGEXP %s #%ld\n", bgg->zInterval, tcontext.elementName, tcontext.elementOccurrence);
+    bombElegantVA("zInterval %d is invalid for BGGEXP %s #%ld\n", bgg->zInterval, tcontext.elementName, tcontext.elementOccurrence);
   /* izLast = nz-bgg->zInterval; */
 
 #ifdef HAVE_GPU
@@ -740,7 +740,7 @@ long trackBGGExpansion(double **part, int64_t np, BGGEXP *bgg, double pCentral, 
           s += step * bgg->zInterval;
 
 #ifdef DEBUG
-        fprintf(fpdebug, "%le %le %le %le %le %le %le %le %i\n",
+        fprintf(fpdebug, "%le %le %le %le %le %le %le %le %ld\n",
                 iz * dz, x, y, px, py, s, dAz_dy, dAz_dx, iImpLoop);
 #endif
       }

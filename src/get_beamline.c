@@ -2279,11 +2279,11 @@ void initializeApContour(APCONTOUR *apcontour) {
     apcontour->nPoints = NULL;
     apcontour->nContours = 0;
     if (!apcontour->filename || !strlen(apcontour->filename))
-      bombElegantVA("Error: No filename given for APCONTOUR\n", apcontour->filename);
+      bombElegantVA("Error: No filename given for APCONTOUR\n");
     if (!apcontour->xColumn || !strlen(apcontour->xColumn))
-      bombElegantVA("Error: No XCOLUMN given for APCONTOUR\n", apcontour->xColumn);
+      bombElegantVA("Error: No XCOLUMN given for APCONTOUR\n");
     if (!apcontour->yColumn || !strlen(apcontour->yColumn))
-      bombElegantVA("Error: No YCOLUMN given for APCONTOUR\n", apcontour->yColumn);
+      bombElegantVA("Error: No YCOLUMN given for APCONTOUR\n");
     if (!SDDS_InitializeInputFromSearchPath(&SDDSin, apcontour->filename))
       bombElegantVA("Error: APCONTOUR file %s is unreadable\n", apcontour->filename);
     while ((readCode = SDDS_ReadPage(&SDDSin)) > 0) {
@@ -2308,7 +2308,7 @@ void initializeApContour(APCONTOUR *apcontour) {
         bombElegantVA("Error: problem getting parameter \"Logic\" from APCONTOUR file %s\n", apcontour->filename);
       apcontour->nPoints = SDDS_Realloc(apcontour->nPoints, sizeof(*(apcontour->nPoints)) * (apcontour->nContours + 1));
       if ((apcontour->nPoints[apcontour->nContours] = SDDS_RowCount(&SDDSin)) < 3)
-        bombElegantVA("Error: APCONTOUR file %s page %d has too few points\n", apcontour->filename, readCode);
+        bombElegantVA("Error: APCONTOUR file %s page %ld has too few points\n", apcontour->filename, readCode);
       if (!(apcontour->x[apcontour->nContours] = SDDS_GetColumnInDoubles(&SDDSin, apcontour->xColumn)) ||
           !(apcontour->y[apcontour->nContours] = SDDS_GetColumnInDoubles(&SDDSin, apcontour->yColumn)))
         bombElegantVA("Error: failed to get x or y data from APCONTOUR file %s\n", apcontour->filename);
@@ -2401,4 +2401,3 @@ long insertSCMULT(char *name, long type, long *occurrence) {
   *occurrence = 0;
   return (1);
 }
-

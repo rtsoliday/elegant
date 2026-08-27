@@ -136,7 +136,7 @@ void track_through_zlongit(double **part0, int64_t np0, ZLONGIT *zlongit, double
     if (nBuckets > 1) {
       fflush(stdout);
       for (iBucket = 0; iBucket < nBuckets; iBucket++) {
-        printf("bucket %ld: %ld particles\n", iBucket, npBucket ? npBucket[iBucket] : 0);
+        printf("bucket %ld: %" PRId64 " particles\n", iBucket, npBucket ? npBucket[iBucket] : 0);
         fflush(stdout);
       }
     }
@@ -172,7 +172,7 @@ void track_through_zlongit(double **part0, int64_t np0, ZLONGIT *zlongit, double
 #endif
         if (np > max_np) {
 #ifdef DEBUG
-          printf("ZLONGIT: setting up work arrays, iBucket=%ld, np=%ld\n", iBucket, np);
+          printf("ZLONGIT: setting up work arrays, iBucket=%ld, np=%" PRId64 "\n", iBucket, np);
           fflush(stdout);
 #endif
           if (part)
@@ -184,7 +184,7 @@ void track_through_zlongit(double **part0, int64_t np0, ZLONGIT *zlongit, double
         }
         if (np > 0) {
 #ifdef DEBUG
-          printf("ZLONGIT: copying data to work array, iBucket=%ld, np=%ld\n", iBucket, np);
+          printf("ZLONGIT: copying data to work array, iBucket=%ld, np=%" PRId64 "\n", iBucket, np);
           fflush(stdout);
 #endif
           for (ip = 0; ip < np; ip++) {
@@ -237,7 +237,7 @@ void track_through_zlongit(double **part0, int64_t np0, ZLONGIT *zlongit, double
 #if USE_MPI
 #  if MPI_DEBUG
           for (ip = 0; ip < np; ip++)
-            printf("particle %5ld: t=%21.15e, delta=%21.15e\n", ip, time[ip], part[ip][5]);
+            printf("particle %5" PRId64 ": t=%21.15e, delta=%21.15e\n", ip, time[ip], part[ip][5]);
           printf("Issuing MPI abort from ZLONGIT\n");
           fflush(stdout);
 #  endif
@@ -548,7 +548,7 @@ void track_through_zlongit(double **part0, int64_t np0, ZLONGIT *zlongit, double
   */
 
 #ifdef DEBUG
-  printf("Preparing to free memory, max_np=%ld, nb=%ld, np0=%ld, nBuckets=%ld\n",
+  printf("Preparing to free memory, max_np=%" PRId64 ", nb=%ld, np0=%" PRId64 ", nBuckets=%ld\n",
          max_np, nb, np0, nBuckets);
   fflush(stdout);
 #endif

@@ -17,6 +17,51 @@
 #include "track.h"
 #include "particleTunes.h"
 #include "fftpackC.h"
+#include <limits.h>
+
+#if USE_MPI
+/* MPI-4's large-count bindings accept MPI_Count.  For older MPI libraries,
+ * split transfers into ordered INT_MAX-sized messages instead of narrowing
+ * the 64-bit particle count passed to the classic interface. */
+static int particleTunesMPI_Send(const void *buffer, int64_t count,
+                                 MPI_Datatype datatype, size_t elementSize,
+                                 int destination, int tag, MPI_Comm communicator) {
+#  if defined(MPI_VERSION) && MPI_VERSION >= 4
+  return MPI_Send_c(buffer, (MPI_Count)count, datatype, destination, tag, communicator);
+#  else
+  const char *position = buffer;
+  while (count > 0) {
+    int chunk = count > INT_MAX ? INT_MAX : (int)count;
+    int status = MPI_Send((void *)position, chunk, datatype, destination, tag, communicator);
+    if (status != MPI_SUCCESS)
+      return status;
+    position += (size_t)chunk * elementSize;
+    count -= chunk;
+  }
+  return MPI_SUCCESS;
+#  endif
+}
+
+static int particleTunesMPI_Recv(void *buffer, int64_t count,
+                                 MPI_Datatype datatype, size_t elementSize,
+                                 int source, int tag, MPI_Comm communicator,
+                                 MPI_Status *status) {
+#  if defined(MPI_VERSION) && MPI_VERSION >= 4
+  return MPI_Recv_c(buffer, (MPI_Count)count, datatype, source, tag, communicator, status);
+#  else
+  char *position = buffer;
+  while (count > 0) {
+    int chunk = count > INT_MAX ? INT_MAX : (int)count;
+    int result = MPI_Recv(position, chunk, datatype, source, tag, communicator, status);
+    if (result != MPI_SUCCESS)
+      return result;
+    position += (size_t)chunk * elementSize;
+    count -= chunk;
+  }
+  return MPI_SUCCESS;
+#  endif
+}
+#endif
 
 char *tuneColumnName[4] = {"nux", "nuy", "nus", "nusp"};
 char *JColumnName[3] = {"Jx", "Jy", "Js"};
@@ -177,23 +222,23 @@ void accumulateParticleTuneData
       if (ptunes->include[ic] &&
           (!(ptunes->data[ic*2+0] = (double**)czarray_2d(sizeof(double), ptunes->np, ptunes->maxBufferSize)) ||
            !(ptunes->data[ic*2+1] = (double**)czarray_2d(sizeof(double), ptunes->np, ptunes->maxBufferSize)))) {
-        bombElegantVA("accumulateParticleTuneData: memory allocation failure for ic=%ld, np=%ld, length=%ld",
+        bombElegantVA("accumulateParticleTuneData: memory allocation failure for ic=%ld, np=%" PRId64 ", length=%ld",
                       ic, np, ptunes->maxBufferSize);
       }
     }
-    if (!(ptunes->particleID = calloc(ptunes->np, sizeof(long))))
+    if (!(ptunes->particleID = calloc(ptunes->np, sizeof(*ptunes->particleID))))
       bombElegant("accumulateParticleTuneData: memory allocation failure for particleID.", NULL);
-    if (!(ptunes->particleIndex = calloc(ptunes->np, sizeof(long))))
+    if (!(ptunes->particleIndex = calloc(ptunes->np, sizeof(*ptunes->particleIndex))))
       bombElegant("accumulateParticleTuneData: memory allocation failure for particleIndex.", NULL);
     if (!(ptunes->turnIndexLimit = calloc(ptunes->np, sizeof(long))))
       bombElegant("accumulateParticleTuneData: memory allocation failure for turnIndexLimit.", NULL);
     ptunes->indexHash = hcreate(16);
     for (ip=jp=0; ip<np; ip++) {
       if (!useParticle || useParticle[ip]) {
-        snprintf(pidText, 32, "%ld", (long)coord[ip][particleIDIndex]);
+        snprintf(pidText, 32, "%" PRId64, (int64_t)coord[ip][particleIDIndex]);
         ptunes->particleIndex[jp] = jp;
         if (!hadd(ptunes->indexHash, (unsigned char*)pidText, strlen(pidText), &(ptunes->particleIndex[jp])))
-          bombElegantVA("Problem creating PID hash table for particle tunes: duplicate PID %ld\n", (long)coord[ip][particleIDIndex]);
+          bombElegantVA("Problem creating PID hash table for particle tunes: duplicate PID %" PRId64 "\n", (int64_t)coord[ip][particleIDIndex]);
         jp++;
       }
     }
@@ -203,17 +248,16 @@ void accumulateParticleTuneData
   }
   
   for (ip=0; ip<np; ip++) {
-    long *pIndexPtr, pIndex;
-    int64_t pid;
+    int64_t *pIndexPtr, pIndex, pid;
     pid = (int64_t)coord[ip][particleIDIndex];
     if ((ptunes->startPID<=0 || pid>=ptunes->startPID) &&
         (ptunes->endPID<=0 || pid<=ptunes->endPID) &&
         (ptunes->PIDInterval<=1 || (pid%ptunes->PIDInterval==0))) {
       snprintf(pidText, 32, "%" PRId64, pid);
       if (!hfind(ptunes->indexHash, (unsigned char *)pidText, strlen(pidText)))
-        bombElegantVA("PID %ld of particle not found in hash table for particle tunes\n", pid);
-      if (!(pIndexPtr = (long*)hstuff(ptunes->indexHash)))
-        bombElegantVA("Problem retrieving particle index of PID %ld for particle tunes\n", pid);
+        bombElegantVA("PID %" PRId64 " of particle not found in hash table for particle tunes\n", pid);
+      if (!(pIndexPtr = (int64_t*)hstuff(ptunes->indexHash)))
+        bombElegantVA("Problem retrieving particle index of PID %" PRId64 " for particle tunes\n", pid);
       pIndex = *pIndexPtr;
       for (ic=0; ic<3; ic++) {
         if (ptunes->include[ic]) {
@@ -343,8 +387,8 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
 
       for (id=1; id<n_processors; id++) {
         if (np[id] &&
-            (MPI_Recv(tuneData+iTotal, np[id], MPI_DOUBLE, id, 100, MPI_COMM_WORLD, &mpiStatus)!=MPI_SUCCESS ||
-             MPI_Recv(J+iTotal, np[id], MPI_DOUBLE, id, 100, MPI_COMM_WORLD, &mpiStatus)!=MPI_SUCCESS ) ) {
+            (particleTunesMPI_Recv(tuneData+iTotal, np[id], MPI_DOUBLE, sizeof(*tuneData), id, 100, MPI_COMM_WORLD, &mpiStatus)!=MPI_SUCCESS ||
+             particleTunesMPI_Recv(J+iTotal, np[id], MPI_DOUBLE, sizeof(*J), id, 100, MPI_COMM_WORLD, &mpiStatus)!=MPI_SUCCESS ) ) {
           printf("Error: MPI_Recv returns error retrieving data from processor %ld\n", id);
           mpiAbort = MPI_ABORT_PARTICLE_TUNE_IO_ERROR;
         }
@@ -352,8 +396,8 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
       }
     } else {
       if (ptunes->np) {
-        MPI_Send(tuneData, ptunes->np, MPI_DOUBLE, 0, 100, MPI_COMM_WORLD);
-        MPI_Send(J, ptunes->np, MPI_DOUBLE, 0, 100, MPI_COMM_WORLD);
+        particleTunesMPI_Send(tuneData, ptunes->np, MPI_DOUBLE, sizeof(*tuneData), 0, 100, MPI_COMM_WORLD);
+        particleTunesMPI_Send(J, ptunes->np, MPI_DOUBLE, sizeof(*J), 0, 100, MPI_COMM_WORLD);
       }
     }
     if (myid==0) {
@@ -384,7 +428,7 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
     iTotal = 0;
     particleID = calloc(npTotal, sizeof(*particleID));
     for (id=1; id<n_processors; id++) {
-      if (np[id] && MPI_Recv(particleID+iTotal, np[id], MPI_INT64_T, id, 100, MPI_COMM_WORLD, &mpiStatus)!=MPI_SUCCESS) {
+      if (np[id] && particleTunesMPI_Recv(particleID+iTotal, np[id], MPI_INT64_T, sizeof(*particleID), id, 100, MPI_COMM_WORLD, &mpiStatus)!=MPI_SUCCESS) {
         printf("Error: MPI_Recv returns error retrieving data from processor %ld\n", id);
         mpiAbort = MPI_ABORT_PARTICLE_TUNE_IO_ERROR;
       }
@@ -392,7 +436,7 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
     }
   } else {
     if (ptunes->np)
-      MPI_Send(ptunes->particleID, ptunes->np, MPI_INT64_T, 0, 100, MPI_COMM_WORLD);
+      particleTunesMPI_Send(ptunes->particleID, ptunes->np, MPI_INT64_T, sizeof(*ptunes->particleID), 0, 100, MPI_COMM_WORLD);
   }
   if (myid==0) {
     if (!SDDS_SetColumn(&(ptunes->SDDSout), SDDS_SET_BY_NAME, particleID, npTotal,  "particleID")) {

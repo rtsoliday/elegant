@@ -19,7 +19,7 @@
 #endif
 
 void track_through_ftrfmode(
-  double **part0, long np0, FTRFMODE *trfmode, double Po,
+  double **part0, int64_t np0, FTRFMODE *trfmode, double Po,
   char *element_name, double element_z, long pass, long n_passes,
   CHARGE *charge) {
   unsigned long *count = NULL;
@@ -35,9 +35,10 @@ void track_through_ftrfmode(
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
   int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
   int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
-  long iBucket, nBuckets, np;
+  long iBucket, nBuckets;
+  int64_t np;
 
-  long max_np = 0;
+  int64_t max_np = 0;
   double *VxPrevious = NULL, *VyPrevious = NULL, *xPhasePrevious = NULL, *yPhasePrevious = NULL, tPrevious;
   double *clockPhasePrevious = NULL;
   double clockNow = 0, clockOffsetPrevious = 0, clockPhaseNow = 0;
@@ -52,7 +53,8 @@ void track_through_ftrfmode(
   long gpuTracking = 0;
 #endif
 #if USE_MPI
-  long firstBin_global, lastBin_global, np_total;
+  long firstBin_global, lastBin_global;
+  int64_t np_total;
   ;
 #endif
 #ifdef DEBUG
@@ -193,7 +195,7 @@ void track_through_ftrfmode(
     } else {
       np = 0;
     }
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     if (np_total == 0)
       continue;
 #endif
@@ -235,7 +237,7 @@ void track_through_ftrfmode(
           np = 0;
       }
 #ifdef DEBUG
-      printf("Working on bucket %ld of %ld, %ld particles\n", iBucket, nBuckets, np);
+      printf("Working on bucket %ld of %ld, %" PRId64 " particles\n", iBucket, nBuckets, np);
       fflush(stdout);
 #endif
       tmean = 0;
@@ -251,10 +253,10 @@ void track_through_ftrfmode(
       }
 #if USE_MPI
       if (distributedBeam) {
-        long np_total = np;
+        int64_t np_total = np;
         if (isSlave) {
           double t_total;
-          MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+          MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
           MPI_Allreduce(&tmean, &t_total, 1, MPI_DOUBLE, MPI_SUM, workers);
           tmean = t_total;
         }

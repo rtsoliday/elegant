@@ -1821,7 +1821,7 @@ long integrate_csbend_ordn(
     kickFrac = kickFrac6;
     break;
   default:
-    bombElegantVA("invalid order %ld given for symplectic integrator", integration_order);
+    bombElegantVA("invalid order %hd given for symplectic integrator", integration_order);
     break;
   }
 
@@ -2119,7 +2119,7 @@ long integrate_csbend_ordn_expanded(double *Qf, double *Qi, double *sigmaDelta2,
     kickFrac = kickFrac6;
     break;
   default:
-    bombElegantVA("invalid order %ld given for symplectic integrator", integration_order);
+    bombElegantVA("invalid order %hd given for symplectic integrator", integration_order);
     break;
   }
 #define X0 Qi[0]

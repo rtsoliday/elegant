@@ -102,7 +102,7 @@ void track_IBS(double **part0, int64_t np0, ELEMENT_LIST *eptr, double Po,
     eta[3] = IBS->etayp[IBS->elements - 1];
 
 #ifdef DEBUG
-    printf("bunchedBeamMode=%ld, charge = %c, ID slots per bunch: %ld\n", IBS->bunchedBeamMode,
+    printf("bunchedBeamMode=%d, charge = %c, ID slots per bunch: %ld\n", IBS->bunchedBeamMode,
            charge ? 'Y' : 'N', (charge && IBS->bunchedBeamMode) ? charge->idSlotsPerBunch : 0);
 #endif
     index_bunch_assignments(part0, np0, (charge && IBS->bunchedBeamMode) ? charge->idSlotsPerBunch : 0, Po, &time0, &ibParticle, &ipBucket, &npBucket, &nBuckets, -1);
@@ -111,7 +111,7 @@ void track_IBS(double **part0, int64_t np0, ELEMENT_LIST *eptr, double Po,
     printf("%ld buckets\n", nBuckets);
     fflush(stdout);
     for (iBucket = 0; iBucket < nBuckets; iBucket++) {
-      printf("bucket %ld: %ld particles\n", iBucket, npBucket[iBucket]);
+      printf("bucket %ld: %" PRId64 " particles\n", iBucket, npBucket[iBucket]);
       fflush(stdout);
     }
 #endif

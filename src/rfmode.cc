@@ -130,7 +130,7 @@ void track_through_rfmode(
   MPI_Allreduce(&np0, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifdef DEBUG
   if (myid == 0) {
-    printf("np_total = %ld\n", np_total);
+    printf("np_total = %" PRId64 "\n", np_total);
     fflush(stdout);
   }
 #  endif
@@ -155,7 +155,7 @@ void track_through_rfmode(
 #endif
   }
 #ifdef DEBUG
-  printf("RFMODE: np0=%ld, charge=%le, mp_charge=%le\n", np0, rfmode->charge, rfmode->mp_charge);
+  printf("RFMODE: np0=%" PRId64 ", charge=%le, mp_charge=%le\n", np0, rfmode->charge, rfmode->mp_charge);
 #endif
 
   if (rfmode->fileInitialized && pass == 0) {
@@ -218,12 +218,12 @@ void track_through_rfmode(
 
   if (rfmode->n_bins > max_n_bins) {
 #ifdef DEBUG
-    printf("Allocating Ihist and Vbin to %ld bins, Ihist=%x, Vbin=%x\n", rfmode->n_bins, Ihist, Vbin);
+    printf("Allocating Ihist and Vbin to %ld bins, Ihist=%p, Vbin=%p\n", rfmode->n_bins, (void *)Ihist, (void *)Vbin);
 #endif
     Ihist = (long *)trealloc(Ihist, sizeof(*Ihist) * (max_n_bins = rfmode->n_bins));
     Vbin = (double *)trealloc(Vbin, sizeof(*Vbin) * max_n_bins);
 #ifdef DEBUG
-    printf("Allocated Ihist and Vbin to %ld bins, Ihist=%x, Vbin=%x\n", max_n_bins, Ihist, Vbin);
+    printf("Allocated Ihist and Vbin to %ld bins, Ihist=%p, Vbin=%p\n", max_n_bins, (void *)Ihist, (void *)Vbin);
 #endif
   }
 
@@ -296,7 +296,7 @@ void track_through_rfmode(
     }
     MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifdef DEBUG
-    printf("np_total = %ld\n", np_total);
+    printf("np_total = %" PRId64 "\n", np_total);
     fflush(stdout);
 #  endif
     if (np_total == 0)
@@ -750,7 +750,7 @@ void track_through_rfmode(
     MPI_Allreduce(&n_binned, &n_binned_global, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifdef DEBUG
-    printf("n_binned = %ld, n_binned_global = %ld, np = %ld, np_total = %ld\n",
+    printf("n_binned = %" PRId64 ", n_binned_global = %" PRId64 ", np = %" PRId64 ", np_total = %" PRId64 "\n",
            n_binned, n_binned_global, np, np_total);
     fflush(stdout);
 #  endif
@@ -774,7 +774,7 @@ void track_through_rfmode(
       TRACKING_CONTEXT tcontext;
       getTrackingContext(&tcontext);
       if (!rfmode->allowUnbinnedParticles) {
-        bombElegantVA((char *)"%ld of %ld particles  outside of binning region in RFMODE %s #%ld. Consider increasing number of bins. Also, particleID assignments should be checked.", np - n_binned, np, tcontext.elementName, tcontext.elementOccurrence);
+        bombElegantVA((char *)"%" PRId64 " of %" PRId64 " particles  outside of binning region in RFMODE %s #%ld. Consider increasing number of bins. Also, particleID assignments should be checked.", np - n_binned, np, tcontext.elementName, tcontext.elementOccurrence);
       } else {
       printf("%" PRId64 " of %" PRId64 " particles  outside of binning region in RFMODE %s #%ld. Consider increasing number of bins. Also, particleID assignments should be checked.\n", np - n_binned, np, tcontext.elementName, tcontext.elementOccurrence);
         fflush(stdout);
@@ -810,7 +810,7 @@ void track_through_rfmode(
       printf("bucket = %ld, firstBin = %ld, lastBin = %ld\n", iBucket, firstBin_global, lastBin_global);
       fflush(stdout);
       if (myid != 0) {
-        printf("%ld particles binned\n", n_binned);
+        printf("%" PRId64 " particles binned\n", n_binned);
         fflush(stdout);
       }
 #  endif
@@ -824,7 +824,7 @@ void track_through_rfmode(
 #  ifdef DEBUG
       printf("Summed histogram across processors\n");
       fflush(stdout);
-      printf("%ld particles binned\n", n_binned);
+      printf("%" PRId64 " particles binned\n", n_binned);
       for (ib = firstBin; ib <= lastBin; ib++)
         printf("%ld %ld\n", ib, Ihist[ib]);
       fflush(stdout);
@@ -832,7 +832,7 @@ void track_through_rfmode(
     }
 #else
 #  ifdef DEBUG
-    printf("%ld particles binned\n", n_binned);
+    printf("%" PRId64 " particles binned\n", n_binned);
     for (ib = firstBin; ib <= lastBin; ib++)
       printf("%ld %ld\n", ib, Ihist[ib]);
     fflush(stdout);

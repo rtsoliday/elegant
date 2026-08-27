@@ -241,7 +241,7 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
   } else if (np == 0)
     return 0;
 #  ifdef DEBUG
-  printf("applyElementModulations: np_total = %ld\n", np_total);
+  printf("applyElementModulations: np_total = %" PRId64 "\n", np_total);
   fflush(stdout);
 #  endif
 #else
@@ -326,7 +326,7 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
     p_elem = (char *)(modData->element[iMod]->p_elem);
 #ifdef DEBUG
     print_elem(stdout, modData->element[iMod]);
-    printf("applyElementModulations: p_elem = %x\n", p_elem);
+    printf("applyElementModulations: p_elem = %p\n", (void *)p_elem);
     fflush(stdout);
 #endif
     value = modData->unperturbedValue[iMod];

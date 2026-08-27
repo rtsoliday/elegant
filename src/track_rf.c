@@ -167,7 +167,7 @@ static void apply_rf_deflector_cpu(double **final, RFDF *rf_param,
     t_part = initial[ip][4] / (data->cMks * beta);
 #ifdef DEBUG
     fprintf(stdout,
-            "start coord[%ld] = %21.15e, %21.15e, %21.15e, %21.15e, %21.15e, %21.15e\n",
+            "start coord[%" PRId64 "] = %21.15e, %21.15e, %21.15e, %21.15e, %21.15e, %21.15e\n",
             ip, x, xp, y, yp, initial[ip][4], initial[ip][5]);
 #endif
     for (is = 0; is <= data->nKicks; is++) {
@@ -188,7 +188,7 @@ static void apply_rf_deflector_cpu(double **final, RFDF *rf_param,
         y += yp * data->length;
       }
 #ifdef DEBUG
-      printf("ip=%ld  is=%ld  dphase=%21.15e, phase=%21.15e\n",
+      printf("ip=%" PRId64 "  is=%ld  dphase=%21.15e, phase=%21.15e\n",
              ip, is,
              data->omega * (t_part - tLight) * 180 / PI,
              fmod((t_part - tLight) * data->omega + data->ePhase,
@@ -224,7 +224,7 @@ static void apply_rf_deflector_cpu(double **final, RFDF *rf_param,
     final[ip][6] = initial[ip][6];
 #ifdef DEBUG
     fprintf(stdout,
-            "stop  coord[%ld] = %21.15e, %21.15e, %21.15e, %21.15e, %21.15e, %21.15e\n",
+            "stop  coord[%" PRId64 "] = %21.15e, %21.15e, %21.15e, %21.15e, %21.15e, %21.15e\n",
             ip, final[ip][0], final[ip][1], final[ip][2], final[ip][3],
             final[ip][4], final[ip][5]);
 #endif

@@ -121,11 +121,11 @@ long addBOFFAXEData(char *filename, char *zColumn, char *dataColumn, long order)
       for (iz = 1; iz < storedBOFFAXEData[nBOFFAXEDataSets].nz; iz++) {
         dz = z[iz] - z[iz - 1];
         if (dz <= 0)
-          bombElegantVA("Data not monotonically increasing in z column from %s for BOFFAXE %s #%ld\n",
-                        buffer, filename, tcontext.elementName, tcontext.elementOccurrence);
+          bombElegantVA("Data not monotonically increasing in z column %s from file %s for BOFFAXE %s #%ld\n",
+                        zColumn, filename, tcontext.elementName, tcontext.elementOccurrence);
         if (fabs(dz0 / dz - 1) > 1e-6)
-          bombElegantVA("Data not uniformly increasing in z column from %s for BOFFAXE %s #%ld (%le vs %le)\n",
-                        buffer, filename, tcontext.elementName, tcontext.elementOccurrence,
+          bombElegantVA("Data not uniformly increasing in z column %s from file %s for BOFFAXE %s #%ld (%le vs %le)\n",
+                        zColumn, filename, tcontext.elementName, tcontext.elementOccurrence,
                         dz0, dz);
       }
       free(z);
@@ -250,13 +250,14 @@ long trackMagneticFieldOffAxisExpansion(double **part, int64_t np, BOFFAXE *boa,
   }
   boaData = storedBOFFAXEData + boa->dataIndex;
   if (boaData->nz % boa->zInterval != 0)
-    bombElegantVA("Z_INTERVAL (%ld) given for BOFFAXE %s#%ld doesn't evenly divide the number of data points (%ld) in the input file %s\n",
-                  boa->zInterval, tcontext.elementName, tcontext.elementOccurrence, boaData->nz);
+    bombElegantVA("Z_INTERVAL (%d) given for BOFFAXE %s#%ld doesn't evenly divide the number of data points (%ld) in the input file %s\n",
+                  boa->zInterval, tcontext.elementName, tcontext.elementOccurrence, boaData->nz, boa->filename);
 
   if (boa->fieldLength > 0) {
     if (fabs(boa->fieldLength - (boaData->zMax - boaData->zMin)) > 1e-6 * boaData->dz)
       bombElegantVA("FIELD_LENGTH value %21.15e for BOFFAXE %s#%ld does not match z range %21.15e in file %s\n",
-                    boa->fieldLength, tcontext.elementName, tcontext.elementOccurrence, boa->filename);
+                    boa->fieldLength, tcontext.elementName, tcontext.elementOccurrence,
+                    boaData->zMax - boaData->zMin, boa->filename);
   }
   if ((length = boa->length) < 0)
     bombElegantVA("Negative LENGTH value %21.15e for BOFFAXE %s#%ld is not permitted\n",

@@ -325,7 +325,7 @@ long insideObstruction(double *part, short mode, double dz, long segment, long n
       else {
         iY = ((long)(Y / obstructionDataSets.YSpacing)) + obstructionDataSets.iY0;
         if (iY < 0 || iY >= obstructionDataSets.nY)
-          bombElegantVA("Failed to find valid iY value for Y=%le, YMin=%le, YMax=%ld, dY=%le, iY0=%ld\n",
+          bombElegantVA("Failed to find valid iY value for Y=%le, YMin=%le, YMax=%le, dY=%le, iY0=%ld\n",
                         Y, obstructionDataSets.YMin, obstructionDataSets.YMax, obstructionDataSets.YSpacing,
                         obstructionDataSets.iY0);
       }
@@ -486,7 +486,7 @@ long insideObstruction_XYZ
       else {
         iY = ((long)(Y / obstructionDataSets.YSpacing)) + obstructionDataSets.iY0;
         if (iY < 0 || iY >= obstructionDataSets.nY)
-          bombElegantVA("Failed to find valid iY value for Y=%le, YMin=%le, YMax=%ld, dY=%le, iY0=%ld\n",
+          bombElegantVA("Failed to find valid iY value for Y=%le, YMin=%le, YMax=%le, dY=%le, iY0=%ld\n",
                         Y, obstructionDataSets.YMin, obstructionDataSets.YMax, obstructionDataSets.YSpacing,
                         obstructionDataSets.iY0);
       }

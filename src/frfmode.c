@@ -19,13 +19,13 @@
 #endif
 
 void track_through_frfmode(
-  double **part0, long np0, FRFMODE *rfmode, double Po,
+  double **part0, int64_t np0, FRFMODE *rfmode, double Po,
   char *element_name, double element_z, long pass, long n_passes,
   CHARGE *charge) {
   long *Ihist = NULL;  /* array for histogram of particle density */
   double *Vbin = NULL; /* array for voltage acting on each bin */
   long max_n_bins = 0;
-  long max_np = 0;
+  int64_t max_np = 0;
   long *pbin = NULL;       /* array to record which bin each particle is in */
   double *time0 = NULL;    /* array to record arrival time of each particle */
   double *time = NULL;     /* array to record arrival time of each particle */
@@ -33,7 +33,8 @@ void track_through_frfmode(
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
   int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
   int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
-  long iBucket, nBuckets, np;
+  long iBucket, nBuckets;
+  int64_t np;
 
   double *VPrevious = NULL, *phasePrevious = NULL, tPrevious;
   double *clockPhasePrevious = NULL;
@@ -51,7 +52,7 @@ void track_through_frfmode(
   double Qrp, VbImagFactor, Q;
   double rampFactor;
 #if USE_MPI
-  long np_total;
+  int64_t np_total;
   long nonEmptyBins = 0;
 #endif
 #ifdef HAVE_GPU
@@ -59,7 +60,7 @@ void track_through_frfmode(
 #endif
 
 #if DEBUG == 1 && USE_MPI == 1
-  printf("FRFMODE(1): myid=%d, isSlave=%ld, distributedBeam=%ld, np0=%ld\n",
+  printf("FRFMODE(1): myid=%d, isSlave=%ld, distributedBeam=%ld, np0=%" PRId64 "\n",
          myid, isSlave, distributedBeam, np0);
   fflush(stdout);
 #endif
@@ -157,7 +158,7 @@ void track_through_frfmode(
     } else {
       np = 0;
     }
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     if (np_total == 0)
       continue;
 #endif
@@ -201,7 +202,7 @@ void track_through_frfmode(
           np = 0;
       }
 #ifdef DEBUG
-      printf("Working on bucket %ld of %ld, %ld particles\n", iBucket, nBuckets, np);
+      printf("Working on bucket %ld of %ld, %" PRId64 " particles\n", iBucket, nBuckets, np);
       fflush(stdout);
 #endif
       tmean = 0;
@@ -220,7 +221,7 @@ void track_through_frfmode(
       if (distributedBeam) {
         if (isSlave) {
           double t_total;
-          MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+          MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
           MPI_Allreduce(&tmean, &t_total, 1, MPI_DOUBLE, MPI_SUM, workers);
           tmean = t_total;
         }

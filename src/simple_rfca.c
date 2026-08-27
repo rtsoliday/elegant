@@ -272,13 +272,13 @@ double findFiducialTime(double **part, int64_t np, double s0, double sOffset,
     double error = 0.0;
 #endif
 #if USE_MPI && MPI_DEBUG
-    printf("fiducializing using TMEAN, isSlave=%d, distributedBeam=%d\n", isSlave, distributedBeam);
+    printf("fiducializing using TMEAN, isSlave=%ld, distributedBeam=%ld\n", isSlave, distributedBeam);
     fflush(stdout);
 #endif
 
     if (isSlave || !distributedBeam) {
 #if USE_MPI && MPI_DEBUG
-      printf("doing fiducilization sum for %ld particles\n", np);
+      printf("doing fiducilization sum for %" PRId64 " particles\n", np);
       fflush(stdout);
 #endif
       for (ip = tsum = 0; ip < np; ip++) {
@@ -299,7 +299,7 @@ double findFiducialTime(double **part, int64_t np, double s0, double sOffset,
       bombElegant("No available particle for RF cavity fiducilization", NULL);
 #else
 #  if MPI_DEBUG
-    printf("tsum = %le, nsum = %ld\n", tsum, nsum);
+    printf("tsum = %le, nsum = %" PRId64 "\n", tsum, nsum);
     fflush(stdout);
 #  endif
     if (distributedBeam) {
@@ -318,7 +318,7 @@ double findFiducialTime(double **part, int64_t np, double s0, double sOffset,
         tsum_total = KahanParallel(tsum, error, MPI_COMM_WORLD);
 #  endif
 #  if MPI_DEBUG
-        printf("tsum total = %le, nsum total = %ld\n", tsum_total, nsum_total);
+        printf("tsum total = %le, nsum total = %" PRId64 "\n", tsum_total, nsum_total);
         fflush(stdout);
 #  endif
         if (nsum_total > 0)
@@ -330,7 +330,7 @@ double findFiducialTime(double **part, int64_t np, double s0, double sOffset,
       }
     } else {
 #  if MPI_DEBUG
-      printf("Found %ld particles for fiducialization\n", np);
+      printf("Found %" PRId64 " particles for fiducialization\n", np);
       fflush(stdout);
 #  endif
       if (np > 0)

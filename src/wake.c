@@ -40,7 +40,7 @@ void track_through_wake(double **part0, int64_t np0, WAKE *wakeData, double *PoI
 #if USE_MPI
   double *buffer;
 #  if MPI_DEBUG
-  printf("myid=%d, np0=%ld\n", myid, np0);
+  printf("myid=%d, np0=%" PRId64 "\n", myid, np0);
   fflush(stdout);
 #  endif
 #endif
@@ -95,7 +95,7 @@ void track_through_wake(double **part0, int64_t np0, WAKE *wakeData, double *PoI
       printf("%ld buckets\n", nBuckets);
       fflush(stdout);
       for (iBucket = 0; iBucket < nBuckets; iBucket++) {
-        printf("bucket %ld: %ld particles\n", iBucket, npBucket[iBucket]);
+        printf("bucket %ld: %" PRId64 " particles\n", iBucket, npBucket[iBucket]);
         fflush(stdout);
       }
     }
@@ -116,7 +116,7 @@ void track_through_wake(double **part0, int64_t np0, WAKE *wakeData, double *PoI
         if ((np = npBucket[iBucket]) == 0)
           continue;
 #ifdef DEBUG
-        printf("WAKE: copying data to work array, iBucket=%ld, np=%ld\n", iBucket, np);
+        printf("WAKE: copying data to work array, iBucket=%ld, np=%" PRId64 "\n", iBucket, np);
         fflush(stdout);
 #endif
         if (np > max_np) {
@@ -139,14 +139,14 @@ void track_through_wake(double **part0, int64_t np0, WAKE *wakeData, double *PoI
       tmax = -(tmin = DBL_MAX);
       find_min_max(&tmin, &tmax, time, np);
 #ifdef DEBUG
-      printf("WAKE: tmin=%21.15le, tmax=%21.15le, np=%ld\n", tmin, tmax, np);
+      printf("WAKE: tmin=%21.15le, tmax=%21.15le, np=%" PRId64 "\n", tmin, tmax, np);
       fflush(stdout);
 #endif
 #if USE_MPI
       if (isSlave && distributedBeam)
         find_global_min_max(&tmin, &tmax, np, workers);
 #  ifdef DEBUG
-      printf("WAKE: global tmin=%21.15le, tmax=%21.15le, np=%ld\n", tmin, tmax, np);
+      printf("WAKE: global tmin=%21.15le, tmax=%21.15le, np=%" PRId64 "\n", tmin, tmax, np);
       fflush(stdout);
 #  endif
 #endif

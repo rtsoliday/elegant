@@ -238,7 +238,7 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
       printf("%ld buckets\n", nBuckets);
       fflush(stdout);
       for (iBucket = 0; iBucket < nBuckets; iBucket++) {
-        printf("bucket %ld: %ld particles\n", iBucket, npBucket[iBucket]);
+        printf("bucket %ld: %" PRId64 " particles\n", iBucket, npBucket[iBucket]);
         fflush(stdout);
       }
     }
@@ -260,7 +260,7 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
         if ((np = npBucket[iBucket]) == 0)
           continue;
 #ifdef DEBUG
-        printf("SCMULT: copying data to work array, iBucket=%ld, np=%ld\n", iBucket, np);
+        printf("SCMULT: copying data to work array, iBucket=%ld, np=%" PRId64 "\n", iBucket, np);
         fflush(stdout);
 #endif
         if (np > max_np) {
@@ -283,7 +283,7 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
       tmax = -(tmin = DBL_MAX);
       find_min_max(&tmin, &tmax, time, np);
 #ifdef DEBUG
-      printf("SCMULT: tmin=%21.15le, tmax=%21.15le, np=%ld\n", tmin, tmax, np);
+      printf("SCMULT: tmin=%21.15le, tmax=%21.15le, np=%" PRId64 "\n", tmin, tmax, np);
       fflush(stdout);
 #endif
 #if USE_MPI
@@ -294,14 +294,14 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
 	MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
 	totalCharge = np_total*charge->macroParticleCharge;
 #ifdef DEBUG
-	printf("SCMULT: global tmin=%21.15le, tmax=%21.15le, np=%ld, Q=%le C\n", tmin, tmax, np_total, totalCharge);
+	printf("SCMULT: global tmin=%21.15le, tmax=%21.15le, np=%" PRId64 ", Q=%le C\n", tmin, tmax, np_total, totalCharge);
 	fflush(stdout);
 #endif
       }
 #else
       totalCharge = np*charge->macroParticleCharge;
 #ifdef DEBUG
-      printf("SCMULT: global tmin=%21.15le, tmax=%21.15le, np=%ld, Q=%le C\n", tmin, tmax, np, totalCharge);
+      printf("SCMULT: global tmin=%21.15le, tmax=%21.15le, np=%" PRId64 ", Q=%le C\n", tmin, tmax, np, totalCharge);
       fflush(stdout);
 #endif
 #endif
@@ -310,7 +310,7 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
       for (int j=0; j<3; j++)
 	sc.bunchData[iBucket].sigma[j] = computeRmsCoordinate(part, 2*j, np, &(sc.bunchData[iBucket].center[j]), NULL);
 #ifdef DEBUG
-      printf("SCMULT: sigmax, y, z = %le, %le, %le; %ld particles, %le C\n", sc.bunchData[iBucket].sigma[0], sc.bunchData[iBucket].sigma[1], sc.bunchData[iBucket].sigma[2], np, totalCharge);
+      printf("SCMULT: sigmax, y, z = %le, %le, %le; %" PRId64 " particles, %le C\n", sc.bunchData[iBucket].sigma[0], sc.bunchData[iBucket].sigma[1], sc.bunchData[iBucket].sigma[2], np, totalCharge);
       fflush(stdout);
 #endif
       if (!(iPass == 0 || sc.averagingFactor == 1)) {
@@ -621,7 +621,7 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part0, int64_t np0, double Po
     bombElegant((char *)"Twiss parameters must be calculated before SC tracking.", NULL);
 
 #ifdef DEBUG
-  printf("initializeSCMULT 1, np=%ld\n", np0);
+  printf("initializeSCMULT 1, np=%" PRId64 "\n", np0);
   fflush(stdout);
 #endif
 
@@ -686,7 +686,7 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part0, int64_t np0, double Po
         if ((np = npBucket[iBucket]) == 0)
           continue;
 #ifdef DEBUG
-        printf("SCMULT: copying data to work array, iBucket=%ld, np=%ld\n", iBucket, np);
+        printf("SCMULT: copying data to work array, iBucket=%ld, np=%" PRId64 "\n", iBucket, np);
         fflush(stdout);
 #endif
         if (np > max_np) {
@@ -762,7 +762,7 @@ void accumulateSCMULT(double **part0, int64_t np0, double Po, ELEMENT_LIST *eptr
   twiss0 = (eptr->pred)->twiss;
   
 #ifdef DEBUG
-  printf("accumulateSCMULT 1, np=%ld\n", np0);
+  printf("accumulateSCMULT 1, np=%" PRId64 "\n", np0);
   fflush(stdout);
 #endif
 
@@ -817,7 +817,7 @@ void accumulateSCMULT(double **part0, int64_t np0, double Po, ELEMENT_LIST *eptr
         if ((np = npBucket[iBucket]) == 0)
           continue;
 #ifdef DEBUG
-        printf("SCMULT: copying data to work array, iBucket=%ld, np=%ld\n", iBucket, np);
+        printf("SCMULT: copying data to work array, iBucket=%ld, np=%" PRId64 "\n", iBucket, np);
         fflush(stdout);
 #endif
         if (np > max_np) {

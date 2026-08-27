@@ -338,13 +338,13 @@ void coolerKicker(CKICKER *ckicker, double **part0, int64_t np0, LINE_LIST *beam
                   ckicker->endPass, ckicker->pickup->endPass);
 
   if ((updateInterval = ckicker->pickup->updateInterval * ckicker->updateInterval) <= 0)
-    bombElegantVA((char *)"CKICKER and CPICKUP with ID=%s have UPDATE_INTERVAL product of %d", ckicker->ID, updateInterval);
+    bombElegantVA((char *)"CKICKER and CPICKUP with ID=%s have UPDATE_INTERVAL product of %ld", ckicker->ID, updateInterval);
   if (pass % updateInterval != 0)
     return;
 
   if (ckicker->pickup->lastPass != pass)
     bombElegantVA("CKICKER and CPICKUP with ID=%s are not synchronized to the same pass (%ld vs %ld)\n",
-                  pass, ckicker->pickup->lastPass);
+                  ckicker->ID, pass, ckicker->pickup->lastPass);
 
   if (isSlave || !distributedBeam
 #if USE_MPI

@@ -4690,7 +4690,11 @@ void do_print_dictionary(char *filename, long latex_form, long SDDS_form);
 void print_dictionary_entry(FILE *fp, long type, long latex_form, long SDDS_form);
 void bombElegant(const char *error, const char *usage);
 void bombTracking(const char *error);
+#if defined(__GNUC__) || defined(__clang__)
+void bombElegantVA(char *ptemplate, ...) __attribute__((format(printf, 1, 2)));
+#else
 void bombElegantVA(char *ptemplate, ...);
+#endif
 void exitElegant(long status);
 void printMessageAndTime(FILE *fp, char *message);
 
@@ -5112,11 +5116,19 @@ void track_through_rfmode(double **part, int64_t np, RFMODE *rfmode, double Po,
     char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
 void set_up_rfmode(RFMODE *rfmode, char *element_name, double element_z, long n_passes, RUN *run, int64_t n_particles,
                    double Po, double Lo);
+void track_through_frfmode(double **part, int64_t np, FRFMODE *rfmode, double Po,
+                           char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
+void set_up_frfmode(FRFMODE *rfmode, char *element_name, double element_z, long n_passes,
+                    RUN *run, int64_t n_particles, double Po, double total_length);
 
 void track_through_trfmode(double **part, int64_t np, TRFMODE *trfmode, double Po,
     char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
 void set_up_trfmode(TRFMODE *trfmode, char *element_name, double element_z, 
                     long n_passes, RUN *run, int64_t n_particles);
+void track_through_ftrfmode(double **part, int64_t np, FTRFMODE *trfmode, double Po,
+                            char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
+void set_up_ftrfmode(FTRFMODE *rfmode, char *element_name, double element_z, long n_passes,
+                     RUN *run, int64_t n_particles, double Po, double total_length);
 void track_through_zlongit(double **part, int64_t np, ZLONGIT *zlongit, double Po, RUN *run, long i_pass,
                            CHARGE *charge);
 void applyLowPassFilterToImpedance(double *Z, long nfreq, double cutoff0, double cutoff1);

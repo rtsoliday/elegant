@@ -107,7 +107,7 @@ void track_through_trfmode(
 #endif
   }
 #ifdef DEBUG
-  printf("TRFMODE: np0=%ld, charge=%le, mp_charge=%le\n", np0, trfmode->charge, trfmode->mp_charge);
+  printf("TRFMODE: np0=%" PRId64 ", charge=%le, mp_charge=%le\n", np0, trfmode->charge, trfmode->mp_charge);
 #endif
 
 #ifdef DEBUG
