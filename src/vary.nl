@@ -8,6 +8,7 @@
 #namelist run_control static
     long n_steps = 1;
     double bunch_frequency = 0;
+    double step_frequency = 0;
     long n_indices = 0;
     long n_passes = 1;
     long n_passes_fiducial = 0;
