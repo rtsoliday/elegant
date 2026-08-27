@@ -207,7 +207,7 @@ static SDDS_DEFINITION final_property_parameter[FINAL_PROPERTY_PARAMETERS] = {
   {"PF", "&parameter name=PF, type=long, units=pages &end"},
   {"Step", "&parameter name=Step, type=long &end"},
   {"Steps", "&parameter name=Steps, type=long &end"},
-  {"Particles", "&parameter name=Particles, description=\"Number of particles\", type=long &end"},
+  {"Particles", "&parameter name=Particles, description=\"Number of particles\", type=long64 &end"},
   /* other */
   {"SVNVersion", "&parameter name=SVNVersion, type=string, description=\"SVN version number\", fixed_value=" SVN_VERSION " &end"},
 };
@@ -322,7 +322,7 @@ void dump_final_properties(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums,
                            long perturbed_quan_duplicates, long n_perturbed_quan,
                            double *optim_quan, char *first_optim_quan_name, 
                            long n_optim_quan, double *optim_lower, double *optim_upper,
-                           long step, double **particle, long n_original, double p_central, VMATRIX *M,
+                           long step, double **particle, int64_t n_original, double p_central, VMATRIX *M,
                            double charge) {
   long n_computed, n_properties = 0;
   double *computed_properties;
@@ -386,12 +386,21 @@ void dump_final_properties(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums,
       SDDS_SetError("Problem getting SDDS index of Step parameter (dump_final_properties)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
-    for (i = 0; i < FINAL_PROPERTY_LONG_PARAMETERS; i++)
+    /* MEM, PF, Step, Steps are SDDS type=long (32-bit); Particles (the last of the
+     * long-parameter group) is type=long64, so it must be passed as int64_t to match
+     * the varargs read and allow >2^31 particles. */
+    for (i = 0; i < FINAL_PROPERTY_LONG_PARAMETERS - 1; i++)
       if (!SDDS_SetParameters(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE,
                               i + index, (long)computed_properties[i + index], -1)) {
         SDDS_SetError("Problem setting SDDS parameter values (dump_final_properties)");
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
       }
+    if (!SDDS_SetParameters(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE,
+                            index + FINAL_PROPERTY_LONG_PARAMETERS - 1,
+                            (int64_t)computed_properties[index + FINAL_PROPERTY_LONG_PARAMETERS - 1], -1)) {
+      SDDS_SetError("Problem setting SDDS Particles parameter value (dump_final_properties)");
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    }
     if ((index = SDDS_GetParameterIndex(SDDS_table, "Sx")) < 0) {
       SDDS_SetError("Problem getting SDDS index of Sx parameter (dump_final_properties)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -491,9 +500,10 @@ void dump_final_properties(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums,
  *
  */
 
-long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, double p_central, VMATRIX *M, double **coord,
+long compute_final_properties(double *data, BEAM_SUMS *sums, int64_t n_original, double p_central, VMATRIX *M, double **coord,
                               long step, long steps, double charge) {
-  register long i, j;
+  register long j;
+  register int64_t i;
   long i_data, offset;
   /* long index; */
   double dp_min, dp_max, Ddp = 0;
@@ -510,7 +520,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
   double tPosition2[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
 #if USE_MPI
   double tmp;
-  long n_part_total = 0, n_orig_total = 0;
+  int64_t n_part_total = 0, n_orig_total = 0;
 #endif
   log_entry("compute_final_properties");
 #ifdef DEBUG
@@ -558,8 +568,8 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
     n_orig_total = n_original;
     if (myid == 0)
       n_part_total = sums->n_part;
-    MPI_Bcast(&n_part_total, 1, MPI_LONG, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&n_orig_total, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&n_part_total, 1, MPI_INT64_T, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&n_orig_total, 1, MPI_INT64_T, 0, MPI_COMM_WORLD);
   }
   if ((distributedBeam && n_part_total) || (!distributedBeam && sums->n_part))
   /* We have to check the total number of particles, otherwise it will cause
@@ -884,7 +894,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, long n_original, do
   return (i_data + F_N_QUANS);
 }
 
-double beam_width(double fraction, double **coord, long n_part,
+double beam_width(double fraction, double **coord, int64_t n_part,
                   long sort_coord) {
   static long i_median, i_lo, i_hi;
   static double dx0, dx1;
@@ -1020,12 +1030,12 @@ double rms_emittance_p(double **coord, long i1, long i2, long n,
 }
 #endif
 
-double rms_longitudinal_emittance(double **coord, long n, double Po, long startPID, long endPID) {
+double rms_longitudinal_emittance(double **coord, int64_t n, double Po, int64_t startPID, int64_t endPID) {
   double s11, s12, s22, dt, ddp;
   double tc, dpc, beta, P;
-  long i, npCount;
+  int64_t i, npCount;
   static double *time = NULL;
-  static long max_n = 0;
+  static int64_t max_n = 0;
 
   if (!n)
     return (0.0);
@@ -1071,17 +1081,17 @@ double rms_longitudinal_emittance(double **coord, long n, double Po, long startP
 }
 
 #if USE_MPI
-double rms_longitudinal_emittance_p(double **coord, long n, double Po, long startPID, long endPID) {
+double rms_longitudinal_emittance_p(double **coord, int64_t n, double Po, int64_t startPID, int64_t endPID) {
   double s11, s12, s22, dt, ddp, s[3], s_total[3];
   double tc, dpc, beta, P, tmp[2], tmp_total[2];
-  long i, npCount, npCount_total;
+  int64_t i, npCount, npCount_total;
   double *time = NULL;
-  long n_total = 0;
+  int64_t n_total = 0;
 
   if (distributedBeam) {
     if (isMaster)
       n = 0;
-    MPI_Allreduce(&n, &n_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&n, &n_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
   } else {
     if (!n)
       return (0.0);
@@ -1106,7 +1116,7 @@ double rms_longitudinal_emittance_p(double **coord, long n, double Po, long star
 
   if (isMaster)
     npCount = 0;
-  MPI_Allreduce(&npCount, &npCount_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(&npCount, &npCount_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
   if (!npCount_total)
     return 0.0;
 
@@ -1334,7 +1344,7 @@ long count_final_properties() {
   return (FINAL_PROPERTY_PARAMETERS);
 }
 
-double approximateBeamWidth(double fraction, double **part, long nPart, long iCoord) {
+double approximateBeamWidth(double fraction, double **part, int64_t nPart, long iCoord) {
   double *hist, *cdf;
   long maxBins = ANALYSIS_BINS, bins = ANALYSIS_BINS, i50, iLo, iHi, i;
   double xMin, xMax, dx;
@@ -1387,7 +1397,7 @@ double approximateBeamWidth(double fraction, double **part, long nPart, long iCo
 
 #if USE_MPI
 /* This function is added as we need do final statistics with Pelegant on one processor at the end */
-double approximateBeamWidth_p(double fraction, double **part, long nPart, long iCoord) {
+double approximateBeamWidth_p(double fraction, double **part, int64_t nPart, long iCoord) {
   double *hist, *cdf;
   long maxBins = ANALYSIS_BINS, bins = ANALYSIS_BINS, i50, iLo, iHi, i;
   double xMin, xMax, dx;
