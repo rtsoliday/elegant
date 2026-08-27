@@ -19,10 +19,11 @@
 void set_up_ramped_rfca(RAMPRF *ramprf);
 
 long ramped_rf_cavity(
-  double **part, long np, RAMPRF *ramprf, double P_central, double L_central, double zEnd, long pass) {
-  long ip, i_volt, i_phase = 0, i_freq = 0, i;
+  double **part, int64_t np, RAMPRF *ramprf, double P_central, double L_central, double zEnd, long pass) {
+  int64_t ip;
+  long i_volt, i_phase = 0, i_freq = 0, i;
   double P, gamma, beta, dgamma, phase, length, volt;
-  double *coord, t, t0, omega, beta_i;
+  double *coord, t, t0, omega, beta_i, tLookup;
   long fixed_freq;
   double dphase;
 #if DEBUG
@@ -91,21 +92,28 @@ long ramped_rf_cavity(
   else
     ramprf->Ts += L_central / (beta * c_mks);
   t0 = ramprf->Ts;
+  /* Sample the programmed voltage/phase/frequency ramps at the TRUE macro time
+     so the ramp advances across steps/turns (mirrors RAMPP, ramp_momentum.c;
+     see trackingClockOffset, simple_rfca.c).  The fast RF carrier phase below
+     deliberately keeps using the offset-free t0 (=Ts), which tracks the
+     particle time part[][4]/(c*beta) also carried without the macro offset, so
+     omega*(t-t0) stays small and free of macro-scale rounding error. */
+  tLookup = t0 + trackingClockOffset();
 
   /* find position within voltage and phase ramp arrays */
-  i_volt = find_nearby_array_entry(ramprf->t_Vf, ramprf->n_Vpts, t0);
+  i_volt = find_nearby_array_entry(ramprf->t_Vf, ramprf->n_Vpts, tLookup);
   fixed_freq = 0;
   if (!ramprf->pwaveform)
     fixed_freq = 1;
   if (!fixed_freq) {
-    i_phase = find_nearby_array_entry(ramprf->t_dP, ramprf->n_Ppts, t0);
-    i_freq = find_nearby_array_entry(ramprf->t_ff, ramprf->n_fpts, t0);
+    i_phase = find_nearby_array_entry(ramprf->t_dP, ramprf->n_Ppts, tLookup);
+    i_freq = find_nearby_array_entry(ramprf->t_ff, ramprf->n_fpts, tLookup);
   }
 
-  volt = ramprf->volt / (1e6 * particleMassMV * particleRelSign) * linear_interpolation(ramprf->Vfactor, ramprf->t_Vf, ramprf->n_Vpts, t0, i_volt);
+  volt = ramprf->volt / (1e6 * particleMassMV * particleRelSign) * linear_interpolation(ramprf->Vfactor, ramprf->t_Vf, ramprf->n_Vpts, tLookup, i_volt);
   if (!fixed_freq) {
-    omega = PIx2 * ramprf->freq * linear_interpolation(ramprf->ffactor, ramprf->t_ff, ramprf->n_fpts, t0, i_freq);
-    phase = (dphase = linear_interpolation(ramprf->dPhase, ramprf->t_dP, ramprf->n_Ppts, t0, i_phase) * PI / 180.0) -
+    omega = PIx2 * ramprf->freq * linear_interpolation(ramprf->ffactor, ramprf->t_ff, ramprf->n_fpts, tLookup, i_freq);
+    phase = (dphase = linear_interpolation(ramprf->dPhase, ramprf->t_dP, ramprf->n_Ppts, tLookup, i_phase) * PI / 180.0) -
             omega * t0;
   } else {
     omega = PIx2 * ramprf->freq;
