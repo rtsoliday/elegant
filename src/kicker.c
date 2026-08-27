@@ -22,8 +22,9 @@ void set_up_kicker(KICKER *kicker);
 void set_up_mkicker(MKICKER *kicker);
 
 void track_through_kicker(
-  double **part, long np, KICKER *kicker, double p_central, long pass, long default_order) {
-  long i, n, ip;
+  double **part, int64_t np, KICKER *kicker, double p_central, long pass, long default_order) {
+  long i, n;
+  int64_t ip;
   double time, time_offset, angle, t0, *coord, amplitude, ds;
   //double sum_amp;
   double x, xp, y, yp, dp, s, curv, dx;
@@ -80,6 +81,8 @@ void track_through_kicker(
       } else
         t0 /= np;
 #endif
+      /* macro-scale timing not carried in part[][4] (see trackingClockOffset) */
+      t0 += trackingClockOffset();
       kicker->t_fiducial = t0;
       kicker->fiducial_seen = 1;
     }
@@ -105,7 +108,7 @@ void track_through_kicker(
   //sum_amp = 0;
   for (ip = 0; ip < np; ip++) {
     angle = kicker->angle;
-    time = part[ip][4] / (c_mks * beta_from_delta(p_central, part[ip][5])) - time_offset;
+    time = part[ip][4] / (c_mks * beta_from_delta(p_central, part[ip][5])) + trackingClockOffset() - time_offset;
 
     if (time > kicker->tmax || time < kicker->tmin) {
       if (kicker->periodic) {
@@ -333,8 +336,9 @@ void set_up_kicker(KICKER *kicker) {
 }
 
 void track_through_mkicker(
-  double **part, long np, MKICKER *kicker, double p_central, long pass, long default_order) {
-  long i, n, ip;
+  double **part, int64_t np, MKICKER *kicker, double p_central, long pass, long default_order) {
+  long i, n;
+  int64_t ip;
   double time, time_offset, strength, t0, amplitude;
   double dummy;
   long n_parts;
@@ -388,6 +392,8 @@ void track_through_mkicker(
       } else
         t0 /= np;
 #endif
+      /* macro-scale timing not carried in part[][4] (see trackingClockOffset) */
+      t0 += trackingClockOffset();
       kicker->t_fiducial = t0;
       kicker->fiducial_seen = 1;
     }
@@ -413,7 +419,7 @@ void track_through_mkicker(
 
   for (ip = 0; ip < np; ip++) {
     strength = kicker->strength;
-    time = part[ip][4] / (c_mks * beta_from_delta(p_central, part[ip][5])) - time_offset;
+    time = part[ip][4] / (c_mks * beta_from_delta(p_central, part[ip][5])) + trackingClockOffset() - time_offset;
 
     if (time > kicker->tmax || time < kicker->tmin) {
       if (kicker->periodic) {

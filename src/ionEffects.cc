@@ -93,7 +93,7 @@ void makeIonHistograms(IONEFFECTS *ionEffects, long nSpecies, double *bunchSigma
 void make2dIonHistogram(IONEFFECTS *ionEffects);
 double findIonBinningRange(IONEFFECTS *ionEffects, long iPlane, long nSpecies);
 void startSummaryDataOutputPage(IONEFFECTS *ionEffects, long iPass, long nPasses, long nBunches);
-void computeIonEffectsElectronBunchParameters(double **part, double *time, long np,
+void computeIonEffectsElectronBunchParameters(double **part, double *time, int64_t np,
                                               CHARGE *charge, double *tNow, long *npTotal, double *qBunch,
                                               double centroid[4], double sigma[4]);
 void setIonEffectsElectronBunchOutput(IONEFFECTS *ionEffects, double tNow, long iPass, long iBunch, double qBunch,
@@ -108,7 +108,7 @@ void applyElectronBunchKicksToIons(IONEFFECTS *ionEffects, long iPass, double qB
                                    double dpSum[3]);
 void generateIons(IONEFFECTS *ionEffects, long iPass, long iBunch, long nBunches,
                   double qBunch, double bunchCentroid[4], double bunchSigma[4]);
-void applyIonKicksToElectronBunch(IONEFFECTS *ionEffects, double **part, long np, double Po, long iBunch, long iPass, double qBunch,
+void applyIonKicksToElectronBunch(IONEFFECTS *ionEffects, double **part, int64_t np, double Po, long iBunch, long iPass, double qBunch,
                                   double bunchCentroid[4], double bunchSigma[4],
                                   double qIon, long nIonsTotal, double ionCentroid[2], double ionSigma[2],
                                   double dpSum[3]);
@@ -719,15 +719,15 @@ void trackWithIonEffects(
                          long nPasses,           /* number of passes */
                          CHARGE *charge          /* beam charge structure */
                          ) {
-  long ip;
+  int64_t ip;
   long iBunch, nBunches = 0;
   double *time0 = NULL;    /* array to record arrival time of each particle */
   double **part = NULL;    /* particle buffer for working bunch */
   double *time = NULL;     /* array to record arrival time of each particle in working bunch */
   long *ibParticle = NULL; /* array to record which bunch each particle is in */
-  long **ipBunch = NULL;   /* array to record particle indices in part0 array for all particles in each bunch */
-  long *npBunch = NULL;    /* array to record how many particles are in each bunch */
-  long np, npTotal, max_np = 0;
+  int64_t **ipBunch = NULL;   /* array to record particle indices in part0 array for all particles in each bunch */
+  int64_t *npBunch = NULL;    /* array to record how many particles are in each bunch */
+  int64_t np, npTotal, max_np = 0;
   /* properties of the electron beam */
   double bunchCentroid[4], bunchSigma[4], tNow, qBunch;
   // double sigmatemp[2];
@@ -2278,7 +2278,7 @@ void startSummaryDataOutputPage(IONEFFECTS *ionEffects, long iPass, long nPasses
 void computeIonEffectsElectronBunchParameters(
                                               double **part,
                                               double *time,
-                                              long np,
+                                              int64_t np,
                                               CHARGE *charge,
                                               double *tNow,
                                               long *npTotal,
@@ -2304,6 +2304,13 @@ void computeIonEffectsElectronBunchParameters(
   rms_emittance(part, 2, 3, np, &bunchSigma[2], NULL, &bunchSigma[3], &bunchCentroid[2], &bunchCentroid[3]);
   compute_average(tNow, time, np);
 #endif
+  /* index_bunch_assignments() returns register-reduced time; add the per-step
+     macro offset so tNow is the true absolute time.  ionEffects uses tNow only
+     for ion drift intervals (advanceIonPositions) and time outputs -- never for
+     an RF phase or a coord[4] write-back -- so true time is both correct and
+     what the drift across step boundaries requires.  Zero unless step_frequency
+     is in use, so legacy behavior is unchanged. */
+  *tNow += trackingClockOffset();
   for (int i = 0; i < 4; i++) {
     if (isnan(bunchCentroid[i]) || isinf(bunchCentroid[i]))
       bunchCentroid[i] = 0;
@@ -2506,7 +2513,7 @@ void generateIons(IONEFFECTS *ionEffects, long iPass, long iBunch, long nBunches
           /* The macroIons parameter is the number for all processors, so we need to
            * apportion the ions among the working processors
            */
-          long nLeft;
+          int64_t nLeft;
           nToAdd = ionEffects->macroIons / (n_processors - 1.0);
           nLeft = ionEffects->macroIons - nToAdd * (n_processors - 1);
           for (long iLeft = 0; iLeft < nLeft; iLeft++) {
@@ -2928,7 +2935,7 @@ void computeIonOverallParameters(
 void applyIonKicksToElectronBunch(
                                   IONEFFECTS *ionEffects,
                                   double **part,
-                                  long np,
+                                  int64_t np,
                                   double Po,
                                   long iBunch,
                                   long iPass,
@@ -2942,7 +2949,7 @@ void applyIonKicksToElectronBunch(
                                   double dpSum[3] // sum of momentum change applied to ions
                                   ) {
   double kick[2], dpSumBunch[2];
-  long ip;
+  int64_t ip;
   double paramValueX[9], paramValueY[9];
   long circuitBreaker[9];
   double tempCentroid[9][2], tempSigma[9][2], tempkick[2];

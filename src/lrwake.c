@@ -14,17 +14,18 @@
 
 void set_up_lrwake(LRWAKE *wakeData, RUN *run, long pass, long particles, CHARGE *charge, long nBunches);
 
-void index_bunch_assignments(double **part, long np, long idSlotsPerBunch, double P0,
+void index_bunch_assignments(double **part, int64_t np, long idSlotsPerBunch, double P0,
                              /* return data: */
                              double **time,     /* (*time)[ip] is the arrival time of ip-th particle */
                              long **ibParticle, /* (*ibParticle)[ip] is the bunch assignment for ip-th particle */
-                             long ***ipBunch,   /* (*ipBunch)[ib][i] is the ip value of the i-th particle in the ib-th bunch */
-                             long **npBunch,    /* (*npBunch)[ib] is the number of particles in the ib-th bunch */
+                             int64_t ***ipBunch,   /* (*ipBunch)[ib][i] is the ip value of the i-th particle in the ib-th bunch */
+                             int64_t **npBunch,    /* (*npBunch)[ib] is the number of particles in the ib-th bunch */
                              long *nBunches,    /* *nBunches is the number of bunches */
                              /* input data from previous call */
                              long lastNBunches /* Supply this only if the calling algorithm insists that the number of bunches not change */
 ) {
-  long ip, ib;
+  int64_t ip;
+  long ib;
   long ibMin, ibMax;
 #if USE_MPI
   long ibMinGlobal, ibMaxGlobal;
@@ -137,7 +138,7 @@ void index_bunch_assignments(double **part, long np, long idSlotsPerBunch, doubl
           printf("Allocating cross-reference arrays\n");
           fflush(stdout);
 #endif
-          *npBunch = (long *)tmalloc(sizeof(*npBunch) * (*nBunches));
+          *npBunch = (int64_t *)tmalloc(sizeof(**npBunch) * (*nBunches));
           for (ib = 0; ib < (*nBunches); ib++)
             (*npBunch)[ib] = 0;
         }
@@ -166,7 +167,7 @@ void index_bunch_assignments(double **part, long np, long idSlotsPerBunch, doubl
         if (ipBunch && npBunch) {
           *ipBunch = tmalloc(sizeof(**ipBunch) * (*nBunches));
           for (ib = 0; ib < *nBunches; ib++) {
-            (*ipBunch)[ib] = (long *)tmalloc(sizeof(***ipBunch) * (*npBunch)[ib]);
+            (*ipBunch)[ib] = (int64_t *)tmalloc(sizeof(***ipBunch) * (*npBunch)[ib]);
             (*npBunch)[ib] = 0; /* will use as index when assigning particles to bunches below */
           }
         }
@@ -232,7 +233,7 @@ void index_bunch_assignments(double **part, long np, long idSlotsPerBunch, doubl
 #endif
 }
 
-void track_through_lrwake(double **part, long np, LRWAKE *wakeData, double *P0Input,
+void track_through_lrwake(double **part, int64_t np, LRWAKE *wakeData, double *P0Input,
                           RUN *run, long i_pass, CHARGE *charge) {
   double *tBunch = NULL; /* array for <t> for bunches */
   double *xBunch = NULL; /* array for Q*<x> for bnuches */
@@ -243,7 +244,8 @@ void track_through_lrwake(double **part, long np, LRWAKE *wakeData, double *P0In
   double *VzBunch = NULL, *VxBunch = NULL, *VyBunch = NULL; /* arrays of voltage at each bunch */
   double *QxBunch = NULL, *QyBunch = NULL;                  /* quadrupole wake divided by probe particle displacement */
   double *time = NULL;                                      /* array to record arrival time of each particle */
-  long ib, ip, nBunches;
+  long ib, nBunches;
+  int64_t ip;
   double factor, P0, rampFactor;
   long *ibParticle = NULL;
 #if USE_MPI
@@ -359,6 +361,12 @@ void track_through_lrwake(double **part, long np, LRWAKE *wakeData, double *P0In
       if (QBunch[ib]) {
         /* QBunch[ib] holds particle count at this point */
         tBunch[ib] /= QBunch[ib];
+        /* index_bunch_assignments() returns register-reduced time; add the per-step
+           macro offset so bunch times stored in tHistory carry true absolute time.
+           The wake lookup below uses tBunch-tHistory differences, which must span
+           the macro inter-step gap; tBunch is never written back to coord[4].
+           Zero unless step_frequency is in use, so legacy behavior is unchanged. */
+        tBunch[ib] += trackingClockOffset();
         xBunch[ib] /= QBunch[ib];
         yBunch[ib] /= QBunch[ib];
         /* multiply by macro-particle charge so QBunch means what it says */
@@ -683,7 +691,7 @@ void set_up_lrwake(LRWAKE *wakeData, RUN *run, long pass, long particles, CHARGE
 #endif
 }
 
-void free_bunch_index_memory(double *time0, long *ibParticle, long **ipBunch, long *npBunch, long nBunches) {
+void free_bunch_index_memory(double *time0, long *ibParticle, int64_t **ipBunch, int64_t *npBunch, long nBunches) {
   long iBunch;
   if (time0)
     free(time0);

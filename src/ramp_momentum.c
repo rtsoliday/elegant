@@ -20,11 +20,12 @@ void set_up_ramp_p(RAMPP *rampp);
 
 void ramp_momentum(
   double **coord,
-  long np,
+  int64_t np,
   RAMPP *rampp,
   double *P_central, /* current beta*gamma on input, changed on output */
   long pass) {
-  long ip, i_time;
+  int64_t ip;
+  long i_time;
   double P_new, t, t0;
 
   log_entry("ramp_momentum");
@@ -71,6 +72,10 @@ void ramp_momentum(
     t0 /= np;
   }
 #endif
+
+  /* macro-scale timing not carried in coord[][4]: sample the momentum ramp at
+     the true absolute bunch-mean time (see trackingClockOffset) */
+  t0 += trackingClockOffset();
 
   i_time = find_nearby_array_entry(rampp->t_Pf, rampp->n_pts, t0);
   P_new = rampp->Po * linear_interpolation(rampp->Pfactor, rampp->t_Pf, rampp->n_pts, t0, i_time);
