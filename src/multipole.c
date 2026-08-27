@@ -1679,7 +1679,7 @@ void computeTotalErrorMultipoleFields(MULTIPOLE_DATA *totalMult,
   }
   if (steeringMult && steeringMult->initialized && steeringMult->referenceOrder >= 0 && steeringMult->referenceOrder != 0)
     bombElegantVA("root order error for multipole data file %s---expected 0 but found %" PRId32 " in referenceOrder parameter",
-                  randomMult->filename, randomMult->referenceOrder);
+                  steeringMult->filename, steeringMult->referenceOrder);
 
   if (!totalMult->initialized) {
     totalMult->initialized = 1;
