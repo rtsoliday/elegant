@@ -135,6 +135,7 @@ elegant_SRC = alpha_data.c \
 	sliceAnalysis.c \
 	slicePoint.c \
 	SReffects.c \
+	CBScat.c \
 	spinUpdate.c \
 	subprocess.c \
 	taylorSeries.c \
