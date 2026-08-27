@@ -45,7 +45,7 @@ static SDDS_DEFINITION slice_column[SLICE_COLUMNS] = {
   {"ecy", "&column name=ecy, symbol=\"$ge$r$bcy$n\", units=m, type=double, description=\"geometric vertical emittance less dispersion contribution\" &end"},
 };
 
-void set_up_slice_point(SLICE_POINT *slicePoint, RUN *run, long occurence, char *previousElementName, long IDSlotsPerBunch) {
+void set_up_slice_point(SLICE_POINT *slicePoint, RUN *run, long occurence, char *previousElementName, int64_t IDSlotsPerBunch) {
   if (slicePoint->disable)
     return;
   if (slicePoint->interval <= 0)
@@ -175,7 +175,9 @@ void dump_slice_analysis(SLICE_POINT *slicePoint, long step, long pass, long n_p
       p = Po * (1 + particle[i][5]);
       gamma = sqrt(p * p + 1);
       beta = p / gamma;
-      timeCoord[i] = particle[i][4] / (c_mks * beta);
+      /* true absolute time; slice bounds derive from these min/max so slicing
+         is invariant (see trackingClockOffset) */
+      timeCoord[i] = particle[i][4] / (c_mks * beta) + trackingClockOffset();
       if (timeCoord[i] > tMax)
         tMax = timeCoord[i];
       if (timeCoord[i] < tMin)
