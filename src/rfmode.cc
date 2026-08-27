@@ -34,7 +34,7 @@ double linear_interpolation(double *y, double *t, long n, double t0, long i);
 }
 #endif
 
-void runBinlessRfMode(double **part, long np, RFMODE *rfmode, double Po,
+void runBinlessRfMode(double **part, int64_t np, RFMODE *rfmode, double Po,
                       char *element_name, double element_z, long pass, long n_passes,
                       CHARGE *charge);
 void fillBerencABMatrices(MATRIX *A, MATRIX *B, RFMODE *rfmode, double dt);
@@ -52,8 +52,8 @@ void track_through_rfmode(
   double *time = NULL;     /* array to record arrival time of each particle */
   double **part = NULL;    /* particle buffer for working bucket */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long iBucket, nBuckets = 0, np, effectiveBuckets, jBucket, adjusting, outputing;
   double tOffset;
   /*
@@ -61,10 +61,13 @@ void track_through_rfmode(
     static FILE *fpdeb2 = NULL;
     */
 
-  long ip, ib, lastBin = 0, firstBin = 0, n_binned = 0;
+  int64_t ip, n_binned = 0;
+  long ib, lastBin = 0, firstBin = 0;
   double tmin = 0, tmax, last_tmax, tmean, dt = 0;
   double Vb, V, omega = 0, phase, t, k, damping_factor, tau;
   double VPrevious, tPrevious, phasePrevious;
+  double clockNow = 0, clockOffsetPrevious = 0;
+  double clockPhaseNow = 0, clockPhasePrevious = 0;
   double V_sum, Vr_sum, Vi_sum, Vg_sum, Vgr_sum, Vgi_sum, Vci_sum, Vcr_sum, Vc_sum;
   double Q_sum;
   long n_summed, max_hist=0, n_occupied;
@@ -719,9 +722,20 @@ void track_through_rfmode(
       VbImagFactor = 1 / (2 * Qrp);
       omega *= Qrp / Q;
 
+      /* trackingClockOffset() is constant within a step; the macro inter-step gap
+         it represents must enter the cavity damping (true elapsed time) but never
+         the phase, the bin times, or the coord[4] write-back, which stay reduced. */
+      clockNow = trackingClockOffset();
+      /* Reduced clock phase for THIS mode's (Q-shifted) omega; a non-harmonic
+         mode adds its across-turn difference to the reduced-time phase advance
+         so CHANGE_T's whole-period removal is transparent (not just harmonics). */
+      clockPhaseNow = trackingClockPhase(omega);
+
       if (rfmode->single_pass) {
         rfmode->V = rfmode->last_phase = 0;
         rfmode->last_t = tmin + 0.5 * dt;
+        rfmode->last_clockOffset = clockNow;
+        rfmode->last_clockPhase = clockPhaseNow;
       }
     }
 
@@ -830,6 +844,8 @@ void track_through_rfmode(
          */
       VPrevious = rfmode->V;
       tPrevious = rfmode->last_t;
+      clockOffsetPrevious = rfmode->last_clockOffset;
+      clockPhasePrevious = rfmode->last_clockPhase;
       phasePrevious = rfmode->last_phase;
 #ifdef DEBUG
       printf("VPrevious = %le, tPrevious = %le, phasePrevious = %le, firstBin = %ld, lastBin = %ld\n",
@@ -860,9 +876,11 @@ void track_through_rfmode(
         printf("Before: Vb = %le V, Vbr = %le, Vbi = %le, phase = %21.15le, t=%21.15les\n",
                rfmode->V, rfmode->Vr, rfmode->Vi, fmod(rfmode->last_phase, PIx2), rfmode->last_t);
 #endif
-        phase = rfmode->last_phase + omega * (t - rfmode->last_t);
-        damping_factor = exp(-(t - rfmode->last_t) / tau);
+        phase = rfmode->last_phase + omega * (t - rfmode->last_t) + (clockPhaseNow - rfmode->last_clockPhase);
+        damping_factor = exp(-((t - rfmode->last_t) + (clockNow - rfmode->last_clockOffset)) / tau);
         rfmode->last_t = t;
+        rfmode->last_clockOffset = clockNow;
+        rfmode->last_clockPhase = clockPhaseNow;
         rfmode->last_phase = phase;
         rfmode->V = V = rfmode->V * damping_factor;
         rfmode->Vr = V * cos(phase);
@@ -875,7 +893,7 @@ void track_through_rfmode(
         /* compute beam-induced voltage for this bin */
         Vb = 2 * k * rfmode->mp_charge * particleRelSign * rfmode->pass_interval * Ihist[ib];
         if (rfmode->long_range_only)
-          Vbin[ib] = VPrevious * (damping_factor = exp(-(t - tPrevious) / tau)) * cos(phasePrevious + omega * (t - tPrevious));
+          Vbin[ib] = VPrevious * (damping_factor = exp(-((t - tPrevious) + (clockNow - clockOffsetPrevious)) / tau)) * cos(phasePrevious + omega * (t - tPrevious) + (clockPhaseNow - clockPhasePrevious));
         else
           Vbin[ib] = rfmode->Vr - Vb / 2;
 
@@ -1172,7 +1190,7 @@ void track_through_rfmode(
 }
 
 void set_up_rfmode(RFMODE *rfmode, char *element_name, double element_z, long n_passes,
-                   RUN *run, long n_particles,
+                   RUN *run, int64_t n_particles,
                    double Po, double total_length) {
   long i;
   double T;
@@ -1182,6 +1200,8 @@ void set_up_rfmode(RFMODE *rfmode, char *element_name, double element_z, long n_
     return;
 
   rfmode->V = rfmode->Vr = rfmode->Vi = rfmode->last_t = rfmode->last_phase = rfmode->last_omega = rfmode->last_Q = 0;
+  rfmode->last_clockOffset = 0;
+  rfmode->last_clockPhase = 0;
 
   rfmode->initialized = 1;
   if (rfmode->pass_interval <= 0)
@@ -1341,6 +1361,10 @@ void set_up_rfmode(RFMODE *rfmode, char *element_name, double element_z, long n_
     rfmode->last_t = rfmode->initial_t;
   } else
     rfmode->last_t = element_z / (Po * c_mks / sqrt(sqr(Po) + 1));
+  /* last_t above is a register-reduced estimate at the start of the current step;
+     record the matching clock offset so the first advance sees no macro gap. */
+  rfmode->last_clockOffset = trackingClockOffset();
+  rfmode->last_clockPhase = 0; /* omega not known here; first advance sees V=0 so any residual is harmless, then it is snapshotted with the real omega */
   rfmode->tFreq = rfmode->fFreq = NULL;
   rfmode->nFreq = 0;
   if (rfmode->fwaveform) {
@@ -1460,12 +1484,13 @@ void set_up_rfmode(RFMODE *rfmode, char *element_name, double element_z, long n_
 }
 
 void runBinlessRfMode(
-  double **part, long np, RFMODE *rfmode, double Po,
+  double **part, int64_t np, RFMODE *rfmode, double Po,
   char *element_name, double element_z, long pass, long n_passes,
   CHARGE *charge) {
   static TIMEDATA *tData;
   static long max_np = 0;
-  long ip, ip0, ib;
+  int64_t ip, ip0;
+  long ib;
   double P;
   double Vb, V, omega, phase, t, k, damping_factor, tau;
   double V_sum, Vr_sum, phase_sum;
@@ -1473,6 +1498,8 @@ void runBinlessRfMode(
   long n_summed, max_hist, n_occupied;
   double Qrp, VbImagFactor, Q;
   double tmean;
+  double clockNow;
+  double clockPhaseNow = 0;
   long deltaPass;
 #if USE_MPI
   long np_total;
@@ -1579,9 +1606,17 @@ void runBinlessRfMode(
   VbImagFactor = 1 / (2 * Qrp);
   omega *= Qrp / Q;
 
+  /* trackingClockOffset() is constant within a step; the macro inter-step gap
+     it represents must enter the cavity damping (true elapsed time) but never
+     the phase or the coord[4] write-back, which stay register-reduced. */
+  clockNow = trackingClockOffset();
+  clockPhaseNow = trackingClockPhase(omega);
+
   if (rfmode->single_pass) {
     rfmode->V = rfmode->last_phase = 0;
     rfmode->last_t = tData[0].t;
+    rfmode->last_clockOffset = clockNow;
+    rfmode->last_clockPhase = clockPhaseNow;
   }
 
   for (ip0 = 0; ip0 < np; ip0++) {
@@ -1589,9 +1624,11 @@ void runBinlessRfMode(
     t = tData[ip0].t;
 
     /* advance cavity to this time */
-    phase = rfmode->last_phase + omega * (t - rfmode->last_t);
-    damping_factor = exp(-(t - rfmode->last_t) / tau);
+    phase = rfmode->last_phase + omega * (t - rfmode->last_t) + (clockPhaseNow - rfmode->last_clockPhase);
+    damping_factor = exp(-((t - rfmode->last_t) + (clockNow - rfmode->last_clockOffset)) / tau);
     rfmode->last_t = t;
+    rfmode->last_clockOffset = clockNow;
+    rfmode->last_clockPhase = clockPhaseNow;
     rfmode->last_phase = phase;
     V = rfmode->V * damping_factor;
     rfmode->Vr = V * cos(phase);

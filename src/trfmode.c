@@ -18,7 +18,7 @@
 #  include "gpu_rfmode.h"
 #endif
 
-void runBinlessTrfMode(double **part, long np, TRFMODE *trfmode, double Po,
+void runBinlessTrfMode(double **part, int64_t np, TRFMODE *trfmode, double Po,
                        char *element_name, double element_z, long pass, long n_passes,
                        CHARGE *charge);
 
@@ -38,12 +38,15 @@ void track_through_trfmode(
   double *time = NULL;     /* array to record arrival time of each particle */
   double **part = NULL;    /* particle buffer for working bucket */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long iBucket, nBuckets, np;
   long max_np = 0;
   double tPrevious, VxPrevious, xPhasePrevious, VyPrevious, yPhasePrevious;
-  long ip, ib;
+  double clockNow = 0, clockOffsetPrevious = 0;
+  double clockPhaseNow = 0, clockPhasePrevious = 0;
+  int64_t ip;
+  long ib;
   double tmin, tmax, tmean, dt, last_tmax = -DBL_MAX;
   double Vxb, Vyb, V, omega, phase, t, k, omegaOverC, damping_factor, tau;
   double Q, Qrp;
@@ -385,10 +388,20 @@ void track_through_trfmode(
     if (pass <= (trfmode->rampPasses - 1))
       k *= (pass + 1.0) / trfmode->rampPasses;
 
+    /* trackingClockOffset() is constant within a step; the macro inter-step gap
+       it represents must enter the cavity damping (true elapsed time) but never
+       the phase, the bin times, or the coord[4] write-back, which stay reduced. */
+    clockNow = trackingClockOffset();
+    /* reduced clock phase for this mode's omega; a non-harmonic mode adds the
+       across-turn difference to its reduced-time phase advance (CHANGE_T). */
+    clockPhaseNow = trackingClockPhase(omega);
+
     if (trfmode->single_pass) {
       trfmode->Vx = trfmode->Vy = 0;
       trfmode->last_t = tmin + 0.5 * dt;
       trfmode->last_xphase = trfmode->last_yphase = 0;
+      trfmode->last_clockOffset = clockNow;
+      trfmode->last_clockPhase = clockPhaseNow;
     }
 
     VxPrevious = trfmode->Vx;
@@ -396,6 +409,8 @@ void track_through_trfmode(
     xPhasePrevious = trfmode->last_xphase;
     yPhasePrevious = trfmode->last_yphase;
     tPrevious = trfmode->last_t;
+    clockOffsetPrevious = trfmode->last_clockOffset;
+    clockPhasePrevious = trfmode->last_clockPhase;
 
 #if USE_MPI
     if (isSlave) {
@@ -407,12 +422,12 @@ void track_through_trfmode(
         t = tmin + (ib + 0.5) * dt; /* middle arrival time for this bin */
 
         /* advance cavity to this time */
-        damping_factor = exp(-(t - trfmode->last_t) / tau);
+        damping_factor = exp(-((t - trfmode->last_t) + (clockNow - trfmode->last_clockOffset)) / tau);
         if (damping_factor > 1)
           printWarningForTracking("Damping factor >1 for TRFMODE.", "This may happen if the bunch and binning region are very long.");
         if (trfmode->doX) {
           /* -- x plane */
-          phase = trfmode->last_xphase + omega * (t - trfmode->last_t);
+          phase = trfmode->last_xphase + omega * (t - trfmode->last_t) + (clockPhaseNow - trfmode->last_clockPhase);
           V = trfmode->Vx * damping_factor;
           trfmode->Vxr = V * cos(phase);
           trfmode->Vxi = V * sin(phase);
@@ -420,7 +435,7 @@ void track_through_trfmode(
         }
         if (trfmode->doY) {
           /* -- y plane */
-          phase = trfmode->last_yphase + omega * (t - trfmode->last_t);
+          phase = trfmode->last_yphase + omega * (t - trfmode->last_t) + (clockPhaseNow - trfmode->last_clockPhase);
           V = trfmode->Vy * damping_factor;
           trfmode->Vyr = V * cos(phase);
           trfmode->Vyi = V * sin(phase);
@@ -428,6 +443,8 @@ void track_through_trfmode(
         }
 
         trfmode->last_t = t;
+        trfmode->last_clockOffset = clockNow;
+        trfmode->last_clockPhase = clockPhaseNow;
         Vxbin[ib] = Vybin[ib] = Vzbin[ib] = 0;
 
         /* compute beam-induced voltage for this bin */
@@ -435,10 +452,10 @@ void track_through_trfmode(
           /* -- x plane (NB: ramp factor is already in k) */
           Vxb = 2 * k * trfmode->mp_charge * particleRelSign * xsum[ib] * trfmode->xfactor;
           if (trfmode->long_range_only) {
-            double Vd = VxPrevious * exp(-(t - tPrevious) / tau);
-            Vxbin[ib] = Vd * cos(xPhasePrevious + omega * (t - tPrevious));
+            double Vd = VxPrevious * exp(-((t - tPrevious) + (clockNow - clockOffsetPrevious)) / tau);
+            Vxbin[ib] = Vd * cos(xPhasePrevious + omega * (t - tPrevious) + (clockPhaseNow - clockPhasePrevious));
             if (count[ib])
-              Vzbin[ib] += omegaOverC * (xsum[ib] / count[ib]) * Vd * sin(xPhasePrevious + omega * (t - tPrevious));
+              Vzbin[ib] += omegaOverC * (xsum[ib] / count[ib]) * Vd * sin(xPhasePrevious + omega * (t - tPrevious) + (clockPhaseNow - clockPhasePrevious));
           } else {
             Vxbin[ib] = trfmode->Vxr;
             if (count[ib])
@@ -458,10 +475,10 @@ void track_through_trfmode(
           /* -- y plane (NB: ramp factor is already in k) */
           Vyb = 2 * k * trfmode->mp_charge * particleRelSign * ysum[ib] * trfmode->yfactor;
           if (trfmode->long_range_only) {
-            double Vd = VyPrevious * exp(-(t - tPrevious) / tau);
-            Vybin[ib] = Vd * cos(yPhasePrevious + omega * (t - tPrevious));
+            double Vd = VyPrevious * exp(-((t - tPrevious) + (clockNow - clockOffsetPrevious)) / tau);
+            Vybin[ib] = Vd * cos(yPhasePrevious + omega * (t - tPrevious) + (clockPhaseNow - clockPhasePrevious));
             if (count[ib])
-              Vzbin[ib] += omegaOverC * (ysum[ib] / count[ib]) * Vd * sin(yPhasePrevious + omega * (t - tPrevious));
+              Vzbin[ib] += omegaOverC * (ysum[ib] / count[ib]) * Vd * sin(yPhasePrevious + omega * (t - tPrevious) + (clockPhaseNow - clockPhasePrevious));
           } else {
             Vybin[ib] = trfmode->Vyr;
             if (count[ib])
@@ -610,7 +627,7 @@ void track_through_trfmode(
 }
 
 void set_up_trfmode(TRFMODE *trfmode, char *element_name, double element_z,
-                    long n_passes, RUN *run, long n_particles) {
+                    long n_passes, RUN *run, int64_t n_particles) {
   double T;
 
   if (trfmode->initialized)
@@ -620,6 +637,8 @@ void set_up_trfmode(TRFMODE *trfmode, char *element_name, double element_z,
   trfmode->Vx = trfmode->Vxr = trfmode->Vxi = trfmode->last_xphase =
     trfmode->Vy = trfmode->Vyr = trfmode->Vyi = trfmode->last_yphase =
       trfmode->last_t = 0;
+  trfmode->last_clockOffset = 0;
+  trfmode->last_clockPhase = 0;
 
 #if SDDS_MPI_IO
   if (isSlave)
@@ -649,6 +668,10 @@ void set_up_trfmode(TRFMODE *trfmode, char *element_name, double element_z,
     fflush(stdout);
   }
   trfmode->last_t = element_z / c_mks;
+  /* last_t above is a register-reduced estimate at the start of the current step;
+     record the matching clock offset so the first advance sees no macro gap. */
+  trfmode->last_clockOffset = trackingClockOffset();
+  trfmode->last_clockPhase = 0; /* omega not known here; first advance sees V=0 so any residual is harmless */
   trfmode->Vxr = trfmode->Vxi = trfmode->Vx = 0;
   trfmode->Vyr = trfmode->Vyi = trfmode->Vy = 0;
   trfmode->doX = trfmode->doY = 0;
@@ -701,14 +724,16 @@ void set_up_trfmode(TRFMODE *trfmode, char *element_name, double element_z,
 }
 
 void runBinlessTrfMode(
-  double **part, long np, TRFMODE *trfmode, double Po,
+  double **part, int64_t np, TRFMODE *trfmode, double Po,
   char *element_name, double element_z, long pass, long n_passes,
   CHARGE *charge) {
   static TIMEDATA *tData;
   static long max_np = 0;
-  long ip, ip0;
+  int64_t ip, ip0;
   double P;
   double Vxb, Vyb, Vzb, dVxb, dVyb, V, omega, phase, t, k, omegaOverC, damping_factor, tau;
+  double clockNow;
+  double clockPhaseNow = 0;
   double Px, Py, Pz;
   double Q, Qrp;
   double x, y;
@@ -784,10 +809,18 @@ void runBinlessTrfMode(
   if (pass <= (trfmode->rampPasses - 1))
     k *= (pass + 1.0) / trfmode->rampPasses;
 
+  /* trackingClockOffset() is constant within a step; the macro inter-step gap
+     it represents enters the damping (true elapsed time) but never the phase or
+     the coord[4] write-back, which stay register-reduced. */
+  clockNow = trackingClockOffset();
+  clockPhaseNow = trackingClockPhase(omega);
+
   if (trfmode->single_pass) {
     trfmode->Vx = trfmode->Vy = 0;
     trfmode->last_t = tData[0].t;
     trfmode->last_xphase = trfmode->last_yphase = 0;
+    trfmode->last_clockOffset = clockNow;
+    trfmode->last_clockPhase = clockPhaseNow;
   }
 
   if (trfmode->record && (trfmode->sample_interval < 2 || pass % trfmode->sample_interval == 0)) {
@@ -805,10 +838,10 @@ void runBinlessTrfMode(
     t = tData[ip0].t;
 
     /* advance cavity to this time */
-    damping_factor = exp(-(t - trfmode->last_t) / tau);
+    damping_factor = exp(-((t - trfmode->last_t) + (clockNow - trfmode->last_clockOffset)) / tau);
     if (trfmode->doX) {
       /* -- x plane */
-      phase = trfmode->last_xphase + omega * (t - trfmode->last_t);
+      phase = trfmode->last_xphase + omega * (t - trfmode->last_t) + (clockPhaseNow - trfmode->last_clockPhase);
       V = trfmode->Vx * damping_factor;
       trfmode->Vxr = V * cos(phase);
       trfmode->Vxi = V * sin(phase);
@@ -821,7 +854,7 @@ void runBinlessTrfMode(
     }
     if (trfmode->doY) {
       /* -- y plane */
-      phase = trfmode->last_yphase + omega * (t - trfmode->last_t);
+      phase = trfmode->last_yphase + omega * (t - trfmode->last_t) + (clockPhaseNow - trfmode->last_clockPhase);
       V = trfmode->Vy * damping_factor;
       trfmode->Vyr = V * cos(phase);
       trfmode->Vyi = V * sin(phase);
@@ -904,6 +937,8 @@ void runBinlessTrfMode(
     }
 
     trfmode->last_t = t;
+    trfmode->last_clockOffset = clockNow;
+    trfmode->last_clockPhase = clockPhaseNow;
   }
 
   if (trfmode->record && (trfmode->sample_interval < 2 || pass % trfmode->sample_interval == 0)) {

@@ -27,7 +27,7 @@ static char *fiducialModeChoice[4] = {
   "pmaximum",
 };
 
-long trackRfCavityWithWakes(double **part, long np, RFCA *rfca, double **accepted,
+long trackRfCavityWithWakes(double **part, int64_t np, RFCA *rfca, double **accepted,
                             double *P_central, double zEnd, long iPass, RUN *run,
                             CHARGE *charge, WAKE *wake, TRWAKE *trwake, LSCKICK *LSCKick,
                             long wakesAtEnd);
@@ -49,14 +49,86 @@ unsigned long parseFiducialMode(char *modeString) {
 }
 
 static long fiducializationBunch = -1;
-static int32_t idSlotsPerBunch = -1;
-void setFiducializationBunch(long b, int32_t n) {
+static int64_t idSlotsPerBunch = -1;
+void setFiducializationBunch(long b, int64_t n) {
   fiducializationBunch = b;
   idSlotsPerBunch = n;
 #if USE_MPI && MPI_DEBUG
   printf("Fiducialization will use bunch %ld, idSlotsPerBunch=%ld\n", fiducializationBunch, (long)idSlotsPerBunch);
   fflush(stdout);
 #endif
+}
+
+/* --- tracking-clock register --------------------------------------------
+ * Macro-scale absolute time (seconds) that is deliberately NOT carried in
+ * part[][4] (=beta*c*t), so intra-bunch precision is preserved even in
+ * long-timescale (multi-step / many-turn) simulations.  Time-dependent
+ * consumers and time outputs reconstruct the true absolute time as
+ *     t_true = part[][4]/(c*beta) + trackingClockOffset().
+ *   base  : per-step macro offset (P1, set from run_control step_frequency);
+ *           set once per step and persists.
+ *   accum : per-turn CHANGE_T removals (P2); reset at the top of each
+ *           do_tracking() call.
+ * The base/accum split keeps the per-step base (set in track_beam before
+ * do_tracking) safe from the accum reset performed inside do_tracking.
+ */
+static double trackingClockBase_s = 0.0;
+static double trackingClockAccum_s = 0.0;   /* plain running sum -> trackingClockOffset() */
+static double trackingClockAccumC_s = 0.0;  /* Neumaier compensation (low word) -> trackingClockPhase() only */
+
+void setTrackingClockBase(double t_s) {
+  trackingClockBase_s = t_s;
+}
+
+void resetTrackingClock(void) {
+  trackingClockAccum_s = 0.0;
+  trackingClockAccumC_s = 0.0;
+}
+
+void accumulateTrackingClock(double dt_s) {
+  /* The plain sum trackingClockAccum_s drives trackingClockOffset() and is
+   * bit-for-bit what it was before this change, so the linear-difference
+   * consumers (HOM damping, ionEffects drift interval) are unaffected.  We
+   * additionally carry a Neumaier compensation word so that after the sum
+   * grows to many seconds the low-order bits it would otherwise shed are
+   * still available to trackingClockPhase() -- that is what lets a
+   * non-harmonic HOM recover an accurate fractional phase (see below). */
+  double t = trackingClockAccum_s + dt_s;
+  if (fabs(trackingClockAccum_s) >= fabs(dt_s))
+    trackingClockAccumC_s += (trackingClockAccum_s - t) + dt_s;
+  else
+    trackingClockAccumC_s += (dt_s - t) + trackingClockAccum_s;
+  trackingClockAccum_s = t;
+}
+
+double trackingClockOffset(void) {
+  return trackingClockBase_s + trackingClockAccum_s;
+}
+
+/* Reduced clock phase for a time-dependent consumer of angular frequency
+ * omega: returns (omega * trueOffset) wrapped into [0, 2*PI).  CHANGE_T
+ * subtracts a whole number of RF fundamental periods from part[][4] each
+ * turn and (Bundle P2) accumulates the removed time here; a consumer whose
+ * frequency is NOT an integer harmonic of that fundamental cannot simply
+ * drop the offset from its phase advance.  Instead it adds the difference
+ * of this quantity across the gap.  The offset is reduced modulo the
+ * consumer's own period 2*PI/omega *in the time domain first* (fmodl is an
+ * exact remainder), so the large integer cycle count is removed before
+ * scaling and the small fractional phase keeps full precision even when the
+ * offset has grown to many seconds.  long double is used only for this
+ * stateless reduction, never for the accumulated state, so it has no effect
+ * on cross-rank determinism (the state is portable double arithmetic). */
+double trackingClockPhase(double omega) {
+  long double off, period, resid;
+  if (omega == 0)
+    return 0.0;
+  off = (long double)trackingClockBase_s +
+        ((long double)trackingClockAccum_s + (long double)trackingClockAccumC_s);
+  period = (long double)PIx2 / (long double)omega;
+  resid = fmodl(off, period);
+  if (resid < 0)
+    resid += period;
+  return (double)((long double)omega * resid);
 }
 
 long getFiducializationPidRange(unsigned long mode, long *startPID,
@@ -73,10 +145,10 @@ long getFiducializationPidRange(unsigned long mode, long *startPID,
   return 1;
 }
 
-double findFiducialTime(double **part, long np, double s0, double sOffset,
+double findFiducialTime(double **part, int64_t np, double s0, double sOffset,
                         double p0, unsigned long mode) {
   double tFid = 0.0;
-  long i;
+  int64_t i;
   long startPID, endPID;
 
   getFiducializationPidRange(mode, &startPID, &endPID);
@@ -139,7 +211,8 @@ double findFiducialTime(double **part, long np, double s0, double sOffset,
     MPI_Bcast(&tFid, 1, MPI_DOUBLE, 1, MPI_COMM_WORLD);
 #endif
   } else if (mode & FID_MODE_PMAX) {
-    long ibest, i;
+    long ibest;
+    int64_t i;
     double best;
 #if (!USE_MPI)
     best = part[0][5];
@@ -193,7 +266,7 @@ double findFiducialTime(double **part, long np, double s0, double sOffset,
 #endif
   } else if (mode & FID_MODE_TMEAN) {
     double tsum = 0;
-    long ip, nsum = 0;
+    int64_t ip, nsum = 0;
 #ifdef USE_KAHAN
     double error = 0.0;
 #endif
@@ -277,10 +350,10 @@ double findFiducialTime(double **part, long np, double s0, double sOffset,
 }
 
 long simple_rf_cavity(
-  double **part, long np, RFCA *rfca, double **accepted, double *P_central, double zEnd) {
+  double **part, int64_t np, RFCA *rfca, double **accepted, double *P_central, double zEnd) {
 
 #ifdef HAVE_GPU
-  long nLeft;
+  int64_t nLeft;
 #  ifdef GPU_VERIFY
   double P_central_input = *P_central;
 #  endif
@@ -309,7 +382,7 @@ long simple_rf_cavity(
                                 NULL, NULL, NULL, NULL, NULL, 0);
 }
 
-static void trackRfCavityAddLSCKick(double **part, long np,
+static void trackRfCavityAddLSCKick(double **part, int64_t np,
                                     LSCKICK *LSCKick, double Po,
                                     CHARGE *charge, double length,
                                     double dgammaOverGammaAve) {
@@ -322,7 +395,7 @@ static void trackRfCavityAddLSCKick(double **part, long np,
 }
 
 long trackRfCavityWithWakes(
-  double **part, long np,
+  double **part, int64_t np,
   RFCA *rfca,
   double **accepted,
   double *P_central, double zEnd,
@@ -333,7 +406,8 @@ long trackRfCavityWithWakes(
   TRWAKE *trwake,
   LSCKICK *LSCKick,
   long wakesAtEnd) {
-  long ip, same_dgamma, nKicks, linearize, ik;
+  int64_t ip;
+  long same_dgamma, nKicks, linearize, ik;
   double timeOffset, dc4, x, xp;
   double P, gamma, gamma1, dgamma = 0.0, dgammaMax = 0.0, phase, length, dtLight, volt, To, dpr;
   double *coord, t, t0, omega, beta_i, tau, dt, tAve = 0, dgammaAve = 0;
@@ -515,14 +589,25 @@ long trackRfCavityWithWakes(
   }
 
   timeOffset = 0;
-  if (isSlave || !distributedBeam) {
-    if (omega && rfca->change_t && np != 0) {
-      coord = part[0];
-      P = *P_central * (1 + coord[5]);
-      beta_i = P / (gamma = sqrt(sqr(P) + 1));
-      t = coord[4] / (c_mks * beta_i);
-      if (omega != 0 && t > (0.9 * To) && rfca->change_t)
-        timeOffset = ((long)(t / To + 0.5)) * To;
+  if (omega && rfca->change_t) {
+    /* Bundle P2: derive the whole-RF-period removal from an MPI-consistent, first-bunch
+     * reference (findFiducialTime) so every rank removes the SAME integer of periods, and
+     * ACCUMULATE the removed time into the tracking-clock register instead of discarding it.
+     * Non-harmonic time-dependent elements (RFMODE HOM damping, ionEffects, ...) then see the
+     * true multi-turn elapsed time via trackingClockOffset().  This operates on the reduced
+     * coord[4] (as the old part[0] reference did); do NOT add trackingClockOffset() here --
+     * this is the producer that drives it.  findFiducialTime runs MPI collectives, so it must
+     * be called by all ranks (incl. the master, which holds np==0 and contributes zero); the
+     * old "isSlave || !distributedBeam" guard is therefore removed.  In the serial (non-
+     * distributed) case an empty beam is skipped to preserve the historical no-op. */
+    unsigned long changeTFidMode = parseFiducialMode(rfca->fiducial);
+    double tRef;
+    if (distributedBeam || np != 0) {
+      tRef = findFiducialTime(part, np, 0.0, 0.0, *P_central, changeTFidMode);
+      if (tRef > (0.9 * To)) {
+        timeOffset = ((long)(tRef / To + 0.5)) * To;
+        accumulateTrackingClock(timeOffset);
+      }
     }
   }
 
@@ -1063,11 +1148,11 @@ void add_to_particle_energy2(double *coord, double timeOfFlight, double Po, doub
   coord[3] = py/pz;
 }
 
-long track_through_rfcw(double **part, long np, RFCW *rfcw, double **accepted, double *P_central, double zEnd,
+long track_through_rfcw(double **part, int64_t np, RFCW *rfcw, double **accepted, double *P_central, double zEnd,
                         RUN *run, long i_pass, CHARGE *charge) {
 
 #ifdef HAVE_GPU
-  long nLeft;
+  int64_t nLeft;
   if (getElementOnGpu()) {
     startGpuTimer();
 #  ifdef GPU_VERIFY
