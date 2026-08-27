@@ -16,6 +16,7 @@
 #include "fftpackC.h"
 #include "track.h"
 #include "SDDS.h"
+#include "oagphy.h" /* COUPLED_RESULTS, ComputeCoupledParameters() for coupled_sigma output */
 #ifdef HAVE_GPU
 #  include <gpu_base.h>
 #endif
@@ -168,16 +169,17 @@ static SDDS_DEFINITION phase_space_column[PHASE_SPACE_COLUMNS+SPIN_COLUMNS] = {
   {"spz", "&column name=spz, type=double &end"},
 };
 
-#define PHASE_SPACE_PARAMETERS 8
+#define PHASE_SPACE_PARAMETERS 9
 static SDDS_DEFINITION phase_space_parameter[PHASE_SPACE_PARAMETERS] = {
   {"Step", "&parameter name=Step, type=long, description=\"Simulation step\" &end"},
   {"pCentral", "&parameter name=pCentral, symbol=\"p$bcen$n\", units=\"m$be$nc\", type=double, description=\"Reference beta*gamma\" &end"},
   {"Charge", "&parameter name=Charge, type=double, units=C, description=\"Bunch charge before sampling\" &end"},
-  {"Particles", "&parameter name=Particles, type=long, description=\"Number of particles before sampling\" &end"},
-  {"IDSlotsPerBunch", "&parameter name=IDSlotsPerBunch, type=long, description=\"Number of particle ID slots reserved to a bunch\" &end"},
+  {"Particles", "&parameter name=Particles, type=long64, description=\"Number of particles before sampling\" &end"},
+  {"IDSlotsPerBunch", "&parameter name=IDSlotsPerBunch, type=long64, description=\"Number of particle ID slots reserved to a bunch\" &end"},
   {"SVNVersion", "&parameter name=SVNVersion, type=string, description=\"SVN version number\", fixed_value=" SVN_VERSION " &end"},
+  {"tOffset", "&parameter name=tOffset type=double, description=\"Per-step offset of t values\" &end"},
   {"SampledCharge", "&parameter name=SampledCharge, type=double, units=C, description=\"Sampled charge\" &end"},
-  {"SampledParticles", "&parameter name=SampledParticles, type=long, description=\"Sampled number of particles\" &end"},
+  {"SampledParticles", "&parameter name=SampledParticles, type=long64, description=\"Sampled number of particles\" &end"},
 };
 
 void SDDS_PhaseSpaceSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row, char *contents,
@@ -267,7 +269,7 @@ static SDDS_DEFINITION centroid_column[CENTROID_COLUMNS_WITH_WEIGHTS] = {
   {"Cs", "&column name=Cs, symbol=\"<s>\", units=m, type=double, description=\"mean distance traveled\" &end"},
   {"Cdelta", "&column name=Cdelta, symbol=\"<$gd$r>\", type=double, description=\"delta centroid\" &end"},
   {"Ct", "&column name=Ct, symbol=\"<t>\", units=s, type=double, description=\"mean arrival time\" &end"},
-  {"Particles", "&column name=Particles, description=\"Number of particles\", type=long &end"},
+  {"Particles", "&column name=Particles, description=\"Number of particles\", type=long64 &end"},
   {"pCentral", "&column name=pCentral, symbol=\"p$bcen$n\", units=\"m$be$nc\", type=double, description=\"Reference beta*gamma\" &end"},
   {"Charge", "&column name=Charge, description=\"Charge in the beam\", units=C, type=double &end"},
   {"Pass", "&column name=Pass, type=long &end"},
@@ -389,8 +391,62 @@ static SDDS_DEFINITION sigma_matrix_spin_column[SIGMA_MATRIX_SPIN_COLUMNS] = {
   {"Sspzz", "&column name=Sspzz, symbol=\"$gs$r$bzz$n\", units=m, type=double, description=\"Spin sigma matrix element z-z\" &end"},
 };
 
+/* Coupled (eigen-)emittances and coupled lattice functions of the full 6x6 beam
+   matrix (Sigma.J / Wolski method), appended to the sigma file when the run_setup
+   coupled_sigma flag is set.  Column names, symbols, and units match the -coupled
+   output of sddsanalyzebeam (elegantTools/sddsanalyzebeam.c).  Three modes m=1,2,3:
+   mode 1 is x-dominated, 2 is y-dominated, 3 is longitudinal-dominated. */
+#define COUPLED_SIGMA_COLUMNS 45
+static SDDS_DEFINITION coupled_sigma_column[COUPLED_SIGMA_COLUMNS] = {
+  {"e1", "&column name=e1, symbol=\"$ge$r$b1$n\", units=m, type=double, description=\"coupled eigen-emittance, mode 1\" &end"},
+  {"en1", "&column name=en1, symbol=\"$ge$r$bn1$n\", units=m, type=double, description=\"normalized coupled eigen-emittance, mode 1\" &end"},
+  {"e2", "&column name=e2, symbol=\"$ge$r$b2$n\", units=m, type=double, description=\"coupled eigen-emittance, mode 2\" &end"},
+  {"en2", "&column name=en2, symbol=\"$ge$r$bn2$n\", units=m, type=double, description=\"normalized coupled eigen-emittance, mode 2\" &end"},
+  {"e3", "&column name=e3, symbol=\"$ge$r$b3$n\", units=m, type=double, description=\"coupled eigen-emittance, mode 3\" &end"},
+  {"en3", "&column name=en3, symbol=\"$ge$r$bn3$n\", units=m, type=double, description=\"normalized coupled eigen-emittance, mode 3\" &end"},
+  {"betax1", "&column name=betax1, symbol=\"$gb$r$bx,1$n\", units=m, type=double, description=\"coupled beta_x, mode 1\" &end"},
+  {"betay1", "&column name=betay1, symbol=\"$gb$r$by,1$n\", units=m, type=double, description=\"coupled beta_y, mode 1\" &end"},
+  {"betaz1", "&column name=betaz1, symbol=\"$gb$r$bs,1$n\", units=m, type=double, description=\"coupled beta_s, mode 1\" &end"},
+  {"alphax1", "&column name=alphax1, symbol=\"$ga$r$bx,1$n\", type=double, description=\"coupled alpha_x, mode 1\" &end"},
+  {"alphay1", "&column name=alphay1, symbol=\"$ga$r$by,1$n\", type=double, description=\"coupled alpha_y, mode 1\" &end"},
+  {"alphaz1", "&column name=alphaz1, symbol=\"$ga$r$bs,1$n\", type=double, description=\"coupled alpha_s, mode 1\" &end"},
+  {"gammax1", "&column name=gammax1, symbol=\"$gg$r$bx,1$n\", units=1/m, type=double, description=\"coupled gamma_x, mode 1\" &end"},
+  {"gammay1", "&column name=gammay1, symbol=\"$gg$r$by,1$n\", units=1/m, type=double, description=\"coupled gamma_y, mode 1\" &end"},
+  {"gammaz1", "&column name=gammaz1, symbol=\"$gg$r$bs,1$n\", units=1/m, type=double, description=\"coupled gamma_s, mode 1\" &end"},
+  {"betax2", "&column name=betax2, symbol=\"$gb$r$bx,2$n\", units=m, type=double, description=\"coupled beta_x, mode 2\" &end"},
+  {"betay2", "&column name=betay2, symbol=\"$gb$r$by,2$n\", units=m, type=double, description=\"coupled beta_y, mode 2\" &end"},
+  {"betaz2", "&column name=betaz2, symbol=\"$gb$r$bs,2$n\", units=m, type=double, description=\"coupled beta_s, mode 2\" &end"},
+  {"alphax2", "&column name=alphax2, symbol=\"$ga$r$bx,2$n\", type=double, description=\"coupled alpha_x, mode 2\" &end"},
+  {"alphay2", "&column name=alphay2, symbol=\"$ga$r$by,2$n\", type=double, description=\"coupled alpha_y, mode 2\" &end"},
+  {"alphaz2", "&column name=alphaz2, symbol=\"$ga$r$bs,2$n\", type=double, description=\"coupled alpha_s, mode 2\" &end"},
+  {"gammax2", "&column name=gammax2, symbol=\"$gg$r$bx,2$n\", units=1/m, type=double, description=\"coupled gamma_x, mode 2\" &end"},
+  {"gammay2", "&column name=gammay2, symbol=\"$gg$r$by,2$n\", units=1/m, type=double, description=\"coupled gamma_y, mode 2\" &end"},
+  {"gammaz2", "&column name=gammaz2, symbol=\"$gg$r$bs,2$n\", units=1/m, type=double, description=\"coupled gamma_s, mode 2\" &end"},
+  {"betax3", "&column name=betax3, symbol=\"$gb$r$bx,3$n\", units=m, type=double, description=\"coupled beta_x, mode 3\" &end"},
+  {"betay3", "&column name=betay3, symbol=\"$gb$r$by,3$n\", units=m, type=double, description=\"coupled beta_y, mode 3\" &end"},
+  {"betaz3", "&column name=betaz3, symbol=\"$gb$r$bs,3$n\", units=m, type=double, description=\"coupled beta_s, mode 3\" &end"},
+  {"alphax3", "&column name=alphax3, symbol=\"$ga$r$bx,3$n\", type=double, description=\"coupled alpha_x, mode 3\" &end"},
+  {"alphay3", "&column name=alphay3, symbol=\"$ga$r$by,3$n\", type=double, description=\"coupled alpha_y, mode 3\" &end"},
+  {"alphaz3", "&column name=alphaz3, symbol=\"$ga$r$bs,3$n\", type=double, description=\"coupled alpha_s, mode 3\" &end"},
+  {"gammax3", "&column name=gammax3, symbol=\"$gg$r$bx,3$n\", units=1/m, type=double, description=\"coupled gamma_x, mode 3\" &end"},
+  {"gammay3", "&column name=gammay3, symbol=\"$gg$r$by,3$n\", units=1/m, type=double, description=\"coupled gamma_y, mode 3\" &end"},
+  {"gammaz3", "&column name=gammaz3, symbol=\"$gg$r$bs,3$n\", units=1/m, type=double, description=\"coupled gamma_s, mode 3\" &end"},
+  {"A_xy_1", "&column name=A_xy_1, units=m, type=double, description=\"x-y coupling term, mode 1\" &end"},
+  {"A_xpy_1", "&column name=A_xpy_1, type=double, description=\"x'-y coupling term, mode 1\" &end"},
+  {"A_xyp_1", "&column name=A_xyp_1, type=double, description=\"x-y' coupling term, mode 1\" &end"},
+  {"A_xpyp_1", "&column name=A_xpyp_1, units=1/m, type=double, description=\"x'-y' coupling term, mode 1\" &end"},
+  {"A_xy_2", "&column name=A_xy_2, units=m, type=double, description=\"x-y coupling term, mode 2\" &end"},
+  {"A_xpy_2", "&column name=A_xpy_2, type=double, description=\"x'-y coupling term, mode 2\" &end"},
+  {"A_xyp_2", "&column name=A_xyp_2, type=double, description=\"x-y' coupling term, mode 2\" &end"},
+  {"A_xpyp_2", "&column name=A_xpyp_2, units=1/m, type=double, description=\"x'-y' coupling term, mode 2\" &end"},
+  {"A_xy_3", "&column name=A_xy_3, units=m, type=double, description=\"x-y coupling term, mode 3\" &end"},
+  {"A_xpy_3", "&column name=A_xpy_3, type=double, description=\"x'-y coupling term, mode 3\" &end"},
+  {"A_xyp_3", "&column name=A_xyp_3, type=double, description=\"x-y' coupling term, mode 3\" &end"},
+  {"A_xpyp_3", "&column name=A_xpyp_3, units=1/m, type=double, description=\"x'-y' coupling term, mode 3\" &end"},
+};
+
 void SDDS_SigmaOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row,
-                           char *command_file, char *lattice_file, char *caller) {
+                           char *command_file, char *lattice_file, char *caller, short coupledSigmaOutput) {
   log_entry("SDDS_SigmaOutputSetup");
 #if USE_MPI
   if (myid < 0)
@@ -404,10 +460,14 @@ void SDDS_SigmaOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, lo
                           caller, SDDS_EOS_NEWFILE);
   SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, NULL, NULL, NULL,
                           NULL, 0, sigma_matrix_column, SIGMA_MATRIX_COLUMNS,
-                          caller, spinCoordOffset?0:SDDS_EOS_COMPLETE);
+                          caller, (spinCoordOffset||coupledSigmaOutput)?0:SDDS_EOS_COMPLETE);
   if (spinCoordOffset)
     SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, "sigma matrix", command_file, lattice_file,
                             NULL, 0, sigma_matrix_spin_column, SIGMA_MATRIX_SPIN_COLUMNS,
+                            caller, coupledSigmaOutput?0:SDDS_EOS_COMPLETE);
+  if (coupledSigmaOutput)
+    SDDS_ElegantOutputSetup(SDDS_table, filename, mode, lines_per_row, NULL, NULL, NULL,
+                            NULL, 0, coupled_sigma_column, COUPLED_SIGMA_COLUMNS,
                             caller, SDDS_EOS_COMPLETE);
   log_exit("SDDS_SigmaOutputSetup");
 }
@@ -427,7 +487,7 @@ static SDDS_DEFINITION watch_centroid_mode_column[WATCH_CENTROID_MODE_COLUMNS+3]
   {"Cdelta", "&column name=Cdelta, symbol=\"<$gd$r>\", type=double, description=\"delta centroid\" &end"},
   {"Ct", "&column name=Ct, symbol=\"<t>\", units=s, type=double, description=\"mean time of flight\" &end"},
   {"dCt", "&column name=dCt, symbol=\"$gD$r<t>\", units=s, type=double, description=\"mean time of flight relative to ideal\" &end"},
-  {"Particles", "&column name=Particles, description=\"Number of particles\", type=long, &end"},
+  {"Particles", "&column name=Particles, description=\"Number of particles\", type=long64, &end"},
   {"Charge", "&column name=Charge, description=\"Charge in the beam\", units=C, type=double &end"},
   {"Transmission", "&column name=Transmission, description=Transmission, type=double &end"},
   {"pCentral", "&column name=pCentral, symbol=\"p$bcen$n\", units=\"m$be$nc\", type=double, description=\"Reference beta*gamma\" &end"},
@@ -453,7 +513,7 @@ static SDDS_DEFINITION watch_parameter_mode_column[WATCH_PARAMETER_MODE_COLUMNS+
   {"Cdelta", "&column name=Cdelta, symbol=\"<$gd$r>\", type=double, description=\"delta centroid\" &end"},
   {"Ct", "&column name=Ct, symbol=\"<t>\", units=s, type=double, description=\"mean time of flight\" &end"},
   {"dCt", "&column name=dCt, symbol=\"$gD$r<t>\", units=s, type=double, description=\"mean time of flight relative to ideal\" &end"},
-  {"Particles", "&column name=Particles, description=\"Number of particles\", type=long, &end"},
+  {"Particles", "&column name=Particles, description=\"Number of particles\", type=long64, &end"},
   {"Charge", "&column name=Charge, description=\"Charge in the beam\", units=C, type=double &end"},
   {"Transmission", "&column name=Transmission, description=Transmission, type=double &end"},
   {"pCentral", "&column name=pCentral, symbol=\"p$bcen$n\", units=\"m$be$nc\", type=double, description=\"Reference beta*gamma\" &end"},
@@ -797,13 +857,13 @@ void SDDS_HistogramSetup(HISTOGRAM *histogram, char *filename, long mode, long l
 #endif
 }
 
-void dump_watch_particles(WATCH *watch, long step, long pass, double **particle, long particles,
-                          double Po, double length, double mp_charge, double z, long slotsPerBunch) {
-  long i, row, count;
+void dump_watch_particles(WATCH *watch, long step, long pass, double **particle, int64_t particles,
+                          double Po, double length, double mp_charge, double z, int64_t slotsPerBunch) {
+  int64_t i, row, count;
   double p, t0, t0Error, t;
   long memoryUsed;
 #if SDDS_MPI_IO
-  long total_row = 0, total_count;
+  int64_t total_row = 0, total_count;
 #endif
 
   log_entry("dump_watch_particles");
@@ -925,8 +985,8 @@ void dump_watch_particles(WATCH *watch, long step, long pass, double **particle,
 
 #if USE_MPI
   if (USE_MPI && distributedBeam) {
-    MPI_Allreduce(&row, &total_row, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&count, &total_count, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&row, &total_row, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&count, &total_count, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     if (isMaster)
       row = total_row;
     if (isMaster)
@@ -952,6 +1012,7 @@ void dump_watch_particles(WATCH *watch, long step, long pass, double **particle,
 #endif
                           "SampledParticles", row,
                           "SampledCharge", mp_charge * row,
+			  "tOffset", trackingClockOffset(),
                           NULL)) {
     SDDS_SetError("Problem setting SDDS parameters (dump_watch_particles)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -986,12 +1047,14 @@ static double tmp_safe_sqrt;
 #define SAFE_SQRT(x) ((tmp_safe_sqrt = (x)) < 0 ? (double)0.0 : sqrt(tmp_safe_sqrt))
 
 void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, double **particle,
-                           long particles, long original_particles, double Po,
+                           int64_t particles, long original_particles, double Po,
                            double revolutionLength, double z, double mp_charge) {
-  long sample, i, watchStartPass = watch->start_pass;
+  long sample, watchStartPass = watch->start_pass;
+  int64_t i;
   double tc, tc0, tc0Error, p_sum, gamma_sum, sum, error_sum, p = 0.0;
   double emit[2], emitc[2];
-  long Cx_index = 0, Sx_index = 0, ex_index = 0, ecx_index = 0, npCount, Cspx_index= 0;
+  long Cx_index = 0, Sx_index = 0, ex_index = 0, ecx_index = 0, Cspx_index= 0;
+  int64_t npCount;
   BEAM_SUMS *sums;
   double emittance_l;
   long memoryUsed;
@@ -999,7 +1062,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
   long useGpuParameters = 0;
 #endif
 #if USE_MPI
-  long particles_total, npCount_total = 0;
+  int64_t particles_total, npCount_total = 0;
 
 #  ifdef USE_MPE /* use the MPE library */
   int event1a, event1b;
@@ -1015,7 +1078,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
   if (myid == 0)
     particles = 0;
 
-  MPI_Allreduce(&particles, &particles_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(&particles, &particles_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifdef DEBUG
   printf("particles = %ld, particles_total = %ld\n", particles, particles_total);
   fflush(stdout);
@@ -1796,13 +1859,13 @@ void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double 
   histogram->count++;
 }
 
-void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, long particles, long step, double Po,
-                      double charge, long slotsPerBunch) {
-  long i;
+void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, int64_t particles, long step, double Po,
+                      double charge, int64_t slotsPerBunch) {
+  int64_t i;
   double p;
 
 #if SDDS_MPI_IO
-  long total_particles;
+  int64_t total_particles;
 
   if (!SDDS_table->parallel_io && isSlave)
     return;
@@ -1835,7 +1898,7 @@ void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, long particles,
   }
 #if USE_MPI
   if (distributedBeam) {
-    MPI_Reduce(&particles, &total_particles, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&particles, &total_particles, 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
     if (isMaster) {
       particles = total_particles;
       if (slotsPerBunch==0)
@@ -1845,7 +1908,8 @@ void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, long particles,
 #endif
   if (!SDDS_SetParameters(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                           "Step", step, "pCentral", Po, "Particles", particles,
-                          "Charge", charge, "IDSlotsPerBunch", slotsPerBunch, NULL)) {
+                          "Charge", charge, "IDSlotsPerBunch", slotsPerBunch,
+			  "tOffset", trackingClockOffset(), NULL)) {
     SDDS_SetError("Problem setting parameter values for SDDS table (dump_phase_space)");
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
@@ -1900,9 +1964,10 @@ static int comp_IDs1(const void **coord1, const void **coord2) {
 }
 #endif
 
-void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral, double **particle, long particles,
+void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral, double **particle, int64_t particles,
 			 long step, double length) {
-  long i, row, badPID, spxIndex=-1;
+  int64_t i, row, badPID;
+  long spxIndex=-1;
 #if USE_MPI && MPI_DEBUG
   printf("dump_lost_particles: running\n");
   fflush(stdout);
@@ -2201,7 +2266,7 @@ void dump_centroid(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline,
 }
 
 void dump_sigma(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline, long n_elements, long step,
-                double p_central) {
+                double p_central, short coupledSigmaOutput) {
   long i, j, ie, offset, plane, index;
   BEAM_SUMS *beam;
   ELEMENT_LIST *eptr;
@@ -2355,6 +2420,61 @@ void dump_sigma(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline, lo
           SDDS_SetError("Problem setting SDDS row values (dump_sigma 10)");
           SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
         }
+    }
+
+    /* coupled (eigen-)emittances and coupled lattice functions of the 6x6 beam matrix */
+    if (coupledSigmaOutput) {
+      COUPLED_RESULTS cr;
+      long ok = 1, mode;
+      char cn[32];
+      memset(&cr, 0, sizeof(cr));
+      if (beam->n_part) {
+        /* beamSums2->sigma is (x,x',y,y',s,delta,t); use the 6x6 (x,x',y,y',s,delta)
+           block.  s is already in meters, so sLongScale=1. */
+        double S6[6][6];
+        for (i = 0; i < 6; i++)
+          for (j = 0; j < 6; j++)
+            S6[i][j] = beam->beamSums2->sigma[i][j];
+        ComputeCoupledParameters(&cr, S6, 1.0);
+      }
+      for (mode = 0; mode < 3; mode++) {
+        long m1 = mode + 1;
+        double enm = cr.emit[mode] * beam->p0 * (1 + beam->centroid[5]);
+        sprintf(cn, "e%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.emit[mode], NULL);
+        sprintf(cn, "en%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, enm, NULL);
+        sprintf(cn, "betax%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.betax[mode], NULL);
+        sprintf(cn, "betay%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.betay[mode], NULL);
+        sprintf(cn, "betaz%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.betaz[mode], NULL);
+        sprintf(cn, "alphax%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.alphax[mode], NULL);
+        sprintf(cn, "alphay%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.alphay[mode], NULL);
+        sprintf(cn, "alphaz%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.alphaz[mode], NULL);
+        sprintf(cn, "gammax%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.gammax[mode], NULL);
+        sprintf(cn, "gammay%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.gammay[mode], NULL);
+        sprintf(cn, "gammaz%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.gammaz[mode], NULL);
+        sprintf(cn, "A_xy_%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.A_xy[mode], NULL);
+        sprintf(cn, "A_xpy_%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.A_xpy[mode], NULL);
+        sprintf(cn, "A_xyp_%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.A_xyp[mode], NULL);
+        sprintf(cn, "A_xpyp_%ld", m1);
+        ok &= SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, ie, cn, cr.A_xpyp[mode], NULL);
+      }
+      if (!ok) {
+        SDDS_SetError("Problem setting coupled sigma row values (dump_sigma)");
+        SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+      }
     }
 
     if (!SDDS_SetRowValues(SDDS_table, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, ie,
