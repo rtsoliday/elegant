@@ -146,16 +146,17 @@ void setupSCEffect(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
 
 /* track through space charge element */
 void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT_LIST *eptr, CHARGE *charge) {
-  long i;
+  int64_t i;
   long *pbin = NULL;       /* array to record which bin each particle is in */
   double *time0 = NULL;    /* array to record arrival time of each particle */
   double *time = NULL;     /* array to record arrival time of each particle, for working bucket */
   double **part = NULL;    /* particle buffer for working bucket */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   /* long ib, nb = 0, n_binned = 0; */
-  long iBucket, nBuckets, max_np = 0, ip, np;
+  long iBucket, nBuckets;
+  int64_t max_np = 0, ip, np;
   double tmin, tmax;
   double totalCharge;
 #ifdef HAVE_GPU
@@ -610,10 +611,11 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part0, long np0, double Po, l
   double *time = NULL;     /* array to record arrival time of each particle, for working bucket */
   double **part = NULL;    /* particle buffer for working bucket */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   /* long ib, nb = 0, n_binned = 0; */
-  long iBucket, nBuckets, max_np = 0, ip, np;
+  long iBucket, nBuckets;
+  int64_t max_np = 0, ip, np;
 
   if (!eptr->twiss)
     bombElegant((char *)"Twiss parameters must be calculated before SC tracking.", NULL);
@@ -748,10 +750,11 @@ void accumulateSCMULT(double **part0, long np0, double Po, ELEMENT_LIST *eptr, l
   double *time = NULL;     /* array to record arrival time of each particle, for working bucket */
   double **part = NULL;    /* particle buffer for working bucket */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   /* long ib, nb = 0, n_binned = 0; */
-  long iBucket, nBuckets, max_np = 0, ip, np;
+  long iBucket, nBuckets;
+  int64_t max_np = 0, ip, np;
   TWISS *twiss0;
   double dmux, dmuy, temp;
   double length;
@@ -868,11 +871,11 @@ void accumulateSCMULT(double **part0, long np0, double Po, ELEMENT_LIST *eptr, l
     free_bunch_index_memory(time0, ibParticle, ipBucket, npBucket, nBuckets);
 }
 
-double computeRmsCoordinate(double **coord, long i1, long np, double *meanReturn, long *countReturn)
+double computeRmsCoordinate(double **coord, long i1, int64_t np, double *meanReturn, long *countReturn)
 /* Confusingly, this routine works fine in parallel, provided all processors except the master participate */
 {
   double vrms = 0.0, xc = 0.0;
-  long i;
+  int64_t i;
 #if USE_MPI
   double xc_sum = 0.0, vrms_sum = 0.0;
   long np_total;
@@ -931,9 +934,10 @@ double computeRmsCoordinate(double **coord, long i1, long np, double *meanReturn
 
 #if USE_MPI
 /* We have this new function as we need treat the parallel and serial element separately */
-double computeRmsCoordinate_p(double **coord, long i1, long np, double *centroid, long *npTotal, unsigned long classFlags) {
+double computeRmsCoordinate_p(double **coord, long i1, int64_t np, double *centroid, long *npTotal, unsigned long classFlags) {
   double vrms = 0.0, xc = 0.0;
-  long i, np_total;
+  long np_total;
+  int64_t i;
 
   if (centroid)
     *centroid = 0;

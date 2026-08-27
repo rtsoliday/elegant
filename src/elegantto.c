@@ -66,8 +66,8 @@ void convert_to_sad(char *outputfile, LINE_LIST *beamline, char *header_file, ch
 /* Needed by insertSCeffects.cc */
 long isSlave;
 long distributedBeam;     
-void index_bunch_assignments(double **part, long np, long idSlotsPerBunch, double P0,
-                             double **time, long **ibParticle, long ***ipBunch, long **npBunch,
+void index_bunch_assignments(double **part, int64_t np, long idSlotsPerBunch, double P0,
+                             double **time, long **ibParticle, int64_t ***ipBunch, int64_t **npBunch,
                              long *nBunches, long lastNBunches
 ) {
 }

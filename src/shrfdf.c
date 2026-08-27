@@ -16,13 +16,13 @@
 #include "mdb.h"
 #include "track.h"
 
-void set_up_shrfdf(SHRFDF *rf_param, double **initial, long n_particles, double pc_central);
+void set_up_shrfdf(SHRFDF *rf_param, double **initial, int64_t n_particles, double pc_central);
 
 void track_through_space_harmonic_deflector(
   double **final,
   SHRFDF *rf_param,
   double **initial,
-  long n_particles,
+  int64_t n_particles,
   double pc_central) {
   double t_first; /* time when first particle reaches cavity */
   double x, xp, y, yp;
@@ -30,7 +30,8 @@ void track_through_space_harmonic_deflector(
   double omega, k, t_part;
   double k_0, alpha_sq;
   double dpx, dpy, dpz, phase;
-  long ip, mode;
+  int64_t ip;
+  long mode;
 
   /*
   This is always false
@@ -106,8 +107,8 @@ void track_through_space_harmonic_deflector(
     rotateBeamCoordinatesForMisalignment(initial, n_particles, -rf_param->tilt);
 }
 
-void set_up_shrfdf(SHRFDF *rf_param, double **initial, long n_particles, double pc_central) {
-  long ip;
+void set_up_shrfdf(SHRFDF *rf_param, double **initial, int64_t n_particles, double pc_central) {
+  int64_t ip;
   double pc, beta;
 #ifdef USE_KAHAN
   double error = 0.0;

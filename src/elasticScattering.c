@@ -57,7 +57,8 @@ void computeScatteringAngles(long itheta, long iphi, double *xpReturn, double *y
 }
 
 static void slopeOffsetFunction(double **coord, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral) {
-  long itheta, iphi, id, ie, ip, particleID;
+  long itheta, iphi, id, ie, particleID;
+  long ip;
   long sharedData[2];
   MALIGN mal;
   long nKicksMade = 0;
@@ -261,7 +262,8 @@ long runElasticScattering(
   double *startingCoord) {
 #if USE_MPI
   double **coord;
-  long nTotal, id, ip, ie, itheta, iphi, nLost, nLeft, nElem, nEachProcessor, code, iRow;
+  long nTotal, id, ie, itheta, iphi, nLost, nLeft, nElem, nEachProcessor, code, iRow;
+  long ip;
   long nWorkingProcessors = n_processors - 1;
   double **lostParticles;
   double pCentral;

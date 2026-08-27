@@ -166,10 +166,10 @@ void rotateCoordinatesForMisalignment(double *coord, double angle) {
  * Hence, the particles are rotated by the negative of the angle.
  */
 
-void rotateBeamCoordinatesForMisalignment(double **part, long np, double angle) {
+void rotateBeamCoordinatesForMisalignment(double **part, int64_t np, double angle) {
   double x, xp, y, yp, *coord;
   double sin_a, cos_a;
-  long i;
+  int64_t i;
 
   if (!angle || fabs(fabs(angle) - PIx2) < 1e-12)
     return;
@@ -219,7 +219,7 @@ void setupRotate3Matrix(void **Rv, double roll, double yaw, double pitch) {
   MATRIX *R;
   double angle[3];   /* yaw=phi, pitch=theta, roll=psi */
   double s[3], c[3]; /* sine, cosine of theta, phi, psi */
-  long ip;
+  int64_t ip;
 
   /* sequence of rotations is: yaw, pitch, roll 
    * this is the 3-2-1 seqeunce from Appendix B of Goldstein's Classical Mechanics 

@@ -31,32 +31,32 @@
 #include "mdb.h"
 #include "track.h"
 
-void enforceTwissValues(double **part, long np, TWISSBEAM *twiss, long offset, double beta1, double alpha1, double emit1, long enforceRms);
-void zero_centroid(double **particle, long n_particles, long coord);
-long dynap_distribution(double **particle, long n_particles, double sx, double sy,
+void enforceTwissValues(double **part, int64_t np, TWISSBEAM *twiss, long offset, double beta1, double alpha1, double emit1, long enforceRms);
+void zero_centroid(double **particle, int64_t n_particles, long coord);
+long dynap_distribution(double **particle, int64_t n_particles, double sx, double sy,
                         long nx, long ny);
 #if SDDS_MPI_IO
-long dynap_distribution_p(double **particle, long n_particles, double sx, double sy,
+long dynap_distribution_p(double **particle, int64_t n_particles, double sx, double sy,
                           long nx, long ny);
 #endif
-void hard_edge_distribution(double **particle, long n_particles,
+void hard_edge_distribution(double **particle, int64_t n_particles,
                             long offset, double max1, double max2, long symmetrize, long *haltonID, long haltonOpt, double cutoff);
-void uniform_distribution(double **particle, long n_particles, long offset,
+void uniform_distribution(double **particle, int64_t n_particles, long offset,
                           double max1, double max2, long symmetrize, long *haltonID, long haltonOpt, double cutoff);
-void shell_distribution(double **particle, long n_particles, long offset,
+void shell_distribution(double **particle, int64_t n_particles, long offset,
                         double s1, double s2, long symmetrize, double cutoff);
-void line_distribution(double **particle, long n_particles, long offset,
+void line_distribution(double **particle, int64_t n_particles, long offset,
                        double max1, double max2);
-void transform_from_normalized_coordinates(double **part, long n_part, long offset, double beta, double alpha);
-void couple_coordinates(double **coord, long n_part, long offset, double angle);
-void gaussian_4d_distribution(double **particle, long n_particles, long offset,
+void transform_from_normalized_coordinates(double **part, int64_t n_part, long offset, double beta, double alpha);
+void couple_coordinates(double **coord, int64_t n_part, long offset, double angle);
+void gaussian_4d_distribution(double **particle, int64_t n_particles, long offset,
                               double s1, double s2, double s3, double s4, double cutoff, long halo);
-void uniform_4d_distribution(double **particle, long n_particles, long offset,
+void uniform_4d_distribution(double **particle, int64_t n_particles, long offset,
                              double max1, double max2, double max3, double max4, double cutoff);
 
 long generate_bunch(
   double **particle,
-  long n_particles,
+  int64_t n_particles,
   TRANSVERSE *x_plane,
   TRANSVERSE *y_plane,
   LONGITUDINAL *longit,
@@ -68,7 +68,9 @@ long generate_bunch(
   long *doRandomizeOrder,
   long limit_in_4d,
   double Po) {
-  long i_particle, first_call = 1, i, j;
+  long first_call = 1, i;
+  int64_t j;
+  int64_t i_particle;
   double s1, s2, s3, s4, delta_p;
   double s56, beta, emit, alpha = 0.0;
   double *randomizedData = NULL;
@@ -561,7 +563,7 @@ long generate_bunch(
 
 void gaussian_distribution(
   double **particle,
-  long n_particles,
+  int64_t n_particles,
   long offset,
   double s1,
   double s2,
@@ -573,7 +575,8 @@ void gaussian_distribution(
   double beta,
   long halo) {
   double x1, x2, limit1, limit2;
-  long i_particle, flag;
+  long flag;
+  int64_t i_particle;
 
   limit1 = s1 * limit;
   limit2 = s2 * limit;
@@ -664,7 +667,7 @@ void gaussian_distribution(
 
 void uniform_distribution(
   double **particle,
-  long n_particles,
+  int64_t n_particles,
   long offset,
   double max1,
   double max2,
@@ -673,7 +676,7 @@ void uniform_distribution(
   long haltonOpt,
   double cutoff) {
   double x1, x2;
-  long i_particle;
+  int64_t i_particle;
   double range1, range2;
   double rnd1, rnd2 = 0.0;
 #if SDDS_MPI_IO
@@ -801,14 +804,14 @@ void uniform_distribution(
 
 void shell_distribution(
   double **particle,
-  long n_particles,
+  int64_t n_particles,
   long offset,
   double s1,
   double s2,
   long symmetrize,
   double cutoff) {
   double x1, x2;
-  long i_particle;
+  int64_t i_particle;
   double angle, dangle;
 
   log_entry("shell_distribution");
@@ -855,7 +858,7 @@ void shell_distribution(
 
 void hard_edge_distribution(
   double **particle,
-  long n_particles,
+  int64_t n_particles,
   long offset,
   double max1,
   double max2,
@@ -864,7 +867,7 @@ void hard_edge_distribution(
   long haltonOpt,
   double cutoff) {
   double x1, x2;
-  long i_particle;
+  int64_t i_particle;
   double range1;
   double range2;
   double rnd1, rnd2;
@@ -969,11 +972,11 @@ void hard_edge_distribution(
 
 void line_distribution(
   double **particle,
-  long n_particles,
+  int64_t n_particles,
   long offset,
   double max1,
   double max2) {
-  long ip;
+  int64_t ip;
   double x1, x2, dx1, dx2;
 
 #if !USE_MPI
@@ -1022,10 +1025,10 @@ void line_distribution(
   }
 }
 
-void enforce_sigma_values(double **coord, long n_part, long offset, double s1d, double s2d) {
+void enforce_sigma_values(double **coord, int64_t n_part, long offset, double s1d, double s2d) {
   double s1a, s2a;
   double f1, f2;
-  long i;
+  int64_t i;
 #if SDDS_MPI_IO
   double s1a_total, s2a_total;
   long total_particles;
@@ -1072,8 +1075,8 @@ void enforce_sigma_values(double **coord, long n_part, long offset, double s1d, 
   log_exit("enforce_sigma_values");
 }
 
-void zero_centroid(double **particle, long n_particles, long coord) {
-  long i;
+void zero_centroid(double **particle, int64_t n_particles, long coord) {
+  int64_t i;
   double sum;
 
   log_entry("zero_centroid");
@@ -1104,7 +1107,7 @@ void zero_centroid(double **particle, long n_particles, long coord) {
   log_exit("zero_centroid");
 }
 
-long dynap_distribution(double **particle, long n_particles, double sx, double sy,
+long dynap_distribution(double **particle, int64_t n_particles, double sx, double sy,
                         long nx, long ny) {
   long ix, iy, ip;
   double x, y, dx = 0.0, dy = 0.0;
@@ -1140,7 +1143,7 @@ long dynap_distribution(double **particle, long n_particles, double sx, double s
 }
 
 #if USE_MPI
-long dynap_distribution_p(double **particle, long n_particles, double sx, double sy,
+long dynap_distribution_p(double **particle, int64_t n_particles, double sx, double sy,
                           long nx, long ny) {
   long ix, iy, ip;
   double x, y, dx = 0.0, dy = 0.0;
@@ -1196,8 +1199,8 @@ long dynap_distribution_p(double **particle, long n_particles, double sx, double
 }
 #endif
 
-void transform_from_normalized_coordinates(double **part, long n_part, long offset, double beta, double alpha) {
-  long i;
+void transform_from_normalized_coordinates(double **part, int64_t n_part, long offset, double beta, double alpha) {
+  int64_t i;
   double *coord, u, up;
   double c1, c2;
 
@@ -1216,8 +1219,8 @@ void transform_from_normalized_coordinates(double **part, long n_part, long offs
   log_exit("transform_from_normalized_coordinates");
 }
 
-void couple_coordinates(double **particle, long n_particles, long offset, double angle) {
-  long i;
+void couple_coordinates(double **particle, int64_t n_particles, long offset, double angle) {
+  int64_t i;
   double slope;
 
   log_entry("couple_coordinates");
@@ -1231,10 +1234,10 @@ void couple_coordinates(double **particle, long n_particles, long offset, double
 void set_beam_centroids(
   double **particle,
   long offset,
-  long n_particles,
+  int64_t n_particles,
   double cent_posi,
   double cent_slope) {
-  long i;
+  int64_t i;
   for (i = 0; i < n_particles; i++) {
     particle[i][offset] += cent_posi;
     particle[i][offset + 1] += cent_slope;
@@ -1243,7 +1246,7 @@ void set_beam_centroids(
 
 void gaussian_4d_distribution(
   double **particle,
-  long n_particles,
+  int64_t n_particles,
   long offset,
   double s1,
   double s2,
@@ -1252,7 +1255,8 @@ void gaussian_4d_distribution(
   double cutoff,
   long halo) {
   double x1, x2, x3, x4, cutoff2;
-  long i_particle, flag;
+  long flag;
+  int64_t i_particle;
 
   log_entry("gaussian_4d_distribution");
 
@@ -1277,14 +1281,14 @@ void gaussian_4d_distribution(
 
 void uniform_4d_distribution(
   double **particle,
-  long n_particles,
+  int64_t n_particles,
   long offset,
   double max1,
   double max2,
   double max3,
   double max4,
   double cutoff) {
-  long i_particle;
+  int64_t i_particle;
   double rnd1, rnd2, rnd3, rnd4;
 
   log_entry("uniform_4d_distribution");
@@ -1309,8 +1313,8 @@ void uniform_4d_distribution(
   log_exit("uniform_4d_distribution");
 }
 
-void enforceTwissValues(double **part, long np, TWISSBEAM *twiss, long offset, double beta1, double alpha1, double emit1, long enforceRms) {
-  long i;
+void enforceTwissValues(double **part, int64_t np, TWISSBEAM *twiss, long offset, double beta1, double alpha1, double emit1, long enforceRms) {
+  int64_t i;
   double R11, R21, R22;
   double betaMean;
 
@@ -1355,12 +1359,12 @@ double langevinFunction(double x)
     return -1;
 }
 
-void polarizeBeam(double **part, long np, POLAR *polar) {
+void polarizeBeam(double **part, int64_t np, POLAR *polar) {
   char *polarizationModeOption[4] = {"twostate", "narrowcone", "widecone", "vonmises-fisher"};
   double phi, cos_theta, sin_theta, rx, ry, theta, theta1, angle;
   double kappa, exp_kappa, u;
   if (spinCoordOffset>0) {
-    long ip, i;
+    int64_t ip, i;
     double *coord, pUp, e[3], emag, p;
     if ((p=polar->polarization)<0) {
       printWarningForTracking("POLAR element has POLARIZATION<0.", "Polarization set to 0");

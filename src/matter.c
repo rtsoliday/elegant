@@ -33,14 +33,15 @@ double radiationLength(long Z, double A, double rho);
 double solveBremsstrahlungCDF(double F);
 
 long track_through_matter(
-  double **part, long np, long iPass, MATTER *matter, double Po, double **accepted, double z0) {
-  long ip;
+  double **part, int64_t np, long iPass, MATTER *matter, double Po, double **accepted, double z0) {
+  int64_t ip;
   double L, Nrad, *coord, theta_rms = 0, beta, beta4gamma2, P, gamma = 0.0;
   double z1, z2, dx, dy, ds = 0.0, t = 0.0, dGammaFactor;
   double K1, K2 = 0.0, sigmaTotal, probScatter = 0.0, dgamma;
   double Xo, probBSScatter = 0, probERScatter = 0, rho, nDensity;
   //long nScatters = 0;
-  long i_top, isLost;
+  int64_t i_top;
+  long isLost;
   /* long sections; */
   long sections0 = 1, impulseMode;
   double L1, prob, probBS, probER;

@@ -83,8 +83,8 @@ static STORED_BMAPXYZ_DATA *storedBmapxyzData = NULL;
 static long iStoredBmapxyzData = -1;
 static long nStoredBmapxyzData = 0;
 
-void lorentz_setup(void *field, long field_type, double **part, long np, double Po);
-void lorentz_terminate(void *field, long field_type, double **part, long np, double Po);
+void lorentz_setup(void *field, long field_type, double **part, int64_t np, double Po);
+void lorentz_terminate(void *field, long field_type, double **part, int64_t np, double Po);
 void select_lorentz_integrator(char *desired_method);
 long do_lorentz_integration(double *coord, void *field);
 double nibend_trajectory_error_offset(double offsetp);
@@ -274,7 +274,7 @@ void lorentz_report(void) {
 
 long lorentz(
   double **part,
-  long n_part,
+  int64_t n_part,
   void *field,
   long field_type,
   double P_central,
@@ -284,7 +284,8 @@ long lorentz(
   APERTURE_DATA *apData0
              ) {
   double *coord;
-  long i_part, i_top, mod, count;
+  int64_t i_part, i_top;
+  long mod, count;
   TRACKING_CONTEXT context;
   short verbosity = 0;
   
@@ -595,7 +596,7 @@ void lorentz_setup(
   void *field,
   long field_type,
   double **part,
-  long np,
+  int64_t np,
   double Po) {
   NIBEND *nibend;
   NISEPT *nisept;
@@ -994,7 +995,7 @@ void lorentz_terminate(
   void *field,
   long field_type,
   double **part,
-  long np,
+  int64_t np,
   double Po) {
   NIBEND *nibend;
   BMAPXYZ *bmxyz;

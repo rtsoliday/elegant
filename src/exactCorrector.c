@@ -79,8 +79,8 @@ int applySteeringMultipoleKicks(
   return 1;
 }
 
-long trackThroughExactCorrector(double **part, long n_part, ELEMENT_LIST *eptr, double Po, double **accepted, double z_start, double *sigmaDelta2) {
-  long i_part, i_top;
+long trackThroughExactCorrector(double **part, int64_t n_part, ELEMENT_LIST *eptr, double Po, double **accepted, double z_start, double *sigmaDelta2) {
+  int64_t i_part, i_top;
   double xkick, ykick, kick, tilt, length, *coord, rho0, theta0, rho, theta, alpha, arg;
   double dx = 0, dy = 0, dz = 0, rigidity0 = 0;
   MULTIPOLE_DATA *multData;

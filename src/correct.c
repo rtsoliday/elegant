@@ -1414,7 +1414,7 @@ void compute_trajcor_matrices(CORMON_DATA *CM, STEERING_LIST *SL, long coord, RU
   ELEMENT_LIST *corr;
   TRAJECTORY *traj0, *traj1;
   long kick_offset, i_corr, i_moni, i;
-  long n_part;
+  int64_t n_part;
   double **one_part, p, p0, kick0, corr_tweek, corrCalibration, *moniCalibration, W0 = 0.0;
   double conditionNumber;
   VMATRIX *save;
@@ -1659,7 +1659,8 @@ long global_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TRAJEC
   TRAJECTORY *traj;
   long iteration, kick_offset;
   long i_moni, i_corr;
-  long n_part, i, sl_index;
+  int64_t n_part;
+  long i, sl_index;
   unsigned long tracking_flags;
   double **particle;
   double p, reading, fraction, minFraction, param, change;
@@ -1723,7 +1724,8 @@ long global_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TRAJEC
 #ifdef DEBUG
     if (1) {
       double centroid;
-      long i, j;
+      long i;
+      long j;
       printf("beam centroids before tracking (beam:%s):\n",
              beam ? "given" : "not given");
       for (i = 0; i < 4; i++) {
@@ -1865,7 +1867,8 @@ long one_to_one_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TR
   TRAJECTORY *traj;
   long iteration, kick_offset;
   long i_moni, i_corr, sl_index;
-  long n_part, i;
+  int64_t n_part;
+  long i;
   unsigned long tracking_flags;
   double **particle, param, fraction;
   double p, reading;
@@ -2055,7 +2058,8 @@ long thread_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TRAJEC
   TRAJECTORY *traj;
   long iteration, kick_offset;
   long i_corr, i_moni, sl_index, iElem, nElems, iBest;
-  long n_part, n_left, i, done, direction, improved, worsened;
+  int64_t n_part, n_left;
+  long i, done, direction, improved, worsened;
   double **particle, param, fraction, bestValue, origValue, lastValue;
   double p, scanStep;
   long iScan, nScan, nToTry, corrLeft;
@@ -4268,7 +4272,7 @@ void compute_coupled_trajcor_matrices(
   ELEMENT_LIST *corr;
   TRAJECTORY *traj0, *traj1;
   long kick_offset, i_corr, i_moni, i, corrPlane;
-  long n_part;
+  int64_t n_part;
   double **one_part, p, p0, kick0, corr_tweek, corrCalibration, *moniCalibration, W0 = 0.0;
   double conditionNumber;
   VMATRIX *save;
@@ -4465,7 +4469,8 @@ long global_coupled_trajcor(CORMON_DATA *CM, STEERING_LIST *SL, TRAJECTORY **tra
   TRAJECTORY *traj;
   long iteration, kick_offset;
   long i_moni, i_corr;
-  long n_part, i, sl_index;
+  int64_t n_part;
+  long i, sl_index;
   double **particle;
   double p, reading, fraction, minFraction, param, change;
   MAT *Qo, *dK;

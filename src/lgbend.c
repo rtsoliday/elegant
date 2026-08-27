@@ -36,8 +36,8 @@ static FILE *fpDeb = NULL;
 static long iPart0;
 #endif
 
-void switchLgbendPlane(double **particle, long n_part, double dx, double alpha, double po, long exitPlane);
-void lgbendFringe(double **particle, long n_part, double alpha, double invRhoPlus, double K1plus, double invRhoMinus, double K1minus,
+void switchLgbendPlane(double **particle, int64_t n_part, double dx, double alpha, double po, long exitPlane);
+void lgbendFringe(double **particle, int64_t n_part, double alpha, double invRhoPlus, double K1plus, double invRhoMinus, double K1minus,
                   LGBEND_SEGMENT *segment, short angleSign, short isExit, short edgeOrder, double Po);
 static double lgBendTrajErrorFromOptim[2];
 double lgbend_trajectory_error(double *value, long *invalid);
@@ -48,7 +48,7 @@ void readLGBendApertureData(LGBEND *lgbend);
 
 static long track_through_lgbend_impl(
   double **particle, /* initial/final phase-space coordinates */
-  long n_part,       /* number of particles */
+  int64_t n_part,       /* number of particles */
   ELEMENT_LIST *eptr,
   LGBEND *lgbend,
   double Po,
@@ -63,7 +63,7 @@ static long track_through_lgbend_impl(
   * integration under outside control. The caller is responsible for handling the coordinates appropriately 
   * outside this routine. The element must have been previously optimized to determine FSE and X offsets.
   */
-  long iPart,
+  int64_t iPart,
   /* If iFinalSlice is positive, we terminate integration inside the magnet after the indicated number of
   * slices. The caller is responsible for handling the coordinates appropriately outside this routine. 
   * The element must have been previously optimized to determine FSE and X offsets.
@@ -75,7 +75,7 @@ static long track_through_lgbend_impl(
   double eyaw, epitch;
   double dZOffset0, dZOffset; /* offset of start of first segment from entry plane, offset of interior point */
   long nSlices, integ_order;
-  long i_part, i_top;
+  int64_t i_part, i_top;
   double *coef;
   double fse, etilt, tilt, rad_coef, isr_coef, dzLoss = 0;
   double rho0, length, angle, angleSign, extraTilt;
@@ -655,7 +655,7 @@ static long track_through_lgbend_impl(
 
 long track_through_lgbend(
   double **particle,
-  long n_part,
+  int64_t n_part,
   ELEMENT_LIST *eptr,
   LGBEND *lgbend,
   double Po,
@@ -666,7 +666,7 @@ long track_through_lgbend(
   MAXAMP *maxamp,
   APCONTOUR *apContour,
   APERTURE_DATA *apFileData,
-  long iPart,
+  int64_t iPart,
   long iFinalSlice) {
 #if defined(HAVE_GPU) && defined(_OPENMP)
   long result = 0;
@@ -912,7 +912,7 @@ void addLgbendRadiationIntegrals(LGBEND *lgbend, double *startingCoord, double p
 }
 
 void lgbendFringe(
-  double **particle, long n_part,
+  double **particle, int64_t n_part,
   double alpha,       // edge angle relative to beam path
   double invRhoPlus,  // inverse bending radius after fringe (always positive)
   double K1plus,      // interior gradient after fringe
@@ -932,7 +932,7 @@ void lgbendFringe(
    * spin rotation via applyFringeSpinKick(). */
   static double *xp0buf = NULL, *yp0buf = NULL;
   static long xp0bufMax = 0;
-  long isf;
+  int64_t isf;
   if (spinCoordOffset) {
     if (n_part > xp0bufMax) {
       xp0buf = trealloc(xp0buf, sizeof(*xp0buf) * n_part);
@@ -950,7 +950,7 @@ void lgbendFringe(
   double focX0, focY0, focYd, invP;
   double dispX, kickPx, expT;
 
-  long i;
+  int64_t i;
   if (isExit) {
     // exit fringe
     alpha = -alpha;
@@ -1064,12 +1064,12 @@ void lgbendFringe(
   }
 }
 
-void switchLgbendPlane(double **particle, long n_part, double dx, double alpha, double po, long exitPlane)
+void switchLgbendPlane(double **particle, int64_t n_part, double dx, double alpha, double po, long exitPlane)
 /* transforms the reference plane to one that is at an angle alpha relative to the
  * initial plane. 
  */
 {
-  long i;
+  int64_t i;
   double s, *coord, sin_alpha, cos_alpha, tan_alpha;
   double d, qx0, qy0, qz0, qx, qy, qz;
 

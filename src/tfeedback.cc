@@ -24,12 +24,13 @@ void propagateLfbCavity(double *V, double *Vp, double *VResidual, double dt0, TF
 
 void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pass, double Po, long idSlotsPerBunch) {
   double sum, position, output;
-  long i, j;
-  long np;
+  long j;
+  int64_t i;
+  int64_t np;
   double *time0 = NULL;    /* array to record arrival time of each particle */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long iBucket, nBuckets = 0;
 #ifdef HAVE_GPU
   long gpuTracking = 0;
@@ -255,11 +256,12 @@ void initializeTransverseFeedbackPickup(TFBPICKUP *tfbp) {
 
 void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LIST *beamline, long pass, long nPasses, char *rootname, double Po, long idSlotsPerBunch, CHARGE *charge) {
   double kick, nomKick;
-  long i, j;
+  int64_t i;
+  long j;
   double *time0 = NULL;    /* array to record arrival time of each particle */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long iBucket, nBuckets = 0;
   long rpass, updateInterval;
   double tAve, rfFactor, phase = 0;
@@ -411,7 +413,7 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
       if (!charge)
         bombElegant("TFBDRIVER GAIN_CHARGE_SCALE>0 but no CHARGE element seen.", NULL);
 #if USE_MPI
-      long npTotal=0, np1=0;
+      int64_t npTotal=0, np1=0;
       if (myid!=0)
 	np1 = npBucket[iBucket];
       MPI_Allreduce(&np1, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -437,14 +439,14 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
 #endif
         } else {
 #if USE_MPI
-          long npTotal = 0;
+          int64_t npTotal = 0;
 #endif
           double tSum, error;
           error = tSum = 0;
           for (i = 0; i < npBucket[iBucket]; i++)
             tSum = KahanPlus(tSum, time0[ipBucket[iBucket][i]], &error);
 #if USE_MPI
-          MPI_Allreduce(&npBucket[iBucket], &npTotal, 1, MPI_LONG, MPI_SUM, workers);
+          MPI_Allreduce(&npBucket[iBucket], &npTotal, 1, MPI_INT64_T, MPI_SUM, workers);
           if (npTotal)
             tAve = KahanParallel(tSum, error, workers) / npTotal;
 #else

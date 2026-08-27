@@ -163,8 +163,9 @@ typedef struct {
 static BRAT_3D_DATA *brat3dData = NULL;
 static long nBrat3dData = 0;
 
-long trackBRAT(double **part, long np, BRAT *brat, double pCentral, double **accepted) {
-  long ip, ic, itop;
+long trackBRAT(double **part, int64_t np, BRAT *brat, double pCentral, double **accepted) {
+  int64_t ip, itop;
+  long ic;
   TRACKING_CONTEXT tcontext;
 
   getTrackingContext(&tcontext);

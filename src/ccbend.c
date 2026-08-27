@@ -35,8 +35,8 @@ static short logHamiltonian = 0;
 static FILE *fpHam = NULL;
 #endif
 
-void switchRbendPlane(double **particle, long n_part, double alpha, double Po);
-void verticalRbendFringe(double **particle, long n_part, double alpha, double rho0, double K1, double K2, double gK,
+void switchRbendPlane(double **particle, int64_t n_part, double alpha, double Po);
+void verticalRbendFringe(double **particle, int64_t n_part, double alpha, double rho0, double K1, double K2, double gK,
                          double *fringeIntKn, short angleSign, short isExit, short fringeModel, short order,
                          double Po);
 double ccbend_trajectory_error(double *value, long *invalid);
@@ -62,8 +62,8 @@ void applyFringeSpinKick(double *spin, double xp, double xp0, double yp, double 
  * the orbit transformation performed by switchRbendPlane(particle, n,
  * angle, Po) — both put particles into a frame whose z-axis is rotated
  * by -angle from the old z-axis about y. */
-void rotateSpinsAboutYAxis(double **particle, long np, double angle) {
-  long i;
+void rotateSpinsAboutYAxis(double **particle, int64_t np, double angle) {
+  int64_t i;
   if (!spinCoordOffset || !angle)
     return;
   for (i = 0; i < np; i++)
@@ -72,7 +72,7 @@ void rotateSpinsAboutYAxis(double **particle, long np, double angle) {
 
 long track_through_ccbend(
                           double **particle, /* initial/final phase-space coordinates */
-                          long n_part,       /* number of particles */
+                          int64_t n_part,       /* number of particles */
                           ELEMENT_LIST *eptr,
                           CCBEND *ccbend,
                           double Po,
@@ -97,7 +97,7 @@ long track_through_ccbend(
   long iTerm, nTerms;
   double dx, dy, dz; /* offsets of the multipole center */
   long nSlices, integ_order;
-  long i_part, i_top;
+  int64_t i_part, i_top;
   double *coef;
   double fse, etilt, epitch, eyaw, tilt, rad_coef, isr_coef, dzLoss = 0;
   double rho0, arcLength, length, angle, yaw, angleSign;
@@ -1336,13 +1336,13 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
 
 #define USE_NEW_SWITCH_CODE 0
 
-void switchRbendPlane(double **particle, long n_part, double alpha, double po)
+void switchRbendPlane(double **particle, int64_t n_part, double alpha, double po)
 /* transforms the reference plane to one that is at an angle alpha relative to the
  * initial plane. use alpha=theta/2, where theta is the total bend angle.
  */
 {
 #if USE_NEW_SWITCH_CODE
-  long i;
+  int64_t i;
   double cos_alpha, tan_alpha, magnet_s;
 
   tan_alpha = tan(alpha);
@@ -1359,7 +1359,7 @@ void switchRbendPlane(double **particle, long n_part, double alpha, double po)
     particle[i][1] = (particle[i][1] + tan_alpha) / (1.0 - particle[i][1] * tan_alpha);
   }
 #else
-  long i;
+  int64_t i;
   double s, *coord, sin_alpha, cos_alpha, tan_alpha;
   double d, qx0, qy0, qz0, qx, qy, qz;
 
@@ -1387,7 +1387,7 @@ void switchRbendPlane(double **particle, long n_part, double alpha, double po)
 }
 
 void verticalRbendFringe(
-                         double **particle, long n_part,
+                         double **particle, int64_t n_part,
                          double alpha,        // edge angle relative to beam path
                          double rho0,         // bending radius (always positive)
                          double K1,           // interior gradient
@@ -1406,7 +1406,7 @@ void verticalRbendFringe(
    * and used when spin tracking is enabled. */
   static double *xp0buf = NULL, *yp0buf = NULL;
   static long xp0bufMax = 0;
-  long isf;
+  int64_t isf;
 
   if (fringeModel == -1)
     return;
@@ -1427,7 +1427,7 @@ void verticalRbendFringe(
 
   if (fringeModel == 0) {
     // old method
-    long i;
+    int64_t i;
     double c, d, e;
     c = d = e = 0;
     if (gK != 0)
@@ -1453,7 +1453,7 @@ void verticalRbendFringe(
     double focX0, /* focXd, */ focY0, focYd, invP;
     double dispX, kickPx, expT;
 
-    long i;
+    int64_t i;
     if (isExit)
       alpha = -alpha;
 

@@ -112,7 +112,8 @@ void readMomentumAperture(char *momApFile) {
 }
 
 static void deltaOffsetFunction(double **coord, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral) {
-  long idelta, particleID, ie, ip;
+  long idelta, particleID, ie;
+  long ip;
   long sharedData[2];
   long nKicksMade = 0;
   double ddelta;
@@ -317,7 +318,8 @@ long runInelasticScattering(
   double *startingCoord) {
 #if USE_MPI
   double **coord;
-  long nTotal, ip, ie, idelta, nLost, nLeft, nElem, nEachProcessor, code, iRow;
+  long nTotal, ie, idelta, nLost, nLeft, nElem, nEachProcessor, code, iRow;
+  long ip;
   long nWorkingProcessors = n_processors - 1;
   double **lostParticles;
   double pCentral;

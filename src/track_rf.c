@@ -19,12 +19,12 @@
 #  include "gpu_rfdf.h"
 #endif
 
-void set_up_rftm110(RFTM110 *rf_param, double **initial, long n_particles, double pc_central);
-void set_up_rfdf(RFDF *rf_param, double **initial, long n_particles, double pc_central, double zEnd);
-void set_up_mrfdf(MRFDF *rf_param, double **initial, long n_particles, double pc_central);
+void set_up_rftm110(RFTM110 *rf_param, double **initial, int64_t n_particles, double pc_central);
+void set_up_rfdf(RFDF *rf_param, double **initial, int64_t n_particles, double pc_central, double zEnd);
+void set_up_mrfdf(MRFDF *rf_param, double **initial, int64_t n_particles, double pc_central);
 
 static long prepare_rf_deflector(RFDF *rf_param, double **initial,
-                                 long n_particles, double pc_central,
+                                 int64_t n_particles, double pc_central,
                                  double L_central, double zEnd, long pass,
                                  GPU_RFDF_DATA *data) {
   double beta, gamma, omega, k, voltFactor, t0;
@@ -138,11 +138,12 @@ static long prepare_rf_deflector(RFDF *rf_param, double **initial,
 }
 
 static void apply_rf_deflector_cpu(double **final, RFDF *rf_param,
-                                   double **initial, long n_particles,
+                                   double **initial, int64_t n_particles,
                                    const GPU_RFDF_DATA *data) {
   double t_part, x, xp, y, yp;
   double beta, px, py, pz, pc;
-  long ip, is;
+  int64_t ip;
+  long is;
 
   if (!(isSlave || !distributedBeam))
     return;
@@ -240,7 +241,7 @@ void track_through_rf_deflector(
   double **final,
   RFDF *rf_param,
   double **initial,
-  long n_particles,
+  int64_t n_particles,
   double pc_central,
   double L_central,
   double zEnd,
@@ -293,7 +294,7 @@ void track_through_rftm110_deflector(
   double **final,
   RFTM110 *rf_param,
   double **initial,
-  long n_particles,
+  int64_t n_particles,
   double pc_central,
   double L_central,
   double zEnd,
@@ -305,7 +306,8 @@ void track_through_rftm110_deflector(
   double omega, phase, phase0, Ez, cBx, cBy;
   double cos_phi, sin_phi, voltTimes2;
   double krho2, krho4, krho6, cos_2phi;
-  long ip, i_volt;
+  int64_t ip;
+  long i_volt;
   double gamma, t0;
 
   if (rf_param->frequency == 0)
@@ -415,8 +417,9 @@ void track_through_rftm110_deflector(
   }
 }
 
-void set_up_rftm110(RFTM110 *rf_param, double **initial, long n_particles, double pc_central) {
-  long ip, i;
+void set_up_rftm110(RFTM110 *rf_param, double **initial, int64_t n_particles, double pc_central) {
+  int64_t ip;
+  long i;
   double pc, beta;
   TABLE data;
   TRACKING_CONTEXT tContext;
@@ -515,7 +518,7 @@ void set_up_rftm110(RFTM110 *rf_param, double **initial, long n_particles, doubl
   }
 }
 
-void set_up_rfdf(RFDF *rf_param, double **initial, long n_particles, double pc_central, double zEnd) {
+void set_up_rfdf(RFDF *rf_param, double **initial, int64_t n_particles, double pc_central, double zEnd) {
   long i;
   double phase;
   TABLE data;
@@ -622,7 +625,7 @@ void track_through_multipole_deflector
  double **final,
  MRFDF *rf_param,
  double **initial,
- long n_particles,
+ int64_t n_particles,
  double pc_central,
  long pass) {
   double t_first; /* time when first particle reaches cavity */
@@ -631,7 +634,8 @@ void track_through_multipole_deflector
   double omega, k, t_part;
   double ptPhaseFactor, pzPhaseFactor;
   double dpx, dpy, dpz, phase;
-  long ip, mode;
+  int64_t ip;
+  long mode;
 
   /*
   This is always false
@@ -737,8 +741,8 @@ void track_through_multipole_deflector
     rotateBeamCoordinatesForMisalignment(initial, n_particles, -rf_param->tilt);
 }
 
-void set_up_mrfdf(MRFDF *rf_param, double **initial, long n_particles, double pc_central) {
-  long ip;
+void set_up_mrfdf(MRFDF *rf_param, double **initial, int64_t n_particles, double pc_central) {
+  int64_t ip;
   double pc, beta;
 #ifdef USE_KAHAN
   double error = 0.0;

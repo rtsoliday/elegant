@@ -15,7 +15,7 @@
 #endif
 
 long transformBeamWithScript(SCRIPT *script, double pCentral, CHARGE *charge,
-                             BEAM *beam, double **part, long np,
+                             BEAM *beam, double **part, int64_t np,
                              char *mainRootname, long iPass, long driftOrder, double z,
                              long forceSerial, long occurence, long backtrack,
 			     LINE_LIST *beamline, RUN *run) {
@@ -216,7 +216,7 @@ void prepareScriptCommand(SCRIPT *script, long iPass, char *rootname, char *inpu
 }
 
 long transformBeamWithScript_s(SCRIPT *script, double pCentral, CHARGE *charge,
-                               BEAM *beam, double **part, long np,
+                               BEAM *beam, double **part, int64_t np,
                                char *mainRootname, long iPass, long driftOrder, double z,
                                long occurence, long backtrack) {
   char *rootname = NULL, *input, *output = NULL;
@@ -230,7 +230,8 @@ long transformBeamWithScript_s(SCRIPT *script, double pCentral, CHARGE *charge,
   short failSoftly = 0;
   TRACKING_CONTEXT trackingContext;
   double **lostParticle;
-  long nLost, nLost2;
+  int64_t nLost;
+  long nLost2;
 
   if (np == 0)
     return 0;
@@ -259,7 +260,7 @@ long transformBeamWithScript_s(SCRIPT *script, double pCentral, CHARGE *charge,
 
   /* copy the lost particles to a separate buffer so we can easily put them back */
   if (beam && beam->n_lost) {
-    long il;
+    int64_t il;
     lostParticle = (double **)czarray_2d(sizeof(double), beam->n_lost, totalPropertiesPerParticle);
     for (il = 0; il < beam->n_lost; il++)
       memcpy(lostParticle[il], beam->particle[np + il], totalPropertiesPerParticle * sizeof(double));
@@ -537,7 +538,7 @@ long transformBeamWithScript_s(SCRIPT *script, double pCentral, CHARGE *charge,
 
 #if USE_MPI
 long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
-                               BEAM *beam, double **part, long np,
+                               BEAM *beam, double **part, int64_t np,
                                char *mainRootname, long iPass, long driftOrder, double z, long occurence,
                                long backtrack) {
   char *rootname = NULL, *input, *output = NULL;
@@ -549,7 +550,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
   double *pID = NULL;
   TRACKING_CONTEXT trackingContext;
   double **lostParticle;
-  long nLost;
+  int64_t nLost;
 
   getTrackingContext(&trackingContext);
 
@@ -631,7 +632,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
 
   /* copy the lost particles to a separate buffer so we can easily put them back */
   if (beam && beam->n_lost) {
-    long il;
+    int64_t il;
     lostParticle = (double **)czarray_2d(sizeof(double), beam->n_lost, totalPropertiesPerParticle);
     for (il = 0; il < beam->n_lost; il++)
       memcpy(lostParticle[il], beam->particle[np + il], totalPropertiesPerParticle * sizeof(double));
@@ -812,7 +813,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
 
   /* put lost particle data back at the top of the array */
   if (beam && lostParticle && nLost) {
-    long il;
+    int64_t il;
     for (il = 0; il < nLost; il++)
       memcpy(part[npNew + il], lostParticle[il], sizeof(double) * totalPropertiesPerParticle);
     beam->n_lost = nLost;

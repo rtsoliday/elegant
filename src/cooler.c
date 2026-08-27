@@ -28,14 +28,14 @@ void coolerPickup(CPICKUP *cpickup, double **part0, long np0, long pass, double 
 
   /*Initialize some variables */
   double t_sum, t_min, t_max;
-  long i;
+  int64_t i;
   double *time0 = NULL;    /* array to record arrival time of each particle */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long nBuckets = 0;
   long ib;
-  long npTotal;
+  int64_t npTotal;
   double t_sumTotal, t_minTotal, t_maxTotal;
 
 #if USE_MPI
@@ -182,7 +182,7 @@ void coolerPickup(CPICKUP *cpickup, double **part0, long np0, long pass, double 
       t_maxTotal = t_max;
 #if USE_MPI
       if (!partOnMaster) {
-	MPI_Allreduce(&npBucket[ib], &npTotal, 1, MPI_LONG, MPI_SUM, workers);
+	MPI_Allreduce(&npBucket[ib], &npTotal, 1, MPI_INT64_T, MPI_SUM, workers);
 	MPI_Allreduce(&t_sum, &t_sumTotal, 1, MPI_DOUBLE, MPI_SUM, workers);
 	MPI_Allreduce(&t_min, &t_minTotal, 1, MPI_DOUBLE, MPI_MIN, workers);
 	MPI_Allreduce(&t_max, &t_maxTotal, 1, MPI_DOUBLE, MPI_MAX, workers);
@@ -277,16 +277,17 @@ void coolerKicker(CKICKER *ckicker, double **part0, long np0, LINE_LIST *beamlin
 #else
 void coolerKicker(CKICKER *ckicker, double **part0, long np0, LINE_LIST *beamline,
 		  long pass, long nPasses, char *rootname, double Po, long idSlotsPerBunch) {
-  long i,j;
+  int64_t i;
+  int64_t j;
   double *time0 = NULL;    /* array to record arrival time of each particle */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long nBuckets = 0;
   long updateInterval;
   double Ex0;
   long ib;
-  long npTotal;
+  int64_t npTotal;
 
 #if USE_MPI
   if (!partOnMaster) {
@@ -399,7 +400,7 @@ void coolerKicker(CKICKER *ckicker, double **part0, long np0, LINE_LIST *beamlin
       npTotal = npBucket[ib];
 #if USE_MPI
       if (!partOnMaster)
-	MPI_Allreduce(&npBucket[ib], &npTotal, 1, MPI_LONG, MPI_SUM, workers);
+	MPI_Allreduce(&npBucket[ib], &npTotal, 1, MPI_INT64_T, MPI_SUM, workers);
 #endif
 
       // Get the dt between CPICKUP and CKICKER
@@ -444,8 +445,8 @@ void coolerKicker(CKICKER *ckicker, double **part0, long np0, LINE_LIST *beamlin
 	  MPI_Comm_rank(workers, &worker_rank);
 
           // Number of bunch particles on all nodes
-          long* node_bunch_particles = (long*)malloc(num_workers*sizeof(long));
-          MPI_Allgather(&npBucket[ib], 1, MPI_LONG, node_bunch_particles, 1, MPI_LONG, workers);
+          int64_t* node_bunch_particles = (int64_t*)malloc(num_workers*sizeof(int64_t));
+          MPI_Allgather(&npBucket[ib], 1, MPI_INT64_T, node_bunch_particles, 1, MPI_INT64_T, workers);
 
 	  // Offsets for where the particles on each node sit wrt bucket
           long* node_array_offsets = (long*)malloc(num_workers*sizeof(long));

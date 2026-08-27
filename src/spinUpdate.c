@@ -171,11 +171,11 @@ void rotateSpinCoordinateSystem(double *S, double cos_t, double sin_t)
   S[1] = -sin_t*S0[0] + cos_t*S0[1];
 }
 
-void rotateSpinsCoordinateSystem(double **particle, long np, double t)
+void rotateSpinsCoordinateSystem(double **particle, int64_t np, double t)
 {
   double cos_t, sin_t;
   double S0[2];
-  long i;
+  int64_t i;
   if (!spinCoordOffset || !t)
     return;
   cos_t = cos(t);
@@ -187,10 +187,10 @@ void rotateSpinsCoordinateSystem(double **particle, long np, double t)
   }
 }
 
-void updateSpinForSolenoid(double **coord, long np, double Po, SOLE *sole)
+void updateSpinForSolenoid(double **coord, int64_t np, double Po, SOLE *sole)
 {
   double Bz;
-  long i;
+  int64_t i;
   if (sole->B)
     Bz = sole->B;
   else

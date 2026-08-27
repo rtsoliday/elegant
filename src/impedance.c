@@ -234,11 +234,12 @@ void track_through_impedance(double **part0, long np0, IMPEDANCE *imp,
   double *pz = NULL;
   long *pbin = NULL;
   long *ibParticle = NULL;
-  long **ipBucket = NULL;
-  long *npBucket = NULL;
+  int64_t **ipBucket = NULL;
+  int64_t *npBucket = NULL;
   double **part = NULL;
   long max_np = 0;
-  long iBucket, nBuckets = 0, np = 0, ip, ib, nb, iw;
+  long iBucket, nBuckets = 0, ib, nb, iw;
+  int64_t np = 0, ip;
   double tmin, tmax, tmean = 0, dt, factor, rampFactor = 1;
   double *Itime = NULL, *xItime = NULL, *yItime = NULL;
   double *Ifreq = NULL;

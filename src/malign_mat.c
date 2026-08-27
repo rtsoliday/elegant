@@ -204,8 +204,8 @@ VMATRIX *misalignment_matrix(MALIGN *malign, long order) {
  * distance dz.
  */
 
-void offsetBeamCoordinatesForMisalignment(double **coord, long np, double dx, double dy, double dz) {
-  long ip;
+void offsetBeamCoordinatesForMisalignment(double **coord, int64_t np, double dx, double dy, double dz) {
+  int64_t ip;
   double *part;
 
   for (ip = np - 1; ip >= 0; ip--) {
@@ -236,7 +236,7 @@ double m_hproduct(MATRIX *M1, MATRIX *M2) {
 /* This is a fairly literal translation of his Mathematica code */
 void offsetParticlesForEntranceCenteredMisalignmentLinearized(
   VMATRIX **VM,                    /* if matrix return is desired */
-  double **coord, long np,         /* if particle transformation is desired */
+  double **coord, int64_t np,         /* if particle transformation is desired */
   double dx, double dy, double dz, /* error displacements */
   double ax,                       /* error pitch */
   double ay,                       /* error yaw */
@@ -258,7 +258,8 @@ void offsetParticlesForEntranceCenteredMisalignmentLinearized(
   static short initialized = 0;
   static VMATRIX *LVM;
   double LD = 0;
-  long ip, i, j;
+  int64_t ip;
+  long i, j;
 
   if (!initialized) {
     m_alloc(&xAxis, 3, 1);
@@ -515,7 +516,7 @@ void offsetParticlesForEntranceCenteredMisalignmentLinearized(
 void offsetParticlesForMisalignment
 (
  long mode, /* 0 = original, 1 = linear entrance, 2 = linear body, 3 = exact entrance, 4 = exact body */
- double **coord, long np,
+ double **coord, int64_t np,
  double dx, double dy, double dz, /* error displacements */
  double ax,                       /* error pitch */
  double ay,                       /* error yaw */
@@ -571,7 +572,7 @@ void offsetParticlesForMisalignment
 /* Algorithm due to M. Venturini, ALSU-AP-TN-2021-001. */
 /* This is a fairly literal translation of his Mathematica code */
 void offsetParticlesForEntranceCenteredMisalignmentExact(
-  double **coord, long np,
+  double **coord, int64_t np,
   double dx, double dy, double dz, /* error displacements */
   double ax,                       /* error pitch */
   double ay,                       /* error yaw */
@@ -592,7 +593,7 @@ void offsetParticlesForEntranceCenteredMisalignmentExact(
   static MATRIX *RB, *RBT, *RXT, *OOp, *OpPp;
   static short initialized = 0;
   double LD = 0;
-  long ip;
+  int64_t ip;
   double sinThetaW, cosThetaW, tanThetaW;
 
   static MATRIX *etaAxis, *etaPAxis, *etaPPAxis;
@@ -911,7 +912,7 @@ void offsetParticlesForEntranceCenteredMisalignmentExact(
 /* This is a fairly literal translation of his Mathematica code */
 void offsetParticlesForBodyCenteredMisalignmentLinearized(
   VMATRIX **VM,            /* if matrix return is desired */
-  double **coord, long np, /* if particle transformation is desired */
+  double **coord, int64_t np, /* if particle transformation is desired */
   /* error displacements */
   double dx0, double dy0, double dz0,
   double ax0,  /* error pitch */
@@ -933,7 +934,8 @@ void offsetParticlesForBodyCenteredMisalignmentLinearized(
   static MATRIX *RB, *RBT, *RXT, *OOp, *OpPp, *OO0, *P0P;
   static short initialized = 0;
   double LD = 0, Rc;
-  long ip, i, j;
+  int64_t ip;
+  long i, j;
   static VMATRIX *LVM;
 
   if (!initialized) {
@@ -1310,7 +1312,7 @@ VMATRIX *transformMatrixBetweenMomentumAndSlopes(VMATRIX *VM) {
  * to perform the misalignment in the body-centered frame 
  */
 void offsetParticlesForBodyCenteredMisalignmentExact(
-  double **coord, long np,
+  double **coord, int64_t np,
   double dx0, double dy0, double dz0,
   double ax0,  /* error pitch */
   double ay0,  /* error yaw */
@@ -1331,7 +1333,7 @@ void offsetParticlesForBodyCenteredMisalignmentExact(
   static MATRIX *R0, *RB, *RB2, *RBT, *RXT, *OOp, *OpPp, *OO0, *O0P0, *P0P;
   static short initialized = 0;
   double LD = 0;
-  long ip;
+  int64_t ip;
   double sinThetaW, cosThetaW, tanThetaW;
 
   static MATRIX *etaAxis, *etaPAxis, *etaPPAxis;

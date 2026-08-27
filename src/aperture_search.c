@@ -385,7 +385,8 @@ long do_aperture_search_mp(
   long *found;
   long n_left, n_right, n_survived, ic;
   double p_central;
-  long n_trpoint, ix, iy, is, ny1;
+  long n_trpoint, ix, ny1;
+  long iy, is;
   long effort, n_stable;
   double orbit[6] = {0, 0, 0, 0, 0, 0};
 
@@ -661,7 +662,8 @@ long do_aperture_search_sp(
   long n_left, n_right;
   double last_x_left, last_x_right, x1, x2;
   double p_central;
-  long n_trpoint, ix, iy, is;
+  long n_trpoint, ix, is;
+  long iy;
   long effort, n_stable;
 
   log_entry("do_aperture_search_sp");
@@ -1630,7 +1632,8 @@ long do_aperture_search_grid
  ) {
   double **coord = NULL;
   double p_central;
-  long ip, np=0, nLeft;
+  long ip;
+  int64_t np=0, nLeft;
   long effort;
   double area;
   double orbit[6] = {0, 0, 0, 0, 0, 0};
@@ -1921,7 +1924,8 @@ long do_aperture_search_grid_p
  ) {
   double **coord;
   double p_central;
-  long ip, np = 0, nLeft, index, npLocal;
+  long index;
+  int64_t ip, np = 0, nLeft, npLocal;
   double area;
   double orbit[6] = {0, 0, 0, 0, 0, 0};
   double *uLimit, *vLimit, *vLimit1, *xLost, *yLost, *sLost, *deltaLost;

@@ -25,10 +25,11 @@ long evaluateLostWithOpenSides(long code, double dx, double dy, double xsize, do
  */
 
 long rectangular_collimator(
-                            double **initial, RCOL *rcol, long np, double **accepted, double z,
+                            double **initial, RCOL *rcol, int64_t np, double **accepted, double z,
                             double Po, ELEMENT_LIST *eptr) {
   double length, *ini;
-  long ip, itop, is_out, lost, openCode;
+  int64_t ip, itop;
+  long is_out, lost, openCode;
   double xsize, ysize;
   double x_center, y_center;
   double x1, y1, zx, zy, dx, dy;
@@ -192,9 +193,10 @@ return (np);
  */
 
 long limit_amplitudes(
-                      double **coord, double xmax, double ymax, long np, double **accepted,
+                      double **coord, double xmax, double ymax, int64_t np, double **accepted,
                       double z, double Po, long extrapolate_z, long openCode, ELEMENT_LIST *eptr) {
-  long ip, itop, is_out;
+  int64_t ip, itop;
+  long is_out;
   double *part;
   double dz, dzx, dzy;
 
@@ -286,9 +288,10 @@ long limit_amplitudes(
 }
 
 long removeInvalidParticles(
-                            double **coord, long np, double **accepted,
+                            double **coord, int64_t np, double **accepted,
                             double z, double Po) {
-  long ip, itop, is_out, ic;
+  int64_t ip, itop;
+  long is_out, ic;
   double *part;
 
 #ifdef HAVE_GPU
@@ -339,10 +342,11 @@ long removeInvalidParticles(
  */
 
 long elliptical_collimator(
-                           double **initial, ECOL *ecol, long np, double **accepted, double z,
+                           double **initial, ECOL *ecol, int64_t np, double **accepted, double z,
                            double Po, ELEMENT_LIST *eptr) {
   double length, *ini;
-  long ip, itop, lost, openCode;
+  int64_t ip, itop;
+  long lost, openCode;
   double a2, b2;
   double dx, dy, xo, yo, xsize, ysize;
   TRACKING_CONTEXT context;
@@ -491,7 +495,7 @@ long elimit_amplitudes(
                        double **coord,
                        double xmax, /* half-axis in x direction */
                        double ymax, /* half-axis in y direction */
-                       long np,
+                       int64_t np,
                        double **accepted,
                        double z,
                        double Po,
@@ -500,7 +504,8 @@ long elimit_amplitudes(
                        long exponent,
                        long yexponent,
                        ELEMENT_LIST *eptr) {
-  long ip, itop, lost;
+  int64_t ip, itop;
+  long lost;
   double *part;
   double a2, b2, c1, c2, c0, dz, det;
   TRACKING_CONTEXT context;
@@ -623,10 +628,11 @@ long elimit_amplitudes(
 #define SQRT_3 1.7320508075688772
 
   long beam_scraper(
-                    double **initial, SCRAPER *scraper, long np, double **accepted, double z,
+                    double **initial, SCRAPER *scraper, int64_t np, double **accepted, double z,
                     double Po, ELEMENT_LIST *eptr) {
     double length, *ini;
-    long do_x, do_y, ip, idir, hit;
+    long do_x, do_y, idir, hit;
+    int64_t ip;
     long dsign[2] = {1, -1};
     long dflag[2] = {0, 0};
     MATTER matter;
@@ -825,9 +831,9 @@ long elimit_amplitudes(
   }
 
   long track_through_pfilter(
-                             double **initial, PFILTER *pfilter, long np, double **accepted, double z,
+                             double **initial, PFILTER *pfilter, int64_t np, double **accepted, double z,
                              double Po) {
-    long ip, itop;
+    int64_t ip, itop;
     static double *deltaBuffer = NULL;
     static long maxBuffer = 0;
     double reference;
@@ -969,10 +975,11 @@ long elimit_amplitudes(
   }
 
   long remove_outlier_particles(
-                                double **initial, CLEAN *clean, long np, double **accepted, double z,
+                                double **initial, CLEAN *clean, int64_t np, double **accepted, double z,
                                 double Po) {
     double *ini, beta, p, *sSave;
-    long ip, itop, is_out, j, mode;
+    int64_t ip, itop;
+    long is_out, j, mode;
     double limit[6], centroid[6], stDev[6];
     long count;
 #define CLEAN_STDEV 0
@@ -1230,9 +1237,10 @@ long elimit_amplitudes(
   }
 
   long imposeApertureData(
-                          double **initial, long np, double **accepted,
+                          double **initial, int64_t np, double **accepted,
                           double z, double Po, APERTURE_DATA *apData, ELEMENT_LIST *eptr) {
-    long ip, itop, lost;
+    int64_t ip, itop;
+    long lost;
     double *ini;
     double xSize, ySize;
     double xCenter, yCenter;
@@ -1306,10 +1314,11 @@ long elimit_amplitudes(
     return (np);
   }
 
-  long track_through_speedbump(double **initial, SPEEDBUMP *speedbump, long np, double **accepted, double z,
+  long track_through_speedbump(double **initial, SPEEDBUMP *speedbump, int64_t np, double **accepted, double z,
                                double Po, ELEMENT_LIST *eptr) {
     double *ini, radius, xiHit, yiHit;
-    long iplane, ip, idir, hit, phit;
+    long iplane, idir, hit, phit;
+    int64_t ip;
     long dsign[2] = {1, -1};
     long dflag[2] = {0, 0};
     double position;
@@ -1463,9 +1472,10 @@ long elimit_amplitudes(
     return (np);
   }
 
-  long trackThroughApContour(double **coord, APCONTOUR *apcontour, long np, double **accepted, double z,
+  long trackThroughApContour(double **coord, APCONTOUR *apcontour, int64_t np, double **accepted, double z,
                              double Po, ELEMENT_LIST *eptr) {
-    long ip, i_top, ic;
+    int64_t ip, i_top;
+    long ic;
     double z0, z1, zLost;
     short lost0, lost1, lost2;
     int lossCode;
@@ -1599,7 +1609,7 @@ long elimit_amplitudes(
    * need to impose the aperture
    */
 
-  long imposeApContour(double **coord, APCONTOUR *apcontour, long np, double **accepted, double z,
+  long imposeApContour(double **coord, APCONTOUR *apcontour, int64_t np, double **accepted, double z,
                        double Po, ELEMENT_LIST *eptr) {
     APCONTOUR apc;
     memcpy(&apc, apcontour, sizeof(apc));
@@ -1622,9 +1632,10 @@ long elimit_amplitudes(
     return trackThroughApContour(coord, &apc, 1, NULL, 0, 1, eptr);
   }
 
-  long trackThroughTaperApCirc(double **initial, TAPERAPC *taperApC, long np, double **accepted, double z,
+  long trackThroughTaperApCirc(double **initial, TAPERAPC *taperApC, int64_t np, double **accepted, double z,
                                double Po, ELEMENT_LIST *eptr) {
-    long ip, itop, isLost;
+    int64_t ip, itop;
+    long isLost;
     double *coord, determinant, rho, rho2, r, rStart, rStart2, r2Limit, dz, dx, dy;
     double x, y, xp, yp;
 
@@ -1707,9 +1718,10 @@ long elimit_amplitudes(
     return 1;
   }
 
-  long trackThroughTaperApElliptical(double **initial, TAPERAPE *taperApE, long np, double **accepted, double zStartElem,
+  long trackThroughTaperApElliptical(double **initial, TAPERAPE *taperApE, int64_t np, double **accepted, double zStartElem,
                                      double Po, ELEMENT_LIST *eptr) {
-    long ip, itop, isLost0, isLost1, isLost2;
+    int64_t ip, itop;
+    long isLost0, isLost1, isLost2;
     double z0, z1, x0, y0, xp, yp, zLost, dadz, dbdz;
     double *coord;
 
@@ -1794,9 +1806,10 @@ long elimit_amplitudes(
     return itop + 1;
   }
 
-  long trackThroughTaperApRectangular(double **initial, TAPERAPR *taperApR, long np, double **accepted, double zStartElem,
+  long trackThroughTaperApRectangular(double **initial, TAPERAPR *taperApR, int64_t np, double **accepted, double zStartElem,
                                       double Po, ELEMENT_LIST *eptr) {
-    long ip, itop, isLost;
+    int64_t ip, itop;
+    long isLost;
     double *coord;
     double x0, y0, xp, yp, zLost, zLost0;
 

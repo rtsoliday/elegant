@@ -159,8 +159,9 @@ long addBOFFAXEData(char *filename, char *zColumn, char *dataColumn, long order)
   return nBOFFAXEDataSets++;
 }
 
-long trackMagneticFieldOffAxisExpansion(double **part, long np, BOFFAXE *boa, double pCentral, double **accepted, double *sigmaDelta2) {
-  long ip, iz, irow;
+long trackMagneticFieldOffAxisExpansion(double **part, int64_t np, BOFFAXE *boa, double pCentral, double **accepted, double *sigmaDelta2) {
+  int64_t ip;
+  long iz, irow;
   STORED_BOFFAXE_DATA *boaData;
   double ds, dz, x, y, xp, yp, delta, s, denom;
   double length;

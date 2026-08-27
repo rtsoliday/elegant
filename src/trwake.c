@@ -30,11 +30,12 @@ void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
   double *pz = NULL;
   double **part = NULL;    /* particle buffer for working bucket */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long max_np = 0;
   long ib, nb = 0, n_binned = 0, plane;
-  long iBucket, nBuckets, ip, np;
+  long iBucket, nBuckets, np;
+  int64_t ip;
   double factor, tmin, tmean = 0, tmax, dt = 0, rampFactor = 1;
 #if USE_MPI
   double *buffer;
@@ -298,11 +299,12 @@ void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
     free(posItime[1]);
 }
 
-void applyTransverseWakeKicks(double **part, double *time, double *pz, long *pbin, long np,
+void applyTransverseWakeKicks(double **part, double *time, double *pz, long *pbin, int64_t np,
                               double Po, long plane,
                               double *Vtime, long nb, double tmin, double dt,
                               long interpolate, long exponent) {
-  long ip, offset;
+  int64_t ip;
+  long offset;
 
   offset = 2 * plane + 1; /* xp or yp index */
 #if defined(HAVE_GPU) && defined(_OPENMP)
@@ -533,8 +535,8 @@ void set_up_trwake(TRWAKE *wakeData, RUN *run, long pass, long particles, CHARGE
   }
 }
 
-void computeTimeCoordinatesOnly(double *time, double Po, double **part, long np) {
-  long ip;
+void computeTimeCoordinatesOnly(double *time, double Po, double **part, int64_t np) {
+  int64_t ip;
 
 #if defined(HAVE_GPU) && defined(_OPENMP)
 #  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
@@ -548,9 +550,9 @@ void computeTimeCoordinatesOnly(double *time, double Po, double **part, long np)
 /* This routine should call computeTimeCoordinatesOnly() first instead of duplicating
    the equations */
 
-double computeTimeCoordinates(double *time, double Po, double **part, long np) {
+double computeTimeCoordinates(double *time, double Po, double **part, int64_t np) {
   double tmean, P;
-  long ip;
+  int64_t ip;
 #ifdef USE_KAHAN
   double error = 0.0;
 #endif
@@ -615,8 +617,8 @@ double computeTimeCoordinates(double *time, double Po, double **part, long np) {
 #endif
 }
 
-void computeDistanceCoordinates(double *time, double Po, double **part, long np) {
-  long ip;
+void computeDistanceCoordinates(double *time, double Po, double **part, int64_t np) {
+  int64_t ip;
 
 #if defined(HAVE_GPU) && defined(_OPENMP)
 #  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
@@ -629,9 +631,10 @@ void computeDistanceCoordinates(double *time, double Po, double **part, long np)
 }
 
 long binTransverseTimeDistribution(double **posItime, double *pz, long *pbin, double tmin, double dt, long nb,
-                                   double *time, double **part, double Po, long np,
+                                   double *time, double **part, double Po, int64_t np,
                                    double dx, double dy, long xPower, long yPower) {
-  long ip, ib, n_binned;
+  int64_t ip, n_binned;
+  long ib;
   for (ib = 0; ib < nb; ib++)
     posItime[0][ib] = posItime[1][ib] = 0;
   for (ip = n_binned = 0; ip < np; ip++) {

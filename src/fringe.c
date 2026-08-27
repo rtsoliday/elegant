@@ -23,7 +23,7 @@
 static VMATRIX *quadPartialFringeMatrix(VMATRIX *M, double K1, long inFringe, double *fringeInt, long part);
 
 void quadFringe(double **coord,
-                const long np,
+                const int64_t np,
                 const double K1,
                 double *fringeIntM0, /* I0m/K1, I1m/K1, I2m/K1, I3m/K1, Lambda2m/K1 */
                 double *fringeIntP0, /* I0p/K1, I1p/K1, I2p/K1, I3p/K1, Lambda2p/K1 */
@@ -34,7 +34,7 @@ void quadFringe(double **coord,
                 const double nonlinearFactor) {
   /* vec = {x, qx, y, qy, s, delta}
      */
-  long ip;
+  int64_t ip;
   double x, px, y, py, delta, xp, yp, denom;
   double *vec;
   double a, dx, dpx, dy, dpy, ds;

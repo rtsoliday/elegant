@@ -30,10 +30,11 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
   double *time = NULL;     /* array to record arrival time of each particle, for working bucket */
   double **part = NULL;    /* particle buffer for working bucket */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long ib, nb = 0, n_binned = 0;
-  long iBucket, nBuckets, max_np = 0, ip, np;
+  long iBucket, nBuckets;
+  int64_t max_np = 0, ip, np;
   double factor, tmin, tmax, tmean = 0, dt = 0, Po, rampFactor;
   char warningBuffer[1024];
 #if USE_MPI
@@ -331,10 +332,10 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
     free(Vtime);
 }
 
-void applyLongitudinalWakeKicks(double **part, double *time, long *pbin, long np, double Po,
+void applyLongitudinalWakeKicks(double **part, double *time, long *pbin, int64_t np, double Po,
                                 double *Vtime, long nb, double tmin, double dt,
                                 long interpolate) {
-  long ip;
+  int64_t ip;
 
   /* change particle momentum offsets to reflect voltage in relevant bin */
 #if defined(HAVE_GPU) && defined(_OPENMP)
@@ -529,8 +530,9 @@ void convolveArrays(double *output, long outputs,
 }
 
 long binTimeDistribution(double *Itime, long *pbin, double tmin,
-                         double dt, long nb, double *time, double **part, double Po, long np) {
-  long ib, ip, n_binned;
+                         double dt, long nb, double *time, double **part, double Po, int64_t np) {
+  long ib, n_binned;
+  int64_t ip;
 
   for (ib = 0; ib < nb; ib++)
     Itime[ib] = 0;
@@ -550,7 +552,7 @@ long binTimeDistribution(double *Itime, long *pbin, double tmin,
   return n_binned;
 }
 
-void track_through_corgpipe(double **part, long np, CORGPIPE *corgpipe, double *Pcentral,
+void track_through_corgpipe(double **part, int64_t np, CORGPIPE *corgpipe, double *Pcentral,
                             RUN *run, long i_pass, CHARGE *charge)
 /* This is basically a copy of P. Emma's MATLAB, with some additional checking and warnings 
  * See also K. Bane, SLAC-PUB-14925.
@@ -558,7 +560,8 @@ void track_through_corgpipe(double **part, long np, CORGPIPE *corgpipe, double *
 {
   double Z0, k, kappa, dt, omega;
   WAKE wakeData;
-  long i, n_bins;
+  long n_bins;
+  int64_t i;
 
   /* this element does nothing in single particle mode (e.g., trajectory, orbit, ..) */
   /*
@@ -687,7 +690,7 @@ void track_through_corgpipe(double **part, long np, CORGPIPE *corgpipe, double *
   free(wakeData.W);
 }
 
-void track_through_corgplates(double **part, long np, CORGPLATES *corgplates, double *Pcentral,
+void track_through_corgplates(double **part, int64_t np, CORGPLATES *corgplates, double *Pcentral,
                               RUN *run, long i_pass, CHARGE *charge)
 /* Longitudinal wake for a pair of parallel corrugated plates, using results in Section 2 and
  * Appendix A of Z. Zhang et al., PRAB 18, 010702 (2015).
@@ -695,7 +698,8 @@ void track_through_corgplates(double **part, long np, CORGPLATES *corgplates, do
 {
   double Z0, k, dt, t, omega, tau;
   WAKE wakeData;
-  long i, n_bins;
+  long n_bins;
+  int64_t i;
   double c1 = 1.7096, c2 = -0.5026;
   double b1 = 0.1483, b2 = 0.1418, b3 = -0.0437, b4 = 0.1460, b5 = 0.5908, d1 = 3.2495, d2 = -9.1830, d3 = 10.2230;
   double F, Q, a, h, p;

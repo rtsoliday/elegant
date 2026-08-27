@@ -1159,7 +1159,7 @@ __device__ __forceinline__ void gpuApplyPackedMatrix(double *part,
 
 __global__ void gpuTrackParticlesKernel(double *coord, long nParticles,
                                         int stride, int matrixSlot) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -1200,7 +1200,7 @@ __device__ __forceinline__ void gpuExactDriftParticle(double *part,
 }
 
 __global__ void gpuExactDriftKernel(double *coord, long nParticles, int stride, double length) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -1208,7 +1208,7 @@ __global__ void gpuExactDriftKernel(double *coord, long nParticles, int stride, 
 }
 
 __global__ void gpuLinearDriftKernel(double *coord, long nParticles, int stride, double length) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
 
   if (ip >= nParticles)
@@ -1347,7 +1347,7 @@ __global__ void gpuKickMapTrackCheckedKernel(double *coord, long nParticles,
                                              const double *xpMap,
                                              const double *ypMap,
                                              unsigned long long *lostCount) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
 
   if (ip >= nParticles)
@@ -1363,7 +1363,7 @@ __global__ void gpuKickMapSurvivorFlagKernel(double *coord, long nParticles,
                                              const double *xpMap,
                                              const double *ypMap,
                                              long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -1375,7 +1375,7 @@ __global__ void gpuKickMapStableTrackScatterKernel(
   double *coord, double *scratch, const long *survivorPrefix,
   long nParticles, int stride, long survivors, GPU_KICKMAP_DATA map,
   const double *xpMap, const double *ypMap, double zStart, double pRef) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
   long destination;
   int survives;
@@ -2029,7 +2029,7 @@ __global__ void gpuMultipolePredicateKernel(double *coord, long nParticles,
 template <bool Radiation, bool Aperture>
 __global__ void gpuMultipoleTrackKernel(double *coord, long nParticles,
                                         int stride) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -2042,7 +2042,7 @@ __global__ void gpuMultipoleTrackCheckedKernel(
   double *coord, long nParticles, int stride,
   unsigned long long *lostCount) {
   extern __shared__ unsigned long long partial[];
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long localCount = 0;
 
   if (ip < nParticles) {
@@ -2065,7 +2065,7 @@ __global__ void gpuMultipoleTrackCheckedKernel(
 template <bool Radiation, bool Aperture>
 __global__ void gpuMultipoleSurvivorFlagKernel(
   double *coord, long nParticles, int stride, long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -2078,7 +2078,7 @@ template <bool Radiation, bool Aperture>
 __global__ void gpuMultipoleStableTrackScatterKernel(
   double *coord, double *scratch, const long *survivorPrefix,
   long nParticles, int stride, long survivors) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
   long destination;
   int survives;
@@ -2183,7 +2183,7 @@ __device__ int gpuExactCorrectorTrackParticle(
 __global__ void gpuExactCorrectorSurvivorFlagKernel(
   double *coord, long nParticles, int stride,
   GPU_EXACT_CORRECTOR_DATA data, long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   if (ip < nParticles)
     survivorPrefix[ip] = gpuExactCorrectorTrackParticle(
       coord + ip * stride, 1, data) ? 1 : 0;
@@ -2192,7 +2192,7 @@ __global__ void gpuExactCorrectorSurvivorFlagKernel(
 __global__ void gpuExactCorrectorStableTrackScatterKernel(
   double *coord, double *scratch, const long *survivorPrefix,
   long nParticles, int stride) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   if (ip >= nParticles)
     return;
   long destination = survivorPrefix[ip];
@@ -2307,7 +2307,7 @@ __device__ int gpuTaperApertureTrackParticle(
 __global__ void gpuTaperApertureSurvivorFlagKernel(
   double *coord, long nParticles, int stride,
   GPU_TAPER_APERTURE_DATA data, long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   if (ip < nParticles)
     survivorPrefix[ip] = gpuTaperApertureTrackParticle(
       coord + ip * stride, 0, data) ? 1 : 0;
@@ -2317,7 +2317,7 @@ __global__ void gpuTaperApertureStableTrackScatterKernel(
   double *coord, double *scratch, const long *survivorPrefix,
   long nParticles, int stride, long survivors,
   GPU_TAPER_APERTURE_DATA data) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   if (ip >= nParticles)
     return;
   long destination = survivorPrefix[ip];
@@ -2432,7 +2432,7 @@ __device__ int gpuSpeedbumpTrackParticle(
 __global__ void gpuSpeedbumpSurvivorFlagKernel(
   double *coord, long nParticles, int stride,
   GPU_SPEEDBUMP_DATA data, long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   if (ip < nParticles)
     survivorPrefix[ip] = gpuSpeedbumpTrackParticle(
       coord + ip * stride, 0, data) ? 1 : 0;
@@ -2442,7 +2442,7 @@ __global__ void gpuSpeedbumpStableTrackScatterKernel(
   double *coord, double *scratch, const long *survivorPrefix,
   long nParticles, int stride, long survivors,
   GPU_SPEEDBUMP_DATA data) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   if (ip >= nParticles)
     return;
   long destination = survivorPrefix[ip];
@@ -2681,7 +2681,7 @@ __global__ void gpuCcbendTrackCheckedKernel(
   double *coord, long nParticles, int stride, GPU_CCBEND_DATA data,
   unsigned long long *lostCount) {
   extern __shared__ unsigned long long partial[];
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long localCount = 0;
 
   if (ip < nParticles &&
@@ -2701,7 +2701,7 @@ __global__ void gpuCcbendTrackCheckedKernel(
 __global__ void gpuCcbendSurvivorFlagKernel(
   double *coord, long nParticles, int stride, GPU_CCBEND_DATA data,
   long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -2712,7 +2712,7 @@ __global__ void gpuCcbendSurvivorFlagKernel(
 __global__ void gpuCcbendStableTrackScatterKernel(
   double *coord, double *scratch, const long *destination,
   long nParticles, int stride, GPU_CCBEND_DATA data) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
 
   if (ip >= nParticles)
@@ -3107,7 +3107,7 @@ __global__ void gpuLgbendTrackCheckedKernel(
   const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
   unsigned long long *lostCount) {
   extern __shared__ unsigned long long partial[];
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long localCount = 0;
 
   if (ip < nParticles &&
@@ -3129,7 +3129,7 @@ __global__ void gpuLgbendSurvivorFlagKernel(
   double *coord, long nParticles, int stride, GPU_LGBEND_DATA data,
   const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture,
   long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -3142,7 +3142,7 @@ __global__ void gpuLgbendStableTrackScatterKernel(
   double *coord, double *scratch, const long *destination,
   long nParticles, int stride, GPU_LGBEND_DATA data,
   const GPU_LGBEND_LOCAL_APERTURE_DATA *localAperture) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
 
   if (ip >= nParticles)
@@ -3156,7 +3156,7 @@ __global__ void gpuLgbendStableTrackScatterKernel(
 
 __global__ void gpuAddCoordinateKernel(double *coord, long nParticles, int stride,
                                        int index, double value) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -3168,7 +3168,7 @@ __global__ void gpuOffsetBeamKernel(double *coord, long nParticles, int stride,
                                     double dz, double dt, double dp, double de,
                                     double pCentral, long startPID, long endPID,
                                     int allParticles, double cMks) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, pc, beta, gamma, t, ds;
 
   if (ip >= nParticles)
@@ -3208,7 +3208,7 @@ __global__ void gpuBatchedMomentumSearchKernel(
   long searchParticles, long target, long pass, long firePass,
   double *history, double *historyCount, long turns,
   double dx, double dy, double pCentral, double cMks) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long id, turn;
   double *part, pc, beta, t;
 
@@ -3243,7 +3243,7 @@ __global__ void gpuBatchedMomentumSearchKernel(
 
 __global__ void gpuSetCentralMomentumKernel(double *coord, long nParticles, int stride,
                                             double oldP, double newP) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
 
   if (ip >= nParticles)
@@ -3254,7 +3254,7 @@ __global__ void gpuSetCentralMomentumKernel(double *coord, long nParticles, int 
 
 __global__ void gpuMatchEnergyKernel(double *coord, long nParticles, int stride,
                                      double oldP, double averageP, int changeBeam) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, dp, dr, dPCentroid, p, t, beta;
 
   if (ip >= nParticles)
@@ -3361,8 +3361,8 @@ __global__ void gpuMatchEnergyPartialKernel(
   count[tid] = 0;
   sum[tid] = 0;
   error[tid] = 0;
-  for (ip = blockIdx.x * blockDim.x + tid; ip < nParticles;
-       ip += gridDim.x * blockDim.x) {
+  for (ip = (long)blockIdx.x * blockDim.x + tid; ip < nParticles;
+       ip += (long)gridDim.x * blockDim.x) {
     double *part = coord + ip * stride;
     double value = oldP * (1 + part[5]);
     double y = value - error[tid];
@@ -3442,7 +3442,7 @@ __global__ void gpuMatchEnergyApplyKernel(double *coord, long nParticles,
                                           int stride, double oldP,
                                           const double *averageP,
                                           int changeBeam) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double average;
 
   if (ip >= nParticles)
@@ -3471,7 +3471,7 @@ __global__ void gpuRfcaThinKickKernel(double *coord, long nParticles, int stride
                                       double pCentral, double volt,
                                       double omega, double phase,
                                       double cMks) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, p, gamma, beta, t, dgamma, gamma1Raw, gamma1;
   double p1, pz, pz1, pRatio;
 
@@ -3506,7 +3506,7 @@ __global__ void gpuRfcaThinKickKernel(double *coord, long nParticles, int stride
 __global__ void gpuTfeedbackKickKernel(double *coord, long nParticles,
                                        int stride, int pickupCoordinate,
                                        int longitudinal, double kick) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
 
   if (ip >= nParticles)
@@ -3520,7 +3520,7 @@ __global__ void gpuTfeedbackKickKernel(double *coord, long nParticles,
 
 __global__ void gpuRfdfKernel(double *coord, long nParticles, int stride,
                               GPU_RFDF_DATA data, int particleIdIndex) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   double tPart, tLight = 0;
   double x, xp, y, yp, beta, px, py, pz, pc;
@@ -3587,7 +3587,7 @@ __global__ void gpuRfdfKernel(double *coord, long nParticles, int stride,
 
 __global__ void gpuSreffectsKernel(double *coord, long nParticles, int stride,
                                    GPU_SREFFECTS_DATA data) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   double P, beta, t;
 
@@ -3751,7 +3751,7 @@ __device__ __forceinline__ void gpuBggexpFields(
 
 __global__ void gpuBggexpKernel(double *coord, long nParticles, int stride,
                                 GPU_BGGEXP_DEVICE_DATA data) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   double Bx, By, Bz;
   double x, xp, y, yp, s, delta;
@@ -3973,7 +3973,7 @@ __global__ void gpuCwigglerKernel(double *coord, long nParticles, int stride,
     1.3512071919596576340476878089715;
   const double fourthOrderX0 =
     -1.7024143839193152680953756179429;
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   double x, xp, qx, y, yp, qy, s, delta, denom, z = 0.0;
   double periodLength, dl, dl1, dl0;
@@ -4187,7 +4187,7 @@ __device__ __forceinline__ double gpuFtableChooseTheta(
 
 __global__ void gpuFtableKernel(double *coord, long nParticles, int stride,
                                 GPU_FTABLE_DATA data) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   double step, sLocation;
 
@@ -4481,7 +4481,7 @@ __device__ int gpuBmxyzIntegrate(double state[8],
 __global__ void gpuBmxyzKernel(double *coord, long nParticles, int stride,
                                GPU_BMXYZ_DATA data,
                                unsigned long long *failedCount) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double state[8];
   double *part;
   double dzds;
@@ -4845,7 +4845,7 @@ __device__ __forceinline__ int gpuLorentzTransformOut(
 __global__ void gpuLorentzKernel(double *coord, long nParticles, int stride,
                                  GPU_LORENTZ_DATA data,
                                  unsigned long long *failedCount) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double state[8];
   double *part;
 
@@ -4864,7 +4864,7 @@ __global__ void gpuRfcwRfOnlyMatrixKernel(double *coord, long nParticles, int st
                                           double phase, int end1Focus,
                                           int end2Focus, double dx, double dy,
                                           double cMks, long *lostCount) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, p, gamma, beta0, ds1, t, dgamma, gamma1;
   double dP, R12, R22, x, xp, y, yp, inverseF;
 
@@ -4939,7 +4939,7 @@ __global__ void gpuRfcwKickInitialKernel(double *coord, double *inverseF,
                                          double volt, double omega,
                                          double phase, int end1Focus,
                                          double cMks) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, p, gamma, beta, dc4, t, dgamma, gamma1Raw, gamma1;
   double p1, pz, pz1, pRatio, invF;
 
@@ -4990,7 +4990,7 @@ __global__ void gpuRfcwKickInitialKernel(double *coord, double *inverseF,
 __global__ void gpuRfcwKickFinalKernel(double *coord, const double *inverseF,
                                        long nParticles, int stride,
                                        double length, int end2Focus) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, invF;
 
   if (ip >= nParticles)
@@ -5057,7 +5057,7 @@ __global__ void gpuRfcwDgammaOverGammaSumsKernel(double *coord, long nParticles,
 
 __global__ void gpuSubtractCoordinateKernel(double *coord, long nParticles, int stride,
                                             int index, double value) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -5070,7 +5070,7 @@ __global__ void gpuCenterBeamKernel(double *coord, long nParticles, int stride,
                                     double offset3, double offset4, double offset5,
                                     int doTime, double pCentral, double timeOffset,
                                     double cMks) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, p, beta;
 
   if (ip >= nParticles)
@@ -5150,7 +5150,7 @@ __global__ void gpuLimitAmplitudeSurvivorFlagKernel(double *coord,
                                                     double xmax,
                                                     double ymax,
                                                     long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -5168,7 +5168,7 @@ __global__ void gpuLimitAmplitudesStableScatterKernel(double *coord,
                                                       double pCentral,
                                                       long extrapolateZ,
                                                       long survivors) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
   long destination, lost;
   double dz = 0;
@@ -5272,7 +5272,7 @@ __global__ void gpuELimitAmplitudeSurvivorFlagKernel(double *coord,
                                                      long exponent,
                                                      long yExponent,
                                                      long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -5294,7 +5294,7 @@ __global__ void gpuELimitAmplitudesStableScatterKernel(double *coord,
                                                        double pCentral,
                                                        long extrapolateZ,
                                                        long survivors) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
   long destination, lost;
   double dz = 0;
@@ -5372,7 +5372,7 @@ __global__ void gpuRemoveInvalidParticlesSurvivorFlagKernel(double *coord,
                                                             long nParticles,
                                                             int stride,
                                                             long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -5382,7 +5382,7 @@ __global__ void gpuRemoveInvalidParticlesSurvivorFlagKernel(double *coord,
 __global__ void gpuRemoveInvalidParticlesStableScatterKernel(
   double *coord, double *scratch, const long *survivorPrefix,
   long nParticles, int stride, double z, double pCentral, long survivors) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
   long destination, lost;
 
@@ -5404,7 +5404,7 @@ __global__ void gpuStableScatterRowsKernel(double *coord, double *scratch,
                                            const long *survivorPrefix,
                                            long nParticles, int stride,
                                            long survivors) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
   long destination;
 
@@ -5578,7 +5578,7 @@ __global__ void gpuBatchedApertureInitializeKernel(
   double *xLimit, double *yLimit,
   double *xLost, double *yLost, double *sLost,
   long *lossPass, long *lossElement, long *originStable) {
-  long line = blockIdx.x * blockDim.x + threadIdx.x;
+  long line = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (line >= lines)
     return;
@@ -5595,7 +5595,7 @@ __global__ void gpuBatchedApertureInitializeKernel(
 __global__ void gpuBatchedApertureRefineLinesKernel(
   long lines, double splitFraction, double *dx, double *dy,
   double *x0, double *y0, const double *xLimit, const double *yLimit) {
-  long line = blockIdx.x * blockDim.x + threadIdx.x;
+  long line = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (line >= lines)
     return;
@@ -5609,7 +5609,7 @@ __global__ void gpuBatchedAperturePrepareKernel(
   long lines, long nSteps, const double *orbit,
   const double *dx, const double *dy, const double *x0, const double *y0,
   double *trialCoord, long trialStride) {
-  long id = blockIdx.x * blockDim.x + threadIdx.x;
+  long id = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long trials = lines * nSteps;
   long line, step;
   double *part;
@@ -5668,7 +5668,7 @@ __global__ void gpuBatchedApertureTrackKernel(
   long passes, double pCentral, unsigned char *survived,
   double *trialXLost, double *trialYLost, double *trialSLost,
   long *trialLossPass, long *trialLossElement) {
-  long id = blockIdx.x * blockDim.x + threadIdx.x;
+  long id = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   int alive = 1;
 
@@ -5730,7 +5730,7 @@ __global__ void gpuBatchedApertureReduceKernel(
   const double *x0, const double *y0, double *xLimit, double *yLimit,
   double *xLost, double *yLost, double *sLost,
   long *lossPass, long *lossElement, long *originStable) {
-  long line = blockIdx.x * blockDim.x + threadIdx.x;
+  long line = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long firstLost = nSteps;
   long lastSurvived;
 
@@ -5777,7 +5777,7 @@ __global__ void gpuRectangularCollimatorSurvivorFlagKernel(double *coord,
                                                            double length,
                                                            long openCode,
                                                            long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   int lost;
 
@@ -5804,7 +5804,7 @@ __global__ void gpuRectangularCollimatorStableScatterKernel(double *coord,
                                                             double z,
                                                             double pCentral,
                                                             long survivors) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
   long destination, lost, entranceLost;
   double x1, y1;
@@ -5904,7 +5904,7 @@ __global__ void gpuEllipticalCollimatorSurvivorFlagKernel(double *coord,
                                                           double length,
                                                           long openCode,
                                                           long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   int lost;
 
@@ -5935,7 +5935,7 @@ __global__ void gpuEllipticalCollimatorStableScatterKernel(double *coord,
                                                            double z,
                                                            double pCentral,
                                                            long survivors) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
   long destination, lost, entranceLost;
 
@@ -6018,7 +6018,7 @@ __global__ void gpuScraperSurvivorFlagKernel(double *coord,
                                              int sideSign,
                                              double length,
                                              long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   int lost;
 
@@ -6044,7 +6044,7 @@ __global__ void gpuScraperStableScatterKernel(double *coord,
                                               double z,
                                               double pCentral,
                                               long survivors) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
   long destination, lost, entranceLost;
 
@@ -6134,7 +6134,7 @@ __global__ void gpuApertureDataSurvivorFlagKernel(double *coord,
                                                   double xSize,
                                                   double ySize,
                                                   long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -6155,7 +6155,7 @@ __global__ void gpuApertureDataStableScatterKernel(double *coord,
                                                    double z,
                                                    double pCentral,
                                                    long survivors) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
   long destination, lost;
 
@@ -6210,8 +6210,8 @@ __global__ void gpuHistogramRangePartialKernel(
     minimum[icoord][tid] = DBL_MAX;
     maximum[icoord][tid] = -DBL_MAX;
   }
-  for (ip = blockIdx.x * blockDim.x + tid; ip < nParticles;
-       ip += gridDim.x * blockDim.x) {
+  for (ip = (long)blockIdx.x * blockDim.x + tid; ip < nParticles;
+       ip += (long)gridDim.x * blockDim.x) {
     const double *part = coord + ip * stride;
     double time = 0;
 
@@ -6298,8 +6298,8 @@ __global__ void gpuHistogramBinPartialKernel(
   GPU_HISTOGRAM_BIN_DATA data, unsigned long long *partial) {
   long ip;
 
-  for (ip = blockIdx.x * blockDim.x + threadIdx.x; ip < nParticles;
-       ip += gridDim.x * blockDim.x) {
+  for (ip = (long)blockIdx.x * blockDim.x + threadIdx.x; ip < nParticles;
+       ip += (long)gridDim.x * blockDim.x) {
     const double *part = coord + ip * stride;
     double time = 0;
 
@@ -6332,7 +6332,7 @@ __global__ void gpuHistogramBinPartialKernel(
 __global__ void gpuHistogramBinFinalizeKernel(
   const unsigned long long *partial, long bins,
   unsigned long long *histogram) {
-  long index = blockIdx.x * blockDim.x + threadIdx.x;
+  long index = (long)blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long sum = 0;
 
   if (index >= 7 * bins)
@@ -6366,7 +6366,7 @@ __device__ __forceinline__ void gpuWakeAddToParticleEnergy(double *part,
 __global__ void gpuRfmodeTimeKernel(
   double *coord, long nParticles, int stride, double pCentral,
   double cMks, double *time) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip < nParticles)
     time[ip] = gpuParticleTime(coord + ip * stride, pCentral, cMks);
@@ -6376,7 +6376,7 @@ __global__ void gpuRfmodeHistogramKernel(
   long nParticles, GPU_RFMODE_DATA data, const double *time,
   long *pbin, unsigned long long *histogram,
   unsigned long long *binnedCount) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double t;
   long ib;
 
@@ -6396,7 +6396,7 @@ __global__ void gpuTrfmodeHistogramKernel(
   double *coord, long nParticles, int stride, GPU_RFMODE_DATA data,
   const double *time, long *pbin, unsigned long long *histogram,
   double *xsum, double *ysum, unsigned long long *binnedCount) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long ib;
 
   if (ip >= nParticles)
@@ -6435,7 +6435,7 @@ __device__ __forceinline__ void gpuRfmodeAddToParticleEnergy(
 __global__ void gpuRfmodeApplyKicksKernel(
   double *coord, long nParticles, int stride, GPU_RFMODE_DATA data,
   const double *time, const long *pbin, const double *voltage) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, value;
   long ib;
 
@@ -6506,7 +6506,7 @@ __device__ __forceinline__ double gpuTrfmodeVoltage(
 __global__ void gpuTrfmodeApplyKicksKernel(
   double *coord, long nParticles, int stride, GPU_RFMODE_DATA data,
   const double *time, const long *pbin, const double *voltage) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, P, Px, Py, Pz, factor, Vx, Vy, Vz;
   long ib;
 
@@ -6537,7 +6537,7 @@ __global__ void gpuWakeBinKernel(double *coord, long nParticles, int stride,
                                  GPU_WAKE_LONGITUDINAL_DATA wake,
                                  double *time, long *pbin, double *itime,
                                  unsigned long long *binnedCount) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   double t;
   long ib;
@@ -6562,7 +6562,7 @@ __global__ void gpuWakeBinKernel(double *coord, long nParticles, int stride,
 __global__ void gpuWakeConvolveKernel(double *vtime, const double *itime,
                                       const double *wakeTable,
                                       GPU_WAKE_LONGITUDINAL_DATA wake) {
-  long ib = blockIdx.x * blockDim.x + threadIdx.x;
+  long ib = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long ib1, ib2, di;
   double sum = 0;
 
@@ -6587,7 +6587,7 @@ __global__ void gpuWakeApplyKicksKernel(double *coord, long nParticles,
                                         GPU_WAKE_LONGITUDINAL_DATA wake,
                                         const double *time, const long *pbin,
                                         const double *vtime) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   long ib;
   double dt1, dgam;
@@ -6637,7 +6637,7 @@ __device__ __forceinline__ void gpuLscAddToParticleEnergy(double *part,
 __global__ void gpuLscBinKernel(double *coord, long nParticles, int stride,
                                 GPU_LSC_DATA lsc, double *itime,
                                 unsigned long long *binnedCount) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, t;
   long ib;
 
@@ -6655,7 +6655,7 @@ __global__ void gpuLscBinKernel(double *coord, long nParticles, int stride,
 __global__ void gpuLscApplyKickAndDriftKernel(double *coord, long nParticles,
                                               int stride, GPU_LSC_DATA lsc,
                                               const double *vtime) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, t, dt1, dgam, sign;
   long ib;
 
@@ -6702,8 +6702,8 @@ __global__ void gpuScmultMomentPartialKernel(
     sum[i][tid] = 0;
     squareSum[i][tid] = 0;
   }
-  for (ip = blockIdx.x * blockDim.x + tid; ip < nParticles;
-       ip += blockDim.x * gridDim.x) {
+  for (ip = (long)blockIdx.x * blockDim.x + tid; ip < nParticles;
+       ip += (long)blockDim.x * gridDim.x) {
     double *part = coord + ip * stride;
     double value[3] = {part[0], part[2], part[4]};
 
@@ -6774,7 +6774,7 @@ __global__ void gpuScmultMomentFinalizeKernel(
 __global__ void gpuScmultLinearKickKernel(double *coord, long nParticles,
                                           int stride,
                                           GPU_SCMULT_LINEAR_DATA data) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   double k0, dz;
 
@@ -6935,7 +6935,7 @@ __global__ void gpuScmultNonlinearKickKernel(double *coord, long nParticles,
                                              int stride,
                                              GPU_SCMULT_LINEAR_DATA data) {
   const double pi = 3.141592653589793238462643383279502884;
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   double x, y, z, k0, kickX, kickY;
 
@@ -7055,7 +7055,7 @@ __global__ void gpuTrwakePrepareKernel(double *coord, long nParticles,
                                        int stride, GPU_TRWAKE_DATA wake,
                                        double *time, double *pz, long *pbin,
                                        unsigned long long *binnedCount) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   double t;
   long ib;
@@ -7127,7 +7127,7 @@ __global__ void gpuTrwakeConvolveKernel(double *vtime,
                                         const double *wakeTable,
                                         GPU_TRWAKE_DATA wake,
                                         int plane) {
-  long ib = blockIdx.x * blockDim.x + threadIdx.x;
+  long ib = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long ib1, ib2, di;
   double sum = 0;
 
@@ -7172,7 +7172,7 @@ __global__ void gpuTrwakeApplyKicksKernel(double *coord, long nParticles,
                                           const long *pbin,
                                           const double *vtimeX,
                                           const double *vtimeY) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   long ib;
   double voltage;
@@ -7208,7 +7208,7 @@ __global__ void gpuCombinedWakePrepareKernel(
   double *coord, long nParticles, int stride, GPU_COMBINED_WAKE_DATA wake,
   double *time, double *pz, long *pbin,
   unsigned long long *binnedCount) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   double t;
   long ib;
@@ -7243,7 +7243,7 @@ __global__ void gpuPolynomialSeriesKernel(
   double *coord, long nParticles, int stride,
   GPU_POLYNOMIAL_SERIES_DATA data, const double *coefficient,
   const int32_t *exponent, unsigned long long *invalidCount) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double input[6], output[6], power;
   double *part;
   double cosTilt, sinTilt, x, xp, y, yp, qx, qy;
@@ -7332,7 +7332,7 @@ __global__ void gpuCombinedWakeHistogramPartialKernel(
   const double *coord, long nParticles, int stride,
   GPU_COMBINED_WAKE_DATA wake, const long *pbin, double *partial,
   long partialCount) {
-  long partialIndex = blockIdx.x * blockDim.x + threadIdx.x;
+  long partialIndex = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long first, last;
   double *local;
 
@@ -7379,7 +7379,7 @@ __global__ void gpuCombinedWakeHistogramReduceKernel(
 __global__ void gpuCombinedWakeConvolutionKernel(
   double *voltage, const double *histogram, const double *table,
   GPU_COMBINED_WAKE_DATA wake, long tableStride) {
-  long ib = blockIdx.x * blockDim.x + threadIdx.x;
+  long ib = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long channel = blockIdx.y;
   long ib1, ib2, di;
   double sum = 0;
@@ -7403,7 +7403,7 @@ __global__ void gpuCombinedWakeConvolutionKernel(
 __global__ void gpuCombinedWakeFrequencyMultiplyKernel(
   cufftDoubleComplex *output, const cufftDoubleComplex *driver,
   const cufftDoubleComplex *table, long frequencyPoints) {
-  long frequency = blockIdx.x * blockDim.x + threadIdx.x;
+  long frequency = (long)blockIdx.x * blockDim.x + threadIdx.x;
   cufftDoubleComplex result;
 
   if (frequency >= frequencyPoints)
@@ -7417,7 +7417,7 @@ __global__ void gpuCombinedWakeFrequencyMultiplyKernel(
 
 __global__ void gpuCombinedWakeDriverFirstBinKernel(
   const double *histogram, long bins, int *driverFirstBin) {
-  long index = blockIdx.x * blockDim.x + threadIdx.x;
+  long index = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long driver, bin;
 
   if (index >= 3 * bins || histogram[index] == 0)
@@ -7431,7 +7431,7 @@ __global__ void gpuCombinedWakeExtractConvolutionKernel(
   double *voltage, const double *convolution,
   const int *driverFirstBin, GPU_COMBINED_WAKE_DATA wake,
   long channel, long fftBins) {
-  long ib = blockIdx.x * blockDim.x + threadIdx.x;
+  long ib = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long convolutionIndex;
   int firstBin;
 
@@ -7449,7 +7449,7 @@ __global__ void gpuCombinedImpedanceMultiplyKernel(
   cufftDoubleComplex *channelFrequency,
   const cufftDoubleComplex *driverFrequency, const double *table,
   GPU_COMBINED_WAKE_DATA wake, long tableStride) {
-  long frequency = blockIdx.x * blockDim.x + threadIdx.x;
+  long frequency = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long channel = blockIdx.y;
   long frequencyPoints = wake.bins / 2 + 1;
   cufftDoubleComplex result = {0, 0};
@@ -7514,7 +7514,7 @@ __global__ void gpuCombinedWakeApplyKicksKernel(
   double *coord, long nParticles, int stride, GPU_COMBINED_WAKE_DATA wake,
   const double *time, const double *pz, const long *pbin,
   const double *voltage) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   long ib;
   double transversePz;
@@ -7579,7 +7579,7 @@ __global__ void gpuCsrCsbendWakeKernel(const double *ctHist,
                                        long trapazoidIntegration,
                                        long diSlippage,
                                        long diSlippage4) {
-  long iBin = blockIdx.x * blockDim.x + threadIdx.x;
+  long iBin = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double term1 = 0;
   double term2 = 0;
   double t1 = 0;
@@ -7652,7 +7652,7 @@ __global__ void gpuCsrCsbendKickInPlaceKernel(double *coord,
                                               double dct,
                                               double Po,
                                               double rho0) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   double ct, x, dp, f, binPosition;
   long iBin;
@@ -7682,7 +7682,7 @@ __global__ void gpuCsrHistogramKernel(double *coord,
                                       double binSize,
                                       long bins,
                                       double *hist) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double value;
   long iBin;
 
@@ -7699,7 +7699,7 @@ __global__ void gpuCsrHistogramKernel(double *coord,
 
 __global__ void gpuCenterTimeKernel(double *coord, long nParticles, int stride,
                                     double pCentral, double timeOffset, double cMks) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, p, beta;
 
   if (ip >= nParticles)
@@ -8032,8 +8032,8 @@ __global__ void gpuSimpleSumsPartialKernel(
 
   for (i = 0; i < 7; i++)
     localSum[i] = 0;
-  for (ip = blockIdx.x * blockDim.x + tid; ip < nParticles;
-       ip += gridDim.x * blockDim.x) {
+  for (ip = (long)blockIdx.x * blockDim.x + tid; ip < nParticles;
+       ip += (long)gridDim.x * blockDim.x) {
     double *part = coord + ip * stride;
     localCount++;
     if (mode != -1)
@@ -8270,8 +8270,8 @@ __global__ void gpuBeamStatisticsPartialKernel(
     localMin[i] = DBL_MAX;
     localMax[i] = -DBL_MAX;
   }
-  for (ip = blockIdx.x * blockDim.x + tid; ip < nParticles;
-       ip += gridDim.x * blockDim.x) {
+  for (ip = (long)blockIdx.x * blockDim.x + tid; ip < nParticles;
+       ip += (long)gridDim.x * blockDim.x) {
     double *part = coord + ip * stride;
     double value[7];
     double p = pCentral * (1 + part[5]);
@@ -8421,8 +8421,8 @@ __global__ void gpuCenteredBeamSumsPartialKernel(
   localCount = 0;
   for (i = 0; i < 28; i++)
     localProduct[i] = 0;
-  for (ip = blockIdx.x * blockDim.x + tid; ip < nParticles;
-       ip += gridDim.x * blockDim.x) {
+  for (ip = (long)blockIdx.x * blockDim.x + tid; ip < nParticles;
+       ip += (long)gridDim.x * blockDim.x) {
     double *part = coord + ip * stride;
     double value[7];
     value[0] = part[0] - centroid[0];
@@ -8628,7 +8628,7 @@ __global__ void gpuLongMinMaxKernel(double *coord, long nParticles, int stride,
 __global__ void gpuSortedBunchValidateKernel(
   const double *coord, long nParticles, int stride, int coordinateIndex,
   int *sorted) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   if (ip + 1 >= nParticles)
     return;
   if (static_cast<long>(coord[ip * stride + coordinateIndex]) >
@@ -8639,7 +8639,7 @@ __global__ void gpuSortedBunchValidateKernel(
 __global__ void gpuSortedBunchRangesKernel(
   const double *coord, long nParticles, int stride, int coordinateIndex,
   long minBunch, long nBuckets, long *start, long *count) {
-  long bucket = blockIdx.x * blockDim.x + threadIdx.x;
+  long bucket = (long)blockIdx.x * blockDim.x + threadIdx.x;
   long low, high, middle, first, last, target;
 
   if (bucket >= nBuckets)
@@ -10589,7 +10589,7 @@ __global__ void gpuCsbendTrackCheckedKernel(double *coord, long nParticles,
                                             int stride,
                                             unsigned long long *lostCount) {
   extern __shared__ unsigned long long partial[];
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long localCount = 0;
 
   if (ip < nParticles) {
@@ -10611,7 +10611,7 @@ __global__ void gpuCsbendTrackCheckedKernel(double *coord, long nParticles,
 __global__ void gpuCsbendSurvivorFlagKernel(double *coord, long nParticles,
                                             int stride,
                                             long *survivorPrefix) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (ip >= nParticles)
     return;
@@ -10622,7 +10622,7 @@ __global__ void gpuCsbendSurvivorFlagKernel(double *coord, long nParticles,
 __global__ void gpuCsbendStableTrackScatterKernel(
   double *coord, double *scratch, const long *survivorPrefix,
   long nParticles, int stride, long survivors) {
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, *target;
   long destination;
 
@@ -10639,7 +10639,7 @@ __global__ void gpuCsbendStableTrackScatterKernel(
 __global__ void gpuTuneProgramInitializeKernel(
   double *coordinate, long particles, int stride,
   GPU_TUNE_PARTICLE_STATUS *status, double *history, long turns) {
-  long id = blockIdx.x * blockDim.x + threadIdx.x;
+  long id = (long)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (id >= particles)
     return;
@@ -10710,7 +10710,7 @@ __global__ void gpuTuneProgramTurnKernel(
   double *coordinate, long particles, int stride, GPU_TUNE_PROGRAM program,
   GPU_TUNE_PARTICLE_STATUS *status, double *history, long turns, long turn,
   long turnOffset) {
-  long id = blockIdx.x * blockDim.x + threadIdx.x;
+  long id = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part;
   int alive;
 
@@ -10802,7 +10802,7 @@ __global__ void gpuCsrCsbendBodySliceCheckedKernel(double *coord,
                                                    const double *beta0,
                                                    unsigned long long *lostCount) {
   extern __shared__ unsigned long long partial[];
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long localCount = 0;
 
   if (ip < nParticles) {
@@ -10827,7 +10827,7 @@ __global__ void gpuCsrCsbendEnterSimpleCheckedKernel(
   double coordinateSign, int edge1Effect, double e1, double psi1,
   double rhoActual, double *beta0, unsigned long long *lostCount) {
   extern __shared__ unsigned long long partial[];
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long localCount = 0;
 
   if (ip < nParticles) {
@@ -10880,7 +10880,7 @@ __global__ void gpuCsrCsbendFinalizeSimpleCheckedKernel(
   double coordinateSign, int edge2Effect, double e2, double psi2,
   double rhoActual, unsigned long long *lostCount) {
   extern __shared__ unsigned long long partial[];
-  long ip = blockIdx.x * blockDim.x + threadIdx.x;
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long long localCount = 0;
 
   if (ip < nParticles) {

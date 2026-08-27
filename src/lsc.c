@@ -19,7 +19,7 @@
 #  include "gpu_lsc.h"
 #endif
 
-void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CHARGE *charge) {
+void track_through_lscdrift(double **part, int64_t np, LSCDRIFT *LSC, double Po, CHARGE *charge) {
   static double *Itime = NULL; /* array for histogram of particle density */
   static double *Ifreq = NULL; /* array for FFT of histogram of particle density */
   static double *Vtime = NULL; /* array for voltage acting on each bin */
@@ -29,7 +29,8 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
   static long max_np = 0;
   double *Vfreq, ZImag;
   short kickMode = 0;
-  long ib, nb, n_binned = 0, nfreq, iReal, iImag;
+  long nb, n_binned = 0, nfreq, iReal, iImag;
+  int64_t ib;
   double factor, tmin, tmax, dt, df, dk, a1, a2;
   double lengthLeft, Imin, Imax, kSC, Zmax;
   double Ia = 17045, Z0, length, k;
@@ -392,7 +393,7 @@ void track_through_lscdrift(double **part, long np, LSCDRIFT *LSC, double Po, CH
 #endif
 }
 
-void addLSCKick(double **part, long np, LSCKICK *LSC, double Po, CHARGE *charge,
+void addLSCKick(double **part, int64_t np, LSCKICK *LSC, double Po, CHARGE *charge,
                 double lengthScale, double dgammaOverGamma) {
   static double *Itime = NULL; /* array for histogram of particle density */
   static double *Ifreq = NULL; /* array for FFT of histogram of particle density */

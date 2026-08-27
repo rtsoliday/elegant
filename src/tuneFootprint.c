@@ -740,7 +740,8 @@ long doTuneFootprint(
   long my_ixy, my_idelta;
   static double **one_part = NULL;
   double p;
-  long n_part, lost;
+  int64_t n_part;
+  long lost;
   XY_TF_DATA *xyTfData;
   DELTA_TF_DATA *deltaTfData;
   long my_nxy, my_ndelta;
@@ -1286,7 +1287,7 @@ void outputTuneFootprint(VARY *control) {
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
       }
       if (control->n_elements_to_vary) {
-        long ip;
+        int64_t ip;
         for (ip = 0; ip < control->n_elements_to_vary; ip++)
           if (!SDDS_SetParameters(&sddsOut_delta, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, ip + 1,
                                   control->varied_quan_value[ip], -1)) {
@@ -1344,7 +1345,7 @@ void outputTuneFootprint(VARY *control) {
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
       }
       if (control->n_elements_to_vary) {
-        long ip;
+        int64_t ip;
         for (ip = 0; ip < control->n_elements_to_vary; ip++)
           if (!SDDS_SetParameters(&sddsOut_xy, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, ip + 1,
                                   control->varied_quan_value[ip], -1)) {

@@ -332,7 +332,7 @@ void initialize_fmultipole(FMULT *multipole) {
 
 long fmultipole_tracking(
   double **particle, /* initial/final phase-space coordinates */
-  long n_part,       /* number of particles */
+  int64_t n_part,       /* number of particles */
   FMULT *multipole,  /* multipole structure */
   double p_error,    /* p_nominal/p_central */
   double Po,
@@ -341,7 +341,8 @@ long fmultipole_tracking(
   /* double dummy; */
   double dzLoss = 0;
   long nSlices;
-  long i_part, i_top, is_lost = 0, i_order;
+  int64_t i_part, i_top;
+  long is_lost = 0, i_order;
   double *coord;
   double drift;
   double x = 0.0, xp = 0.0, y = 0.0, yp = 0.0;
@@ -467,7 +468,7 @@ long fmultipole_tracking(
 
 long multipole_tracking(
   double **particle, /* initial/final phase-space coordinates */
-  long n_part,       /* number of particles */
+  int64_t n_part,       /* number of particles */
   MULT *multipole,   /* multipole structure */
   double p_error,    /* p_nominal/p_central */
   double Po,
@@ -476,7 +477,8 @@ long multipole_tracking(
   double KnL;   /* integrated strength = L/(B.rho)*(Dx^n(By))_o for central momentum */
   long order;   /* order (n) */
   long nSlices; /* number of parts to split multipole into */
-  long i_part, i_kick, i, i_top, is_lost;
+  int64_t i_part, i_top;
+  long i_kick, i, is_lost;
   double sum_Fx, sum_Fy, qx, qy;
   double *coord;
   double drift;
@@ -703,7 +705,7 @@ long multipole_tracking(
 
 long multipole_tracking2(
   double **particle,  /* initial/final phase-space coordinates */
-  long n_part,        /* number of particles */
+  int64_t n_part,        /* number of particles */
   ELEMENT_LIST *elem, /* element pointer */
   double p_error,     /* p_nominal/p_central */
   double Po,
@@ -724,7 +726,7 @@ long multipole_tracking2(
   short skew[3] = {0, 0, 0};
   double dx, dy, dz; /* offsets of the multipole center */
   long nSlices, n_kicks, integ_order, iOrder;
-  long i_part, i_top;
+  int64_t i_part, i_top;
   double *coord;
   double drift;
   double tilt, pitch, yaw, rad_coef, isr_coef, xkick, ykick, dzLoss = 0;
@@ -1261,7 +1263,7 @@ long multipole_tracking2(
 int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xkick, double ykick,
                                   double Po, double rad_coef, double isr_coef,
                                   long *order, double *KnL, short *skew,
-                                  long n_parts, long i_part, double drift,
+                                  long n_parts, int64_t i_part, double drift,
                                   long integration_order,
                                   MULTIPOLE_DATA *multData, MULTIPOLE_DATA *edgeMultData,
                                   MULTIPOLE_DATA *steeringMultData,

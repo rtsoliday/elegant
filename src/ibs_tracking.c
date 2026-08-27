@@ -27,7 +27,7 @@ void SDDS_IBScatterSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long
 void dump_IBScatter(SDDS_TABLE *SDDS_table, IBSCATTER *IBS, long pass);
 void reset_IBS_output(ELEMENT_LIST *element);
 
-void slicebeam(double **coord, long np, double *time, double Po, long nslice, long *index, long *count, double *dt);
+void slicebeam(double **coord, int64_t np, double *time, double Po, long nslice, long *index, long *count, double *dt);
 void zeroslice(long islice, IBSCATTER *IBS);
 long computeSliceParameters(double C[6], double S[6][6], double **part, long *index, long start, long end, double Po);
 void forth_propagate_twiss(IBSCATTER *IBS, long islice, double betax0, double alphax0,
@@ -40,10 +40,11 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
   double *time = NULL;     /* array to record arrival time of each particle */
   double **part = NULL;    /* particle buffer for working bucket */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long max_np = 0, np;
-  long ip, iBucket, nBuckets = 0;
+  int64_t ip, nBuckets = 0;
+  long iBucket;
 
   long *index = NULL, *count = NULL;
   long istart, iend, ipart, icoord, ihcoord, islice;
@@ -691,7 +692,8 @@ void inflateEmittance(double **coord, double Po, double eta[4],
 
 void inflateEmittanceZ(double **coord, double Po, long isRing, double dt,
                        long istart, long iend, long *index, double zRate[3], double Duration) {
-  long i, ipart, np;
+  long ipart, np;
+  int64_t i;
   double c0, tc, dpc, *time, p, beta0, beta1;
 
 #if USE_MPI
@@ -950,8 +952,9 @@ void free_IBS(IBSCATTER *IBS) {
   return;
 }
 
-void slicebeam(double **coord, long np, double *time, double Po, long nslice, long *index, long *count, double *dt) {
-  long i, j, islice, total;
+void slicebeam(double **coord, int64_t np, double *time, double Po, long nslice, long *index, long *count, double *dt) {
+  long j, islice, total;
+  int64_t i;
   double tMaxAll, tMinAll;
   long *timeIndex;
 

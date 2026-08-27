@@ -367,7 +367,8 @@ long doFrequencyMap(
   long ix, iy, idelta, ip, turns;
   static double **one_part;
   double p;
-  long n_part, badPoint;
+  int64_t n_part;
+  long badPoint;
   double diffusion = 0;
   /* double diffusionRate; */
 #if USE_MPI

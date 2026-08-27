@@ -321,7 +321,8 @@ static SDDS_DEFINITION part_dist_para[PART_DIST_PARAMETERS] = {
 static void *part_dist_paraValue[PART_DIST_PARAMETERS];
 
 void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
-  long i, j, total_event, n_left, iElement = 0, elementIndex;
+  long j, total_event, n_left, iElement = 0, elementIndex;
+  int64_t i;
   ELEMENT_LIST *eptr;
   TSCATTER *tsptr;
   double pTemp[6], p1[6], p2[6], dens1, dens2;
@@ -342,7 +343,7 @@ void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
   long iProcessing = 0;
   short occurenceSeen = 0, noOccurenceSeen = 0, skip;
   double **lostParticle = NULL;
-  long nLost = 0;
+  int64_t nLost = 0;
 
   fiducialParticle = (double **)czarray_2d(sizeof(**fiducialParticle), 1, totalPropertiesPerParticle);
   if (!(eptr = beamline->elem_recirc))
@@ -753,7 +754,7 @@ void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
           /* particle must look as if it traveled from start of beamline to this location in order to get the right
            * phase at the rf cavities set up by the fiducial particle
            */
-          long ip;
+          int64_t ip;
           for (ip = 0; ip < iTotal; ip++)
             beam->particle[ip][4] += eptr->pred->end_pos;
         }
@@ -768,7 +769,8 @@ void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
 #endif
         if (beamline->closed_orbit) {
           /* If a closed orbit was computed, scatter with respect to that. */
-          long ip, k;
+          int64_t ip;
+          long k;
           for (ip = 0; ip < iTotal; ip++) {
             for (k = 0; k < 4; k++)
               beam->particle[ip][k] += beamline->closed_orbit[elementIndex].centroid[k];

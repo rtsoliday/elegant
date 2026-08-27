@@ -56,8 +56,8 @@ void track_through_ztransverse(double **part0, long np0, ZTRANSVERSE *ztransvers
   double *pz = NULL;
   double **part = NULL;    /* particle buffer for working bucket */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long max_np = 0;
   double *Vfreq = NULL, *Z = NULL;
   long nBuckets, iBucket, np;
@@ -71,7 +71,8 @@ void track_through_ztransverse(double **part0, long np0, ZTRANSVERSE *ztransvers
   double factor, tmin, tmax, dt, userFactor[2], rampFactor = 1;
   //double tmean;
   //static long not_first_call = -1;
-  long ip, i_pass0;
+  int64_t ip;
+  long i_pass0;
 #if defined(DEBUG)
   FILE *fp;
 #endif

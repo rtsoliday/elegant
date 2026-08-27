@@ -80,9 +80,9 @@ VTS long integrate_csbend_ordn(double *Qf, double *Qi, double *sigmaDelta2, doub
                            double *dz_lost, MULT_APERTURE_DATA *apData, short integration_order, ELEMENT_LIST *eptr);
 VTS long integrate_csbend_ordn_expanded(double *Qf, double *Qi, double *sigmaDelta2, double s, long n, long i, double rho0, double p0,
                                     double *dz_lost, MULT_APERTURE_DATA *apData, short integration_order, ELEMENT_LIST *eptr);
-VTS void convertFromCSBendCoords(double **part, long np, double rho0,
+VTS void convertFromCSBendCoords(double **part, int64_t np, double rho0,
                              double cos_ttilt, double sin_ttilt, long ctMode);
-VTS void convertToCSBendCoords(double **part, long np, double rho0,
+VTS void convertToCSBendCoords(double **part, int64_t np, double rho0,
                            double cos_ttilt, double sin_ttilt, long ctMode);
 void applyFilterTable(double *function, long bins, double dt, long fValues,
                       double *fFreq, double *fReal, double *fImag);
@@ -94,7 +94,7 @@ VTS void convertFromDipoleCanonicalCoordinates(double *Qi, long expanded);
 
 VTS long inversePoissonCDF(double mu, double C);
 
-VTS void setUpCsbendPhotonOutputFile(CSBEND *csbend, char *rootname, long np);
+VTS void setUpCsbendPhotonOutputFile(CSBEND *csbend, char *rootname, int64_t np);
 VTS void logPhoton(double Ep, double x, double xp, double y, double yp, double theta, double thetaf, double rho);
 VTS SDDS_DATASET *SDDSphotons;
 VTS long photonRows;
@@ -789,7 +789,7 @@ void computeCSBENDFieldCoefficients(double *b, double *c,
       */
 }
 
-long trackCSBENDWithLargeRadius(double **part, long n_part, CSBEND *csbend, double p_error,
+long trackCSBENDWithLargeRadius(double **part, int64_t n_part, CSBEND *csbend, double p_error,
                                 double Po, double **accepted,
                                 double z_start, double *sigmaDelta2, char *rootname, MAXAMP *maxamp,
                                 APCONTOUR *apContour, APERTURE_DATA *apFileData,
@@ -879,7 +879,7 @@ long trackCSBENDWithLargeRadius(double **part, long n_part, CSBEND *csbend, doub
   }
 }
 
-long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_error,
+long track_through_csbend(double **part, int64_t n_part, CSBEND *csbend, double p_error,
                           double Po, double **accepted,
                           double z_start, double *sigmaDelta2, char *rootname, MAXAMP *maxamp,
                           APCONTOUR *apContour, APERTURE_DATA *apFileData,
@@ -890,7 +890,8 @@ long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_e
                           long iSlice,
                           ELEMENT_LIST *eptr) {
   double h;
-  long i_part, i_top, particle_lost, j;
+  int64_t i_part, i_top;
+  long particle_lost, j;
   double rho, s, Fx, Fy;
   double x, xp, y, yp, dp, dp0;
   double n, fse, dp_prime;
@@ -2597,7 +2598,7 @@ static long csrResidentSimpleInitialTransformAvailable(
 
 #ifdef HAVE_GPU
 long track_through_csbendCSR_cuda_resident_entry(
-  double **part, long n_part, CSRCSBEND *csbend, double p_error,
+  double **part, int64_t n_part, CSRCSBEND *csbend, double p_error,
   double Po, double **accepted, double z_start, double z_end,
   CHARGE *charge, char *rootname, MAXAMP *maxamp, APCONTOUR *apContour,
   APERTURE_DATA *apFileData, ELEMENT_LIST *eptr) {
@@ -2615,7 +2616,7 @@ long track_through_csbendCSR_cuda_resident_entry(
 }
 #endif
 
-long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, double p_error,
+long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, double p_error,
                              double Po, double **accepted, double z_start, double z_end,
                              CHARGE *charge, char *rootname, MAXAMP *maxamp, APCONTOUR *apContour,
                              APERTURE_DATA *apFileData, ELEMENT_LIST *eptr) {
@@ -2634,7 +2635,8 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
   double ctLower, ctUpper, dct, slippageLength, phiBend, slippageLength13;
   long diSlippage, diSlippage4;
   long nBins, nBinned = 0;
-  long i_part, i_top, kick, j;
+  int64_t i_part, i_top;
+  long kick, j;
   double rho = 0.0, Fx, Fy;
   double fse, dp_prime;
   double tilt, etilt, cos_ttilt, sin_ttilt, ttilt;
@@ -2742,7 +2744,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
     if (!csbend->useMatrix)
       exactDrift(part, n_part, csbend->length);
     else {
-      long i;
+      int64_t i;
       if (isSlave || !distributedBeam) {
         for (i = 0; i < n_part; i++) {
           part[i][0] += csbend->length * part[i][1];
@@ -3629,7 +3631,7 @@ long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, doub
 
       if (csbend->particleFileActive && kick % csbend->particleOutputInterval == 0) {
         if (isMaster) {
-          long ip;
+          int64_t ip;
           /* dump particle data at this location */
           if (!SDDS_StartPage(csbend->SDDSpart, n_part) ||
               !SDDS_SetParameters(csbend->SDDSpart, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
@@ -4233,13 +4235,14 @@ long binParticleCoordinate_s(double **hist, long *maxBins,
 
 void computeSaldinFdNorm(double **FdNorm, double **x, long *n, double sMax, long ns,
                          double Po, double radius, double angle, double dx, char *normMode);
-long track_through_driftCSR_Stupakov(double **part, long np, CSRDRIFT *csrDrift,
+long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDrift,
                                      double Po, double **accepted, double zStart, CHARGE *charge, char *rootname);
 
-long track_through_driftCSR(double **part, long np, CSRDRIFT *csrDrift,
+long track_through_driftCSR(double **part, int64_t np, CSRDRIFT *csrDrift,
                             double Po, double **accepted, double zStart,
                             double revolutionLength, CHARGE *charge, char *rootname) {
-  long iPart, iKick, iBin, binned = 0, nKicks, iSpreadMode = 0;
+  int64_t iPart;
+  long iKick, iBin, binned = 0, nKicks, iSpreadMode = 0;
   double *coord, p, beta, dz, ct0 = 0.0, factor, dz0, dzFirst;
   double ctmin, ctmax, spreadFactor, dct;
   double zTravel, attenuationLength, thetaRad = 0.0, sigmaZ, overtakingLength, criticalWavelength, wavelength = 0.0;
@@ -4290,7 +4293,7 @@ long track_through_driftCSR(double **part, long np, CSRDRIFT *csrDrift,
     if (isSlave || !distributedBeam) {
 #endif
     if (csrDrift->linearOptics) {
-      long i;
+      int64_t i;
       for (i = 0; i < np; i++) {
         part[i][0] += csrDrift->length * part[i][1];
         part[i][2] += csrDrift->length * part[i][3];
@@ -4832,8 +4835,8 @@ double Saldin5354Factor(double xh, double sh, double phihm, double xhLowerLimit)
   return f;
 }
 
-void exactDrift(double **part, long np, double length) {
-  long i;
+void exactDrift(double **part, int64_t np, double length) {
+  int64_t i;
   double *coord;
 
 #ifdef HAVE_GPU
@@ -4871,9 +4874,10 @@ void DumpStupakovOutput(char *filename, SDDS_DATASET *SDDSout, long *active,
 double SolveForPhiStupakovDiffSum = 0;
 long SolveForPhiStupakovDiffCount = 0;
 
-long track_through_driftCSR_Stupakov(double **part, long np, CSRDRIFT *csrDrift,
+long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDrift,
                                      double Po, double **accepted, double zStart, CHARGE *charge, char *rootname) {
-  long iPart, iKick, iBin, binned = 0, nKicks;
+  int64_t iPart;
+  long iKick, iBin, binned = 0, nKicks;
   long nCaseC, nCaseD1, nCaseD2;
   double ctLower, ctUpper, ds;
   long nBins, maxBins, nBinned, diBin;
@@ -5576,10 +5580,10 @@ void dipoleFringeKHwangRLindberg(double *Qf, double *Qi,
  * the purpose of generating output.  It ignores misalignments.
  */
 
-void convertFromCSBendCoords(double **part, long np, double rho0,
+void convertFromCSBendCoords(double **part, int64_t np, double rho0,
                              double cos_ttilt, double sin_ttilt,
                              long ctMode) {
-  long ip;
+  int64_t ip;
   double x, y, xp, yp, *coord;
 
   for (ip = 0; ip < np; ip++) {
@@ -5604,9 +5608,9 @@ void convertFromCSBendCoords(double **part, long np, double rho0,
  * convertFromCSBendCoords
  */
 
-void convertToCSBendCoords(double **part, long np, double rho0,
+void convertToCSBendCoords(double **part, int64_t np, double rho0,
                            double cos_ttilt, double sin_ttilt, long ctMode) {
-  long ip;
+  int64_t ip;
   double x, y, xp, yp, *coord;
 
   for (ip = 0; ip < np; ip++) {
@@ -6444,12 +6448,12 @@ double pickNormalizedPhotonEnergy(double RN) {
   return value;
 }
 
-void addCorrectorRadiationKick(double **coord, long np, ELEMENT_LIST *elem, long type, double Po, double *sigmaDelta2, long disableISR) {
+void addCorrectorRadiationKick(double **coord, int64_t np, ELEMENT_LIST *elem, long type, double Po, double *sigmaDelta2, long disableISR) {
   double F2;
   double kick=0, length=0;
   double isrCoef, radCoef, dp, p, beta0, beta1, deltaFactor;
   short isr, sr;
-  long i;
+  int64_t i;
 
 #ifdef HAVE_GPU
   if (getElementOnGpu()) {
@@ -6567,7 +6571,7 @@ void convolveArrays1(double *output, long n, double *a1, double *a2) {
   }
 }
 
-void setUpCsbendPhotonOutputFile(CSBEND *csbend, char *rootname, long np) {
+void setUpCsbendPhotonOutputFile(CSBEND *csbend, char *rootname, int64_t np) {
   TRACKING_CONTEXT tc;
 #if USE_MPI
   SDDSphotons = NULL;

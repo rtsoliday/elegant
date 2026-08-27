@@ -63,11 +63,12 @@ void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po
   double *time = NULL;     /* array to record arrival time of each particle */
   double **part = NULL;    /* particle buffer for working bucket */
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
-  long **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
-  long *npBucket = NULL;   /* array to record how many particles are in each bucket */
+  int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
+  int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long max_np = 0;
   double *Vfreq, *Z;
-  long np = 0, ip, n_binned, nfreq, iReal, iImag, ib, nb = 0;
+  int64_t np = 0, ip, n_binned;
+  long nfreq, iReal, iImag, ib, nb = 0;
   double factor, tmin, tmax, tmean, dt, dt1, dgam, rampFactor;
   long i_pass0;
   long iBucket, nBuckets;
@@ -830,9 +831,9 @@ long checkPointSpacing(double *x, long n, double tolerance) {
 }
 
 #if USE_MPI
-double computeAverage_p(double *data, long np, MPI_Comm mpiComm) {
+double computeAverage_p(double *data, int64_t np, MPI_Comm mpiComm) {
   double tSum = 0;
-  long ip;
+  int64_t ip;
   double error = 0.0;
   long np_total;
 

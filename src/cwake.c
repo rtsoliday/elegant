@@ -182,10 +182,11 @@ void track_through_cwake(double **part0, long np0, CWAKE *cw, double *PoInput,
   double *time0 = NULL, *time = NULL, *pz = NULL;
   double **part = NULL;
   long *ibParticle = NULL;
-  long **ipBucket = NULL;
-  long *npBucket = NULL;
+  int64_t **ipBucket = NULL;
+  int64_t *npBucket = NULL;
   long ib, nb = 0;
-  long iBucket, nBuckets = 0, max_np = 0, ip, np, iw;
+  long iBucket, nBuckets = 0, iw;
+  int64_t max_np = 0, ip, np;
   double tmin, tmax, tmean = 0, dt = 0, Po, rampFactor;
   long needI = 0, needXI = 0, needYI = 0, needTransverse = 0;
 #if USE_MPI

@@ -72,7 +72,8 @@ static void momentumOffsetFunctionBatched(
   double **coord, long np, long pass, long i_elem, long n_elem,
   ELEMENT_LIST *eptr, double *pCentral) {
   MALIGN mal;
-  long id, ip, target, turn;
+  long id, target, turn;
+  long ip;
   (void)i_elem;
   (void)n_elem;
 
@@ -1222,7 +1223,8 @@ FILE *fpoffset = NULL;
 #  endif
 
 static void momentumOffsetFunctionOmni(double **coord, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral) {
-  long id, ie, ip, particleID;
+  long id, ie, particleID;
+  long ip;
   MALIGN mal;
 #  ifdef DEBUG
   if (fpoffset == NULL) {

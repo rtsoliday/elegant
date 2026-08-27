@@ -18,10 +18,10 @@
 #  include "gpu/gpu_sreffects.h"
 #endif
 
-void track_SReffects(double **coord, long np, SREFFECTS *SReffects0, double Po,
+void track_SReffects(double **coord, int64_t np, SREFFECTS *SReffects0, double Po,
                      TWISS *twiss, RADIATION_INTEGRALS *radIntegrals,
                      long lossOnly) {
-  long ip;
+  int64_t ip;
   double Fx, Fy, Fdelta, Ddelta, P, t;
   double gamma2Ratio, gammaRatio;
   double Srxp, Sryp, Srdelta;

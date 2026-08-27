@@ -51,7 +51,7 @@
 #include "matlib.h"
 
 void (*set_up_derivatives(void *field, long field_type, double *kscale,
-                          double z_start, double *Z_end, double *tau_start, double **part, long n_part,
+                          double z_start, double *Z_end, double *tau_start, double **part, int64_t n_part,
                           double Po, double *X_limit, double *Y_limit, double *accuracy,
                           long *n_steps))(double *, double *, double);
 void (*set_up_stochastic_effects(long field_type))(double *, double, double);
@@ -94,7 +94,7 @@ void setupRftmEz0FromFile(RFTMEZ0 *rftmEz0, double frequency, double length);
 void setupRftmEz0SolenoidFromFile(RFTMEZ0 *rftmEz0, double length, double k);
 void setupMapSolenoidFromFile(MAP_SOLENOID *mapSol, double length);
 double exit_function(double *qp, double *q, double phase);
-double *select_fiducial(double **part, long n_part, char *mode);
+double *select_fiducial(double **part, int64_t n_part, char *mode);
 void select_integrator(char *desired_method);
 void input_impulse_tw_linac(double *P, double *q);
 void output_impulse_tw_linac(double *P, double *q);
@@ -177,7 +177,7 @@ double HermitePolynomial2ndDeriv(double x, long n);
 
 long motion(
             double **part,
-            long n_part,
+            int64_t n_part,
             void *field,
             long field_type,
             double *pCentral,
@@ -193,7 +193,8 @@ long motion(
   static double accuracy[6], tiny[6];
   double tolerance, hmax, hrec;
   double *coord;
-  long i_part, i_top, rk_return = 0;
+  int64_t i_part, i_top;
+  long rk_return = 0;
   double kscale, *P, Po, gamma;
   static double gamma0, P0[3];
   long n_steps;
@@ -428,7 +429,7 @@ void (*set_up_derivatives(
                           double *Z_end_inner_scope,
                           double *tau_start,
                           double **part,
-                          long n_part,
+                          int64_t n_part,
                           double P_central_inner_scope,
                           double *X_limit_inner_scope,
                           double *Y_limit_inner_scope,
@@ -1482,8 +1483,8 @@ static char *known_mode[N_KNOWN_MODES] = {
 double best_particle[MAX_PROPERTIES_PER_PARTICLE];
 #endif
 
-double *select_fiducial(double **part, long n_part, char *var_mode_in) {
-  long i;
+double *select_fiducial(double **part, int64_t n_part, char *var_mode_in) {
+  int64_t i;
   long i_best = 0, i_var, fid_mode;
   double value, best_value, sum;
   char *var, *mode, *var_mode, *ptr;

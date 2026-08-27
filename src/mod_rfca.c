@@ -16,9 +16,9 @@
 #include "track.h"
 #include "SDDS.h"
 
-long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central, double zEnd,
+long modulated_rf_cavity(double **part, int64_t np, MODRF *modrf, double P_central, double zEnd,
 			 long pass, long nPasses) {
-  long ip;
+  int64_t ip;
   double amPhase, pmPhase;
   double P, gamma, dgamma, phase, length, volt;
   double *coord, t, t0, omega0, omega, beta_i, tau, dt, tAve = 0;

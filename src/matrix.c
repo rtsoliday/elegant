@@ -205,11 +205,12 @@ void null_matrices(VMATRIX *M, unsigned long flags) {
 }
 
 void track_particles(double **final, VMATRIX *M, double **initial,
-                     long n_part) {
+                     int64_t n_part) {
   double sum1;
   double *Tij, sum, coord_j;
   long k, j;
-  long i, l, i_part;
+  long i, l;
+  int64_t i_part;
   double coord_k, coord_jk;
   double **Qij, *Qijk;
   double *C, **R, ***T, ****Q;

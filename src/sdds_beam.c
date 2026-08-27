@@ -15,6 +15,7 @@
  */
 #include "mdb.h"
 #include "track.h"
+#include <limits.h>
 #include "sdds_beam.h"
 
 static long input_type_code;
@@ -49,7 +50,7 @@ static char *elegantColumn[6] = {
 #define IEC_T 4
 #define IEC_P 5
 
-long get_sdds_particles(double ***particle, int32_t *id_slots_per_bunch, long one_dump, long n_skip);
+long get_sdds_particles(double ***particle, int64_t *id_slots_per_bunch, long one_dump, long n_skip);
 
 static char **inputFile = NULL;    /* input filenames */
 static long inputFiles = 0;        /* number of input files */
@@ -176,7 +177,9 @@ long new_sdds_beam(
                    OUTPUT_FILES *output,
                    long flags) {
   double p, t_offset, gamma, beta, p_central;
-  long i_store, i, j, k;
+  long j, k;
+  int64_t i_store;
+  int64_t i;
   static long new_particle_data, generate_new_bunch;
   double r, theta, pr, pz, pphi, delta;
   double sin_theta, cos_theta, path, *pti;
@@ -649,28 +652,52 @@ long new_sdds_beam(
       if (!distributedBeam && new_particle_data) { /* Each processor will hold a copy of the whole beam */
         long np_total, np = beam->n_to_track;
         double **data_all = NULL, **data = beam->particle;
-        int *offset_array = (int *)tmalloc(n_processors * sizeof(*offset_array));
         long *n_vector_long = (long *)tmalloc(n_processors * sizeof(*n_vector_long));
+        /* MPI-4 provides large-count Allgatherv (MPI_Count recvcounts, MPI_Aint
+         * displs). Use it so the whole-beam gather is not limited to INT_MAX total
+         * elements (~INT_MAX/properties particles). On pre-MPI-4 libraries the
+         * counts/displacements are int, so we guard the total and fail fast. */
+#  if defined(MPI_VERSION) && MPI_VERSION >= 4
+        MPI_Count *n_vector = (MPI_Count *)tmalloc(n_processors * sizeof(*n_vector));
+        MPI_Aint *offset_array = (MPI_Aint *)tmalloc(n_processors * sizeof(*offset_array));
+#  else
+        int *offset_array = (int *)tmalloc(n_processors * sizeof(*offset_array));
         int *n_vector = (int *)tmalloc(n_processors * sizeof(*n_vector));
+#  endif
 
 #  ifdef MPI_DEBUG
         printf("Preparing to share all particles across all processors\n");
 #  endif
         MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 
+#  if !(defined(MPI_VERSION) && MPI_VERSION >= 4)
+        /* Pre-MPI-4: the cumulative int offset over all ranks is the tightest limit
+         * (~INT_MAX/properties total particles). See doc/elegant.tex. */
+        if (np_total > (long)(INT_MAX / totalPropertiesPerParticle))
+          bombElegant("Total particle count exceeds the MPI int element-count/displacement "
+                      "limit (~INT_MAX/properties) for whole-beam gather and this MPI is pre-4.0. "
+                      "Use a distributed beam or an MPI-4 library.", NULL);
+#  endif
+
         data_all = (double **)resize_czarray_2d((void **)data_all, sizeof(double), (long)(np_total), totalPropertiesPerParticle);
 
         MPI_Allgather(&np, 1, MPI_LONG, n_vector_long, 1, MPI_LONG, MPI_COMM_WORLD);
         offset_array[0] = 0;
         for (i = 0; i < n_processors - 1; i++) {
-          n_vector[i] = totalPropertiesPerParticle * n_vector_long[i];
+          n_vector[i] = (int64_t)totalPropertiesPerParticle * n_vector_long[i];
           offset_array[i + 1] = offset_array[i] + n_vector[i];
         }
-        n_vector[n_processors - 1] = totalPropertiesPerParticle * n_vector_long[n_processors - 1];
+        n_vector[n_processors - 1] = (int64_t)totalPropertiesPerParticle * n_vector_long[n_processors - 1];
 
         if (!beam->n_original) /* A dummy memory is allocated on Master */
           data = (double **)czarray_2d(sizeof(**data), 1, totalPropertiesPerParticle);
-        MPI_Allgatherv(&data[0][0], totalPropertiesPerParticle * np, MPI_DOUBLE, &data_all[0][0], n_vector, offset_array, MPI_DOUBLE, MPI_COMM_WORLD);
+#  if defined(MPI_VERSION) && MPI_VERSION >= 4
+        MPI_Allgatherv_c(&data[0][0], (MPI_Count)((int64_t)totalPropertiesPerParticle * np), MPI_DOUBLE,
+                         &data_all[0][0], n_vector, offset_array, MPI_DOUBLE, MPI_COMM_WORLD);
+#  else
+        MPI_Allgatherv(&data[0][0], totalPropertiesPerParticle * np, MPI_DOUBLE,
+                       &data_all[0][0], n_vector, offset_array, MPI_DOUBLE, MPI_COMM_WORLD);
+#  endif
 
         if (data)
           free_czarray_2d((void **)data, np, totalPropertiesPerParticle);
@@ -842,11 +869,11 @@ long new_sdds_beam(
  *     for elegant input:  (*particle)[i] = (x, xp, y, yp, t, p) for ith particle
  */
 long get_sdds_particles(double ***particle,
-                        int32_t *id_slots_per_bunch,
+                        int64_t *id_slots_per_bunch,
                         long one_dump, /* read only one page */
                         long n_skip    /* number of pages to skip */
                         ) {
-  int32_t i;
+  int64_t i;
   long np_max, np, np_new, rows, dump_rejected;
   long retval, data_seen;
   double **data = NULL;
@@ -1013,7 +1040,7 @@ long get_sdds_particles(double ***particle,
       }
       if (*id_slots_per_bunch == 0) {
         if ((i = SDDS_GetParameterIndex(&SDDS_input, "IDSlotsPerBunch")) >= 0 &&
-            !SDDS_GetParameterAsLong(&SDDS_input, "IDSlotsPerBunch", id_slots_per_bunch)) {
+            !SDDS_GetParameterAsLong64(&SDDS_input, "IDSlotsPerBunch", id_slots_per_bunch)) {
           bombElegant("Error: IDSlotsPerBunch parameter exists but could not be read. Check data type.\n", NULL);
         }
         printf("%ld particle ID slots per bunch\n", (long)(*id_slots_per_bunch));
@@ -1175,8 +1202,8 @@ long get_sdds_particles(double ***particle,
       return (np);
     }
 
-    void adjust_arrival_time_data(double **coord, long np, double Po, long center_t, long flip_t) {
-      long ip;
+    void adjust_arrival_time_data(double **coord, int64_t np, double Po, long center_t, long flip_t) {
+      int64_t ip;
       double P, beta;
       double tave;
 

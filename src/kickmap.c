@@ -26,7 +26,8 @@ long trackKickMap(
   KICKMAP *map,
   double zStart,
   double *sigmaDelta2) {
-  long ip, iTop, ik, nKicks, kickSign = 1;
+  int64_t ip, iTop;
+  long ik, nKicks, kickSign = 1;
   double *coord;
   double dxp, dyp;
   double length;
