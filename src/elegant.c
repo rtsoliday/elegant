@@ -95,21 +95,21 @@ void showUsageOrGreeting(unsigned long mode) {
 #if USE_MPI
 #  if HAVE_GPU
   char *USAGE = "usage: mpirun -np <number of processes> gpu-Pelegant <inputfile> [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is gpu-Pelegant 2026.4Beta1 ALPHA RELEASE, "__DATE__
+  char *GREETING = "This is gpu-Pelegant 2026.4.0 ALPHA RELEASE, "__DATE__
     ", by M. Borland, K. Amyx, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, J.R. King, N. Kuklev, R. Lindberg, I.V. Pogorelov, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.\nParallelized by Y. Wang, H. Shang, and M. Borland.";
 #  else
   char *USAGE = "usage: mpirun -np <number of processes> Pelegant <inputfile> [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is elegant 2026.4Beta1 "__DATE__
+  char *GREETING = "This is elegant 2026.4.0 "__DATE__
     ", by M. Borland, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, N. Kuklev, R. Lindberg, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.\nParallelized by Y. Wang, H. Shang, and M. Borland.";
 #  endif
 #else
 #  if HAVE_GPU
   char *USAGE = "usage: gpu-elegant {<inputfile>|-pipe=in} [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>] [-ompThreads=<positive-integer>]";
-  char *GREETING = "This is gpu-elegant 2026.4Beta1 ALPHA RELEASE, "__DATE__
+  char *GREETING = "This is gpu-elegant 2026.4.0 ALPHA RELEASE, "__DATE__
     ", by M. Borland, K. Amyx, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, J.R. King, N. Kuklev, R. Lindberg, I.V. Pogorelov, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.";
 #  else
   char *USAGE = "usage: elegant {<inputfile>|-pipe=in} [-macro=<tag>=<value>,[...]] [-rpnDefns=<filename>] [-configuration=<filename>]";
-  char *GREETING = "This is elegant 2026.4Beta1, "__DATE__
+  char *GREETING = "This is elegant 2026.4.0, "__DATE__
     ", by M. Borland, J. Calvey, M. Carla', N. Carmignani, AJ Dick, Z. Duan, M. Ehrlichman, L. Emery, W. Guo, N. Kuklev, R. Lindberg, V. Sajaev, R. Soliday, Y.-P. Sun, M. Wallbank, C.-X. Wang, Y. Wang, Y. Wu, and A. Xiao.";
 #  endif
 #endif
@@ -1002,6 +1002,7 @@ int main(int argc, char **argv)
           run_conditions.concat_order = concat_order;
           run_conditions.print_statistics = print_statistics;
           run_conditions.combine_bunch_statistics = combine_bunch_statistics;
+          run_conditions.coupledSigmaOutput = coupled_sigma;
           run_conditions.wrap_around = wrap_around;
           run_conditions.showElementTiming = show_element_timing;
           run_conditions.monitorMemoryUsage = monitor_memory_usage;
@@ -2477,9 +2478,10 @@ double find_beam_p_central(char *input) {
   return psum / rows;
 }
 
-void center_beam_on_coords(double **part, long np, double *coord, long center_dp) {
+void center_beam_on_coords(double **part, int64_t np, double *coord, long center_dp) {
   double offset;
-  long i, j, lim;
+  long j, lim;
+  int64_t i;
   double centroid[6];
 
   compute_centroids(centroid, part, np);
@@ -2500,8 +2502,9 @@ void center_beam_on_coords(double **part, long np, double *coord, long center_dp
 #endif
 }
 
-void offset_beam_by_coords(double **part, long np, double *coord, long offset_dp) {
-  long i, j, lim;
+void offset_beam_by_coords(double **part, int64_t np, double *coord, long offset_dp) {
+  long j, lim;
+  int64_t i;
 
   if (!np)
     return;
@@ -2672,6 +2675,7 @@ void print_dictionary_entry(FILE *fp, long type, long latex_form, long SDDS_form
         else
           fprintf(fp, "  %.15g", entity_description[type].parameter[j].number);
         break;
+      case IS_INT64:
       case IS_LONG:
       case IS_SHORT:
         if (latex_form && entity_description[type].parameter[j].integer == 0)
