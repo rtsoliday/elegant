@@ -212,6 +212,7 @@ char *entity_name[N_TYPES] = {
   "POLAR",
   "IMPEDANCE",
   "CWAKE",
+  "CBSCAT",
 };
 
 char *madcom_name[N_MADCOMS] = {
@@ -356,8 +357,9 @@ char *entity_text[N_TYPES] = {
   "A simple dipole edge matrix",
   "A canonically-integrated dipole/quadrupole corrector.",
   "Sets polarization of a beam if spin-tracking is enabled",
-  "A single-pass impedance combining longitudinal monopole, transverse dipole, and transverse quadrupole channels read from one SDDS file.  Equivalent to a co-located ZLONGIT and one or more ZTRANSVERSE elements, but performs particle binning and bunch assignment only once.",
-  "A single-pass wake combining longitudinal monopole, transverse dipole, transverse quadrupole, and transverse position-independent (constant) deflecting channels read from one SDDS file.  Equivalent to a co-located WAKE and one or more TRWAKE elements, but performs particle binning and bunch assignment only once."
+  "Combines monopole, dipole, and quadrupole impedance components.",
+  "Combines monopole, dipole, and quadrupole wake components.",
+  "Compton back-scattering of a counter-propagating laser off the beam."
 };
 
 QUAD quad_example;
@@ -712,6 +714,7 @@ PARAMETER mark_param[N_MARK_PARAMS] = {
   {"DX", "M", IS_DOUBLE, 0, (long)((char *)&mark_example.dx), NULL, 0.0, 0, "non-functional misalignment (e.g., for girder)"},
   {"DY", "M", IS_DOUBLE, 0, (long)((char *)&mark_example.dy), NULL, 0.0, 0, "non-functional misalignment (e.g., for girder)"},
   {"FITPOINT", "", IS_SHORT, 0, (long)((char *)&mark_example.fitpoint), NULL, 0.0, 0, "Supply local values of Twiss parameters, moments, floor coordinates, matrices, etc. for optimization?"},
+  {"COUPLED_FITPOINT", "", IS_SHORT, 0, (long)((char *)&mark_example.coupled_fitpoint), NULL, 0.0, 0, "Also supply coupled (eigen-)emittances and coupled lattice functions of the tracked beam (requires FITPOINT)?"},
 };
 
 MATR matr_example;
@@ -765,8 +768,8 @@ PARAMETER rfdf_param[N_RFDF_PARAMS] = {
   {"PHASE_NOISE_GROUP", "", IS_LONG, 0, (long)((char *)&rfdf_example.phaseNoiseGroup), NULL, 0.0, 0, "Group number for phase noise."},
   {"START_PASS", "", IS_LONG, 0, (long)((char *)&rfdf_example.startPass), NULL, 0.0, -1, "If non-negative, pass on which to start modeling cavity."},
   {"END_PASS", "", IS_LONG, 0, (long)((char *)&rfdf_example.endPass), NULL, 0.0, -1, "If non-negative, pass on which to end modeling cavity."},
-  {"START_PID", "", IS_LONG, 0, (long)((char *)&rfdf_example.startPID), NULL, 0.0, -1, "If non-negative, lowest particle ID to which deflection is applied."},
-  {"END_PID", "", IS_LONG, 0, (long)((char *)&rfdf_example.endPID), NULL, 0.0, -1, "If non-negative, highest particle ID to which deflection is applied."},
+  {"START_PID", "", IS_INT64, 0, (long)((char *)&rfdf_example.startPID), NULL, 0.0, -1, "If non-negative, lowest particle ID to which deflection is applied."},
+  {"END_PID", "", IS_INT64, 0, (long)((char *)&rfdf_example.endPID), NULL, 0.0, -1, "If non-negative, highest particle ID to which deflection is applied."},
   {"DRIFT_MATRIX", "", IS_SHORT, 0, (long)((char *)&rfdf_example.driftMatrix), NULL, 0.0, 0, "If non-zero, calculations involving matrices assume this element is a drift space."},
   {"DX", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&rfdf_example.dx), NULL, 0.0, 0, "misalignment"},
   {"DY", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&rfdf_example.dy), NULL, 0.0, 0, "misalignment"},
@@ -901,8 +904,8 @@ WATCH watch_example;
 /* names for watch point */
 PARAMETER watch_param[N_WATCH_PARAMS] = {
   {"FRACTION", "", IS_DOUBLE, 0, (long)((char *)&watch_example.fraction), NULL, 1.0, 0, "fraction of particles to dump (coordinate mode)"},
-  {"START_PID", "", IS_LONG, 0, (long)((char *)&watch_example.startPID), NULL, 0.0, -1, "starting particleID for particles to dump"},
-  {"END_PID", "", IS_LONG, 0, (long)((char *)&watch_example.endPID), NULL, 0.0, -1, "ending particleID for particles to dump"},
+  {"START_PID", "", IS_INT64, 0, (long)((char *)&watch_example.startPID), NULL, 0.0, -1, "starting particleID for particles to dump"},
+  {"END_PID", "", IS_INT64, 0, (long)((char *)&watch_example.endPID), NULL, 0.0, -1, "ending particleID for particles to dump"},
   {"INTERVAL", "", IS_LONG, 0, (long)((char *)&watch_example.interval), NULL, 0.0, 1, "interval for data output (in turns)"},
   {"START_PASS", "", IS_LONG, 0, (long)((char *)&watch_example.start_pass), NULL, 0.0, 0, "pass on which to start"},
   {"END_PASS", "", IS_LONG, 0, (long)((char *)&watch_example.end_pass), NULL, 0.0, -1, "pass on which to end (inclusive).  Ignored if negative."},
@@ -956,8 +959,8 @@ PARAMETER malign_param[N_MALIGN_PARAMS] = {
   {"DP", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&malign_example.dp), NULL, 0.0, 0, "delta p/pCentral"},
   {"DE", "", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&malign_example.de), NULL, 0.0, 0, "delta gamma/gammaCentral"},
   {"ON_PASS", "", IS_LONG, 0, (long)((char *)&malign_example.on_pass), NULL, 0.0, -1, "pass on which to apply"},
-  {"START_PID", "", IS_LONG, 0, (long)((char *)&malign_example.startPID), NULL, 0.0, -1, "starting particleID for particles to affect. By default, all particles are affected."},
-  {"END_PID", "", IS_LONG, 0, (long)((char *)&malign_example.endPID), NULL, 0.0, -1, "ending particleID for particles to affect. By default, all particles are affected."},
+  {"START_PID", "", IS_INT64, 0, (long)((char *)&malign_example.startPID), NULL, 0.0, -1, "starting particleID for particles to affect. By default, all particles are affected."},
+  {"END_PID", "", IS_INT64, 0, (long)((char *)&malign_example.endPID), NULL, 0.0, -1, "ending particleID for particles to affect. By default, all particles are affected."},
   {"FORCE_MODIFY_MATRIX", "", IS_SHORT, 0, (long)((char *)&malign_example.forceModifyMatrix), NULL, 0.0, 0, "modify the matrix even if on_pass>=0"},
   {"FLOOR", "", IS_SHORT, 0, (long)((char *)&malign_example.floor), NULL, 0.0, 0, "if non-zero, floor coordinates are changed, which is probably a bad idea"},
   {"EXCLUDE_ORBIT", "", IS_SHORT, 0, (long)((char *)&malign_example.excludeOrbit), NULL, 0.0, 0, "if non-zero, effects on orbit calculations are excluded when ON_PASS=0."}
@@ -2656,8 +2659,8 @@ PARAMETER histogram_param[N_HISTOGRAM_PARAMS] = {
   {"NORMALIZE", "", IS_SHORT, 0, (long)((char *)&histogram_example.normalize), NULL, 0.0, 1, "normalize histogram with bin size and number of particles?"},
   {"DISABLE", "", IS_SHORT, 0, (long)((char *)&histogram_example.disable), NULL, 0.0, 0, "If nonzero, no output will be generated."},
   {"SPARSE", "", IS_SHORT, 0, (long)((char *)&histogram_example.sparse), NULL, 0.0, 0, "If nonzero, only bins with non-zero counts will be output."},
-  {"START_PID", "", IS_LONG, 0, (long)((char *)&histogram_example.startPID), NULL, 0.0, -1, "starting particleID for particles to include"},
-  {"END_PID", "", IS_LONG, 0, (long)((char *)&histogram_example.endPID), NULL, 0.0, -1, "ending particleID for particles to include"},
+  {"START_PID", "", IS_INT64, 0, (long)((char *)&histogram_example.startPID), NULL, 0.0, -1, "starting particleID for particles to include"},
+  {"END_PID", "", IS_INT64, 0, (long)((char *)&histogram_example.endPID), NULL, 0.0, -1, "ending particleID for particles to include"},
   {"BUNCH_SERIES", "", IS_SHORT, 0, (long)((char *)&histogram_example.bunchSeries), NULL, 0.0, 0, "If nonzero, successive instances of the same HISTOGRAM element are assigned to successive bunches. Overrides START_PID and END_PID values."},
 };
 
@@ -3534,8 +3537,8 @@ PARAMETER mrfdf_param[N_MRFDF_PARAMS] = {
   {"PHASE_REFERENCE", "", IS_LONG, 0, (long)((char *)&mrfdf_example.phase_reference), NULL, 0.0, 0, "phase reference number (to link with other time-dependent elements)"},
   {"START_PASS", "", IS_LONG, 0, (long)((char *)&mrfdf_example.startPass), NULL, 0.0, -1, "If non-negative, pass on which to start modeling cavity."},
   {"END_PASS", "", IS_LONG, 0, (long)((char *)&mrfdf_example.endPass), NULL, 0.0, -1, "If non-negative, pass on which to end modeling cavity."},
-  {"START_PID", "", IS_LONG, 0, (long)((char *)&mrfdf_example.startPID), NULL, 0.0, -1, "If non-negative, lowest particle ID to which deflection is applied."},
-  {"END_PID", "", IS_LONG, 0, (long)((char *)&mrfdf_example.endPID), NULL, 0.0, -1, "If non-negative, highest particle ID to which deflection is applied."},
+  {"START_PID", "", IS_INT64, 0, (long)((char *)&mrfdf_example.startPID), NULL, 0.0, -1, "If non-negative, lowest particle ID to which deflection is applied."},
+  {"END_PID", "", IS_INT64, 0, (long)((char *)&mrfdf_example.endPID), NULL, 0.0, -1, "If non-negative, highest particle ID to which deflection is applied."},
 };
 
 EHCOR ehcor_example;
@@ -3748,8 +3751,8 @@ SLICE_POINT slice_point_example;
 /* names for slice point */
 PARAMETER slice_point_param[N_SLICE_POINT_PARAMS] = {
   {"N_SLICES", "", IS_LONG, 0, (long)((char *)&slice_point_example.nSlices), NULL, 0.0, 10, "number of slices"},
-  {"START_PID", "", IS_LONG, 0, (long)((char *)&slice_point_example.startPID), NULL, 0.0, -1, "starting particleID for particles to dump"},
-  {"END_PID", "", IS_LONG, 0, (long)((char *)&slice_point_example.endPID), NULL, 0.0, -1, "ending particleID for particles to dump"},
+  {"START_PID", "", IS_INT64, 0, (long)((char *)&slice_point_example.startPID), NULL, 0.0, -1, "starting particleID for particles to dump"},
+  {"END_PID", "", IS_INT64, 0, (long)((char *)&slice_point_example.endPID), NULL, 0.0, -1, "ending particleID for particles to dump"},
   {"INTERVAL", "", IS_LONG, 0, (long)((char *)&slice_point_example.interval), NULL, 0.0, 1, "interval for data output (in turns)"},
   {"START_PASS", "", IS_LONG, 0, (long)((char *)&slice_point_example.start_pass), NULL, 0.0, 0, "pass on which to start"},
   {"END_PASS", "", IS_LONG, 0, (long)((char *)&slice_point_example.end_pass), NULL, 0.0, -1, "pass on which to end (inclusive).  Ignored if negative."},
@@ -4124,6 +4127,31 @@ PARAMETER dqcor_param[N_DQCOR_PARAMS] = {
   {"TRACKING_MATRIX", "", IS_SHORT, 0, (long)((char *)&dqcor_example.trackingBasedMatrix), NULL, 0.0, 0, "If nonzero, gives order of tracking-based matrix up to third order to be used for twiss parameters etc.  If zero, 2nd-order analytical matrix is used."},
 };
 
+CBSCAT cbscat_example;
+/* Compton-backscattering element physical parameters */
+PARAMETER cbscat_param[N_CBSCAT_PARAMS] = {
+  {"LASER_WAVELENGTH", "M", IS_DOUBLE, 0, (long)((char *)&cbscat_example.laserWavelength), NULL, 8.0e-7, 0, "Wavelength of the collision laser (sets the incident photon energy E_h = h c / lambda)."},
+  {"PULSE_ENERGY", "J", IS_DOUBLE, 0, (long)((char *)&cbscat_example.pulseEnergy), NULL, 0.0, 0, "Energy per laser pulse.  Used to set the photon number N_ph = PULSE_ENERGY/E_h unless N_PHOTONS>0."},
+  {"SIGMA_X", "M", IS_DOUBLE, 0, (long)((char *)&cbscat_example.sigmax), NULL, 1.0e-5, 0, "Laser transverse rms size in x at focus."},
+  {"SIGMA_Y", "M", IS_DOUBLE, 0, (long)((char *)&cbscat_example.sigmay), NULL, 1.0e-5, 0, "Laser transverse rms size in y at focus."},
+  {"LASER_PULSE_LENGTH", "M", IS_DOUBLE, 0, (long)((char *)&cbscat_example.sigmaz), NULL, 1.0e-3, 0, "Laser rms pulse length (c*sigma_t)."},
+  {"DX", "M", IS_DOUBLE, 0, (long)((char *)&cbscat_example.dx), NULL, 0.0, 0, "Laser transverse offset in x at focus."},
+  {"DY", "M", IS_DOUBLE, 0, (long)((char *)&cbscat_example.dy), NULL, 0.0, 0, "Laser transverse offset in y at focus."},
+  {"FOCUS_POSITION", "M", IS_DOUBLE, 0, (long)((char *)&cbscat_example.focusPosition), NULL, 0.0, 0, "Longitudinal position of the laser focus relative to the element (S0)."},
+  {"LASER_DELAY", "S", IS_DOUBLE, 0, (long)((char *)&cbscat_example.delay), NULL, 0.0, 0, "Laser-pulse timing offset relative to the reference particle."},
+  {"COLLISION_ANGLE", "RAD", IS_DOUBLE, 0, (long)((char *)&cbscat_example.theta0), NULL, PI, 0, "Angle between the electron and laser directions.  PI = head-on; other values give a crossing angle."},
+  {"COLLISION_AZIMUTH", "RAD", IS_DOUBLE, 0, (long)((char *)&cbscat_example.azimuth), NULL, 0.0, 0, "Azimuthal orientation of the crossing plane, measured from +x toward +y (0 = horizontal x-z plane).  Combined with COLLISION_ANGLE it sets the laser propagation direction."},
+  {"FACTOR", "", IS_DOUBLE, 0, (long)((char *)&cbscat_example.factor), NULL, 1.0, 0, "Scale factor applied to the computed scatter rate."},
+  {"N_PHOTONS", "", IS_DOUBLE, 0, (long)((char *)&cbscat_example.nPhotons), NULL, 0.0, 0, "If >0, overrides the laser photon number computed from PULSE_ENERGY."},
+  {"N_STEPS", "", IS_LONG, 0, (long)((char *)&cbscat_example.nSteps), NULL, 0.0, 21, "Number of longitudinal quadrature points for the luminosity overlap integral."},
+  {"STARTONPASS", "", IS_LONG, 0, (long)((char *)&cbscat_example.startOnPass), NULL, 0.0, 0, "Pass number to start on."},
+  {"ENDONPASS", "", IS_LONG, 0, (long)((char *)&cbscat_example.endOnPass), NULL, 0.0, -1, "Pass number to end on (inclusive).  Ignored if negative."},
+  {"PASS_INTERVAL", "", IS_LONG, 0, (long)((char *)&cbscat_example.passInterval), NULL, 0.0, 1, "Apply scattering only every PASS_INTERVAL-th pass, counting from STARTONPASS (and no later than ENDONPASS).  1 (default) = every pass in the window."},
+  {"CROSS_SECTION", "", IS_STRING, 0, (long)((char *)&cbscat_example.crossSection), "klein-nishina", 0.0, 0, "Differential cross section for angle sampling: \"klein-nishina\" or \"thomson\"."},
+  {"EXACT_RECOIL", "", IS_LONG, 0, (long)((char *)&cbscat_example.exactRecoil), NULL, 0.0, 0, "If nonzero, apply the single-scatter recoil by an exact per-particle Lorentz boost to the electron rest frame (exact Compton energy-momentum conservation), instead of the default approximate lab-frame Eq. (4) mapping.  The exact treatment matters when eps=E'/(m_e c^2) is not small (hard inverse-Compton/gamma-ray regimes)."},
+  {"PHOTON_OUTPUT_FILE", "", IS_STRING, 0, (long)((char *)&cbscat_example.photonOutputFile), NULL, 0.0, 0, "Optional SDDS file for the emitted (back-scattered) photons.  No file is written if blank."},
+};
+
 /* END OF ELEMENT DICTIONARY ARRAYS */
 
 /* array of parameter structures */
@@ -4209,7 +4237,7 @@ ELEMENT_DESCRIPTION entity_description[N_TYPES] = {
   {N_FMULT_PARAMS, MAT_LEN_NCAT | IS_MAGNET | SPIN_TRACKING, sizeof(FMULT), fmult_param},
   {N_WAKE_PARAMS, MAY_CHANGE_ENERGY | BACKTRACK | MPALGORITHM | GPU_SUPPORT | COLLECTIVE_EFFECTS, sizeof(WAKE), wake_param},
   {N_TRWAKE_PARAMS, 0 | BACKTRACK | MPALGORITHM | GPU_SUPPORT | COLLECTIVE_EFFECTS, sizeof(TRWAKE), trwake_param},
-  {N_TUBEND_PARAMS, 0, sizeof(TUBEND), tubend_param},
+  {N_TUBEND_PARAMS, NO_DICT_OUTPUT, sizeof(TUBEND), tubend_param},
   {N_CHARGE_PARAMS, BACKTRACK | MPALGORITHM | NO_APERTURE, sizeof(CHARGE), charge_param},
   {N_PFILTER_PARAMS, MPALGORITHM | NO_APERTURE, sizeof(PFILTER), pfilter_param},
   {N_HISTOGRAM_PARAMS, RUN_ZERO_PARTICLES | BACKTRACK | MPALGORITHM | NO_APERTURE | GPU_SUPPORT, sizeof(HISTOGRAM), histogram_param},
@@ -4285,6 +4313,7 @@ ELEMENT_DESCRIPTION entity_description[N_TYPES] = {
   {N_POLAR_PARAMS, DONT_CONCAT | SPIN_TRACKING | MPALGORITHM, sizeof(POLAR), polar_param},
   {N_IMPEDANCE_PARAMS, COLLECTIVE_EFFECTS | GPU_SUPPORT, sizeof(IMPEDANCE), impedance_param},
   {N_CWAKE_PARAMS, MAY_CHANGE_ENERGY | BACKTRACK | MPALGORITHM | COLLECTIVE_EFFECTS | GPU_SUPPORT, sizeof(CWAKE), cwake_param},
+  {N_CBSCAT_PARAMS, 0, sizeof(CBSCAT), cbscat_param},
 };
 
 void compute_offsets() {
@@ -4300,6 +4329,9 @@ void compute_offsets() {
         break;
       case IS_LONG:
         typeSize = sizeof(long);
+        break;
+      case IS_INT64:
+        typeSize = sizeof(int64_t);
         break;
       case IS_SHORT:
         typeSize = sizeof(short);
