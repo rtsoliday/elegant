@@ -98,7 +98,7 @@ $(LIB_DIR):
 	mkdir -p $(LIB_DIR)
 
 $(OBJ_DIR):
-	mkdir $(OBJ_DIR)
+	mkdir -p $(OBJ_DIR)
 
 ifeq ($(OS), Windows)
 
