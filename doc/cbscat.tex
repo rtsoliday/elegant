@@ -1,0 +1,140 @@
+This element models Compton back-scattering of a counter-propagating (or crossing-angle) laser pulse off the electron
+beam, following and extending Pan {\em et al.}  \cite{PhysRevAccelBeams.22.040702}.  It is a zero-length, per-particle
+stochastic element: on each pass every particle has a probability of undergoing a single Compton scatter, and if it does
+its transverse angles and fractional momentum deviation are changed according to Eq.~(4) of that reference.  The element
+may optionally record the emitted (back-scattered) photons to an SDDS file for $\gamma$-source spectrum studies.
+
+\paragraph{Recoil model.}
+Let $\gamma$ and $\beta$ be the Lorentz factor and velocity of the {\em individual}
+electron (computed from its own momentum $P=(1+\delta)P_0$, not the reference
+value, so a beam with energy spread scatters with the correct per-electron
+kinematics), $E_e=\gamma m_e c^2$ its energy, $E_h = h c/\lambda$ the lab-frame
+laser-photon energy (set by \verb|LASER_WAVELENGTH|), and $\theta_0$ the collision
+angle between the electron and laser directions (\verb|COLLISION_ANGLE|;
+$\theta_0=\pi$ is head-on).  Define the rest-frame incident photon energy
+\begin{equation}
+E' = \gamma E_h (1 - \beta\cos\theta_0).
+\end{equation}
+For a scatter with photon polar angle $\theta$ (measured from the electron
+direction) and azimuth $\phi$, the coordinate changes applied are
+\begin{eqnarray}
+x' &=& x'_0 - \frac{E'}{E_e\beta}\sin\theta\cos\phi, \\
+y' &=& y'_0 - \frac{E'}{E_e\beta}\sin\theta\sin\phi, \\
+\delta &=& \delta_0 + \frac{\gamma^2 E_h}{E_e\beta}(\cos\theta_0-\beta)
+                    - \frac{\gamma E'}{E_e\beta}\cos\theta .
+\end{eqnarray}
+The change in $\delta$ is applied so as to preserve the particle arrival time.
+The maximum energy transferred to the photon (the Compton edge) is recovered at
+$\theta=0$ and is $E_{\gamma,\mathrm{max}}\approx 4\gamma^2 E_h$ for a head-on
+collision.
+
+The Eq.~(4) mapping above is a linearized lab-frame recoil: the transverse terms
+are the paraxial projection $x'=p_x/p_z$, and the energy change is evaluated using
+the {\em incident} rest-frame photon energy $E'$.  It is therefore exact only in
+the Thomson limit $\epsilon\equiv E'/(m_e c^2)\to 0$; for $\epsilon$ not small it
+overestimates the electron energy loss because it omits the rest-frame Compton
+down-shift.  Setting \verb|EXACT_RECOIL|$=1$ replaces this mapping with an exact,
+per-particle treatment: the electron and incident photon four-momenta are boosted
+into the electron rest frame (boost along the electron's own direction), the
+photon is scattered there with exact Compton energy--momentum conservation,
+\begin{equation}
+E'_s = \frac{E'}{1+\epsilon\,(1-\cos\theta)},
+\end{equation}
+and the outgoing electron and photon four-momenta (formed by conservation) are
+boosted back to the lab, where the electron momentum is mapped to $(x',y',\delta)$
+without approximation.  This matches the analytic Compton edge
+$4\gamma^2 E_h/(1+2\epsilon)$ and should be used in the hard inverse-Compton /
+$\gamma$-ray regime ($\epsilon\gtrsim 0.1$); at small $\epsilon$ it agrees with the
+default to a few percent.  The overlap integral and the sampling of $\theta$ are
+identical in both modes.  The default (\verb|EXACT_RECOIL|$=0$) retains the
+Eq.~(4) mapping for backward compatibility.
+
+\paragraph{Cross section.}
+The scattered-photon polar angle is sampled from the differential cross section
+selected by \verb|CROSS_SECTION|:
+\begin{itemize}
+\item \verb|"thomson"|: $d\sigma/d\Omega \propto (1+\cos^2\theta)$, with total
+  cross section $\sigma_T = \frac{8\pi}{3}r_e^2$~\cite{Jackson}.
+\item \verb|"klein-nishina"| (default): the full Klein--Nishina
+  expression~\cite{KleinNishina1929} with $\epsilon = E'/(m_e c^2)$, and the
+  corresponding Klein--Nishina total cross section.
+\end{itemize}
+In the keV rest-frame-energy regime typical of optical-laser Compton sources the
+two choices agree to order $\epsilon$; both are provided for generality.
+
+\paragraph{Scatter probability (luminosity overlap).}
+The mean number of scatters for a given particle on a given pass is computed as a
+luminosity-overlap integral of that particle's path through the Gaussian laser
+pulse,
+\begin{equation}
+\mu = \sigma_{\rm tot}\,\text{\tt FACTOR}\,\frac{1-\beta\cos\theta_0}{\beta}
+      \int n_{\rm ph}\big(\mathbf{r}_e(z),t_e(z)\big)\,dz,
+\end{equation}
+integrated over the electron beamline coordinate $z$, where $n_{\rm ph}$ is the
+laser photon density, $(1-\beta\cos\theta_0)$ is the relative-velocity (flux)
+factor --- exact for any angle --- and the $1/\beta$ converts the time integral to
+a path-length integral.  The photon number is $N_{\rm ph}=$\verb|PULSE_ENERGY|$/E_h$
+unless overridden by \verb|N_PHOTONS|.
+
+The overlap is evaluated in the \emph{laser propagation frame} rather than the
+beamline frame, so the geometry is correct for any collision angle, including a
+$90^\circ$ side collision.  The propagation direction and two transverse laser
+axes are built from \verb|COLLISION_ANGLE| ($\theta_0$, the angle between $+\hat z$
+and the laser propagation; $\theta_0=\pi$ is head-on) and \verb|COLLISION_AZIMUTH|
+($\phi_0$, measured from $+\hat x$ toward $+\hat y$, so $\phi_0=0$ is a crossing in
+the horizontal $x$--$z$ plane and $\phi_0=\pi/2$ a vertical crossing):
+\begin{eqnarray}
+\hat{\mathbf k} &=& (\sin\theta_0\cos\phi_0,\ \sin\theta_0\sin\phi_0,\ \cos\theta_0)
+   \qquad\text{(propagation; \tt LASER\_PULSE\_LENGTH along here)},\\
+\hat{\mathbf e}_1 &=& (\cos\theta_0\cos\phi_0,\ \cos\theta_0\sin\phi_0,\ -\sin\theta_0)
+   \qquad\text{(in-plane transverse; {\tt SIGMA\_X})},\\
+\hat{\mathbf e}_2 &=& (-\sin\phi_0,\ \cos\phi_0,\ 0)
+   \hspace{6.2em}\text{(out-of-plane transverse; {\tt SIGMA\_Y})}.
+\end{eqnarray}
+Thus \verb|SIGMA_X| and \verb|SIGMA_Y| are the laser rms spot sizes along
+$\hat{\mathbf e}_1$ (in the crossing plane) and $\hat{\mathbf e}_2$ (perpendicular
+to it), and \verb|LASER_PULSE_LENGTH| is the rms length along the propagation
+direction $\hat{\mathbf k}$.  At head-on this reduces to $\hat{\mathbf k}=-\hat z$,
+$\hat{\mathbf e}_1=\hat x$, $\hat{\mathbf e}_2=\hat y$, i.e.\ the familiar
+pulse-length-along-$z$ picture.  Two focusing effects are included simultaneously:
+\begin{itemize}
+\item {\em Hourglass:} the laser rms spot size grows away from the waist
+  \emph{along the propagation direction} as
+  $\sigma(s)=\sigma_0\sqrt{1+(s/z_R)^2}$, where $s$ is the distance from the waist
+  measured along $\hat{\mathbf k}$, with Rayleigh range $z_R = 4\pi\sigma_0^2/\lambda$
+  computed separately for \verb|SIGMA_X| and \verb|SIGMA_Y| from
+  \verb|LASER_WAVELENGTH|.  The waist location is set by \verb|FOCUS_POSITION|
+  ($S_0$, along $\hat z$) together with the transverse offsets \verb|DX|, \verb|DY|.
+\item {\em Crossing geometry:} the electron's separation from the moving pulse
+  center is projected onto $(\hat{\mathbf k},\hat{\mathbf e}_1,\hat{\mathbf e}_2)$,
+  so both the reduced interaction length of an oblique collision and the exact flux
+  factor $(1-\beta\cos\theta_0)/\beta$ are captured.
+\end{itemize}
+Each particle's true (velocity-corrected) arrival time, referenced to the bunch
+centroid and offset by \verb|LASER_DELAY| (a time in seconds), sets its overlap,
+so head/tail and off-axis particles sample different, hourglass-broadened overlaps.
+Because the exponent is quadratic in $z$, the quadrature is centered on the overlap
+peak and spans $\pm 5$ effective sigma about it, evaluated over \verb|N_STEPS|
+points (the full hourglass-broadened density is used at each point).  A single
+scatter per pass is applied (valid for $\mu\ll 1$); if $\mu>1$ it is clamped to $1$
+and a warning is issued.  The overall rate can be scaled with \verb|FACTOR|.
+
+\paragraph{Photon output.}
+If \verb|PHOTON_OUTPUT_FILE| is given, the emitted back-scattered photons are
+written to an SDDS file with columns \verb|Ep| (photon energy, eV), \verb|x|,
+\verb|xp|, \verb|y|, and \verb|yp|.  Photon output is available in the serial
+version of {\tt elegant} only.
+
+The output filename may be an incomplete filename.  This means it may contain one instance of the string format
+specification ``\%s'' and one occurence of an integer format specification (e.g., ``\%ld'').  {\tt elegant} will replace
+the former with the rootname (see \verb|run_setup|) and the latter with the element's occurrence number.
+This allows labeling the files from different interaction points with sequential indices.
+
+\paragraph{Notes.}
+The element applies at most one Compton event per particle per pass, consistent
+with Eq.~(4).  For multi-pass (storage-ring) use, \verb|STARTONPASS| and
+\verb|ENDONPASS| gate the passes on which scattering occurs, and
+\verb|PASS_INTERVAL| further restricts scattering to every \verb|PASS_INTERVAL|-th
+pass counting from \verb|STARTONPASS| (the default of 1 acts on every pass in the
+window).
+
