@@ -2496,7 +2496,7 @@ double optimization_function(double *value, long *invalid) {
 #endif
   }
 
-  if (beamline->flags & BEAMLINE_RADINT_WANTED) {    
+  if (beamline->flags & BEAMLINE_RADINT_WANTED) {
     if (radint_mem[0] == -1) {
       for (i = 0; i < 14; i++)
 	radint_mem[i] = rpn_create_mem(radint_name[i], 0);
@@ -3379,7 +3379,8 @@ void SDDS_PrintStatistics(SDDS_TABLE *popLogPtr, long iteration, double best_val
 #endif
 
 double particleComparisonForOptimization(BEAM *beam, OPTIMIZATION_DATA *optimData, long *invalid) {
-  long i, j;
+  long j;
+  long i;
 
   *invalid = 0;
 
