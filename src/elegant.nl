@@ -38,6 +38,7 @@
     long suppress_parameter_defaults = 0;
     STRING rfc_reference_output = NULL;
     long combine_bunch_statistics = 0;
+    long coupled_sigma = 0;
     long wrap_around = 1;
     long final_pass = 0;
     long default_order = 2;
