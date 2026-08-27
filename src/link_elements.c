@@ -260,6 +260,10 @@ void add_element_links(ELEMENT_LINKS *links, NAMELIST_TEXT *nltext, LINE_LIST *b
       links->initial_value[n_links] =
         *((long *)(eptr[0]->p_elem + entity_description[eptr[0]->type].parameter[links->target_param[n_links]].offset));
       break;
+    case IS_INT64:
+      links->initial_value[n_links] =
+        *((int64_t *)(eptr[0]->p_elem + entity_description[eptr[0]->type].parameter[links->target_param[n_links]].offset));
+      break;
     case IS_SHORT:
       links->initial_value[n_links] =
         *((short *)(eptr[0]->p_elem + entity_description[eptr[0]->type].parameter[links->target_param[n_links]].offset));
@@ -277,6 +281,10 @@ void add_element_links(ELEMENT_LINKS *links, NAMELIST_TEXT *nltext, LINE_LIST *b
       case IS_LONG:
         links->baseline_value[n_links][j] =
           *((long *)(eptr[j]->p_elem + entity_description[eptr[j]->type].parameter[links->target_param[n_links]].offset));
+        break;
+      case IS_INT64:
+        links->baseline_value[n_links][j] =
+          *((int64_t *)(eptr[j]->p_elem + entity_description[eptr[j]->type].parameter[links->target_param[n_links]].offset));
         break;
       case IS_SHORT:
         links->baseline_value[n_links][j] =
@@ -548,6 +556,13 @@ long assert_element_links(ELEMENT_LINKS *links, RUN *run, LINE_LIST *beamline, l
             sprintf(s, "%s0", entity_description[sour[i_elem]->type].parameter[i_item].name);
             rpn_store(value0, NULL, rpn_create_mem(s, 0));
             break;
+          case IS_INT64:
+            value = *((int64_t *)(p_elem + entity_description[sour[i_elem]->type].parameter[i_item].offset));
+            rpn_store(value, NULL, rpn_create_mem(entity_description[sour[i_elem]->type].parameter[i_item].name, 0));
+            value0 = *((int64_t *)(sour[i_elem]->p_elem0 + entity_description[sour[i_elem]->type].parameter[i_item].offset));
+            sprintf(s, "%s0", entity_description[sour[i_elem]->type].parameter[i_item].name);
+            rpn_store(value0, NULL, rpn_create_mem(s, 0));
+            break;
           case IS_SHORT:
             value = *((short *)(p_elem + entity_description[sour[i_elem]->type].parameter[i_item].offset));
             rpn_store(value, NULL, rpn_create_mem(entity_description[sour[i_elem]->type].parameter[i_item].name, 0));
@@ -575,6 +590,9 @@ long assert_element_links(ELEMENT_LINKS *links, RUN *run, LINE_LIST *beamline, l
           break;
         case IS_LONG:
           presentValue = *((long *)(p_elem + entity_description[elem_type].parameter[param].offset));
+          break;
+        case IS_INT64:
+          presentValue = *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset));
           break;
         case IS_SHORT:
           presentValue = *((short *)(p_elem + entity_description[elem_type].parameter[param].offset));
@@ -615,6 +633,10 @@ long assert_element_links(ELEMENT_LINKS *links, RUN *run, LINE_LIST *beamline, l
           case IS_LONG:
             *((long *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
               nearestInteger(value);
+            break;
+          case IS_INT64:
+            *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
+              nearestInteger64(value);
             break;
           case IS_SHORT:
             *((short *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
@@ -691,6 +713,10 @@ void reset_element_links(ELEMENT_LINKS *links, RUN *run, LINE_LIST *beamline) {
         *((long *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
           nearestInteger(links->baseline_value[i_link][i_elem]);
         break;
+      case IS_INT64:
+        *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
+          nearestInteger64(links->baseline_value[i_link][i_elem]);
+        break;
       case IS_SHORT:
         *((short *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
           nearestInteger(links->baseline_value[i_link][i_elem]);
@@ -739,6 +765,9 @@ void rebaseline_element_links(ELEMENT_LINKS *links, RUN *run, LINE_LIST *beamlin
         break;
       case IS_LONG:
         links->baseline_value[i_link][i_elem] = *((long *)(p_elem + entity_description[elem_type].parameter[param].offset));
+        break;
+      case IS_INT64:
+        links->baseline_value[i_link][i_elem] = *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset));
         break;
       case IS_SHORT:
         links->baseline_value[i_link][i_elem] = *((short *)(p_elem + entity_description[elem_type].parameter[param].offset));

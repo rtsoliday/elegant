@@ -231,6 +231,13 @@ long applyElementRamps(RAMP_DATA *rampData, LINE_LIST *beamline, double pCentral
                rampData->element[iMod]->name,
                entity_description[type].parameter[param].name, (long)(value + 0.5), iPass, (long)(rampData->unperturbedValue[iMod]));
       break;
+    case IS_INT64:
+      *((int64_t *)(p_elem + entity_description[type].parameter[param].offset)) = value + 0.5;
+      if (rampData->flags[iMod] & VERBOSE_RAMP)
+        printf("Ramp value for element %s, parameter %s is %" PRId64 " at pass %ld (originally %" PRId64 ")\n",
+               rampData->element[iMod]->name,
+               entity_description[type].parameter[param].name, (int64_t)(value + 0.5), iPass, (int64_t)(rampData->unperturbedValue[iMod]));
+      break;
     case IS_SHORT:
       *((short *)(p_elem + entity_description[type].parameter[param].offset)) = value + 0.5;
       if (rampData->flags[iMod] & VERBOSE_RAMP)

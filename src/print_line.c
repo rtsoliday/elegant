@@ -46,6 +46,12 @@ void print_line(FILE *fp, LINE_LIST *lptr) {
                 *(long *)(eptr->p_elem + parameter[j].offset),
                 parameter[j].unit);
         break;
+      case IS_INT64:
+        fprintf(fp, "    %s = %" PRId64 " %s\n",
+                parameter[j].name,
+                *(int64_t *)(eptr->p_elem + parameter[j].offset),
+                parameter[j].unit);
+        break;
       case IS_SHORT:
         fprintf(fp, "    %s = %hd %s\n",
                 parameter[j].name,
@@ -91,6 +97,12 @@ void print_elem(FILE *fp, ELEMENT_LIST *eptr) {
       fprintf(fp, "    %s = %ld %s\n",
               parameter[j].name,
               *(long *)(eptr->p_elem + parameter[j].offset),
+              parameter[j].unit);
+      break;
+    case IS_INT64:
+      fprintf(fp, "    %s = %" PRId64 " %s\n",
+              parameter[j].name,
+              *(int64_t *)(eptr->p_elem + parameter[j].offset),
               parameter[j].unit);
       break;
     case IS_SHORT:
@@ -161,6 +173,12 @@ void print_elem_list(FILE *fp, ELEMENT_LIST *eptr) {
           fprintf(fp, "    %s = %ld %s\n",
                   parameter[j].name,
                   *(long *)(eptr->p_elem + parameter[j].offset),
+                  parameter[j].unit);
+          break;
+        case IS_INT64:
+          fprintf(fp, "    %s = %" PRId64 " %s\n",
+                  parameter[j].name,
+                  *(int64_t *)(eptr->p_elem + parameter[j].offset),
                   parameter[j].unit);
           break;
         case IS_SHORT:
