@@ -14,7 +14,6 @@ SCRIPTS = analyzeMagnets \
 	bremsstrahlungLifetimeDetailed \
 	bucketParameters \
 	computeCoherentFraction \
-	computeGeneralizedGradients \
 	computeQuadFringeIntegrals \
 	computeSCTuneSpread \
 	computeTwissBeats \
@@ -63,6 +62,7 @@ SCRIPTS = analyzeMagnets \
 PROD = astra2elegant \
 	centroid2floor \
 	computeCBGGE \
+	computeLBGGE \
 	computeRBGGE \
 	csrImpedance \
 	curvedDipoleFringeCalc \
@@ -98,8 +98,8 @@ else
   SVN_VERSION=GIT_$(shell git log --oneline | wc -l | sed 's/^[[:space:]]*//')
 endif
 
-CFLAGS +=  -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I../physics -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" 
-CCFLAGS +=  -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I../physics -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -I.
+CFLAGS +=  -I../physics -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" 
+CCFLAGS +=  -I../physics -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -I.
 
 ifneq ($(OS), Linux)
   PROD += sddsupsample
