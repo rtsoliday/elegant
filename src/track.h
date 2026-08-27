@@ -416,7 +416,7 @@ typedef struct {
     double centroid[7];  /* centroid[i] = Sum(x[i]/n), i=6 is time */
     BEAM_SUMS2 *beamSums2; /* second-order correlations, etc. */
     SPIN_SUMS *spinSums;   /* centroid and rms for spin */
-    long n_part;         /* number of particles */
+    int64_t n_part;         /* number of particles */
     double z;            /* z location */
     double p0;           /* reference momentum (beta*gamma) */
     double charge;       /* charge in beam */
@@ -425,7 +425,7 @@ typedef struct {
 
 typedef struct {
   double centroid[6]; /* X, theta, Y, phi, Z, delta */
-  long n_part;
+  int64_t n_part;
 } GLOBAL_BEAM_SUMS;
   
 typedef struct {
@@ -488,7 +488,7 @@ extern char *chamberShapeChoice[N_CHAMBER_SHAPES];
 
 typedef struct {
     double centroid[6];
-    long n_part;
+    int64_t n_part;
     ELEMENT_LIST *elem;
     } TRAJECTORY;
 
@@ -712,6 +712,7 @@ typedef struct {
     long i_step;
     long n_steps;                /* number of error sets/bunches levels */
     double bunch_frequency;      /* bunch interval, if timing is varied */
+    double step_frequency;       /* used for macro-scale harmonic timing offsets that are not included in bunch coordinates */
     short reset_rf_each_step;     /* whether to reset rf element phases/timing */
     short reset_scattering_seed;  /* whether to reset random numbers for scattering for each step */
     unsigned long fiducial_flag; /* flags for fiducial control */
@@ -879,22 +880,22 @@ typedef struct {
 /* structure to store particle coordinates */
 typedef struct {
     double **original;      /* original particle data */
-    long n_original;        /* number of particles read from data file, also size of original array */
-    long n_saved;           /* number of particles saved in original array, if this is being done */
+    int64_t n_original;        /* number of particles read from data file, also size of original array */
+    int64_t n_saved;           /* number of particles saved in original array, if this is being done */
     double p0_original;     /* initial central momentum */
     double **particle;      /* current/final coordinates */
-    long n_to_track;        /* initial number of particles being tracked. */
-    long n_lost; 
-    int32_t id_slots_per_bunch;     /* if non-zero, the bunch # is (int)((particleID-1)/id_slots_per_bunch) */
+    int64_t n_to_track;        /* initial number of particles being tracked. */
+    int64_t n_lost;
+    int64_t id_slots_per_bunch;     /* if non-zero, the bunch # is (particleID-1)/id_slots_per_bunch */
 #if SDDS_MPI_IO
-  long n_to_track_total;    /* The total number of particles being tracked on all the processors */
-  long n_original_total;    /* The total number of particles read from data file */
-  long n_saved_total;       /* The total number of particles saved for reuse on all the processors */
+  int64_t n_to_track_total;    /* The total number of particles being tracked on all the processors */
+  int64_t n_original_total;    /* The total number of particles read from data file */
+  int64_t n_saved_total;       /* The total number of particles saved for reuse on all the processors */
 #endif
-    long n_particle;        /* size of particle and accepted arrays */
+    int64_t n_particle;        /* size of particle and accepted arrays */
     double p0;              /* current/final central momentum */
     double **accepted;      /* coordinates of accepted particles */
-    long n_accepted;        /* final number of particles being tracked. */
+    int64_t n_accepted;        /* final number of particles being tracked. */
     double bunchFrequency;
     } BEAM;
 void free_beamdata(BEAM *beam);
@@ -951,15 +952,16 @@ typedef struct {
 typedef struct {
   /* user-provided parameters */
   char *filename;
-  long startPID, endPID, PIDInterval;
+  int64_t startPID, endPID;
+  long PIDInterval;
   short include[4]; /* x, y, delta, spin */
   long segmentLength, startPass;
   /* Conversion of particle ID to particle index. This is needed because particles get reordered when losses occur. */
   htab *indexHash;
-  long np;
+  int64_t np;
   /* data[coord][particle][turn], e.g., data[2][10][20] is y for 11th particle on 21st turn */
   double ***data;
-  long *particleID, *particleIndex;
+  int64_t *particleID, *particleIndex;
   /* Pass from which we started accumulating data */
   long pass0; 
   /* Maximum number of turns recorded and buffer size for particle. May vary due to losses. */
@@ -986,10 +988,10 @@ typedef struct {
 
 typedef struct {
     double ideal_gamma, p_central;
-    long default_order, concat_order, print_statistics;
-    long combine_bunch_statistics, wrap_around, tracking_updates, final_pass; 
-    long always_change_p0, stopTrackingParticleLimit, load_balancing_on, random_sequence_No, checkBeamStructure;
-    long showElementTiming, monitorMemoryUsage, backtrack, lossesIncludeGlobalCoordinates, spinTracking;
+    short default_order, concat_order, print_statistics;
+    short combine_bunch_statistics, wrap_around, tracking_updates, final_pass; 
+    short always_change_p0, stopTrackingParticleLimit, load_balancing_on, random_sequence_No, checkBeamStructure;
+    short showElementTiming, monitorMemoryUsage, backtrack, lossesIncludeGlobalCoordinates, spinTracking, coupledSigmaOutput;
     double lossLimit[2]; /* loss recording only between these limits */
     char *runfile, *lattice, *acceptance, *centroid, *bpmCentroid, *sigma, 
       *final, *output, *rootname, *losses, *tuneFile;
@@ -1206,7 +1208,8 @@ extern char *final_unit[N_FINAL_QUANTITIES];
 #define T_POLAR 137
 #define T_IMPEDANCE 138
 #define T_CWAKE 139
-#define N_TYPES 140
+#define T_CBSCAT 140
+#define N_TYPES 141
 
 extern char *entity_name[N_TYPES];
 extern char *madcom_name[N_MADCOMS];
@@ -1231,7 +1234,7 @@ extern char *entity_text[N_TYPES];
 #define N_MONI_PARAMS 15
 #define N_RCOL_PARAMS 7
 #define N_ECOL_PARAMS 9
-#define N_MARK_PARAMS 3
+#define N_MARK_PARAMS 4
 #define N_MATR_PARAMS 4
 #define N_ALPH_PARAMS 13
 #define N_RFDF_PARAMS 29
@@ -1353,6 +1356,7 @@ extern char *entity_text[N_TYPES];
 #define N_BEDGE_PARAMS 7
 #define N_DQCOR_PARAMS 33
 #define N_POLAR_PARAMS 6
+#define N_CBSCAT_PARAMS 20
 
 /* END OF LIST FOR NUMBERS OF PARAMETERS */
 
@@ -1388,6 +1392,7 @@ typedef struct {
 #define IS_LONG 2
 #define IS_STRING 3
 #define IS_SHORT 4
+#define IS_INT64 5
 
 #define DEFAULT_FREQUENCY 2856e6
 #define DEFAULT_GAP 0.01
@@ -1770,13 +1775,15 @@ typedef struct {
 typedef struct {
   double dx, dy;   /* Useful for recording position of girder ends, for example */
   short fitpoint;
+  short coupled_fitpoint; /* also supply coupled (eigen-)emittances and coupled lattice functions of the tracked beam */
   /* values for internal use: */
-  unsigned long init_flags; /* 1:twiss_mem initialized, 
+  unsigned long init_flags; /* 1:twiss_mem initialized,
                                2:centroid_mem, sigma_mem, emit_mem initialized,
                                4:floor_mem initialized
                                8:matrix_mem initialized
                                16:ctwiss_mem initialized
-                               32:moments_mem initialized */
+                               32:moments_mem initialized
+                               64:coupledBeam_mem initialized */
   long *twiss_mem;       /* betax, alphax, NUx, etax, etaxp, betay, ... */
   long *centroid_mem;    /* (x, xp, y, yp, s, dp, Pcen, n) from tracking */
   long *sigma_mem;       /* (x, xp, y, yp, s, dp) from tracking */
@@ -1791,6 +1798,7 @@ typedef struct {
   long *co_mem;          /* closed orbit */
   long *ctwiss_mem;      /* coupled twiss parameters */
   long *moments_mem;     /* beam moments from moments propagation (not tracking) */
+  long *coupledBeam_mem; /* coupled (eigen-)emittances and coupled lattice functions from tracking */
 } MARK;
 
 /* storage structure for alpha magnet */
@@ -1826,7 +1834,7 @@ typedef struct {
   double groupVoltageNoise, groupPhaseNoise;
   long voltageNoiseGroup, phaseNoiseGroup;
   long startPass, endPass;
-  long startPID, endPID;
+  int64_t startPID, endPID;
   short driftMatrix;
   double dx, dy, dz;
   short magneticDeflection;
@@ -1848,7 +1856,7 @@ typedef struct {
   double a[5], b[5], frequency[5], phase[5];
   long phase_reference;
   long startPass, endPass;
-  long startPID, endPID;
+  int64_t startPID, endPID;
   /* for internal use only */
   double t_first_particle;        
   long initialized, fiducial_seen;
@@ -2005,7 +2013,8 @@ extern char *fft_window_name[N_FFT_WINDOWS];
 
 typedef struct {
     double fraction;
-    long startPID, endPID, interval, start_pass, end_pass;
+    int64_t startPID, endPID;
+    long interval, start_pass, end_pass;
     char *filename, *label, *mode;
     short xData, yData, longitData, excludeSlopes;
     long flushInterval, sparseInterval;
@@ -2032,7 +2041,7 @@ typedef struct {
     short fixedBinSize, xData, yData, longitData;
     double binSizeFactor;
     short normalize, disable, sparse;
-    long startPID, endPID;
+    int64_t startPID, endPID;
     short bunchSeries;
     /* internal variables for SDDS output */
     short initialized;
@@ -2061,7 +2070,9 @@ typedef struct {
   /* slice analysis element */
 
 typedef struct {
-  long nSlices, startPID, endPID, interval, start_pass, end_pass;
+  long nSlices;
+  int64_t startPID, endPID;
+  long interval, start_pass, end_pass;
   char *filename, *label;
   long indexOffset;
   double referenceFrequency;
@@ -2100,7 +2111,8 @@ extern PARAMETER malign_param[N_MALIGN_PARAMS] ;
 
 typedef struct {
     double dxp, dyp, dx, dy, dz, dt, dp, de;
-    long on_pass, startPID, endPID;
+    long on_pass;
+    int64_t startPID, endPID;
     short forceModifyMatrix, floor, excludeOrbit; 
     } MALIGN;
 
@@ -2448,7 +2460,36 @@ typedef struct {
   long startOnPass, endOnPass;
   char *distribution;
 } SCATTER;
-  
+
+/* names and storage structure for Compton-backscattering element physical parameters.
+ * Models Compton back-scattering of a counter-propagating laser off the beam, following
+ * Pan et al., Phys. Rev. Accel. Beams 22, 040702 (2019), Eq. 4.  Zero-length per-particle
+ * stochastic kick applied once per pass. */
+typedef struct {
+  double laserWavelength;     /* LASER_WAVELENGTH, m  (E_h = h c / lambda) */
+  double pulseEnergy;         /* PULSE_ENERGY, J */
+  double sigmax, sigmay;      /* SIGMA_X, SIGMA_Y : laser rms sizes at focus, m */
+  double sigmaz;              /* LASER_PULSE_LENGTH : laser rms length, m */
+  double dx, dy;              /* DX, DY : laser transverse offset at focus, m */
+  double focusPosition;       /* FOCUS_POSITION : S0, longitudinal focus offset from element, m */
+  double delay;               /* LASER_DELAY : laser vs reference-particle timing offset, s */
+  double theta0;              /* COLLISION_ANGLE, rad (default PI = head-on; !=PI => crossing angle) */
+  double azimuth;             /* COLLISION_AZIMUTH, rad (default 0 = crossing in the x-z plane) */
+  double factor;              /* FACTOR : scale on scatter rate (default 1) */
+  double nPhotons;            /* N_PHOTONS : override pulse-energy photon count if > 0 */
+  long nSteps;                /* N_STEPS : longitudinal quadrature points (default 21) */
+  long startOnPass, endOnPass;
+  long passInterval;          /* PASS_INTERVAL : act only every Nth pass counting from STARTONPASS (default 1) */
+  char *crossSection;         /* "klein-nishina" | "thomson" */
+  long exactRecoil;           /* EXACT_RECOIL : 0 = approximate Eq.(4) lab recoil (default);
+                                 1 = exact per-particle rest-frame Compton boost */
+  char *photonOutputFile;     /* NULL/"" => no photon output */
+  /* for internal use only: */
+  short photonFileActive, initialized;
+  SDDS_DATASET *SDDSphotons;
+} CBSCAT;
+
+
 /* names and storage structure for distribution-based scattering element physical parameters */
 typedef struct {
   long *particleIDScattered, nParticles, group, nScattered, allScattered;
@@ -2881,10 +2922,12 @@ typedef struct {
     /* BEAM-INDUCED voltage data */
     double V;                  /* magnitude of voltage */
     double Vr, Vi;             /* real, imaginary components of voltage phasor at t=tlast */
-    double last_t;             /* time at which last particle was seen */
+    double last_t;             /* time at which last particle was seen (register-reduced) */
     double last_phase;         /* phase at t=last_t */
     double last_omega;         /* omega at t=last_t */
     double last_Q;             /* loaded Q at t=last_t */
+    double last_clockOffset;   /* trackingClockOffset() at t=last_t; damping uses true elapsed time = (t-last_t)+(clockNow-last_clockOffset) */
+    double last_clockPhase;    /* trackingClockPhase(omega) at t=last_t; phase advance adds (clockPhaseNow-last_clockPhase) for a non-harmonic mode */
     /* generator- and feedback-related data, see T. Berenc RF-TN-2015-001 */
     double setpointAdjustment, fbVCavity;
     double lambdaA;          /* 2/((Ra/Q)*Qloaded) */
@@ -2951,8 +2994,10 @@ typedef struct {
     double *Q;                 /* loaded quality factor */
     double *Rs;                /* shunt impedance */
     double *beta;              /* normalized load impedance */
-    double last_t;             /* time at which last particle was seen */
+    double last_t;             /* time at which last particle was seen (register-reduced) */
     double *last_phase;        /* phase at t=last_t */
+    double last_clockOffset;   /* trackingClockOffset() at t=last_t; damping uses true elapsed time = (t-last_t)+(clockNow-last_clockOffset) */
+    double *last_clockPhase;   /* per-mode trackingClockPhase(omega) at t=last_t; phase advance adds (clockPhaseNow-last_clockPhase) for a non-harmonic mode */
     SDDS_DATASET *SDDSout;
     long *modeIndex;           /* SDDS index of mode column in output file */
     } FRFMODE;
@@ -2990,9 +3035,11 @@ typedef struct {
     double Vxr, Vxi;           /* real, imaginary components of voltage phasor at t=tlast */
     double Vy;                 /* magnitude of voltage */
     double Vyr, Vyi;           /* real, imaginary components of voltage phasor at t=tlast */
-    double last_t;             /* time at which last particle was seen */
+    double last_t;             /* time at which last particle was seen (register-reduced) */
     double last_xphase;        /* phase at t=last_t */
     double last_yphase;        /* phase at t=last_t */
+    double last_clockOffset;   /* trackingClockOffset() at t=last_t; damping uses true elapsed time = (t-last_t)+(clockNow-last_clockOffset) */
+    double last_clockPhase;    /* trackingClockPhase(omega) at t=last_t; phase advance adds (clockPhaseNow-last_clockPhase) for a non-harmonic mode (shared x/y) */
     SDDS_DATASET *SDDSrec;
     long fileInitialized;
     } TRFMODE;
@@ -3031,9 +3078,11 @@ typedef struct {
     double *Q;                 /* loaded quality factor */
     double *beta;              /* normalized load impedance */
     double *Rs;                /* shunt impedance */
-    double last_t;             /* time at which last particle was seen */
+    double last_t;             /* time at which last particle was seen (register-reduced) */
     double *lastPhasex;        /* phase at t=last_t */
     double *lastPhasey;        /* phase at t=last_t */
+    double last_clockOffset;   /* trackingClockOffset() at t=last_t; damping uses true elapsed time = (t-last_t)+(clockNow-last_clockOffset) */
+    double *last_clockPhase;   /* per-mode trackingClockPhase(omega) at t=last_t; phase advance adds (clockPhaseNow-last_clockPhase) for a non-harmonic mode (shared x/y) */
     SDDS_DATASET *SDDSout;
     long *xModeIndex, *yModeIndex;
     } FTRFMODE;
@@ -4072,6 +4121,7 @@ typedef struct {
 
 /* names and storage structure for longitudinal corrugated-plates wake physical parameters */
 extern PARAMETER corgplates_param[N_CORGPLATES_PARAMS];
+extern PARAMETER cbscat_param[N_CBSCAT_PARAMS];
 
 typedef struct {
   double length, halfGap, period, depth, dt, tmax;
@@ -4169,22 +4219,22 @@ void setup_bunched_beam_moments(
     long n_elements,
     long save_original
     );
-void zero_centroid(double **particle, long n_particles, long coord);
-long generate_bunch(double **particle, long n_particles, TRANSVERSE *x_plane,  TRANSVERSE *y_plane,
+void zero_centroid(double **particle, int64_t n_particles, long coord);
+long generate_bunch(double **particle, int64_t n_particles, TRANSVERSE *x_plane,  TRANSVERSE *y_plane,
                     LONGITUDINAL *longit, long *enforce_rms_params, long limit_invar, long symmetrize, 
                     long *haltonID, long haltonOpt, long *randomizeOrder, long elliptical_symmetry, double Po);
-void set_beam_centroids(double **particle, long offset, long n_particles, double cent_posi, 
+void set_beam_centroids(double **particle, long offset, int64_t n_particles, double cent_posi, 
     double cent_slope);
-void gaussian_distribution(double **particle, long n_particles, 
+void gaussian_distribution(double **particle, int64_t n_particles, 
                            long offset, double s1, double s2, long symmetrize, long *haltonID, long haltonOpt, double limit,
                            double limit_invar, double beta, long halo);
-void enforce_sigma_values(double **coord, long n_part, long offset, double s1d, double s2d);
-void polarizeBeam(double **part, long np, POLAR *polar);
+void enforce_sigma_values(double **coord, int64_t n_part, long offset, double s1d, double s2d);
+void polarizeBeam(double **part, int64_t np, POLAR *polar);
 
 /* prototypes for alpha_matrix.c: */
 extern VMATRIX *alpha_magnet_matrix(double gradient, double xgamma, long maximum_order,
     long part);
-extern long alpha_magnet_tracking(double **particle, VMATRIX *M, ALPH *alpha, long n_part,
+extern long alpha_magnet_tracking(double **particle, VMATRIX *M, ALPH *alpha, int64_t n_part,
     double **accepted, double P_central, double z);
  
 /* prototypes for awe_beam13.c: */
@@ -4200,7 +4250,7 @@ extern void finish_awe_beam(OUTPUT_FILES *output, RUN *run, VARY *control, ERROR
 */
 
 /*prototypes for sdds_beam.c */
-void adjust_arrival_time_data(double **coord, long np, double Po, long center_t, long flip_t);
+void adjust_arrival_time_data(double **coord, int64_t np, double Po, long center_t, long flip_t);
  
 /* prototypes for bend_matrix6.c: */
 extern VMATRIX *bend_matrix(double length, double angle, double ea1, double ea2, double R1, double R2,
@@ -4266,26 +4316,26 @@ extern long check_duplic_line(LINE_LIST *line, char *new_line, long n_lines, lon
 /* prototypes for compute_centroids.c: */
 extern BEAM_SUMS *allocateBeamSums(unsigned long flags, long nz);
 extern void freeBeamSums(BEAM_SUMS *sums, long nz);
-extern void compute_centroids(double *centroid, double **coordinates, long n_part);
-extern void compute_sigmas(double *emit, double *sigma, double *centroid, double **coordinates, long n_part);
+extern void compute_centroids(double *centroid, double **coordinates, int64_t n_part);
+extern void compute_sigmas(double *emit, double *sigma, double *centroid, double **coordinates, int64_t n_part);
 extern void zero_beam_sums(BEAM_SUMS *sums, long n);
 #define BEAM_SUMS_SPARSE   0x0001UL
 #define BEAM_SUMS_NOMINMAX 0x0002UL
 #define BEAM_SUMS_EXACTEMIT 0x0004UL
-extern void accumulate_beam_sums(BEAM_SUMS *sums, double **coords, long n_part, double p_central, double mp_charge,
+extern void accumulate_beam_sums(BEAM_SUMS *sums, double **coords, int64_t n_part, double p_central, double mp_charge,
                                  double *timeValue, double tMin, double tMax,
-				 long startPID, long endPID, unsigned long flags);
+				 int64_t startPID, int64_t endPID, unsigned long flags);
 extern void accumulate_beam_sums1(BEAM_SUMS *sums,
                                   double **coord,
-                                  long n_part,
+                                  int64_t n_part,
                                   double p_central, 
                                   double mp_charge,
                                   double *timeValue, double tMin, double tMax,
-                                  long startPID, long endPID,
+                                  int64_t startPID, int64_t endPID,
                                   unsigned long flags);
 extern void copy_beam_sums(BEAM_SUMS *target, BEAM_SUMS *source);
 extern long computeSliceMoments(double C[6], double S[6][6], 
-			 double **part, long np, 
+			 double **part, int64_t np, 
 			 double minValue, double maxValue);
 double correctedEmittance(double S[6][6], double eta[4], long i1, long i2,
 			  double *beta, double *alpha);
@@ -4328,8 +4378,8 @@ VMATRIX *determineMatrixHigherOrder(RUN *run, ELEMENT_LIST *eptr, double *starti
 extern void determineRadiationMatrix(VMATRIX *Mr, RUN *run, ELEMENT_LIST *eptr, double *startingCoord, double *D, long slices, long sliceEtilted, long order);
 extern void determineRadiationMatrix1(VMATRIX *Mr, RUN *run, ELEMENT_LIST *eptr, double *startingCoord, double *D, long ignoreRadiation, double *z, long iSlice);
 extern void set_up_watch_point(WATCH *watch, RUN *run, long occurence, char *previousElementName, long previousElementOccurence,
-			       long i_pass, ELEMENT_LIST *eptr, long IDSlotsPerBunch);
-extern void set_up_slice_point(SLICE_POINT *slice, RUN *run, long occurence, char *previousElementName, long IDSlotsPerBunch);
+			       long i_pass, ELEMENT_LIST *eptr, int64_t IDSlotsPerBunch);
+extern void set_up_slice_point(SLICE_POINT *slice, RUN *run, long occurence, char *previousElementName, int64_t IDSlotsPerBunch);
 void SDDS_SlicePointSetup(SLICE_POINT *slicePoint, char *command_file, char *lattice_file, char *caller, 
                           char *previousElementName);
 void dump_slice_analysis(SLICE_POINT *slicePoint, long step, long pass, long n_passes, 
@@ -4357,7 +4407,7 @@ extern void concat_matrices(VMATRIX *M2, VMATRIX *M1, VMATRIX *M0, unsigned long
 #define CONCAT_EXCLUDE_S0 0x0001UL
 
 /* prototypes for copy_particles.c: */
-extern void copy_particles(double **copy, double **original, long n_particles);
+extern void copy_particles(double **copy, double **original, int64_t n_particles);
  
 /* prototypes for correct.c: */
 extern void finish_response_output(void);
@@ -4381,13 +4431,13 @@ extern long advance_values1(double *value, long n_values, long *value_index, dou
                             double **enumerated_value, long *counter, long *max_count, long *flags, long n_indices);
 
 extern double beta_from_delta(double p, double delta);
-extern long do_tracking(BEAM *beam, double **coord, long n_original, long *effort, LINE_LIST *beamline, 
+extern long do_tracking(BEAM *beam, double **coord, int64_t n_original, long *effort, LINE_LIST *beamline, 
                         double *P_central, double **accepted, BEAM_SUMS **sums_vs_z, 
                         long *n_z_points, TRAJECTORY *traj_vs_z, RUN *run, long step,
                         unsigned long flags, long n_passes, long passOffset, SASEFEL_OUTPUT *sasefel,
 			SLICE_OUTPUT *sliceAnalysis,
                         double *finalCharge, double **lostParticles, ELEMENT_LIST *startElem);
-extern void recordLostParticles(BEAM *beam, double **coord, long nLeft, long nLostNew, long pass);
+extern void recordLostParticles(BEAM *beam, double **coord, int64_t nLeft, long nLostNew, long pass);
 extern void resetElementTiming();
 extern void reportElementTiming();
 
@@ -4395,52 +4445,53 @@ extern void setTrackingContext(char *name, long occurence, long type, char *root
 extern void getTrackingContext(TRACKING_CONTEXT *trackingContext);
 extern TRACKING_CONTEXT trackingContext;
 
-extern void offset_beam(double **coord, long n_to_track, MALIGN *offset, double P_central);
-extern void do_match_energy(double **coord, long np, double *P_central, long change_beam);
-extern void set_central_energy(double **coord, long np, double new_energy, double *P_central);
-extern void set_central_momentum(double **coord, long np, double  P_new, double *P_central);
-extern void center_beam(double **part, CENTER *center, long np, long iPass, double P0);
-void remove_correlations(double **part, REMCOR *remcor, long np);
-void drift_beam(double **part, long np, double length, long order);
-void exactDrift(double **part, long np, double length);
+extern void offset_beam(double **coord, int64_t n_to_track, MALIGN *offset, double P_central);
+extern void do_match_energy(double **coord, int64_t np, double *P_central, long change_beam);
+extern void set_central_energy(double **coord, int64_t np, double new_energy, double *P_central);
+extern void set_central_momentum(double **coord, int64_t np, double  P_new, double *P_central);
+extern void center_beam(double **part, CENTER *center, int64_t np, long iPass, double P0);
+void remove_correlations(double **part, REMCOR *remcor, int64_t np);
+void drift_beam(double **part, int64_t np, double length, long order);
+void exactDrift(double **part, int64_t np, double length);
 void computeEtiltCentroidOffset(double *dcoord_etilt, double rho0, double angle, double etilt, double tilt);
-void scatter_ele(double **part, long np, double Po, SCATTER *scatter, long iPass);
+void scatter_ele(double **part, int64_t np, double Po, SCATTER *scatter, long iPass);
+void track_CBScat(double **part, int64_t np, double Po, CBSCAT *cb, long iPass, long iOccurence);
 void store_fitpoint_twiss_parameters(MARK *fpt, char *name, long occurence, TWISS *twiss, RADIATION_INTEGRALS *radIntegrals);
-void store_fitpoint_beam_parameters(MARK *fpt, char *name, long occurence, double **coord, long np, double Po);
-void setTrackingWedgeFunction(void (*wedgeFunc)(double **part, long np, long pass, double *pCentral),
+void store_fitpoint_beam_parameters(MARK *fpt, char *name, long occurence, double **coord, int64_t np, double Po);
+void setTrackingWedgeFunction(void (*wedgeFunc)(double **part, int64_t np, long pass, double *pCentral),
                               ELEMENT_LIST *eptr);
-void setTrackingOmniWedgeFunction(void (*wedgeFunc)(double **part, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral));
-void setTrackingOmniWedgeGpuFunction(long (*wedgeFunc)(long np, long pass,
+void setTrackingOmniWedgeFunction(void (*wedgeFunc)(double **part, int64_t np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral));
+void setTrackingOmniWedgeGpuFunction(long (*wedgeFunc)(int64_t np, long pass,
                                                       long i_elem, long n_elem,
                                                       ELEMENT_LIST *eptr,
                                                       double *pCentral));
 void gatherParticles(double ***coord, long *nToTrack, long *nLost, double ***accepted, long n_processors, int myid, double *round);
 long transformBeamWithScript(SCRIPT *script, double pCentral, CHARGE *charge, BEAM *beam, double **part, 
-                             long np, char *mainRootname, long iPass, long driftOrder, double z, long forceSerial,
+                             int64_t np, char *mainRootname, long iPass, long driftOrder, double z, long forceSerial,
 			     long occurence, long backtrack, LINE_LIST *beamline, RUN *run);
 long transformBeamWithScript_s(SCRIPT *script, double pCentral, CHARGE *charge, BEAM *beam, double **part, 
-			       long np, char *mainRootname, long iPass, long driftOrder, double z, long occurence, long backtrack);
+			       int64_t np, char *mainRootname, long iPass, long driftOrder, double z, long occurence, long backtrack);
 #ifdef USE_MPI
 long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge, BEAM *beam, double **part, 
-                               long np, char *mainRootname, long iPass, long driftOrder, double z, long occurence, long bracktrack);
+                               int64_t np, char *mainRootname, long iPass, long driftOrder, double z, long occurence, long bracktrack);
 #endif
-void convertToCanonicalCoordinates(double **coord, long np, double p0, long includeTimeCoordinate);
-void convertFromCanonicalCoordinates(double **coord, long np, double p0, long includeTimeCoordinate);
+void convertToCanonicalCoordinates(double **coord, int64_t np, double p0, long includeTimeCoordinate);
+void convertFromCanonicalCoordinates(double **coord, int64_t np, double p0, long includeTimeCoordinate);
 
-extern void track_through_kicker(double **part, long np, KICKER *kicker, double p_central, long pass,
+extern void track_through_kicker(double **part, int64_t np, KICKER *kicker, double p_central, long pass,
       long order);
 void initializeFTable(FTABLE *ftable);
 void readSimpleFtable(FTABLE *ftable);
-void field_table_tracking(double **coord, long np, FTABLE *ftable, double Po, RUN *run);
+void field_table_tracking(double **coord, int64_t np, FTABLE *ftable, double Po, RUN *run);
 void rotate_coordinate(double **A, double *x, long inverse);
 double choose_theta(double rho, double x0, double x1, double x2);
-void track_through_mkicker(double **part, long np, MKICKER *kicker, double p_central, long pass, long default_order);
+void track_through_mkicker(double **part, int64_t np, MKICKER *kicker, double p_central, long pass, long default_order);
 
-extern long simple_rf_cavity(double **part, long np, RFCA *rfca, double **accepted, double *P_central,
+extern long simple_rf_cavity(double **part, int64_t np, RFCA *rfca, double **accepted, double *P_central,
                              double zEnd);
-extern long track_through_rfcw(double **part, long np, RFCW *rfcw, double **accepted, double *P_central, 
+extern long track_through_rfcw(double **part, int64_t np, RFCW *rfcw, double **accepted, double *P_central, 
                                double zEnd, RUN *run, long i_pass, CHARGE *charge);
-extern long modulated_rf_cavity(double **part, long np, MODRF *modrf, double P_central, double zEnd,
+extern long modulated_rf_cavity(double **part, int64_t np, MODRF *modrf, double P_central, double zEnd,
 				long iPass, long nPasses);
 extern void set_up_kicker(KICKER *kicker);
 extern void add_to_particle_energy(double *coord, double timeOfFlight, double Po, double dgamma);
@@ -4451,10 +4502,10 @@ extern void identifyRfcaBodyFocusModel(void *pElem, long type, short *matrixMeth
 #define FID_MODE_FIRST       0x0004UL
 #define FID_MODE_PMAX        0x0008UL
 #define FID_MODE_FULLBEAM    0x1000UL
-double findFiducialTime(double **part, long np, double s0, double sOffset,
+double findFiducialTime(double **part, int64_t np, double s0, double sOffset,
                         double p0, unsigned long mode);
 extern unsigned long parseFiducialMode(char *mode);
-void setFiducializationBunch(long b, int32_t n);
+void setFiducializationBunch(long b, int64_t n);
 long getFiducializationPidRange(unsigned long mode, long *startPID,
                                 long *endPID);
 
@@ -4471,31 +4522,31 @@ extern void dump_final_properties(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums,
      double *varied_quan, char *first_varied_quan_name, long n_varied_quan, long totalSteps,
      double *perturbed_quan, long *perturbed_quan_index, long perturbed_duplicates, long n_perturbed_quan,
      double *optim_quan, char *first_optim_quan_name, long n_optim_quan, double *optim_lower, double *optim_upper, 
-     long step, double **particle, long n_original, double p_central, VMATRIX *M,
+     long step, double **particle, int64_t n_original, double p_central, VMATRIX *M,
      double finalCharge);
 extern long compute_final_properties
-    (double *data, BEAM_SUMS *sums, long n_original, double p_central, VMATRIX *M, double **coord, 
+    (double *data, BEAM_SUMS *sums, int64_t n_original, double p_central, VMATRIX *M, double **coord, 
      long step, long totalSteps, double finalCharge);
 extern void rpn_store_final_properties(double *value, long number);
 extern long get_final_property_index(char *name);
 extern long count_final_properties(void);
 
-extern double beam_width(double fraction, double **coord, long n_part, long sort_coord);
-extern double approximateBeamWidth(double fraction, double **part, long nPart, long iCoord);
+extern double beam_width(double fraction, double **coord, int64_t n_part, long sort_coord);
+extern double approximateBeamWidth(double fraction, double **part, int64_t nPart, long iCoord);
 #if USE_MPI
-extern double approximateBeamWidth_p(double fraction, double **part, long nPart, long iCoord);
+extern double approximateBeamWidth_p(double fraction, double **part, int64_t nPart, long iCoord);
 extern double rms_emittance_p(double **coord, long i1, long i2, long n,
 			      double *S11Return, double *S12Return, double *S22Return, 
 			      double *c1Return, double *c2Return, long *nTotal);
-extern double rms_longitudinal_emittance_p(double **coord, long n, double Po, long startPID, long endPID);
-extern double computeAverage_p(double *data, long np, MPI_Comm mpiComm);
+extern double rms_longitudinal_emittance_p(double **coord, int64_t n, double Po, int64_t startPID, int64_t endPID);
+extern double computeAverage_p(double *data, int64_t np, MPI_Comm mpiComm);
 #endif
 void computeBeamTwissParameters(TWISS *twiss, double **data, long particles);
 void computeBeamTwissParameters3(TWISSBEAM *twiss, double **data, long particles);
 extern double rms_emittance(double **coord, long i1, long i2, long n,
                             double *S11Return, double *S12Return, double *S22Return, double *c1Return, double *c2Return);
-extern double rms_longitudinal_emittance(double **coord, long n, double Po, long startPID, long endPID);
-extern double rms_norm_emittance(double **coord, long i1, long i2, long ip, long n, double Po);
+extern double rms_longitudinal_emittance(double **coord, int64_t n, double Po, int64_t startPID, int64_t endPID);
+extern double rms_norm_emittance(double **coord, long i1, long i2, int64_t ip, long n, double Po);
 extern void compute_longitudinal_parameters(ONE_PLANE_PARAMETERS *bp, double **coord, long n, double Po);
 extern void compute_transverse_parameters(ONE_PLANE_PARAMETERS *bp, double **coord, long n, long plane);
 
@@ -4578,7 +4629,7 @@ int lsf2dPolyUnweighted(double *x[2], double *y, long points, int32_t *order[2],
 
 /* particleTunes.c */
 long setupParticleTunes(NAMELIST_TEXT *nltext, RUN *run, VARY *control, PARTICLE_TUNES *ptunes);
-void accumulateParticleTuneData(double **coord, long np, long pass, PARTICLE_TUNES *pTunes);
+void accumulateParticleTuneData(double **coord, int64_t np, long pass, PARTICLE_TUNES *pTunes);
 void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass);
 void finishParticleTunes(PARTICLE_TUNES *ptunes);
 
@@ -4631,8 +4682,8 @@ extern char *compose_filename_occurence(char *templateString, char *root_name, l
 extern char *compose_filename_per_processor(char *templateString, char *root_name);
 #endif
 extern double find_beam_p_central(char *input);
-void center_beam_on_coords(double **particle, long n_part, double *coord, long center_momentum_also);
-void offset_beam_by_coords(double **part, long np, double *coord, long offset_dp);
+void center_beam_on_coords(double **particle, int64_t n_part, double *coord, long center_momentum_also);
+void offset_beam_by_coords(double **part, int64_t np, double *coord, long offset_dp);
 void link_date(void);
 void check_heap(void);
 void do_print_dictionary(char *filename, long latex_form, long SDDS_form);
@@ -4682,49 +4733,49 @@ extern ELEMENT_LIST *rm_element(ELEMENT_LIST *elem);
 extern ELEMENT_LIST *replace_element(ELEMENT_LIST *elem0, ELEMENT_LIST *elem1); 
 
 /* prototypes for limit_amplitudes4.c: */
-extern long rectangular_collimator(double **initial, RCOL *rcol, long np, double **accepted, double z, double P_central,
+extern long rectangular_collimator(double **initial, RCOL *rcol, int64_t np, double **accepted, double z, double P_central,
                                      ELEMENT_LIST *eptr);
-extern long limit_amplitudes(double **coord, double xmax, double ymax, long np, double **accepted, double z, double P_central,
+extern long limit_amplitudes(double **coord, double xmax, double ymax, int64_t np, double **accepted, double z, double P_central,
                              long extrapolate_z, long openCode, ELEMENT_LIST *eptr);
-extern long elliptical_collimator(double **initial, ECOL *ecol, long np, double **accepted, double z, double P_central,
+extern long elliptical_collimator(double **initial, ECOL *ecol, int64_t np, double **accepted, double z, double P_central,
                                     ELEMENT_LIST *eptr);
-extern long elimit_amplitudes(double **coord, double xmax, double ymax, long np, double **accepted, double z,
+extern long elimit_amplitudes(double **coord, double xmax, double ymax, int64_t np, double **accepted, double z,
                               double P_central, long extrapolate_z, long openCode, long exponent, long yexponent, ELEMENT_LIST *eptr);
-extern long remove_outlier_particles(double **initial, CLEAN *clean, long np, 
+extern long remove_outlier_particles(double **initial, CLEAN *clean, int64_t np, 
 				     double **accepted, double z, double Po);  
-extern long beam_scraper(double **initial, SCRAPER *scraper, long np, double **accepted, double z,
+extern long beam_scraper(double **initial, SCRAPER *scraper, int64_t np, double **accepted, double z,
                          double P_central, ELEMENT_LIST *eptr);
 unsigned long interpretScraperDirection(char *insertFrom, long oldDir);
-extern long track_through_pfilter(double **initial, PFILTER *pfilter, long np, 
+extern long track_through_pfilter(double **initial, PFILTER *pfilter, int64_t np, 
                                   double **accepted, double z, double Po);
-long removeInvalidParticles(double **coord, long np, double **accepted,
+long removeInvalidParticles(double **coord, int64_t np, double **accepted,
                             double z, double Po);
 extern long determineOpenSideCode(char *openSide);
 long interpolateApertureData(double z, APERTURE_DATA *apData,
                              double *xCenter, double *yCenter, double *xSize, double *ySize);
-long imposeApertureData(double **coord, long np, double **accepted,
+long imposeApertureData(double **coord, int64_t np, double **accepted,
                         double z, double Po, APERTURE_DATA *apData, ELEMENT_LIST *eptr);
 void resetApertureData(APERTURE_DATA *apData);
-long track_through_speedbump(double **initial, SPEEDBUMP *speedbump, long np, double **accepted, double z,
+long track_through_speedbump(double **initial, SPEEDBUMP *speedbump, int64_t np, double **accepted, double z,
                              double Po, ELEMENT_LIST *eptr);
 int pointIsInsideContour(double x0, double y0, double *x, double *y, int64_t n, double *center, double theta);
 void initializeApContour(APCONTOUR *apcontour);
-long trackThroughApContour(double **initial, APCONTOUR *apcontour, long np, double **accepted, double z,
+long trackThroughApContour(double **initial, APCONTOUR *apcontour, int64_t np, double **accepted, double z,
                            double Po, ELEMENT_LIST *eptr);
-long imposeApContour(double **coord, APCONTOUR *apcontour, long np, double **accepted, double z,
+long imposeApContour(double **coord, APCONTOUR *apcontour, int64_t np, double **accepted, double z,
                      double Po, ELEMENT_LIST *eptr);
 long checkApContour(double x, double y, APCONTOUR *apcontour, ELEMENT_LIST *eptr);
-long trackThroughTaperApCirc(double **initial, TAPERAPC *taperApC, long np, double **accepted, double z,
+long trackThroughTaperApCirc(double **initial, TAPERAPC *taperApC, int64_t np, double **accepted, double z,
                              double Po, ELEMENT_LIST *eptr);
-long trackThroughTaperApElliptical(double **initial, TAPERAPE *taperApE, long np, double **accepted, double zStartElem,
+long trackThroughTaperApElliptical(double **initial, TAPERAPE *taperApE, int64_t np, double **accepted, double zStartElem,
                                    double Po, ELEMENT_LIST *eptr);
-long trackThroughTaperApRectangular(double **initial, TAPERAPR *taperApR, long np, double **accepted, double zStartElem,
+long trackThroughTaperApRectangular(double **initial, TAPERAPR *taperApR, int64_t np, double **accepted, double zStartElem,
                                     double Po, ELEMENT_LIST *eptr);
 double linear_interpolation(double *y, double *t, long n, double t0, long i);
 long find_nearby_array_entry(double *entry, long n, double key);
  
 /* prototypes for kick_sbend.c: */
-long track_through_kick_sbend(double **part, long n_part, KSBEND *ksbend, double p_error, double Po,
+long track_through_kick_sbend(double **part, int64_t n_part, KSBEND *ksbend, double p_error, double Po,
     double **accepted, double z_start);
 void bend_edge_kicks(double *x, double *xp, double *y, double *yp, double rho, double n, double beta, 
     double psi,  long which_edge);
@@ -4760,24 +4811,24 @@ extern void misalign_matrix(VMATRIX *M, double dx, double dy, double dz,
                             double designTilt, double thetaBend, double length, 
                             short method);
 extern VMATRIX *misalignment_matrix(MALIGN *malign, long order);
-extern void offsetBeamCoordinatesForMisalignment(double **part, long np, double dx, double dy, double dz);
-extern void offsetParticlesForMisalignment(long mode, double **coord, long np, double dx, double dy, 
+extern void offsetBeamCoordinatesForMisalignment(double **part, int64_t np, double dx, double dy, double dz);
+extern void offsetParticlesForMisalignment(long mode, double **coord, int64_t np, double dx, double dy, 
                                            double dz,  double ax, double ay, double az,
                                            double tilt, double thetaBend, double length,
                                            short face);
-extern void offsetParticlesForEntranceCenteredMisalignmentExact(double **coord, long np, double dx, double dy, 
+extern void offsetParticlesForEntranceCenteredMisalignmentExact(double **coord, int64_t np, double dx, double dy, 
                                                                 double dz,  double ax, double ay, double az,
                                                                 double tilt, double thetaBend, double length,
                                                                 short face);
-extern void offsetParticlesForBodyCenteredMisalignmentExact(double **coord, long np, double dx0, double dy0, double dz0,
+extern void offsetParticlesForBodyCenteredMisalignmentExact(double **coord, int64_t np, double dx0, double dy0, double dz0,
                                                             double ax0, double ay0, double az0,
                                                             double tilt, double thetaBend, double length,
                                                             short face);
-extern void offsetParticlesForEntranceCenteredMisalignmentLinearized(VMATRIX **VM, double **coord, long np, 
+extern void offsetParticlesForEntranceCenteredMisalignmentLinearized(VMATRIX **VM, double **coord, int64_t np, 
                                                               double dx, double dy, double dz,
                                                               double ax, double ay, double az, double tilt,
                                                               double thetaBend, double length, short face);
-extern void offsetParticlesForBodyCenteredMisalignmentLinearized(VMATRIX **VM, double **coord, long np, 
+extern void offsetParticlesForBodyCenteredMisalignmentLinearized(VMATRIX **VM, double **coord, int64_t np, 
                                                           double dx, double dy, double dz,
                                                           double ax, double ay, double az, double tilt,
                                                           double thetaBend, double length, short face);
@@ -4793,7 +4844,7 @@ extern void remove_s_dependent_matrix_elements(VMATRIX *M, long order);
 #define EXCLUDE_T  0x04
 #define EXCLUDE_Q  0x08
 #define SET_UNIT_R 0x10
-extern void track_particles(double **final, VMATRIX *M, double  **initial, long n_part);
+extern void track_particles(double **final, VMATRIX *M, double  **initial, int64_t n_part);
 extern void free_matrices(VMATRIX *M);
 // Not used
 // extern void free_nonlinear_matrices(VMATRIX *M);
@@ -4809,7 +4860,7 @@ extern double checkSymplecticity(VMATRIX *Mv, short canonical);
 extern void checkSymplecticity3rdOrder(VMATRIX *M, double meanMax[3][2]);
 
 /* prototypes for motion4.c: */
-extern long motion(double **part, long n_part, void *field, long field_type, double *P_central, double *dgamma,
+extern long motion(double **part, int64_t n_part, void *field, long field_type, double *P_central, double *dgamma,
     double *dP, double **accepted, double z_start);
  
 /* prototypes for multipole.c: */
@@ -4826,17 +4877,17 @@ typedef struct {
 extern void setupMultApertureData(MULT_APERTURE_DATA *apertureData, double reverseTilt, APCONTOUR *apContour, MAXAMP *maxamp, 
                                   APERTURE_DATA *apFileData, APERTURE_DATA *localApFileData, double zPosition, ELEMENT_LIST *eptr);
 extern long checkMultAperture(double x, double y, double sLocal, MULT_APERTURE_DATA *apData);
-extern long multipole_tracking(double **particle, long n_part, MULT *multipole, double p_error, double Po, double **accepted, double z_start);
-extern long multipole_tracking2(double **particle, long n_part, ELEMENT_LIST *elem, double p_error, 
+extern long multipole_tracking(double **particle, int64_t n_part, MULT *multipole, double p_error, double Po, double **accepted, double z_start);
+extern long multipole_tracking2(double **particle, int64_t n_part, ELEMENT_LIST *elem, double p_error, 
                                 double Po, double **accepted, double z_start,
                                 MAXAMP *maxamp, APCONTOUR *apcontour, APERTURE_DATA *apData, double *sigmaDelta2,
                                 long iSlice);
-extern long fmultipole_tracking(double **particle,  long n_part, FMULT *multipole,
+extern long fmultipole_tracking(double **particle,  int64_t n_part, FMULT *multipole,
                                 double p_error, double Po, double **accepted, double z_start);
 int integrate_kick_multipole_ordn(double *coord, double dx, double dy, double xkick, double ykick,
                                   double Po, double rad_coef, double isr_coef,
                                   long *order, double *KnL,  short *skew,
-                                  long n_parts, long i_part, double drift,
+                                  long n_parts, int64_t i_part, double drift,
                                   long integration_order,
                                   MULTIPOLE_DATA *multData, MULTIPOLE_DATA *edgeMultData, MULTIPOLE_DATA *steeringMultData,
                                   MULT_APERTURE_DATA *apData, double *dzLoss, double *sigmaDelta2,
@@ -4846,7 +4897,7 @@ long findMaximumOrder(long order, long order2, MULTIPOLE_DATA *edgeMultData, MUL
                       MULTIPOLE_DATA *multData);
 
 /* prototypes for polynomialseries.c: */
-extern long polynomialSeries_tracking(double **particle,  long n_part, POLYNOMIALSERIES *polynomialSeries,
+extern long polynomialSeries_tracking(double **particle,  int64_t n_part, POLYNOMIALSERIES *polynomialSeries,
                                 double p_error, double Po, double **accepted, double z_start);
 
 /* prototypes for kickmap.c */
@@ -4862,7 +4913,7 @@ extern void output_magnets(char *filename, char *line_name, LINE_LIST *beamline)
 extern void output_profile(char *filename, char *line_name, LINE_LIST *beamline);
  
 /* prototypes for pepper_pot2.c: */
-extern long pepper_pot_plate(double **initial, PEPPOT *peppot, long np, double **accepted);
+extern long pepper_pot_plate(double **initial, PEPPOT *peppot, int64_t np, double **accepted);
  
 /* prototypes for phase_reference.c: */
 extern long get_phase_reference(double *phase, long phase_ref_number);
@@ -4896,7 +4947,7 @@ extern VMATRIX *qfringe_matrix(double K1, double l, long direction, long order, 
 extern VMATRIX *quse_matrix(double K1, double K2, double l, long maximum_order, double fse1, double fse2);
 
 /* prototypes for fringe.c */
-void quadFringe(double **coord, long np, double K1, double *fringeIntM, double *fringeIntP, 
+void quadFringe(double **coord, int64_t np, double K1, double *fringeIntM, double *fringeIntP, 
                 int backtrack, int inFringe, int higherOrder,
                 int linearFlag, double nonlinearFactor);
 void dipoleFringe(double *vec, double h, long inFringe, long higherOrder, double K1);
@@ -4908,24 +4959,24 @@ extern void tilt_matrices0(VMATRIX *M, double tilt);
 extern void tilt_matrices(VMATRIX *M, double tilt);
 extern VMATRIX *rotation_matrix(double tilt);
 extern void rotateCoordinatesForMisalignment(double *coord, double angle);
-extern void rotateBeamCoordinatesForMisalignment(double **part, long np, double angle);
+extern void rotateBeamCoordinatesForMisalignment(double **part, int64_t np, double angle);
 void pitch_matrices(VMATRIX *M, double pitch);
 void yaw_matrices(VMATRIX *M, double yaw);
 
 /* prototypes for track_ramp.c: */
-extern void track_through_ramped_deflector(double **final, RMDF *ramp_param, double **initial, long n_particles, double pc_central);
+extern void track_through_ramped_deflector(double **final, RMDF *ramp_param, double **initial, int64_t n_particles, double pc_central);
 extern void track_through_rftm110_deflector(double **final, RFTM110 *rf_param,
-					    double **initial, long n_particles,
+					    double **initial, int64_t n_particles,
 					    double pc_central, double L_central, double zEnd,
 					    long pass);
  
 /* prototypes for track_rf2.c: */
 extern void track_through_rf_deflector(double **final, RFDF *rf_param,
-                                       double **initial, long n_particles,
+                                       double **initial, int64_t n_particles,
                                        double pc_central, double L_central, double zEnd,
                                        long pass);
 extern void track_through_multipole_deflector(double **final, MRFDF *rf_param, double **initial,
-                                              long n_particles, double pc_central, long pass);
+                                              int64_t n_particles, double pc_central, long pass);
 
 /* prototypes for vary4.c: */
 extern void vary_setup(VARY *_control, NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
@@ -4980,7 +5031,7 @@ void do_set_reference_particle_output(OPTIMIZATION_DATA *optimization_data, NAME
 		double target,double (*func)(double *x, long *invalid), long populationSize, long n_iterations, long max_iterations);
 #endif
 /* prototype for sample.c */
-long sample_particles(double **initial, SAMPLE *samp, long np, double **accepted, double z, double p0);
+long sample_particles(double **initial, SAMPLE *samp, int64_t np, double **accepted, double z, double p0);
 
 
 /* prototype for run_rpnexpr.c */
@@ -5003,21 +5054,21 @@ extern long trace_mode;
 extern long particleID;
 
 /* prototypes for lorentz.c */
-long lorentz(double **part, long n_part, void *field, long field_type, double P_central, double **accepted, 
+long lorentz(double **part, int64_t n_part, void *field, long field_type, double P_central, double **accepted, 
              MAXAMP *maxamp, APCONTOUR *apcontour, APERTURE_DATA *apData);
 void lorentz_report(void);
 
 /* prototypes for kick_poly.c */
-long polynomial_kicks(double **particle, long n_part, KPOLY *kpoly, double p_error, double Po,
+long polynomial_kicks(double **particle, int64_t n_part, KPOLY *kpoly, double p_error, double Po,
     double **accepted, double z_start);
-long polynomial_hamiltonian(double **particle,  long n_part, HKPOLY *hkpoly, double p_error, double Po,
+long polynomial_hamiltonian(double **particle,  int64_t n_part, HKPOLY *hkpoly, double p_error, double Po,
                             double **accepted, double z_start);
 
 /* prototypes for ramp_p.c */
-void ramp_momentum(double **coord, long np, RAMPP *rampp, double *P_central, long pass);
+void ramp_momentum(double **coord, int64_t np, RAMPP *rampp, double *P_central, long pass);
 
 /* prototypes for ramped_rfca.c */
-long ramped_rf_cavity(double **part, long np, RAMPRF *ramprf, double P_central, 
+long ramped_rf_cavity(double **part, int64_t np, RAMPRF *ramprf, double P_central, 
                       double L_central, double z_cavity, long pass);
 
 /* prototypes for closed_orbit.c */
@@ -5055,23 +5106,23 @@ long assert_element_links(ELEMENT_LINKS *links, RUN *run_cond, LINE_LIST *beamli
 void reset_element_links(ELEMENT_LINKS *links, RUN *run_cond, LINE_LIST *beamline);
 void rebaseline_element_links(ELEMENT_LINKS *links, RUN *run, LINE_LIST *beamline);
 
-long track_through_matter(double **part, long np, long iPass, MATTER *matter, double Po, double **accepted, double z0);
+long track_through_matter(double **part, int64_t np, long iPass, MATTER *matter, double Po, double **accepted, double z0);
 
-void track_through_rfmode(double **part, long np, RFMODE *rfmode, double Po,
+void track_through_rfmode(double **part, int64_t np, RFMODE *rfmode, double Po,
     char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
-void set_up_rfmode(RFMODE *rfmode, char *element_name, double element_z, long n_passes, RUN *run, long n_particles,
+void set_up_rfmode(RFMODE *rfmode, char *element_name, double element_z, long n_passes, RUN *run, int64_t n_particles,
                    double Po, double Lo);
 
-void track_through_trfmode(double **part, long np, TRFMODE *trfmode, double Po,
+void track_through_trfmode(double **part, int64_t np, TRFMODE *trfmode, double Po,
     char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
 void set_up_trfmode(TRFMODE *trfmode, char *element_name, double element_z, 
-                    long n_passes, RUN *run, long n_particles);
-void track_through_zlongit(double **part, long np, ZLONGIT *zlongit, double Po, RUN *run, long i_pass,
+                    long n_passes, RUN *run, int64_t n_particles);
+void track_through_zlongit(double **part, int64_t np, ZLONGIT *zlongit, double Po, RUN *run, long i_pass,
                            CHARGE *charge);
 void applyLowPassFilterToImpedance(double *Z, long nfreq, double cutoff0, double cutoff1);
-void track_through_lscdrift(double **part, long np, LSCDRIFT *lscdrift, double Po, CHARGE *charge);
+void track_through_lscdrift(double **part, int64_t np, LSCDRIFT *lscdrift, double Po, CHARGE *charge);
 long checkPointSpacing(double *x, long n, double tolerance);
-void track_through_ztransverse(double **part, long np, ZTRANSVERSE *ztransverse,
+void track_through_ztransverse(double **part, int64_t np, ZTRANSVERSE *ztransverse,
                                double Po, RUN *run, long i_pass,
                                CHARGE *charge);
 void track_through_impedance(double **part0, long np0, IMPEDANCE *imp,
@@ -5081,62 +5132,71 @@ void optimizeBinSettingsForImpedance(double timeSpan, double freq, double Q,
 void convolveArrays(double *output, long outputs, 
                     double *a1, long n1,
                     double *a2, long n2, long di2);
-void applyLongitudinalWakeKicks(double **part, double *time, long *pbin, long np, double Po,
+void applyLongitudinalWakeKicks(double **part, double *time, long *pbin, int64_t np, double Po,
                                 double *Vtime, long nb, double tmin, double dt,
                                 long interpolate);
-void applyTransverseWakeKicks(double **part, double *time, double *pz, long *pbin, long np,
+void applyTransverseWakeKicks(double **part, double *time, double *pz, long *pbin, int64_t np,
                               double Po, long plane,
                               double *Vtime, long nb, double tmin, double dt, 
                               long interpolate, long exponent);
-void track_through_wake(double **part, long np, WAKE *wakeData, double *Po,
+void track_through_wake(double **part, int64_t np, WAKE *wakeData, double *Po,
                         RUN *run, long i_pass, CHARGE *charge);
-void track_through_corgpipe(double **part, long np, CORGPIPE *corgpipe, double *Pcentral, 
+void track_through_corgpipe(double **part, int64_t np, CORGPIPE *corgpipe, double *Pcentral, 
                             RUN *run, long i_pass, CHARGE *charge);
-void track_through_corgplates(double **part, long np, CORGPLATES *corgplates, double *Pcentral, 
+void track_through_corgplates(double **part, int64_t np, CORGPLATES *corgplates, double *Pcentral, 
                             RUN *run, long i_pass, CHARGE *charge);
 void track_through_cwake(double **part0, long np0, CWAKE *cw,
                          double *PoInput, RUN *run, long i_pass, CHARGE *charge);
-void track_through_trwake(double **part, long np, TRWAKE *wakeData, double Po,
+void track_through_trwake(double **part, int64_t np, TRWAKE *wakeData, double Po,
                           RUN *run, long i_pass, CHARGE *charge);
-void track_through_lrwake(double **part, long np, LRWAKE *wakeData, double *Po,
+void track_through_lrwake(double **part, int64_t np, LRWAKE *wakeData, double *Po,
 			  RUN *run, long i_pass, CHARGE *charge);
-void index_bunch_assignments(double **part, long np, long idSlotsPerBunch, double P0, double **time, long **ibParticle, long ***ipBucket, long **npBucket, long *nBuckets,
+void index_bunch_assignments(double **part, int64_t np, long idSlotsPerBunch, double P0, double **time, long **ibParticle, int64_t ***ipBucket, int64_t **npBucket, long *nBuckets,
                                   long lastNBuckets);
-void free_bunch_index_memory(double *time0, long *ibParticle, long **ipBucket, long *npBucket, long nBuckets);
+void free_bunch_index_memory(double *time0, long *ibParticle, int64_t **ipBucket, int64_t *npBucket, long nBuckets);
 
-void addLSCKick(double **part, long np, LSCKICK *LSC, double Po, CHARGE *charge, 
+void addLSCKick(double **part, int64_t np, LSCKICK *LSC, double Po, CHARGE *charge, 
                 double lengthScale, double dgammaOverGamma);
-void computeTimeCoordinatesOnly(double *time, double Po, double **part, long np);
-double computeTimeCoordinates(double *time, double Po, double **part, long np);
-void computeDistanceCoordinates(double *time, double Po, double **part, long np);
+void computeTimeCoordinatesOnly(double *time, double Po, double **part, int64_t np);
+double computeTimeCoordinates(double *time, double Po, double **part, int64_t np);
+void computeDistanceCoordinates(double *time, double Po, double **part, int64_t np);
+/* tracking-clock register (simple_rfca.c): macro-scale absolute time in seconds
+   that is not carried in part[][4]; true time = part[][4]/(c*beta) + trackingClockOffset() */
+void setTrackingClockBase(double t_s);
+void resetTrackingClock(void);
+void accumulateTrackingClock(double dt_s);
+double trackingClockOffset(void);
+/* (omega*trueOffset) reduced to [0,2*PI) in extended precision; a non-harmonic
+   time-dependent consumer adds the across-gap difference of this to its phase */
+double trackingClockPhase(double omega);
 long binTransverseTimeDistribution(double **posItime, double *pz, long *pbin, double tmin,
-                                   double dt, long nb, double *time, double **part, double Po, long np,
+                                   double dt, long nb, double *time, double **part, double Po, int64_t np,
                                    double dx, double dy, long xPower, long yPower);
 long binTimeDistribution(double *Itime, long *pbin, double tmin,
-                         double dt, long nb, double *time, double **part, double Po, long np);
+                         double dt, long nb, double *time, double **part, double Po, int64_t np);
 
-long trackBGGExpansion(double **part, long np, BGGEXP *bgg, double pCentral, double **accepted, double *sigmaDelta2);
+long trackBGGExpansion(double **part, int64_t np, BGGEXP *bgg, double pCentral, double **accepted, double *sigmaDelta2);
 
-long trackMagneticFieldOffAxisExpansion(double **part, long np, BOFFAXE *boa, double pCentral, double **accepted, double *sigmaDelta2);
+long trackMagneticFieldOffAxisExpansion(double **part, int64_t np, BOFFAXE *boa, double pCentral, double **accepted, double *sigmaDelta2);
 
 void track_SReffects(double **coord, long n, SREFFECTS *SReffects, double Po, 
                      TWISS *twiss, RADIATION_INTEGRALS *radIntegrals,
                      long lossesOnly);
 VMATRIX *srEffectsMatrix(SREFFECTS *SReffects);
 
-void track_IBS(double **coord, long np, ELEMENT_LIST *eptr, double Po, 
+void track_IBS(double **coord, int64_t np, ELEMENT_LIST *eptr, double Po, 
                ELEMENT_LIST *element, CHARGE *charge, long i_pass, long n_passes, RUN *run);
 
-void addCorrectorRadiationKick(double **coord, long np, ELEMENT_LIST *elem, long type, double Po, double *sigmaDelta2, 
+void addCorrectorRadiationKick(double **coord, int64_t np, ELEMENT_LIST *elem, long type, double Po, double *sigmaDelta2, 
 			       long disableISR);
-long track_through_csbendCSR(double **part, long n_part, CSRCSBEND *csbend, double p_error, double Po, double **accepted,
+long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, double p_error, double Po, double **accepted,
                              double z_start, double z_end, CHARGE *charge, char *rootname, MAXAMP *maxamp, 
                              APCONTOUR *apContour, APERTURE_DATA *apFileData, ELEMENT_LIST *eptr);
-long track_through_csbend(double **part, long n_part, CSBEND *csbend, double p_error, double Po, double **accepted,
+long track_through_csbend(double **part, int64_t n_part, CSBEND *csbend, double p_error, double Po, double **accepted,
                           double z_start, double *sigmaDelta2, char *rootname, MAXAMP *maxamp, 
                           APCONTOUR *apContour, APERTURE_DATA *apFileData, long iSlice, ELEMENT_LIST *eptr);
 void csbend_update_fse_adjustment(CSBEND *csbend, ELEMENT_LIST *eptr);
-long track_through_driftCSR(double **part, long np, CSRDRIFT *csrDrift, 
+long track_through_driftCSR(double **part, int64_t np, CSRDRIFT *csrDrift, 
                             double Po, double **accepted, double zStart, 
 			    double revolutionLength, CHARGE *charge, char *rootname);
 long reset_driftCSR();
@@ -5149,26 +5209,26 @@ void updateSpinQuaternionLocalFS(double S[3], double Bx, double By, double Bz,
 				 double charge, double mass, double a);
 void performQuaternionRotation(double S[3], double rx, double ry, double rz);
 void rotateSpinCoordinateSystem(double *S, double cos_t, double sin_t);
-void rotateSpinsCoordinateSystem(double **particle, long np, double t);
-void updateSpinForSolenoid(double **coord, long np, double Po, SOLE *sole);
+void rotateSpinsCoordinateSystem(double **particle, int64_t np, double t);
+void updateSpinForSolenoid(double **coord, int64_t np, double Po, SOLE *sole);
 
 /* Spin helpers shared between CCBEND and LGBEND.  See ccbend.c for definitions. */
 void applyFringeSpinKick(double *spin, double xp, double xp0, double yp, double yp0,
                          double y, double rho, double p, double a);
-void rotateSpinsAboutYAxis(double **particle, long np, double angle);
+void rotateSpinsAboutYAxis(double **particle, int64_t np, double angle);
   
-long track_through_ccbend(double **particle, long n_part, ELEMENT_LIST *eptr, CCBEND *ccbend, double Po,
+long track_through_ccbend(double **particle, int64_t n_part, ELEMENT_LIST *eptr, CCBEND *ccbend, double Po,
                           double **accepted, double z_start, double *sigmaDelta2, char *rootname,
                           MAXAMP *maxamp, APCONTOUR *apContour, APERTURE_DATA *apFileData, long iSlice, long iFinalSlice);
 void addCcbendRadiationIntegrals(CCBEND *ccbend, double *startingCoord, double pCentral,
                                  double eta0, double etap0, double beta0, double alpha0,
                                  double *I1, double *I2, double *I3, double *I4, double *I5, ELEMENT_LIST *elem);
 int integrate_kick_KnL(double *coord, const double dx, const double dy, const double Po, const double rad_coef, const double isr_coef, const double *KnLFull, const long nTerms,
-                       const long integration_order, const long n_parts, const long iPart, 
+                       const long integration_order, const long n_parts, const int64_t iPart, 
                        long iFinalSlice, double drift, MULTIPOLE_DATA *multData, MULTIPOLE_DATA *edge1MultData, MULTIPOLE_DATA *edge2MultData, MULT_APERTURE_DATA *apData,
                        double *dzLoss, double *sigmaDelta2, double *lastRho1, double refTilt, double ZOffset, ELEMENT_LIST *eptr, GLOBAL_BEAM_SUMS *beamSums);
 
-long track_through_lgbend(double **particle, long n_part, ELEMENT_LIST *eptr, LGBEND *lgbend, double Po,
+long track_through_lgbend(double **particle, int64_t n_part, ELEMENT_LIST *eptr, LGBEND *lgbend, double Po,
                           double **accepted, double z_start, double *sigmaDelta2, char *rootname,
                           MAXAMP *maxamp, APCONTOUR *apContour, APERTURE_DATA *apFileData, long iSlice, long iFinalSlice);
 void readLGBendConfiguration(LGBEND *lgbend, ELEMENT_LIST *eptr);
@@ -5191,7 +5251,7 @@ void convertLocalCoordinatesToGlobal(double *Z, double *X, double *Y, double *th
                                      double *coord, ELEMENT_LIST *eptr, double dZ,
                                      long segment, long nSegments);
 
-long trackThroughExactCorrector(double **part, long n_part, ELEMENT_LIST *eptr, double Po, double **accepted, double z_start, double *sigmaDelta2);
+long trackThroughExactCorrector(double **part, int64_t n_part, ELEMENT_LIST *eptr, double Po, double **accepted, double z_start, double *sigmaDelta2);
 
 long setup_load_parameters(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
 long setup_load_parameters_for_file(char *filename, RUN *run, LINE_LIST *beamline);
@@ -5217,6 +5277,7 @@ extern void finishRfcDataFile() ;
 #define LOAD_FLAG_FRACTIONAL   (1<<LOAD_MODE_FRACTIONAL)
 #define LOAD_FLAG_VERBOSE      (LOAD_FLAG_FRACTIONAL<<1)
 extern long nearestInteger(double value);
+extern int64_t nearestInteger64(double value);
 
 #define SDDS_EOS_NEWFILE 1
 #define SDDS_EOS_COMPLETE 2
@@ -5245,21 +5306,21 @@ void SDDS_HistogramSetup(HISTOGRAM *histogram, char *filename, long mode, long l
                          char *command_file, char *lattice_file, char *caller);
 void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double **particle, long particles, 
                              double Po, double length, double charge, double z);
-extern void dump_watch_particles(WATCH *watch, long step, long pass, double **particle, long particles, double Po,
-                                 double length, double mp_charge, double z, long idSlotsPerBunch);
-extern void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, double **particle, long particles, 
+extern void dump_watch_particles(WATCH *watch, long step, long pass, double **particle, int64_t particles, double Po,
+                                 double length, double mp_charge, double z, int64_t idSlotsPerBunch);
+extern void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, double **particle, int64_t particles,
 				  long original_particles,  double Po, double revolutionLength, double z, double mp_charge);
 extern void dump_watch_FFT(WATCH *watch, long step, long pass, long n_passes, double **particle, long particles,
                            long original_particles,  double Po, double length);
 extern void do_watch_FFT(double **data, long n_data, long slot, long window_code);
 extern void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral,
-		  double **particle, long particles, long step, double length);
+		  double **particle, int64_t particles, long step, double length);
 extern void dump_centroid(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline, long n_elements, long bunch,
                           double p_central, short bpmsOnly);
-extern void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, long particles, long step, double Po,
-                             double charge, long idSlotsPerBunch);
+extern void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, int64_t particles, long step, double Po,
+                             double charge, int64_t idSlotsPerBunch);
 extern void dump_sigma(SDDS_TABLE *SDDS_table, BEAM_SUMS *sums, LINE_LIST *beamline, long n_elements, long step,
-                double p_central);
+		       double p_central, short coupledSigmaOutput);
 void computeEmitTwissFromSigmaMatrix(double *emit, double *emitc, double *beta, double *alpha, double sigma[7][7], long plane);
 extern void doSASEFELAtEndOutput(SASEFEL_OUTPUT *sasefelOutput, long step);
 extern void computeSASEFELAtEnd(SASEFEL_OUTPUT *sasefelOutput, double **particle, long particles, 
@@ -5268,10 +5329,10 @@ extern void setupSASEFELAtEnd(NAMELIST_TEXT *nltext, RUN *run, OUTPUT_FILES *out
 extern void storeSASEFELAtEndInRPN(SASEFEL_OUTPUT *sasefelOutput);
 extern void SDDS_CentroidOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row, char *contents, char *command_file, char *lattice_file, char *caller, short bpmsOnly);
 extern void SDDS_SigmaOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row,
-                           char *command_file, char *lattice_file, char *caller);
+				  char *command_file, char *lattice_file, char *caller, short coupledSigmaOutput);
 extern void readErrorMultipoleData(MULTIPOLE_DATA *multData, char *multFile, long steering);
-extern void set_up_histogram(HISTOGRAM *histogram, RUN *run, long occurence, long IDSlotsPerBunch);
-extern long track_through_tubend(double **part, long n_part, TUBEND *tubend,
+extern void set_up_histogram(HISTOGRAM *histogram, RUN *run, long occurence, int64_t IDSlotsPerBunch);
+extern long track_through_tubend(double **part, int64_t n_part, TUBEND *tubend,
                           double p_error, double Po, double **accepted,
                           double z_start);
 extern void setup_sdds_beam(BEAM *beam,NAMELIST_TEXT *nltext,RUN *run, VARY *control,ERRORVAL *errcon,OPTIM_VARIABLES *optim,OUTPUT_FILES *output,LINE_LIST *beamline,long n_elements,
@@ -5340,13 +5401,13 @@ void clearSCSpecs();
 long getSCMULTSpecCount();  
 extern char *scMultName;
 long insertSCMULT(char *name, long type, long *occurrence);
-void trackThroughSCMULT(double **part, long np, double Po, long iPass, ELEMENT_LIST *eptr, CHARGE *charge);
+void trackThroughSCMULT(double **part, int64_t np, double Po, long iPass, ELEMENT_LIST *eptr, CHARGE *charge);
 void finishSCSpecs();
-void initializeSCMULT(ELEMENT_LIST *eptr, double **part, long np, double Po, long i_pass, long idSlotsPerbunch);
-void accumulateSCMULT(double **part, long np, double Po, ELEMENT_LIST *eptr, long idSlotsPerbunch);
-double computeRmsCoordinate(double **coord, long i1, long np, double *mean, long *countReturn);
+void initializeSCMULT(ELEMENT_LIST *eptr, double **part, int64_t np, double Po, long i_pass, long idSlotsPerbunch);
+void accumulateSCMULT(double **part, int64_t np, double Po, ELEMENT_LIST *eptr, long idSlotsPerbunch);
+double computeRmsCoordinate(double **coord, long i1, int64_t np, double *mean, long *countReturn);
 #if USE_MPI
-double computeRmsCoordinate_p(double **coord, long i1, long np, double *centroid, long *npTotal, unsigned long classFlags);
+double computeRmsCoordinate_p(double **coord, long i1, int64_t np, double *centroid, long *npTotal, unsigned long classFlags);
 #endif
 
 void do_insert_elements(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
@@ -5371,14 +5432,14 @@ void dump_scattered_loss_particles(SDDS_TABLE *SDDS_table, double **particleLos,
                                    long *lostOnPass, long particles, double *weight, TSCATTER *tsptr, 
                                    ELEMENT_LIST *eptr);
 
-void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part, long np, long pass, double Po, long idSlotsPerBunch);
+void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part, int64_t np, long pass, double Po, long idSlotsPerBunch);
 void initializeTransverseFeedbackPickup(TFBPICKUP *tfbp);
-void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part, long np, LINE_LIST *beamline, long pass, long n_passes, char *rootname, double Po, long idSlotsPerBunch, CHARGE *charge);
+void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part, int64_t np, LINE_LIST *beamline, long pass, long n_passes, char *rootname, double Po, long idSlotsPerBunch, CHARGE *charge);
 void initializeTransverseFeedbackDriver(TFBDRIVER *tfbd, LINE_LIST *beamline, long n_passes, char *rootname);
 
-void coolerPickup(CPICKUP *tfbp, double **part, long np, long pass, double Po, long idSlotsPerBunch);
+void coolerPickup(CPICKUP *tfbp, double **part, int64_t np, long pass, double Po, long idSlotsPerBunch);
 void initializeCoolerPickup(CPICKUP *tfbp);
-void coolerKicker(CKICKER *tfbd, double **part, long np, LINE_LIST *beamline, long pass, long n_passes, char *rootname, double Po, long idSlotsPerBunch);
+void coolerKicker(CKICKER *tfbd, double **part, int64_t np, LINE_LIST *beamline, long pass, long n_passes, char *rootname, double Po, long idSlotsPerBunch);
 void initializeCoolerKicker(CKICKER *tfbd, LINE_LIST *beamline, long n_passes, char *rootname, double Po);
 
 long computeEngeCoefficients(double *engeCoef, double rho, double length, double gap, double fint);
@@ -5419,11 +5480,11 @@ double Kahan (long length, double a[], double *error);
 double KahanPlus (double oldSum, double b, double *error);
 #if USE_MPI
 double KahanParallel (double sum,  double error, MPI_Comm comm);
-void find_global_min_max (double *min, double *max, long np, MPI_Comm comm);
+void find_global_min_max (double *min, double *max, int64_t np, MPI_Comm comm);
 #endif
 typedef struct {
   double t;
-  long ip;
+  int64_t ip;
 } TIMEDATA;
 extern int compTimeData(const void *tv1, const void *tv2);
 
@@ -5462,7 +5523,7 @@ int run_coupled_twiss_output(RUN *run, LINE_LIST *beamline, double *starting_coo
 void finish_coupled_twiss_output();
 void SortEigenvalues (double *WR, double *WI, double *VR, int matDim, int eigenModesNumber, int verbosity);
 
-long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, double pCentral, double **coord, long np,
+long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, double pCentral, double **coord, int64_t np,
                              RUN *run, long i_pass);
 void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE_LIST *beamline, RUN *run);
 
@@ -5490,7 +5551,7 @@ extern int makeInitialParticleEnsemble(double ***initial, double *reference, dou
 
 extern time_t get_mtime(char *filename);  
 
-extern long trackBRAT(double **part, long np, BRAT *brat, double pCentral, double **accepted);
+extern long trackBRAT(double **part, int64_t np, BRAT *brat, double pCentral, double **accepted);
 extern int interpolate2dFieldMapHigherOrder(double *Foutput, double x, double y,
                                             double dx, double dy,
                                             double xmin, double ymin,
@@ -5517,7 +5578,7 @@ extern void popWarningSuppression(void);
 extern void setObstructionsMode(long state) ;
 extern void resetObstructionData(OBSTRUCTION_DATASETS *obsData);
 extern void readObstructionInput(NAMELIST_TEXT *nltext, RUN *run);
-extern long filterParticlesWithObstructions(double **coord, long np, double **accepted, double z, double P_central);
+extern long filterParticlesWithObstructions(double **coord, int64_t np, double **accepted, double z, double P_central);
 extern long insideObstruction(double *part, short mode, double dz, long segment, long nSegments);
 extern long insideObstruction_xyz(double x, double xp, double y, double yp, long particleID, double *lossCoordinates, 
 				  double tilt, short mode, double dz, long segment, long nSegments);
