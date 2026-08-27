@@ -1,0 +1,84 @@
+#!/bin/sh  
+# \
+exec oagtclsh "$0" "$@"
+
+set auto_path [linsert $auto_path 0  $env(OAG_TOP_DIR)/oag/apps/lib/$env(HOST_ARCH)]
+package require os
+
+APSStandardSetup
+
+set usage {usage: runCase -cores <number> -nPerBunch <number>(100000) -dfh <harmonicDetuning-kHz> -current <mA> -delayTurns <number>(1000) -rampTurns <number>(5000) -totalTurns <number>(12000)}
+set args $argv
+set dfh -1
+set cores -1
+set delayTurns 1000
+set rampTurns 5000
+set totalTurns 12000
+set nPerBunch 100000
+set current -1
+if {[APSStrictParseArguments {cores dfh current nPerBunch delayTurns totalTurns rampTurns}] || [expr $cores<1] || [expr $dfh<0] || [expr $current<0]} {
+    return -code error "$usage"
+}
+
+set I $current
+
+# Parameters of the main cavities
+# Q 
+set Qm 49e3
+# Loaded Q
+set Qlm 9.1e3
+# Ra/Q
+set RaOQm 208
+# Harmonic number
+set mh 1296
+# Number of cavities
+set nm 16
+
+# Parameters of the harmonic cavities
+# Loaded Q
+set Qlh 600e3
+# Relative harmonic
+set hh 4
+# Ra/Q
+set RaOQh 109
+# Number of cavities
+set nh 4
+
+# Main cavity voltage
+set Vc 9.0
+
+# Rf feedback filters
+set phaseFilter PhaseFeedbackFilters.sdds
+set ampFilter AmpFeedbackFilters.sdds
+# Feedback update interval in main buckets
+set nfb 216
+
+set dff [format %.2f $dfh]
+        
+set rootname run-${I}mA-${nPerBunch}PPB-MH${mh}-NM${nm}-Vc${Vc}-Qm${Qm}-Qlm${Qlm}-RaOQm${RaOQm}-HH${hh}-NH${nh}-Qlh${Qlh}-RaOQh${RaOQh}-${dff}kHz
+if ![file exists $rootname.bash ] {
+    # Figure out the HHC voltage for this case, and make the profile Basic.twi.longit for use in generating the bunch
+    exec beamLoadCalcHHC -output $rootname.param -current $I \
+      -mainHarmonic $mh -nMain $nm -Vcavity $Vc -Qm $Qm -Ql $Qlm -RaOverQ $RaOQm \
+      -dfHHC $dfh -QlHHC $Qlh -harmonic $hh -RaOverQHHC $RaOQh -nHHC $nh
+    # Generate the bunch
+    exec makeBunch -rootname ${rootname}-bunch -nPerBunch $nPerBunch -profile Basic.twi.longit
+    exec makeDiagParamFile -output $rootname.diag -particles $nPerBunch -bunches 24
+    set jobFile $rootname.csh
+    set fd [open $jobFile w]
+    puts $fd "#!/bin/csh"
+    puts $fd "setenv PATH /usr/lib64/mpich/bin:\$PATH"
+    puts $fd "mpiexec -np $cores Pelegant runTemplate.ele -macro=rootname=$rootname,current=$I,cavitySetup=$rootname.param,diagSetup=$rootname.diag,turns=$totalTurns,delayTurns=$delayTurns,rampTurns=$rampTurns,bunch=${rootname}-bunch.bun,ampFilter=$ampFilter,phaseFilter=$phaseFilter,fbInterval=$nfb"
+    close $fd
+    file attributes $jobFile -permissions u+x
+    
+    exec sddsmakedataset $rootname.settings \
+      -column=cores,type=long -data=$cores -column=delayTurns,type=long -data=$delayTurns -column=rampTurns,type=long -data=$rampTurns \
+      -column=totalTurns,type=long -data=$totalTurns -column=nPerBunch,type=long -data=$nPerBunch \
+      -column=I,type=double,units=mA -data=$I -column=Qm,type=double -data=$Qm -column=Qlm,type=double -data=$Qlm -column=RaOQm,type=double -data=$RaOQm \
+      -column=mh,type=long -data=$mh -column=nm,type=long -data=$nm -column=Qlh,type=double -data=$Qlh  \
+      -column=hh,type=long -data=$hh -column=RaOQh,type=double -data=$RaOQh -column=nh,type=long -data=$nh \
+      -column=Vc,type=double,units=MV -data=$Vc -column=phaseFilter,type=string -data=$phaseFilter \
+      -column=ampFilter,type=string -data=$ampFilter -column=nfb,type=long -data=$nfb \
+      -column=dfh,type=double,units=kHz -data=$dff 
+}
