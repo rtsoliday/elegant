@@ -17,7 +17,7 @@ if {[APSStrictParseArguments {rootname coupling}] || \
 }
 
 exec sddsprocess $rootname.twi $rootname.bs \
-    "-define=param,ex,ex0 1 $coupling + /" "-define=param,ey,ex $coupling *" \
+    "-define=param,ex,ex0 1 $coupling Jy * Jx / + /" "-define=param,ey,ex $coupling *" \
     "-define=col,Sx,betax ex * etax Sdelta0 * sqr + sqrt 1e6 *,symbol=\$gs\$r\$bx\$n,units=\$gm\$rm" \
     "-define=col,Sy,betay ey * etay Sdelta0 * sqr + sqrt 1e6 *,symbol=\$gs\$r\$by\$n,units=\$gm\$rm" \
     "-define=col,Sxp,1 alphax sqr + betax / ex * etaxp Sdelta0 * sqr + sqrt 1e6 *,symbol=\$gs\$r\047\$bx\$n,units=\$gm\$rrad" \
