@@ -73,9 +73,9 @@ void track_through_kicker(
 #else
       if (distributedBeam) {
         double t0_sum;
-        long np_total;
+        int64_t np_total;
 
-        MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+        MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
         MPI_Allreduce(&t0, &t0_sum, 1, MPI_DOUBLE, MPI_SUM, workers);
         t0 = t0_sum / np_total;
       } else
@@ -384,9 +384,9 @@ void track_through_mkicker(
 #else
       if (distributedBeam) {
         double t0_sum;
-        long np_total;
+        int64_t np_total;
 
-        MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+        MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
         MPI_Allreduce(&t0, &t0_sum, 1, MPI_DOUBLE, MPI_SUM, workers);
         t0 = t0_sum / np_total;
       } else

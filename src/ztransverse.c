@@ -44,7 +44,7 @@ void set_up_ztransverse(ZTRANSVERSE *ztransverse, RUN *run, long pass, long part
                         double timeSpan);
 double *getTransverseImpedance(SDDS_DATASET *SDDSin, char *ZName);
 
-void track_through_ztransverse(double **part0, long np0, ZTRANSVERSE *ztransverse, double Po,
+void track_through_ztransverse(double **part0, int64_t np0, ZTRANSVERSE *ztransverse, double Po,
                                RUN *run, long i_pass, CHARGE *charge) {
   double *posItime[2] = {NULL, NULL}; /* array for particle density times x, y*/
   double *posIfreq = NULL;            /* array for FFT of particle density times x or y*/
@@ -58,9 +58,10 @@ void track_through_ztransverse(double **part0, long np0, ZTRANSVERSE *ztransvers
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
   int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
   int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
-  long max_np = 0;
+  int64_t max_np = 0;
   double *Vfreq = NULL, *Z = NULL;
-  long nBuckets, iBucket, np;
+  long nBuckets, iBucket;
+  int64_t np;
 #if USE_MPI
   long offset, length;
   double tmin_part, tmax_part;

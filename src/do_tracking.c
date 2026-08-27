@@ -122,12 +122,12 @@ static short mpiAbortGlobal;
 typedef enum balanceMode { badBalance,
   startMode,
   goodBalance } balance;
-void scatterParticles(double **coord, long *nToTrack, double **accepted,
+void scatterParticles(double **coord, int64_t *nToTrack, double **accepted,
                       long n_processors, int myid, balance balanceStatus,
                       double my_rate, double nParPerElements, double round,
                       int lostSinceSeqMod, int *distributed,
                       long *reAllocate, double *P_central);
-void gatherParticles(double ***coord, long *nToTrack, long *nLost, double ***accepted, long n_processors,
+void gatherParticles(double ***coord, int64_t *nToTrack, int64_t *nLost, double ***accepted, long n_processors,
                      int myid, double *round);
 /* Avoid unnecessary communications by checking if an operation will be executed in advance*/
 int usefulOperation(ELEMENT_LIST *eptr, unsigned long flags, long i_pass);
@@ -329,8 +329,8 @@ long do_tracking(
   balance balanceStatus;
 #  if SDDS_MPI_IO
   int distributed = 1;
-  long total_nOriginal;
-  long total_nToTrack;
+  int64_t total_nOriginal;
+  int64_t total_nToTrack;
 #  else
   int distributed = 0; /* indicate if the particles have been scattered */
 #  endif
@@ -427,7 +427,7 @@ long do_tracking(
   if (distributedBeam && !partOnMaster) {
     if (isMaster)
       nOriginal = 0;
-    MPI_Allreduce(&nOriginal, &total_nOriginal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&nOriginal, &total_nOriginal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
   } else /* single partticle case where all the processors track the same particle(s), or particles are on master when the first beam is fiducial */
     total_nOriginal = nOriginal;
 #  if MPI_DEBUG
@@ -473,7 +473,7 @@ long do_tracking(
     if (isMaster)
       nToTrack = 0;
     if (beam)
-      MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+      MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
   } else { /* singlePart tracking or partOnMaster */
     if (beam)
       beam->n_to_track_total = nToTrack;
@@ -613,7 +613,7 @@ long do_tracking(
 #  ifdef DEBUG_CRASH
           printMessageAndTime(stdout, "do_tracking checkpoint 0.36\n");
 #  endif
-        MPI_Allreduce(&nToTrack, &total_nToTrack, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&nToTrack, &total_nToTrack, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifdef DEBUG_CRASH
         printMessageAndTime(stdout, "do_tracking checkpoint 0.37\n");
 #  endif
@@ -758,15 +758,15 @@ long do_tracking(
 
 #if !SDDS_MPI_IO
         if ((et2 = delapsed_time()) - et1 > 2.0) {
-          sprintf(s, "%ld particles present after pass %ld        ",
+          sprintf(s, "%" PRId64 " particles present after pass %ld        ",
                   nToTrack, i_pass);
 #else
           if (i_pass % 20 == 0) {
             if (!partOnMaster && distributedBeam) {
-              sprintf(s, "%ld particles present after pass %ld        ",
+              sprintf(s, "%" PRId64 " particles present after pass %ld        ",
                       beam ? beam->n_to_track_total : -1, i_pass);
             } else { /* singlePart tracking or partOnMaster */
-              sprintf(s, "%ld particles present after pass %ld        ",
+              sprintf(s, "%" PRId64 " particles present after pass %ld        ",
                       nToTrack, i_pass);
             }
 #endif
@@ -1213,7 +1213,7 @@ long do_tracking(
                 if (isMaster)
                   nToTrack = 0;
                 if (beam)
-                  MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+                  MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
               }
 #endif
 #ifdef DEBUG_CRASH
@@ -1221,7 +1221,7 @@ long do_tracking(
               printf("element %s#%ld, %ld particles, %ld left\n", eptr->name, eptr->occurence, nToTrack, nLeft);
               fflush(stdout);
 #endif
-              snprintf(buffer, 16384, "Starting %s#%ld (%s) at s=%le to %le m, p0 = %le, pass %ld, %ld particles, memory %ld kB\n",
+              snprintf(buffer, 16384, "Starting %s#%ld (%s) at s=%le to %le m, p0 = %le, pass %ld, %" PRId64 " particles, memory %ld kB\n",
                        eptr->name, eptr->occurence,  entity_name[eptr->type],
                        last_z, eptr->end_pos, *P_central, i_pass,
 #if USE_MPI
@@ -1363,7 +1363,7 @@ long do_tracking(
                     int64_t nToTrackTotal = nToTrack;
                     if (beam) {
                       if (!partOnMaster && distributedBeam)
-                        MPI_Allreduce(&nToTrack, &nToTrackTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+                        MPI_Allreduce(&nToTrack, &nToTrackTotal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
                     }
                     if (nToTrackTotal > 0)
                       rpn_store(sMaxTransmittedMonitor = eptr->end_pos, NULL, sMaxTransmittedMonitorMemory);
@@ -1720,7 +1720,7 @@ long do_tracking(
                     if (isMaster)
                       nToTrack = 0;
                     if (beam)
-                      MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+                      MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
                   } else { /* singlePart tracking or partOnMaster */
                     if (beam)
                       beam->n_to_track_total = nToTrack;
@@ -1831,7 +1831,7 @@ long do_tracking(
                     if (isMaster)
                       nToTrack = 0;
                     if (beam)
-                      MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+                      MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
                   } else { /* singlePart tracking or partOnMaster */
                     if (beam)
                       beam->n_to_track_total = nToTrack;
@@ -2490,7 +2490,7 @@ long do_tracking(
                 case T_SCRIPT:
 #if !USE_MPI
                   if (nLeft < nMaximum && ((SCRIPT *)eptr->p_elem)->verbosity > 1)
-                    printf("nLost=%ld, beam->n_particle=%ld, beam->n_to_track=%ld, nLeft=%ld, nToTrack=%ld, nMaximum=%ld\n",
+                    printf("nLost=%" PRId64 ", beam->n_particle=%" PRId64 ", beam->n_to_track=%" PRId64 ", nLeft=%" PRId64 ", nToTrack=%" PRId64 ", nMaximum=%" PRId64 "\n",
                            nLost, beam ? beam->n_particle : -1, beam ? beam->n_to_track : -1, nLeft, nToTrack, nMaximum);
 #endif
 #if USE_MPI && MPI_DEBUG
@@ -2629,7 +2629,7 @@ long do_tracking(
                           if (isMaster)
                             nToTrack = 0;
                           if (beam)
-                            MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+                            MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
                         } else { /* singlePart tracking or partOnMaster */
                           if (beam)
                             beam->n_to_track_total = nToTrack;
@@ -2638,7 +2638,7 @@ long do_tracking(
 #else
                           if (nToTrack < 10) {
 #endif
-                            printf("*** Error: too few particles (%ld) for computation of twiss parameters from beam\n", nToTrack);
+                            printf("*** Error: too few particles (%" PRId64 ") for computation of twiss parameters from beam\n", nToTrack);
                             exitElegant(1);
                           }
                           computeBeamTwissParameters(&beamTwiss, coord, nToTrack);
@@ -2801,7 +2801,7 @@ long do_tracking(
                   fflush(stdout);
                 }
                 if (nLeft != nToTrack)
-                  printf("%ld particles left\n", nLeft);
+                  printf("%" PRId64 " particles left\n", nLeft);
                 fflush(stdout);
               }
             } else if (!(flags & TEST_PARTICLES)) {
@@ -3022,13 +3022,13 @@ long do_tracking(
 #if USE_MPI
             if (!partOnMaster && distributedBeam) {
               /* We have to collect information from all the processors to print correct info during tracking */
-              long nToTrackC;
+              int64_t nToTrackC;
               nToTrackC = nToTrack;
               if (isMaster)
                 nToTrackC = 0;
               if (beam)
-                MPI_Reduce(&nToTrackC, &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-              sprintf(s, "%ld particles present after pass %ld        ",
+                MPI_Reduce(&nToTrackC, &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
+              sprintf(s, "%" PRId64 " particles present after pass %ld        ",
                       beam ? beam->n_to_track_total : -1, i_pass);
             } else {
               if (beam)
@@ -3349,7 +3349,7 @@ long do_tracking(
           /* change back to sequential mode before leaving the do_tracking function */
           if (parallelStatus == trueParallel && distributedBeam) {
             gatherParticles(&coord, &nToTrack, &nLost, &accepted, n_processors, myid, &round);
-            MPI_Bcast(&nToTrack, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+            MPI_Bcast(&nToTrack, 1, MPI_INT64_T, 0, MPI_COMM_WORLD);
             parallelStatus = notParallel;
             partOnMaster = 1;
           }
@@ -3460,7 +3460,7 @@ long do_tracking(
             if (isMaster)
               nToTrack = 0;
             if (beam)
-              MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+              MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
           } else { /* singlePart tracking or partOnMaster */
             if (beam)
               beam->n_to_track_total = nToTrack;
@@ -3482,7 +3482,7 @@ long do_tracking(
         log_entry("do_tracking.4");
         if (!(flags & SILENT_RUNNING) && !is_batch && n_passes != 1 && !(flags & TEST_PARTICLES)) {
 #if !USE_MPI
-          printf("%ld particles present after pass %ld        \n",
+          printf("%" PRId64 " particles present after pass %ld        \n",
                  nToTrack, i_pass);
 #else
           if (!partOnMaster && distributedBeam) {
@@ -3490,13 +3490,13 @@ long do_tracking(
             if (isMaster)
               nToTrack = 0;
             if (beam)
-              MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-            printf("%ld particles present after pass %ld        \n",
+              MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
+            printf("%" PRId64 " particles present after pass %ld        \n",
                    beam ? beam->n_to_track_total : -1, i_pass);
           } else {
             if (beam)
               beam->n_to_track_total = nToTrack;
-            printf("%ld particles present after pass %ld        \n",
+            printf("%" PRId64 " particles present after pass %ld        \n",
                    nToTrack, i_pass);
           }
 #endif
@@ -3534,7 +3534,7 @@ long do_tracking(
             if (isMaster)
               nToTrack = 0;
             if (beam)
-              MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+              MPI_Reduce(&nToTrack, &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
           } else {
             if (beam)
               beam->n_to_track_total = nToTrack;
@@ -3656,7 +3656,7 @@ long do_tracking(
         double error = 0.0;
 #endif
 #if USE_MPI
-        long np_total;
+        int64_t np_total;
         double P_total = 0.0;
         if (distributedBeam) {
           if (((parallelStatus == trueParallel) && isSlave) || ((parallelStatus != trueParallel) && isMaster))
@@ -3699,7 +3699,7 @@ long do_tracking(
           } else {
             if (isMaster)
               np = 0; /* All the particles have been distributed to the slave processors */
-            MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
           }
         } else if (!np) {
           log_exit("do_match_energy");
@@ -3797,7 +3797,7 @@ long do_tracking(
 #if defined(IEEE_MATH)
               if (isnan(coord[ip][4]) || isinf(coord[ip][4])) {
                 long i;
-                printf("error: bad time coordinate for particle %ld\n", ip);
+                printf("error: bad time coordinate for particle %" PRId64 "\n", ip);
                 fflush(stdout);
                 for (i = 0; i < 6; i++)
                   printf("%15.8e ", coord[ip][i]);
@@ -3976,11 +3976,11 @@ long do_tracking(
 #if USE_MPI
               if (distributedBeam) {
                 double sum_total;
-                long np_total;
+                int64_t np_total;
 
                 MPI_Allreduce(&sum, &sum_total, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
                 sum = sum_total;
-                MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+                MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
                 if (np_total > 0)
                   center->delta[ic] = offset = sum / np_total;
                 else
@@ -4179,7 +4179,7 @@ long do_tracking(
 
       void store_fitpoint_beam_parameters(MARK *fpt, char *name, long occurence, double **coord, int64_t np, double Po) {
         long i, j, k;
-        long npTotal;
+        int64_t npTotal;
         static double emit[3], sigma[7], centroid[7], beta[3], alpha[3], emitc[3], min[7], max[7];
         static BEAM_SUMS *sums;
         static char *centroid_name_suffix[9] = {
@@ -4220,7 +4220,7 @@ long do_tracking(
                parallelStatus, partOnMaster, distributedBeam);
 #  endif
         if (parallelStatus == trueParallel && !partOnMaster && distributedBeam)
-          MPI_Allreduce(&np, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+          MPI_Allreduce(&np, &npTotal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
         else
           npTotal = np;
 #  if MPI_DEBUG
@@ -4382,7 +4382,7 @@ long do_tracking(
         VMON *vmon;
         long n;
         /*
-          long npTotal;
+          int64_t npTotal;
         */
 
         sums = allocateBeamSums(0, 1);
@@ -4692,9 +4692,9 @@ long do_tracking(
             if (distributedBeam) {
               if (isSlave) {
                 double sum_total;
-                long np_total;
+                int64_t np_total;
 
-                MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+                MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
                 MPI_Allreduce(&sum, &sum_total, 1, MPI_DOUBLE, MPI_SUM, workers);
                 matr->sReference = sum_total / np_total;
               }
@@ -4757,9 +4757,9 @@ long do_tracking(
             if (distributedBeam) {
               if (isSlave) {
                 double sum_total;
-                long np_total;
+                int64_t np_total;
 
-                MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+                MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
                 MPI_Allreduce(&sum, &sum_total, 1, MPI_DOUBLE, MPI_SUM, workers);
                 matr->sReference = sum_total / np_total;
               }
@@ -5146,7 +5146,7 @@ long do_tracking(
 #define DEBUG_SCATTER 0
 
 #if USE_MPI
-      void scatterParticles(double **coord, long *nToTrack, double **accepted,
+      void scatterParticles(double **coord, int64_t *nToTrack, double **accepted,
                             long n_processors, int myid, balance balanceStatus,
                             double my_rate, double nParPerElements, double round,
                             int lostSinceSeqMode, int *distributed,
@@ -5200,7 +5200,7 @@ long do_tracking(
           printf("scatterParticles, branch 1\n");
           fflush(stdout);
 #  endif
-          MPI_Bcast(nToTrack, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+          MPI_Bcast(nToTrack, 1, MPI_INT64_T, 0, MPI_COMM_WORLD);
 #  if DEBUG_SCATTER
           printf("scatterParticles, branch 1.1\n");
           fflush(stdout);
@@ -5235,7 +5235,7 @@ long do_tracking(
           if (myid == 0)
             my_rate = 0.0;      /* set it back to zero */
           if (minRate == 0.0) { /* redistribute evenly when all particles are lost on any working processor */
-            MPI_Bcast(nToTrack, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+            MPI_Bcast(nToTrack, 1, MPI_INT64_T, 0, MPI_COMM_WORLD);
             if (myid == 0)
               my_nToTrack = 0;
             else {
@@ -5376,12 +5376,12 @@ long do_tracking(
         free(rateCounts);
       }
 
-      void gatherParticles(double ***coord, long *nToTrack, long *nLost, double ***accepted, long n_processors, int myid, double *round) {
+      void gatherParticles(double ***coord, int64_t *nToTrack, int64_t *nLost, double ***accepted, long n_processors, int myid, double *round) {
         long work_processors = n_processors - 1;
         int root = 0;
         int64_t nItems, displs;
         long i;
-        long my_nToTrack, my_nLost, *nToTrackCounts,
+        int64_t my_nToTrack, my_nLost, *nToTrackCounts,
           *nLostCounts, current_nLost = 0, nToTrack_total, nLost_total;
 
 #  ifdef HAVE_GPU
@@ -5394,8 +5394,8 @@ long do_tracking(
           fflush(stdout);
         */
 
-        nToTrackCounts = malloc(sizeof(long) * n_processors);
-        nLostCounts = malloc(sizeof(long) * n_processors);
+        nToTrackCounts = malloc(sizeof(*nToTrackCounts) * n_processors);
+        nLostCounts = malloc(sizeof(*nLostCounts) * n_processors);
 
         if (myid == 0) {
           my_nToTrack = 0;
@@ -5406,10 +5406,10 @@ long do_tracking(
         }
 
         /* gather nToTrack and nLost from all of the slave processors to the master processors */
-        MPI_Gather(&my_nToTrack, 1, MPI_LONG, nToTrackCounts, 1, MPI_LONG, root, MPI_COMM_WORLD);
-        MPI_Gather(&my_nLost, 1, MPI_LONG, nLostCounts, 1, MPI_LONG, root, MPI_COMM_WORLD);
-        MPI_Allreduce(&my_nToTrack, &nToTrack_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(&my_nLost, &nLost_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Gather(&my_nToTrack, 1, MPI_INT64_T, nToTrackCounts, 1, MPI_INT64_T, root, MPI_COMM_WORLD);
+        MPI_Gather(&my_nLost, 1, MPI_INT64_T, nLostCounts, 1, MPI_INT64_T, root, MPI_COMM_WORLD);
+        MPI_Allreduce(&my_nToTrack, &nToTrack_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&my_nLost, &nLost_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 
 #  if MPI_DEBUG
         printf("gatherPaticles: nToTrack = %ld, nToTrack_total = %ld, nLost = %ld, nLost_total = %ld\n",
@@ -5452,7 +5452,7 @@ long do_tracking(
 
         /* collect information for the lost particles and gather the accepted array */
 
-        MPI_Bcast(&current_nLost, 1, MPI_LONG, root, MPI_COMM_WORLD);
+        MPI_Bcast(&current_nLost, 1, MPI_INT64_T, root, MPI_COMM_WORLD);
 
         if (myid == 0) {
           /* set up the displacement array and the number of elements that are received from each processor */
@@ -5604,8 +5604,8 @@ long do_tracking(
         BEAM_SUMS *sums;
 
 #if USE_MPI
-        long npTotal;
-        MPI_Reduce(&np, &npTotal, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+        int64_t npTotal;
+        MPI_Reduce(&np, &npTotal, 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
         if (isMaster && npTotal < 10) {
           printf("*** Error: too few particles (<10) for emittance modification\n");
           exitElegant(1);
@@ -5942,7 +5942,7 @@ long do_tracking(
             xyz[2] = s_location;
             interpolateFTable(B, xyz, ftable);
             if (fpdebug)
-              fprintf(fpdebug, "%ld 0 %ld %21.15e %21.15e %21.15e %21.15e %21.15e %21.15e\n", ik, ip, xyz[0], xyz[1], xyz[2], B[0], B[1], B[2]);
+              fprintf(fpdebug, "%" PRId64 " 0 %" PRId64 " %21.15e %21.15e %21.15e %21.15e %21.15e %21.15e\n", ik, ip, xyz[0], xyz[1], xyz[2], B[0], B[1], B[2]);
             BA = sqrt(sqr(B[0]) + sqr(B[1]) + sqr(B[2]));
             /* 3. calculate the rotation matrix */
             A[0][0] = -(p[1] * B[2] - p[2] * B[1]);
@@ -5990,7 +5990,7 @@ long do_tracking(
               }
               theta = choose_theta(rho, theta0, theta1, theta2);
               if (fpdebug)
-                fprintf(fpdebug, "%ld 1 %ld %21.15e %21.15e %21.15e %21.15e %21.15e %21.15e\n", ik, ip, xyz[0], xyz[1], xyz[2], B[0], B[1], B[2]);
+                fprintf(fpdebug, "%" PRId64 " 1 %" PRId64 " %21.15e %21.15e %21.15e %21.15e %21.15e %21.15e\n", ik, ip, xyz[0], xyz[1], xyz[2], B[0], B[1], B[2]);
 
               p[0] = -p[2] * sin(theta);
               p[2] *= cos(theta);
@@ -6180,7 +6180,7 @@ long do_tracking(
         if (beam->original && beam->n_saved) {
           for (i = 1; i < beam->n_original; i++) {
             if (beam->original[i] < beam->original[i - 1]) {
-              printf("Error in pointer order for i=%ld in beam->original\n", i);
+              printf("Error in pointer order for i=%" PRId64 " in beam->original\n", i);
               bad = 1;
             }
           }
@@ -6188,7 +6188,7 @@ long do_tracking(
         if (beam->particle) {
           for (i = 1; i < beam->n_particle; i++) {
             if (beam->particle[i] < beam->particle[i - 1]) {
-              printf("Error in pointer order for i=%ld in beam->particle\n", i);
+              printf("Error in pointer order for i=%" PRId64 " in beam->particle\n", i);
               bad = 1;
             }
           }
@@ -6196,7 +6196,7 @@ long do_tracking(
         if (beam->accepted) {
           for (i = 1; i < beam->n_particle; i++) {
             if (beam->accepted[i] < beam->accepted[i - 1]) {
-              printf("Error in pointer order for i=%ld in beam->accepted\n", i);
+              printf("Error in pointer order for i=%" PRId64 " in beam->accepted\n", i);
               bad = 1;
             }
           }
@@ -6214,7 +6214,7 @@ long do_tracking(
         if (beam->particle) {
           for (i = 0; i < beam->n_particle; i++) {
             if (beam->particle[i][6] <= 0) {
-              printf("Non-positive particleID %le for i=%ld in beam->particle\n", beam->particle[i][6], i);
+              printf("Non-positive particleID %le for i=%" PRId64 " in beam->particle\n", beam->particle[i][6], i);
               bad = 1;
             }
           }
@@ -6222,7 +6222,7 @@ long do_tracking(
         if (beam->accepted) {
           for (i = 0; i < beam->n_particle; i++) {
             if (beam->accepted[i][6] <= 0) {
-              printf("Non-positive particleID %le for i=%ld in beam->accepted\n", beam->particle[i][6], i);
+              printf("Non-positive particleID %le for i=%" PRId64 " in beam->accepted\n", beam->particle[i][6], i);
               bad = 1;
             }
           }

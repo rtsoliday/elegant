@@ -53,7 +53,7 @@ static SDDS_DEFINITION wake_parameter[WAKE_PARAMETERS] = {
 void set_up_zlongit(ZLONGIT *zlongit, RUN *run, long pass, long particles, CHARGE *charge,
                     double timeSpan);
 
-void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po,
+void track_through_zlongit(double **part0, int64_t np0, ZLONGIT *zlongit, double Po,
                            RUN *run, long i_pass, CHARGE *charge) {
   double *Itime = NULL;    /* array for histogram of particle density */
   double *Ifreq = NULL;    /* array for FFT of histogram of particle density */
@@ -65,7 +65,7 @@ void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
   int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
   int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
-  long max_np = 0;
+  int64_t max_np = 0;
   double *Vfreq, *Z;
   int64_t np = 0, ip, n_binned;
   long nfreq, iReal, iImag, ib, nb = 0;
@@ -77,7 +77,7 @@ void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po
   double *buffer = NULL;
   double tmin_part, tmax_part; /* record the actual tmin and tmax for particles to reduce communications */
   long offset = 0, length = 0;
-  long particles_total;
+  int64_t particles_total;
 #endif
 
   /*
@@ -301,7 +301,7 @@ void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po
 #if (!USE_MPI)
       if (n_binned != np) {
         char warningBuffer[1024];
-        snprintf(warningBuffer, 1024, "Only %ld of %ld particles were binned; results suspect. Reduce impedance frequency spacing for file-based impedances or invoking auto-scaling for broad-band impedances.",
+        snprintf(warningBuffer, 1024, "Only %" PRId64 " of %" PRId64 " particles were binned; results suspect. Reduce impedance frequency spacing for file-based impedances or invoking auto-scaling for broad-band impedances.",
                  n_binned, np);
         printWarningForTracking("Not all particles binned in ZLONGIT.",
                                 warningBuffer);
@@ -419,7 +419,7 @@ void track_through_zlongit(double **part0, long np0, ZLONGIT *zlongit, double Po
 #endif
 
 #if USE_MPI
-      MPI_Allreduce(&np, &particles_total, 1, MPI_LONG, MPI_SUM, workers);
+      MPI_Allreduce(&np, &particles_total, 1, MPI_INT64_T, MPI_SUM, workers);
       if (myid == 1) {
 #endif
         if (zlongit->SDDS_wake_initialized && zlongit->wakes) {
@@ -835,7 +835,7 @@ double computeAverage_p(double *data, int64_t np, MPI_Comm mpiComm) {
   double tSum = 0;
   int64_t ip;
   double error = 0.0;
-  long np_total;
+  int64_t np_total;
 
   for (ip = tSum = 0; ip < np; ip++) {
     tSum = KahanPlus(tSum, data[ip], &error);
@@ -845,7 +845,7 @@ double computeAverage_p(double *data, int64_t np, MPI_Comm mpiComm) {
     tSum = 0.0;
     np = 0;
   }
-  MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, mpiComm);
+  MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, mpiComm);
   if (np_total > 0)
     return KahanParallel(tSum, error, mpiComm) / np_total;
   return 0.0;

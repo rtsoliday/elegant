@@ -1332,17 +1332,17 @@ long track_through_csbend(double **part, int64_t n_part, CSBEND *csbend, double 
 
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!part) {
-      printf("error: null particle array found (working on particle %ld) (track_through_csbend)\n", i_part);
+      printf("error: null particle array found (working on particle %" PRId64 ") (track_through_csbend)\n", i_part);
       fflush(stdout);
       abort();
     }
     if (!(coord = part[i_part])) {
-      printf("error: null coordinate pointer for particle %ld (track_through_csbend)\n", i_part);
+      printf("error: null coordinate pointer for particle %" PRId64 " (track_through_csbend)\n", i_part);
       fflush(stdout);
       abort();
     }
     if (accepted && !accepted[i_part]) {
-      printf("error: null accepted particle pointer for particle %ld (track_through_csbend)\n", i_part);
+      printf("error: null accepted particle pointer for particle %" PRId64 " (track_through_csbend)\n", i_part);
       fflush(stdout);
       abort();
     }
@@ -1509,7 +1509,7 @@ long track_through_csbend(double **part, int64_t n_part, CSBEND *csbend, double 
 
     if (particle_lost) {
       if (!part[i_top]) {
-        printf("error: couldn't swap particles %ld and %ld--latter is null pointer (track_through_csbend)\n",
+        printf("error: couldn't swap particles %" PRId64 " and %" PRId64 "--latter is null pointer (track_through_csbend)\n",
                i_part, i_top);
         fflush(stdout);
         abort();
@@ -1520,7 +1520,7 @@ long track_through_csbend(double **part, int64_t n_part, CSBEND *csbend, double 
       if (accepted) {
         if (!accepted[i_top]) {
           printf(
-            "error: couldn't swap acceptance data for particles %ld and %ld--latter is null pointer (track_through_csbend)\n",
+            "error: couldn't swap acceptance data for particles %" PRId64 " and %" PRId64 "--latter is null pointer (track_through_csbend)\n",
             i_part, i_top);
           fflush(stdout);
           abort();
@@ -3030,17 +3030,17 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
     /* check particle data, transform coordinates, and handle edge effects */
     for (i_part = 0; i_part < n_part; i_part++) {
       if (!part) {
-        printf("error: null particle array found (working on particle %ld) (track_through_csbend)\n", i_part);
+        printf("error: null particle array found (working on particle %" PRId64 ") (track_through_csbend)\n", i_part);
         fflush(stdout);
         abort();
       }
       if (!(coord = part[i_part])) {
-        printf("error: null coordinate pointer for particle %ld (track_through_csbend)\n", i_part);
+        printf("error: null coordinate pointer for particle %" PRId64 " (track_through_csbend)\n", i_part);
         fflush(stdout);
         abort();
       }
       if (accepted && !accepted[i_part]) {
-        printf("error: null accepted particle pointer for particle %ld (track_through_csbend)\n", i_part);
+        printf("error: null accepted particle pointer for particle %" PRId64 " (track_through_csbend)\n", i_part);
         fflush(stdout);
         abort();
       }
@@ -3186,7 +3186,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
 
             if (particleLost) {
               if (!part[i_top]) {
-                printf("error: couldn't swap particles %ld and %ld--latter is null pointer (track_through_csbend)\n",
+                printf("error: couldn't swap particles %" PRId64 " and %" PRId64 "--latter is null pointer (track_through_csbend)\n",
                        i_part, i_top);
                 fflush(stdout);
                 abort();
@@ -3197,7 +3197,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
               if (accepted) {
                 if (!accepted[i_top]) {
                   printf(
-                    "error: couldn't swap acceptance data for particles %ld and %ld--latter is null pointer (track_through_csbend)\n",
+                    "error: couldn't swap acceptance data for particles %" PRId64 " and %" PRId64 "--latter is null pointer (track_through_csbend)\n",
                     i_part, i_top);
                   fflush(stdout);
                   abort();
@@ -3353,7 +3353,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
 	}
 #if (!USE_MPI)
         if (nBinned != n_part) {
-          printf("Only %ld of %ld particles binned for CSRCSBEND (z0=%le, kick=%ld, BRF=%le)\n",
+          printf("Only %ld of %" PRId64 " particles binned for CSRCSBEND (z0=%le, kick=%ld, BRF=%le)\n",
                  nBinned, n_part, z_start, kick, csbend->binRangeFactor < 1.1 ? 1.1 : csbend->binRangeFactor);
           printf("ct min, max = %21.15e, %21.15e, dct = %21.15e, nBins=%ld, maxBins=%ld\n",
                  ctLower, ctUpper, dct, nBins, maxBins);
@@ -3772,7 +3772,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
                                     part, n_part, 4);
 #if (!USE_MPI)
     if (nBinned != n_part) {
-      printf("Only %ld of %ld particles binned for CSRCSBEND (z0=%le, end, BRF=%le)\n",
+      printf("Only %ld of %" PRId64 " particles binned for CSRCSBEND (z0=%le, end, BRF=%le)\n",
              nBinned, n_part, z_start, csbend->binRangeFactor < 1.1 ? 1.1 : csbend->binRangeFactor);
       printf("ct min, max = %21.15e, %21.15e, dct = %21.15e, nBins=%ld, maxBins=%ld\n",
              ctLower, ctUpper, dct, nBins, maxBins);
@@ -3837,7 +3837,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
 
       if (p1 <= 0) {
         if (!part[i_top]) {
-          printf("error: couldn't swap particles %ld and %ld--latter is null pointer (track_through_csbend)\n",
+          printf("error: couldn't swap particles %" PRId64 " and %" PRId64 "--latter is null pointer (track_through_csbend)\n",
                  i_part, i_top);
           fflush(stdout);
           abort();
@@ -3846,7 +3846,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
         if (accepted) {
           if (!accepted[i_top]) {
             printf(
-              "error: couldn't swap acceptance data for particles %ld and %ld--latter is null pointer (track_through_csbend)\n",
+              "error: couldn't swap acceptance data for particles %" PRId64 " and %" PRId64 "--latter is null pointer (track_through_csbend)\n",
               i_part, i_top);
             fflush(stdout);
             abort();
@@ -4551,7 +4551,7 @@ for (iKick = 0; iKick < nKicks; iKick++) {
            binned_total, np_total, tContext.elementName);
 #else
       if (csrWake.dGamma && np != binned) {
-        printf("only %ld of %ld particles binned for CSR drift %s (track_through_driftCSR)\n",
+        printf("only %ld of %" PRId64 " particles binned for CSR drift %s (track_through_driftCSR)\n",
                binned, np, tContext.elementName);
 #endif
     printf("beam ct min, max = %21.15e, %21.15e\n",
@@ -4890,7 +4890,8 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
   TRACKING_CONTEXT tContext;
   LSCKICK lscKick;
 #if USE_MPI
-  long binned_total = 1, np_total = 1;
+  long binned_total = 1;
+  int64_t np_total = 1;
   double *buffer;
 #endif
 
@@ -4977,7 +4978,7 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
 #if USE_MPI
     if (distributedBeam) {
       if (isSlave)
-        MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+  MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
       MPI_Allreduce(&nBinned, &binned_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     }
 
@@ -4989,13 +4990,13 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
     }
     if ((myid == 1) && (np_total != binned_total)) {
       dup2(fdStdout, fileno(stdout)); /* Let the first slave processor write the output */
-      printf("Only %ld of %ld particles binned for CSRDRIFT (%s, BRF=%le, Stupakov)\n",
+      printf("Only %ld of %" PRId64 " particles binned for CSRDRIFT (%s, BRF=%le, Stupakov)\n",
              binned_total, np_total,
              tContext.elementName, csrWake.binRangeFactor);
       fflush(stdout);
 #else
       if (nBinned != np) {
-        printf("Only %ld of %ld particles binned for CSRDRIFT (%s, BRF=%le, Stupakov)\n",
+        printf("Only %ld of %" PRId64 " particles binned for CSRDRIFT (%s, BRF=%le, Stupakov)\n",
                nBinned, np,
                tContext.elementName, csrWake.binRangeFactor);
 #endif
@@ -5183,12 +5184,12 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
     }
     if ((myid == 1) && (np_total != binned_total)) {
       dup2(fdStdout, fileno(stdout)); /* Let the first slave processor write the output */
-      printf("Only %ld of %ld particles kicked for CSRDRIFT (%s, BRF=%le, Stupakov)\n",
+      printf("Only %ld of %" PRId64 " particles kicked for CSRDRIFT (%s, BRF=%le, Stupakov)\n",
              binned_total, np_total,
              tContext.elementName, csrWake.binRangeFactor);
 #else
       if (np != binned) {
-        printf("Only %ld of %ld particles kicked for CSRDRIFT (%s, BRF=%le, Stupakov)\n",
+        printf("Only %ld of %" PRId64 " particles kicked for CSRDRIFT (%s, BRF=%le, Stupakov)\n",
                binned, np,
                tContext.elementName, csrWake.binRangeFactor);
 #endif

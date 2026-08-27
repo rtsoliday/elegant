@@ -314,7 +314,8 @@ long addBGGExpData(char *filename, char *nameFragment, short skew) {
 }
 
 long trackBGGExpansion(double **part, int64_t np, BGGEXP *bgg, double pCentral, double **accepted, double *sigmaDelta2) {
-  int64_t ip, iz, irow, igLimit[2], nz;
+  int64_t ip, iz, irow, nz;
+  long igLimit[2];
   STORED_BGGEXP_DATA *bggData[2];
   double ds, dz, x, y, xp, yp, delta, s, phi, denom;
   double step, length;

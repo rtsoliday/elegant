@@ -679,7 +679,7 @@ long new_bunched_beam(
   beam->n_to_track = n_actual_particles;
 #if USE_MPI
   if (distributedBeam)
-    MPI_Allreduce(&beam->n_to_track, &beam->n_to_track_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&beam->n_to_track, &beam->n_to_track_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #endif
 
   /* copy particles into tracking buffer, adding in the time offset 
@@ -763,12 +763,12 @@ long track_beam(
   /* now track particles */
   if (!(flags & SILENT_RUNNING)) {
 #if !SDDS_MPI_IO
-    printf("tracking %ld particles\n", beam->n_to_track);
+    printf("tracking %" PRId64 " particles\n", beam->n_to_track);
 #else
     if (partOnMaster)
-      printf("tracking %ld particles\n", beam->n_to_track);
+      printf("tracking %" PRId64 " particles\n", beam->n_to_track);
     else
-      printf("tracking %ld particles\n", beam->n_to_track_total);
+      printf("tracking %" PRId64 " particles\n", beam->n_to_track_total);
 #endif
     fflush(stdout);
   }
@@ -948,12 +948,12 @@ void do_track_beam_output(RUN *run, VARY *control,
         printf("n_lost = %ld\n", total_lost);
       }
 #else
-      printf("n_lost = %ld\n", beam->n_lost);
+      printf("n_lost = %" PRId64 "\n", beam->n_lost);
 #endif
       fflush(stdout);
     }
 
-    printf("Dumping lost particles: n_to_track = %ld, n_lost = %ld, n_particles = %ld\n",
+    printf("Dumping lost particles: n_to_track = %" PRId64 ", n_lost = %" PRId64 ", n_particles = %" PRId64 "\n",
            beam->n_to_track, beam->n_lost, beam->n_particle);
     fflush(stdout);
     dump_lost_particles(&output->SDDS_losses, run->lossLimit, p_central0, beam->particle + beam->n_accepted,
@@ -1047,7 +1047,7 @@ void do_track_beam_output(RUN *run, VARY *control,
     fflush(stdout);
 #endif
     if (distributedBeam)
-      MPI_Reduce(&(beam->n_to_track), &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&(beam->n_to_track), &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
 #if MPI_DEBUG
     printf("Dumping final properties data.\n");
     fflush(stdout);
@@ -1258,7 +1258,7 @@ void finish_output(
                           finalCharge);
 #else
     if (distributedBeam)
-      MPI_Reduce(&(beam->n_to_track), &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&(beam->n_to_track), &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
     dump_final_properties(&output->SDDS_final, output->sums_vs_z + output->n_z_points,
                           control->varied_quan_value, control->varied_quan_name ? *control->varied_quan_name : NULL,
                           control->n_elements_to_vary, control->indexLimitProduct * control->n_steps,
@@ -1422,9 +1422,9 @@ long generateBunchForMoments(double **particle, int64_t np, long symmetrize,
   gsl_matrix *M;
 
 #if USE_MPI
-  long sum = 0, tmp, my_offset = 0, *offset = tmalloc(n_processors * sizeof(*offset)), total_particles = 0;
+  int64_t sum = 0, tmp, my_offset = 0, *offset = tmalloc(n_processors * sizeof(*offset)), total_particles = 0;
   if (isSlave && distributedBeam) {
-    MPI_Allgather(&np, 1, MPI_LONG, offset, 1, MPI_LONG, workers);
+  MPI_Allgather(&np, 1, MPI_INT64_T, offset, 1, MPI_INT64_T, workers);
     tmp = offset[0];
     for (i = 1; i < n_processors; i++) {
       sum += tmp;

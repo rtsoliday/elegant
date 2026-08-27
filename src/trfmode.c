@@ -23,7 +23,7 @@ void runBinlessTrfMode(double **part, int64_t np, TRFMODE *trfmode, double Po,
                        CHARGE *charge);
 
 void track_through_trfmode(
-  double **part0, long np0, TRFMODE *trfmode, double Po,
+  double **part0, int64_t np0, TRFMODE *trfmode, double Po,
   char *element_name, double element_z, long pass, long n_passes,
   CHARGE *charge) {
   unsigned long *count = NULL;
@@ -40,8 +40,8 @@ void track_through_trfmode(
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
   int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
   int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
-  long iBucket, nBuckets, np;
-  long max_np = 0;
+  long iBucket, nBuckets;
+  int64_t np, max_np = 0;
   double tPrevious, VxPrevious, xPhasePrevious, VyPrevious, yPhasePrevious;
   double clockNow = 0, clockOffsetPrevious = 0;
   double clockPhaseNow = 0, clockPhasePrevious = 0;
@@ -61,7 +61,8 @@ void track_through_trfmode(
 #if USE_MPI
   double *buffer, t_total;
   unsigned long *ulbuffer;
-  long np_total, binned_total;
+  long binned_total;
+  int64_t np_total;
   MPI_Status mpiStatus;
 #endif
 
@@ -78,10 +79,10 @@ void track_through_trfmode(
   }
 
 #if USE_MPI
-  MPI_Allreduce(&np0, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(&np0, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifdef DEBUG
   if (myid == 0) {
-    printf("np_total = %ld\n", np_total);
+    printf("np_total = %" PRId64 "\n", np_total);
     fflush(stdout);
   }
 #  endif
@@ -236,9 +237,9 @@ void track_through_trfmode(
     } else {
       np = 0;
     }
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #ifdef DEBUG
-    printf("Total of %ld particles, %ld on this processor\n", np_total, np);
+    printf("Total of %" PRId64 " particles, %" PRId64 " on this processor\n", np_total, np);
     fflush(stdout);
 #endif
     if (np_total == 0)
@@ -288,7 +289,7 @@ void track_through_trfmode(
 #if USE_MPI
     if (!isSlave)
       tmean = np = 0;
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&tmean, &t_total, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     tmean = t_total / np_total;
 #else
@@ -356,7 +357,7 @@ void track_through_trfmode(
     MPI_Allreduce(&n_binned, &binned_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     if (binned_total != np_total && myid == 0) {
       char warningBuffer[1024];
-      snprintf(warningBuffer, 1024, "%ld of %ld particles binned.", binned_total, np_total);
+      snprintf(warningBuffer, 1024, "%ld of %" PRId64 " particles binned.", binned_total, np_total);
       printWarningForTracking("Some particles not binned in TRFMODE", warningBuffer);
     }
     if (isSlave) {
@@ -380,7 +381,7 @@ void track_through_trfmode(
 #else
     if (n_binned != np) {
       char warningBuffer[1024];
-      snprintf(warningBuffer, 1024, "%ld of %ld particles binned.", n_binned, np);
+      snprintf(warningBuffer, 1024, "%ld of %" PRId64 " particles binned.", n_binned, np);
       printWarningForTracking("Some particles not binned in TRFMODE", warningBuffer);
     }
 #endif

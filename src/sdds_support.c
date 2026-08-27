@@ -915,7 +915,7 @@ void dump_watch_particles(WATCH *watch, long step, long pass, double **particle,
       bombElegant("Error: Invalid startPID, endPID in dump_watch_particles", NULL);
     for (i = 0; i < particles; i++)
       if (!particle[i]) {
-        printf("error: coordinate slot %ld is NULL (dump_watch_particles)\n", i);
+        printf("error: coordinate slot %" PRId64 " is NULL (dump_watch_particles)\n", i);
         fflush(stdout);
         abort();
       }
@@ -1131,7 +1131,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
 
   for (i = 0; i < particles; i++)
     if (!particle[i]) {
-      printf("error: coordinate slot %ld is NULL (dump_watch_parameters)\n", i);
+      printf("error: coordinate slot %" PRId64 " is NULL (dump_watch_parameters)\n", i);
       fflush(stdout);
       abort();
     }
@@ -1890,7 +1890,7 @@ void dump_phase_space(SDDS_TABLE *SDDS_table, double **particle, int64_t particl
 
     for (i = 0; i < particles; i++)
       if (!particle[i]) {
-        printf("error: coordinate slot %ld is NULL (dump_phase_space)\n", i);
+        printf("error: coordinate slot %" PRId64 " is NULL (dump_phase_space)\n", i);
         fflush(stdout);
         abort();
       }
@@ -2014,7 +2014,7 @@ void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral
     fflush(stdout);
 #endif
     if (!particle[i]) {
-      printf("error: coordinate slot %ld is NULL (dump_lost_particles)\n", i);
+      printf("error: coordinate slot %" PRId64 " is NULL (dump_lost_particles)\n", i);
       fflush(stdout);
 #if USE_MPI && MPI_DEBUG
       printf("bad particle pointer for particle %ld\n", i);
@@ -2034,9 +2034,9 @@ void dump_lost_particles(SDDS_TABLE *SDDS_table, double *sLimit, double pCentral
   }
   if (badPID) {
 #if USE_MPI
-    printf("%ld particles with \"bad\" PID on processor %d\n", badPID, myid);
+    printf("%" PRId64 " particles with \"bad\" PID on processor %d\n", badPID, myid);
 #else
-    printf("%ld particles with \"bad\" PID\n", badPID);
+    printf("%" PRId64 " particles with \"bad\" PID\n", badPID);
 #endif
     fflush(stdout);
   }

@@ -4366,7 +4366,7 @@ extern void GWigSymplecticPass(double **coord, long num_particles, double pCentr
 			CWIGGLER *cwiggler, double *sigmaDelta2, long singleStep, double *ZwStart);
 extern void determineCWigglerEndFlags(CWIGGLER *cwig, ELEMENT_LIST *eptr0);
 extern void InitializeAPPLE(char *file, APPLE *apple);
-extern void APPLE_Track(double **coord, long num_particles, double pCentral,
+extern void APPLE_Track(double **coord, int64_t num_particles, double pCentral,
 			APPLE *apple);
 extern VMATRIX *sextupole_matrix(double K2, double K1, double J1, double length, long maximum_order, double fse, double xkick, double ykick, double ffringe);
 extern VMATRIX *solenoid_matrix(double length, double ks, long max_order);
@@ -4437,7 +4437,7 @@ extern long do_tracking(BEAM *beam, double **coord, int64_t n_original, long *ef
                         unsigned long flags, long n_passes, long passOffset, SASEFEL_OUTPUT *sasefel,
 			SLICE_OUTPUT *sliceAnalysis,
                         double *finalCharge, double **lostParticles, ELEMENT_LIST *startElem);
-extern void recordLostParticles(BEAM *beam, double **coord, int64_t nLeft, long nLostNew, long pass);
+extern void recordLostParticles(BEAM *beam, double **coord, int64_t nLeft, int64_t nToTrack, long pass);
 extern void resetElementTiming();
 extern void reportElementTiming();
 
@@ -4465,7 +4465,7 @@ void setTrackingOmniWedgeGpuFunction(long (*wedgeFunc)(int64_t np, long pass,
                                                       long i_elem, long n_elem,
                                                       ELEMENT_LIST *eptr,
                                                       double *pCentral));
-void gatherParticles(double ***coord, long *nToTrack, long *nLost, double ***accepted, long n_processors, int myid, double *round);
+void gatherParticles(double ***coord, int64_t *nToTrack, int64_t *nLost, double ***accepted, long n_processors, int myid, double *round);
 long transformBeamWithScript(SCRIPT *script, double pCentral, CHARGE *charge, BEAM *beam, double **part, 
                              int64_t np, char *mainRootname, long iPass, long driftOrder, double z, long forceSerial,
 			     long occurence, long backtrack, LINE_LIST *beamline, RUN *run);
@@ -5179,7 +5179,7 @@ long trackBGGExpansion(double **part, int64_t np, BGGEXP *bgg, double pCentral, 
 
 long trackMagneticFieldOffAxisExpansion(double **part, int64_t np, BOFFAXE *boa, double pCentral, double **accepted, double *sigmaDelta2);
 
-void track_SReffects(double **coord, long n, SREFFECTS *SReffects, double Po, 
+void track_SReffects(double **coord, int64_t n, SREFFECTS *SReffects, double Po,
                      TWISS *twiss, RADIATION_INTEGRALS *radIntegrals,
                      long lossesOnly);
 VMATRIX *srEffectsMatrix(SREFFECTS *SReffects);
@@ -5219,7 +5219,7 @@ void rotateSpinsAboutYAxis(double **particle, int64_t np, double angle);
   
 long track_through_ccbend(double **particle, int64_t n_part, ELEMENT_LIST *eptr, CCBEND *ccbend, double Po,
                           double **accepted, double z_start, double *sigmaDelta2, char *rootname,
-                          MAXAMP *maxamp, APCONTOUR *apContour, APERTURE_DATA *apFileData, long iSlice, long iFinalSlice);
+                          MAXAMP *maxamp, APCONTOUR *apContour, APERTURE_DATA *apFileData, int64_t iPart, long iFinalSlice);
 void addCcbendRadiationIntegrals(CCBEND *ccbend, double *startingCoord, double pCentral,
                                  double eta0, double etap0, double beta0, double alpha0,
                                  double *I1, double *I2, double *I3, double *I4, double *I5, ELEMENT_LIST *elem);
@@ -5230,7 +5230,7 @@ int integrate_kick_KnL(double *coord, const double dx, const double dy, const do
 
 long track_through_lgbend(double **particle, int64_t n_part, ELEMENT_LIST *eptr, LGBEND *lgbend, double Po,
                           double **accepted, double z_start, double *sigmaDelta2, char *rootname,
-                          MAXAMP *maxamp, APCONTOUR *apContour, APERTURE_DATA *apFileData, long iSlice, long iFinalSlice);
+                          MAXAMP *maxamp, APCONTOUR *apContour, APERTURE_DATA *apFileData, int64_t iPart, long iFinalSlice);
 void readLGBendConfiguration(LGBEND *lgbend, ELEMENT_LIST *eptr);
 void copyLGBend(LGBEND *target, LGBEND *source);
 void configureLGBendGeometry(LGBEND *lgbend);
@@ -5407,7 +5407,7 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part, int64_t np, double Po, 
 void accumulateSCMULT(double **part, int64_t np, double Po, ELEMENT_LIST *eptr, long idSlotsPerbunch);
 double computeRmsCoordinate(double **coord, long i1, int64_t np, double *mean, long *countReturn);
 #if USE_MPI
-double computeRmsCoordinate_p(double **coord, long i1, int64_t np, double *centroid, long *npTotal, unsigned long classFlags);
+double computeRmsCoordinate_p(double **coord, long i1, int64_t np, double *centroid, int64_t *npTotal, unsigned long classFlags);
 #endif
 
 void do_insert_elements(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline);
@@ -5456,7 +5456,7 @@ void setupMomentumApertureSearch(NAMELIST_TEXT *nltext, RUN *run, VARY *control)
 void finishMomentumApertureSearch();
 long doMomentumApertureSearch(RUN *run, VARY *control, ERRORVAL *errcon, LINE_LIST *beamline, double *startingCoord);
 #if USE_MPI
-void gatherLostParticles(double ***lostParticles, long *nLost, double **coord, long nSurvived, long n_processors, int myid);
+void gatherLostParticles(double ***lostParticles, int64_t *nLost, double **coord, int64_t nSurvived, long n_processors, int myid);
 #endif
 
 /* prototypes for drand_oag.c */

@@ -49,7 +49,7 @@ void ramp_momentum(
 #if defined(IEEE_MATH)
     if (isnan(t) || isinf(t)) {
       long i;
-      printf("error: bad time coordinate for particle %ld\n", ip);
+      printf("error: bad time coordinate for particle %" PRId64 "\n", ip);
       for (i = 0; i < 6; i++)
         printf("%15.8e ", coord[ip][i]);
       fputc('\n', stdout);
@@ -62,10 +62,10 @@ void ramp_momentum(
   t0 /= np;
 #else
   if (distributedBeam) {
-    long np_total;
+    int64_t np_total;
     double t0_total;
 
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&t0, &t0_total, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     t0 = t0_total / np_total;
   } else {

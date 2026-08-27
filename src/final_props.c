@@ -625,7 +625,7 @@ long compute_final_properties(double *data, BEAM_SUMS *sums, int64_t n_original,
 #endif
       for (i = sum = 0; i < sums->n_part; i++) {
         if (!coord[i]) {
-          printf("coordinate element for particle %ld is null (compute_final_properties)\n", i);
+          printf("coordinate element for particle %" PRId64 " is null (compute_final_properties)\n", i);
           fflush(stdout);
           abort();
         }

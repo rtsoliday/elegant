@@ -727,7 +727,8 @@ void trackWithIonEffects(
   long *ibParticle = NULL; /* array to record which bunch each particle is in */
   int64_t **ipBunch = NULL;   /* array to record particle indices in part0 array for all particles in each bunch */
   int64_t *npBunch = NULL;    /* array to record how many particles are in each bunch */
-  int64_t np, npTotal, max_np = 0;
+  int64_t np, max_np = 0;
+  long npTotal;
   /* properties of the electron beam */
   double bunchCentroid[4], bunchSigma[4], tNow, qBunch;
   // double sigmatemp[2];

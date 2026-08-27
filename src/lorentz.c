@@ -379,9 +379,9 @@ long lorentz(
     lastParticleID = part[i_part][particleIDIndex];
     if (verbosity>9 && count%mod==0) {
 #if USE_MPI
-      printf("Worker %d tracking particle %ld of %ld\n", myid, count, n_part);
+        printf("Worker %d tracking particle %ld of %" PRId64 "\n", myid, count, n_part);
 #else
-      printf("Tracking particle %ld of %ld\n", count, n_part);
+      printf("Tracking particle %ld of %" PRId64 "\n", count, n_part);
 #endif
       fflush(stdout);
     }

@@ -796,7 +796,7 @@ void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
 #  endif
         gatherLostParticles(&lostParticle, &nLost, beam->particle, n_left, n_processors, myid);
         if (verbosity > 1) {
-          printf("Gathered %ld lost particles to master\n", nLost);
+          printf("Gathered %" PRId64 " lost particles to master\n", nLost);
           fflush(stdout);
         }
         if (isMaster)
@@ -831,7 +831,7 @@ void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
           if (loss) {
             if (verbosity > 2) {
               char s[1000];
-              sprintf(s, "dumping \"loss\" file, %ld particles of %ld", nLost, beam->n_to_track);
+              sprintf(s, "dumping \"loss\" file, %" PRId64 " particles of %" PRId64, nLost, beam->n_to_track);
               report_stats(stdout, s);
             }
             dump_scattered_loss_particles(&SDDS_loss, lostParticle, beam->original,
@@ -842,7 +842,7 @@ void TouschekDistribution(RUN *run, VARY *control, LINE_LIST *beamline) {
             }
             if (verbosity > 3) {
               char s[1000];
-              sprintf(s, "Finished dumping \"loss\" file, %ld particles of %ld", n_left, beam->n_to_track);
+              sprintf(s, "Finished dumping \"loss\" file, %ld particles of %" PRId64, n_left, beam->n_to_track);
               report_stats(stdout, s);
             }
           }

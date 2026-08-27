@@ -225,17 +225,17 @@ long track_through_kick_sbend(double **part, int64_t n_part, KSBEND *ksbend, dou
   i_top = n_part - 1;
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!part) {
-      printf("error: null particle array found (working on particle %ld) (track_through_kick_sbend)\n", i_part);
+      printf("error: null particle array found (working on particle %" PRId64 ") (track_through_kick_sbend)\n", i_part);
       fflush(stdout);
       abort();
     }
     if (!(coord = part[i_part])) {
-      printf("error: null coordinate pointer for particle %ld (track_through_kick_sbend)\n", i_part);
+      printf("error: null coordinate pointer for particle %" PRId64 " (track_through_kick_sbend)\n", i_part);
       fflush(stdout);
       abort();
     }
     if (accepted && !accepted[i_part]) {
-      printf("error: null accepted particle pointer for particle %ld (track_through_kick_sbend)\n", i_part);
+      printf("error: null accepted particle pointer for particle %" PRId64 " (track_through_kick_sbend)\n", i_part);
       fflush(stdout);
       abort();
     }
@@ -293,7 +293,7 @@ long track_through_kick_sbend(double **part, int64_t n_part, KSBEND *ksbend, dou
 
     if (particle_lost) {
       if (!part[i_top]) {
-        printf("error: couldn't swap particles %ld and %ld--latter is null pointer (track_through_kick_sbend)\n",
+        printf("error: couldn't swap particles %" PRId64 " and %" PRId64 "--latter is null pointer (track_through_kick_sbend)\n",
                i_part, i_top);
         fflush(stdout);
         abort();
@@ -302,7 +302,7 @@ long track_through_kick_sbend(double **part, int64_t n_part, KSBEND *ksbend, dou
       if (accepted) {
         if (!accepted[i_top]) {
           printf(
-            "error: couldn't swap acceptance data for particles %ld and %ld--latter is null pointer (track_through_kick_sbend)\n",
+            "error: couldn't swap acceptance data for particles %" PRId64 " and %" PRId64 "--latter is null pointer (track_through_kick_sbend)\n",
             i_part, i_top);
           fflush(stdout);
           abort();

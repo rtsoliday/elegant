@@ -89,9 +89,9 @@ long generate_bunch(
     remaining_sequence_No--;
   total_n_particles += n_particles;
 #else
-  long sum = 0, tmp, my_offset = 0, *offset = tmalloc(n_processors * sizeof(*offset)), total_particles = 0;
+  int64_t sum = 0, tmp, my_offset = 0, *offset = tmalloc(n_processors * sizeof(*offset)), total_particles = 0;
   if (isSlave && distributedBeam) {
-    MPI_Allgather(&n_particles, 1, MPI_LONG, offset, 1, MPI_LONG, workers);
+    MPI_Allgather(&n_particles, 1, MPI_INT64_T, offset, 1, MPI_INT64_T, workers);
     tmp = offset[0];
     for (i = 1; i < n_processors; i++) {
       sum += tmp;
@@ -586,10 +586,11 @@ void gaussian_distribution(
 #if USE_MPI
     /* To generate n particles with Halton sequence on m processors, each processor will 
        generate all particles, but only n/m particles will be used for each of the processors */
-    long i, start_particle = 0, end_particle = n_particles, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
+    long i;
+    int64_t start_particle = 0, end_particle = n_particles, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
 
     if (distributedBeam) {
-      MPI_Allgather(&n_particles, 1, MPI_LONG, particle_array, 1, MPI_LONG, MPI_COMM_WORLD);
+      MPI_Allgather(&n_particles, 1, MPI_INT64_T, particle_array, 1, MPI_INT64_T, MPI_COMM_WORLD);
       for (i = 1; i < n_processors; i++) {
         particle_array[i] += particle_array[i - 1];
       }
@@ -680,7 +681,8 @@ void uniform_distribution(
   double range1, range2;
   double rnd1, rnd2 = 0.0;
 #if SDDS_MPI_IO
-  long i, start_particle = 0, end_particle = n_particles, *particle_array;
+  long i;
+  int64_t start_particle = 0, end_particle = n_particles, *particle_array;
 #endif
 
   log_entry("uniform_distribution");
@@ -694,7 +696,7 @@ void uniform_distribution(
       /* To generate n particles with Halton sequence on m processors, each processor will 
 	 generate all particles, but only n/m particles will be used for each of the processors */
       particle_array = tmalloc(n_processors * sizeof(*particle_array));
-      MPI_Allgather(&n_particles, 1, MPI_LONG, particle_array, 1, MPI_LONG, MPI_COMM_WORLD);
+      MPI_Allgather(&n_particles, 1, MPI_INT64_T, particle_array, 1, MPI_INT64_T, MPI_COMM_WORLD);
       for (i = 1; i < n_processors; i++) {
         particle_array[i] += particle_array[i - 1];
       }
@@ -823,10 +825,11 @@ void shell_distribution(
   angle = -dangle;
 #else
   if (distributedBeam) {
-    long i, start_particle, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
-    long n_particles_total;
+    long i;
+    int64_t start_particle, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
+    int64_t n_particles_total;
 
-    MPI_Allgather(&n_particles, 1, MPI_LONG, particle_array, 1, MPI_LONG, MPI_COMM_WORLD);
+    MPI_Allgather(&n_particles, 1, MPI_INT64_T, particle_array, 1, MPI_INT64_T, MPI_COMM_WORLD);
     for (i = 1; i < n_processors; i++) {
       particle_array[i] += particle_array[i - 1];
     }
@@ -872,7 +875,8 @@ void hard_edge_distribution(
   double range2;
   double rnd1, rnd2;
 #if SDDS_MPI_IO
-  long i, start_particle = 0, end_particle = n_particles, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
+  long i;
+  int64_t start_particle = 0, end_particle = n_particles, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
 #endif
 
   log_entry("hard_edge_distribution");
@@ -886,7 +890,7 @@ void hard_edge_distribution(
       /* To generate n particles with Halton sequence on m processors, each processor will 
 	 generate all particles, but only n/m particles will be used for each of the processors */
 
-      MPI_Allgather(&n_particles, 1, MPI_LONG, particle_array, 1, MPI_LONG, MPI_COMM_WORLD);
+      MPI_Allgather(&n_particles, 1, MPI_INT64_T, particle_array, 1, MPI_INT64_T, MPI_COMM_WORLD);
       for (i = 1; i < n_processors; i++) {
         particle_array[i] += particle_array[i - 1];
       }
@@ -989,10 +993,11 @@ void line_distribution(
     x1 = x2 = dx1 = dx2 = 0;
 #else
   if (distributedBeam) {
-    long i, start_particle, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
-    long n_particles_total;
+    long i;
+    int64_t start_particle, *particle_array = tmalloc(n_processors * sizeof(*particle_array));
+    int64_t n_particles_total;
 
-    MPI_Allgather(&n_particles, 1, MPI_LONG, particle_array, 1, MPI_LONG, MPI_COMM_WORLD);
+    MPI_Allgather(&n_particles, 1, MPI_INT64_T, particle_array, 1, MPI_INT64_T, MPI_COMM_WORLD);
     for (i = 1; i < n_processors; i++) {
       particle_array[i] += particle_array[i - 1];
     }
@@ -1031,7 +1036,7 @@ void enforce_sigma_values(double **coord, int64_t n_part, long offset, double s1
   int64_t i;
 #if SDDS_MPI_IO
   double s1a_total, s2a_total;
-  long total_particles;
+  int64_t total_particles;
 #endif
 
   log_entry("enforce_sigma_values");
@@ -1054,7 +1059,7 @@ void enforce_sigma_values(double **coord, int64_t n_part, long offset, double s1
   if (isSlave) {
     MPI_Allreduce(&s1a, &s1a_total, 1, MPI_DOUBLE, MPI_SUM, workers);
     MPI_Allreduce(&s2a, &s2a_total, 1, MPI_DOUBLE, MPI_SUM, workers);
-    MPI_Allreduce(&n_part, &total_particles, 1, MPI_LONG, MPI_SUM, workers);
+    MPI_Allreduce(&n_part, &total_particles, 1, MPI_INT64_T, MPI_SUM, workers);
     s1a = sqrt(s1a_total / total_particles);
     s2a = sqrt(s2a_total / total_particles);
   }
@@ -1093,9 +1098,9 @@ void zero_centroid(double **particle, int64_t n_particles, long coord) {
   if (distributedBeam) {
     if (isSlave) {
       double total_sum;
-      long total_particles;
+      int64_t total_particles;
       MPI_Allreduce(&sum, &total_sum, 1, MPI_DOUBLE, MPI_SUM, workers);
-      MPI_Allreduce(&n_particles, &total_particles, 1, MPI_LONG, MPI_SUM, workers);
+      MPI_Allreduce(&n_particles, &total_particles, 1, MPI_INT64_T, MPI_SUM, workers);
       sum = total_sum / total_particles;
     }
   } else {
@@ -1148,10 +1153,10 @@ long dynap_distribution_p(double **particle, int64_t n_particles, double sx, dou
   long ix, iy, ip;
   double x, y, dx = 0.0, dy = 0.0;
   double *coord;
-  long n_particles_total, remainder, start_particle, end_particle;
+  int64_t n_particles_total, remainder, start_particle, end_particle;
 
   log_entry("dynap_distribution");
-  MPI_Allreduce(&n_particles, &n_particles_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(&n_particles, &n_particles_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
   if ((nx < 1 || ny < 1) || (nx == 1 && ny == 1 && n_particles_total != 1)) {
     if ((nx = sqrt(n_particles_total * 1.0)) <= 1)
       bombElegant("too few particles requested for dynamic-aperture beam type", NULL);
@@ -1381,7 +1386,7 @@ void polarizeBeam(double **part, int64_t np, POLAR *polar) {
   	e[i] /= emag;
     }
     int code = match_string(polar->mode, polarizationModeOption, 4, 0);
-    long npTotal, *npPerRank, *offsetPerRank;
+    int64_t npTotal, *npPerRank, *offsetPerRank;
     if (p==0 || p==1)
       code = 0;
     switch (code) {
@@ -1391,8 +1396,8 @@ void polarizeBeam(double **part, int64_t np, POLAR *polar) {
       npPerRank = calloc(n_processors, sizeof(*npPerRank));
       offsetPerRank = calloc(n_processors, sizeof(*offsetPerRank));
       npPerRank[myid] = np;
-      MPI_Allreduce(MPI_IN_PLACE, npPerRank, n_processors, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-      MPI_Allreduce(&np, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+      MPI_Allreduce(MPI_IN_PLACE, npPerRank, n_processors, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
+      MPI_Allreduce(&np, &npTotal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
       offsetPerRank[0] = 0;
       for (ip=1; ip<n_processors; ip++)
 	offsetPerRank[ip] = offsetPerRank[ip-1]+npPerRank[ip-1];
@@ -1404,7 +1409,7 @@ void polarizeBeam(double **part, int64_t np, POLAR *polar) {
       offsetPerRank[0] = 0;
       int myid = 0;
 #endif      
-      long nUp = (long)(npTotal * (p + 1.0) / 2.0 + 0.5);  /* round-half-up */
+      int64_t nUp = (int64_t)(npTotal * (p + 1.0) / 2.0 + 0.5);  /* round-half-up */
       if (nUp < 0) nUp = 0;
       if (nUp > npTotal) nUp = np;
       char *pUpArr = calloc(npTotal, sizeof(*pUpArr));

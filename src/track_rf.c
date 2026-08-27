@@ -441,7 +441,7 @@ void set_up_rftm110(RFTM110 *rf_param, double **initial, int64_t n_particles, do
     }
 #if USE_MPI
     if (USE_MPI && distributedBeam) {
-      long n_total;
+      int64_t n_total;
 #  ifndef USE_KAHAN
       double tmp;
 #  endif
@@ -456,7 +456,7 @@ void set_up_rftm110(RFTM110 *rf_param, double **initial, int64_t n_particles, do
       rf_param->t_first_particle = KahanParallel(rf_param->t_first_particle, error, MPI_COMM_WORLD);
 #  endif
 
-      MPI_Allreduce(&n_particles, &n_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+      MPI_Allreduce(&n_particles, &n_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
       n_particles = n_total;
     }
 #endif
@@ -762,7 +762,7 @@ void set_up_mrfdf(MRFDF *rf_param, double **initial, int64_t n_particles, double
     }
 #if USE_MPI
     if (USE_MPI && distributedBeam) {
-      long n_total;
+      int64_t n_total;
 #  ifndef USE_KAHAN
       double tmp;
 #  endif
@@ -777,7 +777,7 @@ void set_up_mrfdf(MRFDF *rf_param, double **initial, int64_t n_particles, double
       rf_param->t_first_particle = KahanParallel(rf_param->t_first_particle, error, MPI_COMM_WORLD);
 #  endif
 
-      MPI_Allreduce(&n_particles, &n_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+      MPI_Allreduce(&n_particles, &n_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
       n_particles = n_total;
     }
 #endif

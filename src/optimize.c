@@ -2111,7 +2111,8 @@ double optimization_function(double *value, long *invalid) {
   TUNE_FOOTPRINTS tuneFP;
   static long nLostMemory = -1;
 #if USE_MPI
-  long nOriginalTotal, nLostTotal;
+  long nOriginalTotal;
+  int64_t nLostTotal;
 #endif
 
   log_entry("optimization_function");
@@ -2630,7 +2631,7 @@ double optimization_function(double *value, long *invalid) {
     if (isMaster && distributedBeam)
       if (beam->n_to_track_total < (n_processors - 1)) {
         printf("*************************************************************************************************\n");
-        printf("* Warning! The number of particles (%ld) shouldn't be less than the number of processors (%d)! *\n", beam->n_to_track, n_processors - 1);
+    printf("* Warning! The number of particles (%" PRId64 ") shouldn't be less than the number of processors (%d)! *\n", beam->n_to_track, n_processors - 1);
         printf("* Use of fewer processors is recommended!                                                       *\n");
         printf("*************************************************************************************************\n");
         MPI_Abort(MPI_COMM_WORLD, 2);
@@ -2674,7 +2675,7 @@ double optimization_function(double *value, long *invalid) {
       if (!independentRunPerRank &&
           optimization_data->method != OPTIM_METHOD_HYBSIMPLEX && optimization_data->method != OPTIM_METHOD_SWARM &&
           optimization_data->method != OPTIM_METHOD_GENETIC) {
-        MPI_Allreduce(&beam->n_lost, &nLostTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&beam->n_lost, &nLostTotal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
         rpn_store(nLostTotal, NULL, nLostMemory);
       } else
         rpn_store(beam->n_lost, NULL, nLostMemory);
@@ -3451,7 +3452,7 @@ double particleComparisonForOptimization(BEAM *beam, OPTIMIZATION_DATA *optimDat
     /* In this case, each processor (maybe only 1) tracks all the particles */
 
     if (beam->n_to_track != optimData->nParticlesToMatch) {
-      printf("Mismatch in comparison of particles after tracking: %ld needed but %ld present\n",
+      printf("Mismatch in comparison of particles after tracking: %ld needed but %" PRId64 " present\n",
              optimData->nParticlesToMatch, beam->n_to_track);
       fflush(stdout);
       *invalid = 1;

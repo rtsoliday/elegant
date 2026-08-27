@@ -209,7 +209,7 @@ void accumulateParticleTuneData
     if ((ptunes->startPID<=0 || pid>=ptunes->startPID) &&
         (ptunes->endPID<=0 || pid<=ptunes->endPID) &&
         (ptunes->PIDInterval<=1 || (pid%ptunes->PIDInterval==0))) {
-      snprintf(pidText, 32, "%ld", pid);
+      snprintf(pidText, 32, "%" PRId64, pid);
       if (!hfind(ptunes->indexHash, (unsigned char *)pidText, strlen(pidText)))
         bombElegantVA("PID %ld of particle not found in hash table for particle tunes\n", pid);
       if (!(pIndexPtr = (long*)hstuff(ptunes->indexHash)))
@@ -255,12 +255,13 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
     return;
   
 #if USE_MPI
-  long npTotal = 0, *np = NULL, iTotal, id, *particleID = NULL;
+  long id;
+  int64_t npTotal = 0, *np = NULL, iTotal, *particleID = NULL;
   short mpiAbortGlobal;
   MPI_Status mpiStatus;
   MPI_Barrier(MPI_COMM_WORLD);
   np = calloc(n_processors, sizeof(*np));
-  MPI_Gather(&(ptunes->np), 1, MPI_LONG, np, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+  MPI_Gather(&(ptunes->np), 1, MPI_INT64_T, np, 1, MPI_INT64_T, 0, MPI_COMM_WORLD);
   for (id=0; id<n_processors; id++)
     npTotal += np[id];
   tuneData = calloc(myid==0?npTotal:ptunes->np, sizeof(double));
@@ -335,7 +336,8 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
     MPI_Barrier(MPI_COMM_WORLD);
     /* Collect data from each slave */
     if (myid==0) {
-      long iTotal, id;
+      long id;
+      int64_t iTotal;
       MPI_Status mpiStatus;
       iTotal = 0;
 
@@ -382,7 +384,7 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
     iTotal = 0;
     particleID = calloc(npTotal, sizeof(*particleID));
     for (id=1; id<n_processors; id++) {
-      if (np[id] && MPI_Recv(particleID+iTotal, np[id], MPI_LONG, id, 100, MPI_COMM_WORLD, &mpiStatus)!=MPI_SUCCESS) {
+      if (np[id] && MPI_Recv(particleID+iTotal, np[id], MPI_INT64_T, id, 100, MPI_COMM_WORLD, &mpiStatus)!=MPI_SUCCESS) {
         printf("Error: MPI_Recv returns error retrieving data from processor %ld\n", id);
         mpiAbort = MPI_ABORT_PARTICLE_TUNE_IO_ERROR;
       }
@@ -390,7 +392,7 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
     }
   } else {
     if (ptunes->np)
-      MPI_Send(ptunes->particleID, ptunes->np, MPI_LONG, 0, 100, MPI_COMM_WORLD);
+      MPI_Send(ptunes->particleID, ptunes->np, MPI_INT64_T, 0, 100, MPI_COMM_WORLD);
   }
   if (myid==0) {
     if (!SDDS_SetColumn(&(ptunes->SDDSout), SDDS_SET_BY_NAME, particleID, npTotal,  "particleID")) {

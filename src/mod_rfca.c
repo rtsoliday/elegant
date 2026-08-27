@@ -47,7 +47,7 @@ long modulated_rf_cavity(double **part, int64_t np, MODRF *modrf, double P_centr
       bombElegant("NULL particle data pointer (modulated_rf_cavity)", NULL);
     for (ip = 0; ip < np; ip++)
       if (!part[ip]) {
-        printf("NULL pointer for particle %ld (modulated_rf_cavity)\n", ip);
+        printf("NULL pointer for particle %" PRId64 " (modulated_rf_cavity)\n", ip);
         fflush(stdout);
 #if USE_MPI
         MPI_Abort(MPI_COMM_WORLD, 1);

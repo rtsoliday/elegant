@@ -229,7 +229,7 @@ long trackThroughExactCorrector(double **part, int64_t n_part, ELEMENT_LIST *ept
     for (i_part = 0; i_part <= i_top; i_part++) {
       lost = 0;
       if (!(coord = part[i_part])) {
-        printf("error: null coordinate pointer for particle %ld (trackThroughExactCorrector)\n", i_part);
+        printf("error: null coordinate pointer for particle %" PRId64 " (trackThroughExactCorrector)\n", i_part);
         fflush(stdout);
         abort();
       }
@@ -279,7 +279,7 @@ long trackThroughExactCorrector(double **part, int64_t n_part, ELEMENT_LIST *ept
         if (accepted) {
           if (!accepted[i_top]) {
             printf(
-              "error: couldn't swap acceptance data for particles %ld and %ld--latter is null pointer (trackThroughExactCorrector)\n",
+              "error: couldn't swap acceptance data for particles %" PRId64 " and %" PRId64 "--latter is null pointer (trackThroughExactCorrector)\n",
               i_part, i_top);
             fflush(stdout);
             abort();

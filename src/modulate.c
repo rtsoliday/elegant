@@ -233,9 +233,9 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
 #endif
 
 #if USE_MPI
-  long np_total = 0;
+  int64_t np_total = 0;
   if (distributedBeam) {
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     if (np_total == 0)
       return 0;
   } else if (np == 0)

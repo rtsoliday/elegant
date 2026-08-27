@@ -407,12 +407,12 @@ long fmultipole_tracking(
   multipoleKicksDone += (i_top + 1) * multData.orders * nSlices * 4;
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!(coord = particle[i_part])) {
-      printf("null coordinate pointer for particle %ld (fmultipole_tracking)", i_part);
+      printf("null coordinate pointer for particle %" PRId64 " (fmultipole_tracking)", i_part);
       fflush(stdout);
       abort();
     }
     if (accepted && !accepted[i_part]) {
-      printf("null accepted coordinates pointer for particle %ld (fmultipole_tracking)", i_part);
+      printf("null accepted coordinates pointer for particle %" PRId64 " (fmultipole_tracking)", i_part);
       fflush(stdout);
       abort();
     }
@@ -557,12 +557,12 @@ long multipole_tracking(
   multipoleKicksDone += (i_top + 1) * nSlices * 4;
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!(coord = particle[i_part])) {
-      printf("null coordinate pointer for particle %ld (multipole_tracking)", i_part);
+      printf("null coordinate pointer for particle %" PRId64 " (multipole_tracking)", i_part);
       fflush(stdout);
       abort();
     }
     if (accepted && !accepted[i_part]) {
-      printf("null accepted coordinates pointer for particle %ld (multipole_tracking)", i_part);
+      printf("null accepted coordinates pointer for particle %" PRId64 " (multipole_tracking)", i_part);
       fflush(stdout);
       abort();
     }
@@ -1177,12 +1177,12 @@ long multipole_tracking2(
   {
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!(coord = particle[i_part])) {
-      printf("null coordinate pointer for particle %ld (multipole_tracking)", i_part);
+      printf("null coordinate pointer for particle %" PRId64 " (multipole_tracking)", i_part);
       fflush(stdout);
       abort();
     }
     if (accepted && !accepted[i_part]) {
-      printf("null accepted coordinates pointer for particle %ld (multipole_tracking)", i_part);
+      printf("null accepted coordinates pointer for particle %" PRId64 " (multipole_tracking)", i_part);
       fflush(stdout);
       abort();
     }

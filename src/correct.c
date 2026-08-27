@@ -1743,7 +1743,7 @@ long global_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TRAJEC
                          (BEAM_SUMS **)NULL, (long *)NULL,
                          traj = traject[iteration == 0 ? 0 : 1], run, 0, tracking_flags, 1, 0, NULL, NULL, NULL, NULL, NULL);
     if (beam) {
-      printf("%ld particles survived tracking", n_part);
+      printf("%" PRId64 " particles survived tracking", n_part);
       fflush(stdout);
       if (n_part == 0) {
         for (i = 0; i < beamline->n_elems + 1; i++)
@@ -2112,7 +2112,7 @@ long thread_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TRAJEC
                          (BEAM_SUMS **)NULL, (long *)NULL,
                          traj = traject[iteration == 0 ? 0 : 1], run, 0, tracking_flags, 1, 0, NULL, NULL, NULL, NULL, NULL);
     if (verbose > 1) {
-      printf("%ld particles left after tracking through beamline\n", n_left);
+      printf("%" PRId64 " particles left after tracking through beamline\n", n_left);
       fflush(stdout);
     }
     for (i_moni = 0; i_moni < CM->nmon; i_moni++) {
@@ -2238,7 +2238,7 @@ long thread_trajcor_plane(CORMON_DATA *CM, STEERING_LIST *SL, long coord, TRAJEC
           }
           if (verbose && bestValue != origValue) {
             if (traj[iBest].elem) {
-              printf("Beam now reaches element %ld at s=%le m (%ld left)\n", iBest, traj[iBest].elem->end_pos, n_left);
+              printf("Beam now reaches element %ld at s=%le m (%" PRId64 " left)\n", iBest, traj[iBest].elem->end_pos, n_left);
               fflush(stdout);
             }
           }
@@ -4533,7 +4533,7 @@ long global_coupled_trajcor(CORMON_DATA *CM, STEERING_LIST *SL, TRAJECTORY **tra
                          (BEAM_SUMS **)NULL, (long *)NULL,
                          traj = traject[iteration == 0 ? 0 : 1], run, 0, tracking_flags, 1, 0, NULL, NULL, NULL, NULL, NULL);
     if (beam) {
-      printf("%ld particles survived tracking", n_part);
+      printf("%" PRId64 " particles survived tracking", n_part);
       fflush(stdout);
       if (n_part == 0) {
         for (i = 0; i < beamline->n_elems + 1; i++)

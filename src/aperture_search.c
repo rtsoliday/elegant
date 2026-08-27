@@ -1775,7 +1775,7 @@ long do_aperture_search_grid
     }
     
     if (verbosity >= 1) {
-      printf("Tracking %ld particles\n", np);
+      printf("Tracking %" PRId64 " particles\n", np);
       fflush(stdout);
     }
     p_central = run->p_central;
@@ -1785,7 +1785,7 @@ long do_aperture_search_grid
                         APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     if (verbosity >= 1) {
       long pid;
-      printf("%ld particles left\n", nLeft);
+      printf("%" PRId64 " particles left\n", nLeft);
       fflush(stdout);
       for (ip=0; ip<nLeft; ip++) {
         pid = coord[ip][particleIDIndex];
@@ -2079,19 +2079,19 @@ long do_aperture_search_grid_p
     }
     
     if (verbosity >= 1 && myid==0) {
-      printf("Tracking %ld particles\n", np);
+      printf("Tracking %" PRId64 " particles\n", np);
       fflush(stdout);
     }
     p_central = run->p_central;
     
-    long nLost=0, nLeftLocal=0;
+    int64_t nLost=0, nLeftLocal=0;
     
     nLeftLocal = do_tracking(NULL, coord, npLocal, NULL, beamline, &p_central,
                              NULL, NULL, NULL, NULL, run, control->i_step,
                              APERTURE_TRACKING_FLAGS, control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     
-    long *npVector = (long*)malloc(sizeof(long)*n_processors);
-    long *nLeftVector = (long*)malloc(sizeof(long)*n_processors);
+    int64_t *npVector = malloc(sizeof(*npVector)*n_processors);
+    int64_t *nLeftVector = malloc(sizeof(*nLeftVector)*n_processors);
     MPI_Status mpiStatus;
     
 #if MPI_DEBUG
@@ -2139,8 +2139,8 @@ long do_aperture_search_grid_p
     fflush(stdout);
 #endif
     
-    MPI_Gather(&npLocal, 1, MPI_LONG, npVector, 1, MPI_LONG, 0, MPI_COMM_WORLD);
-    MPI_Gather(&nLeftLocal, 1, MPI_LONG, nLeftVector, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+    MPI_Gather(&npLocal, 1, MPI_INT64_T, npVector, 1, MPI_INT64_T, 0, MPI_COMM_WORLD);
+    MPI_Gather(&nLeftLocal, 1, MPI_INT64_T, nLeftVector, 1, MPI_INT64_T, 0, MPI_COMM_WORLD);
 #if MPI_DEBUG
     if (myid==0) {
       for (ip=0; ip<n_processors; ip++)
@@ -2159,7 +2159,7 @@ long do_aperture_search_grid_p
         np += npVector[islave];
       }
       if (verbosity >= 1 && myid==0) {
-        printf("%ld particles left\n", nLeft);
+        printf("%" PRId64 " particles left\n", nLeft);
         fflush(stdout);
       }
       lostParticles = (double **)czarray_2d(sizeof(**coord), np-nLeft, totalPropertiesPerParticle);

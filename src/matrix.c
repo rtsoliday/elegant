@@ -268,12 +268,12 @@ void track_particles(double **final, VMATRIX *M, double **initial,
       bombElegant("NULL Q pointer (track_particles)", NULL);
     for (i_part = n_part - 1; i_part >= 0; i_part--) {
       if (!(fin = final[i_part])) {
-        printf("error: final coordinate pointer is NULL for particle %ld (track_particles)\n", i_part);
+        printf("error: final coordinate pointer is NULL for particle %" PRId64 " (track_particles)\n", i_part);
         fflush(stdout);
         abort();
       }
       if (!(ini = initial[i_part])) {
-        printf("error: final coordinate pointer is NULL for particle %ld (track_particles)\n", i_part);
+        printf("error: final coordinate pointer is NULL for particle %" PRId64 " (track_particles)\n", i_part);
         fflush(stdout);
         abort();
       }
@@ -341,12 +341,12 @@ void track_particles(double **final, VMATRIX *M, double **initial,
       bombElegant("NULL R pointer (track_particles)", NULL);
     for (i_part = n_part - 1; i_part >= 0; i_part--) {
       if (!(fin = final[i_part])) {
-        printf("error: final coordinate pointer is NULL for particle %ld (track_particles)\n", i_part);
+        printf("error: final coordinate pointer is NULL for particle %" PRId64 " (track_particles)\n", i_part);
         fflush(stdout);
         abort();
       }
       if (!(ini = initial[i_part])) {
-        printf("error: final coordinate pointer is NULL for particle %ld (track_particles)\n", i_part);
+        printf("error: final coordinate pointer is NULL for particle %" PRId64 " (track_particles)\n", i_part);
         fflush(stdout);
         abort();
       }

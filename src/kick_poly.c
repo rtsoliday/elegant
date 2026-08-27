@@ -64,12 +64,12 @@ long polynomial_kicks(
   i_top = n_part - 1;
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!(coord = particle[i_part])) {
-      printf("null coordinate pointer for particle %ld (polynomial_kicks)", i_part);
+      printf("null coordinate pointer for particle %" PRId64 " (polynomial_kicks)", i_part);
       fflush(stdout);
       abort();
     }
     if (accepted && !accepted[i_part]) {
-      printf("null accepted coordinates pointer for particle %ld (polynomial_kicks)", i_part);
+      printf("null accepted coordinates pointer for particle %" PRId64 " (polynomial_kicks)", i_part);
       fflush(stdout);
       abort();
     }
@@ -231,12 +231,12 @@ long polynomial_hamiltonian(
   i_top = n_part - 1;
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!(coord = particle[i_part])) {
-      printf("null coordinate pointer for particle %ld (polynomial_hamiltonian)", i_part);
+      printf("null coordinate pointer for particle %" PRId64 " (polynomial_hamiltonian)", i_part);
       fflush(stdout);
       abort();
     }
     if (accepted && !accepted[i_part]) {
-      printf("null accepted coordinates pointer for particle %ld (polynomial_hamiltonian)", i_part);
+      printf("null accepted coordinates pointer for particle %" PRId64 " (polynomial_hamiltonian)", i_part);
       fflush(stdout);
       abort();
     }

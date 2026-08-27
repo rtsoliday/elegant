@@ -20,7 +20,7 @@ void convolveArrays(double *output, long outputs,
                     double *a1, long n1,
                     double *a2, long n2, long di2);
 
-void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInput,
+void track_through_wake(double **part0, int64_t np0, WAKE *wakeData, double *PoInput,
                         RUN *run, long i_pass, CHARGE *charge) {
   double *Itime = NULL; /* array for histogram of particle density */
   double *Vtime = NULL; /* array for voltage acting on each bin */
@@ -228,7 +228,7 @@ void track_through_wake(double **part0, long np0, WAKE *wakeData, double *PoInpu
       if (!USE_MPI || !distributedBeam) {
         if (n_binned != np) {
           snprintf(warningBuffer, 1024,
-                   "Only %ld of %ld particles were binned. Consider setting n_bins=0 to invoke autoscaling.",
+                   "Only %ld of %" PRId64 " particles were binned. Consider setting n_bins=0 to invoke autoscaling.",
                    n_binned, np);
           printWarningForTracking("Some particles not binned in WAKE.", warningBuffer);
           /* return; */

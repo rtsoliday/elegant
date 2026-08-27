@@ -346,7 +346,7 @@ long new_sdds_beam(
           bombElegant("beam->particle array is NULL (new_sdds_beam-2)", NULL);
         for (i = i_store = 0; i < beam->n_original; i += sample_interval) {
           if (!beam->original[i]) {
-            printf("error: beam->original[%ld] is NULL (new_sdds_beam-2)\n", i);
+            printf("error: beam->original[%" PRId64 "] is NULL (new_sdds_beam-2)\n", i);
             ;
             fflush(stdout);
             exitElegant(1);
@@ -370,7 +370,7 @@ long new_sdds_beam(
             cos_theta = cos(theta);
             theta += PIx2 / n_particles_per_ring;
             if (!beam->particle[i_store]) {
-              printf("error: beam->particle[%ld] is NULL (new_sdds_beam-2)\n", i_store);
+              printf("error: beam->particle[%" PRId64 "] is NULL (new_sdds_beam-2)\n", i_store);
               fflush(stdout);
               exitElegant(1);
             }
@@ -390,12 +390,12 @@ long new_sdds_beam(
         for (i_store = 0; i_store < beam->n_to_track; i_store++) {
           for (i = 0; i < 6; i++) {
             if (!beam->particle[i_store]) {
-              printf("error: beam->particle[%ld] is NULL\n", i_store);
+              printf("error: beam->particle[%" PRId64 "] is NULL\n", i_store);
               fflush(stdout);
               exitElegant(1);
             }
             if (isnan(beam->particle[i_store][i]) || isinf(beam->particle[i_store][i])) {
-              printf("error: NaN or Infinity detected in initial particle data, coordinate %ld\n", i);
+              printf("error: NaN or Infinity detected in initial particle data, coordinate %" PRId64 "\n", i);
               fflush(stdout);
               exitElegant(1);
             }
@@ -425,7 +425,7 @@ long new_sdds_beam(
             continue;
           }
           if (!beam->original[i]) {
-            printf("error: beam->original[%ld] is NULL (new_sdds_beam.2)\n", i);
+            printf("error: beam->original[%" PRId64 "] is NULL (new_sdds_beam.2)\n", i);
             fflush(stdout);
             exitElegant(1);
           }
@@ -436,7 +436,7 @@ long new_sdds_beam(
             continue;
           }
           if (!beam->particle[i_store]) {
-            printf("error: beam->particle[%ld] is NULL (new_sdds_beam.2)\n", i_store);
+            printf("error: beam->particle[%" PRId64 "] is NULL (new_sdds_beam.2)\n", i_store);
             fflush(stdout);
             exitElegant(1);
           }
@@ -455,7 +455,7 @@ long new_sdds_beam(
         for (i_store = 0; i_store < beam->n_to_track; i_store++) {
           for (i = 0; i < 6; i++) {
             if (isnan(beam->particle[i_store][i]) || isinf(beam->particle[i_store][i])) {
-              printf("error: NaN or Infinity detected in initial particle data, coordinate %ld\n", i);
+              printf("error: NaN or Infinity detected in initial particle data, coordinate %" PRId64 "\n", i);
               fflush(stdout);
               exitElegant(1);
             }
@@ -526,7 +526,7 @@ long new_sdds_beam(
         printf("Done with all duplicates\n");
 #endif
         beam->n_to_track = beam->n_particle;
-        printf("%ld particles in beam after duplication\n", beam->n_particle);
+        printf("%" PRId64 " particles in beam after duplication\n", beam->n_particle);
       }
 #if SDDS_MPI_IO
     }
@@ -586,12 +586,12 @@ long new_sdds_beam(
       }
       for (i = 0; i < beam->n_saved; i++) {
         if (!beam->original[i]) {
-          printf("error: beam->original[%ld] is NULL (new_sdds_beam.3)\n", i);
+          printf("error: beam->original[%" PRId64 "] is NULL (new_sdds_beam.3)\n", i);
           fflush(stdout);
           exitElegant(1);
         }
         if (!beam->particle[i]) {
-          printf("error: beam->particle[%ld] is NULL (new_sdds_beam.3)\n", i);
+          printf("error: beam->particle[%" PRId64 "] is NULL (new_sdds_beam.3)\n", i);
           fflush(stdout);
           exitElegant(1);
         }
@@ -613,7 +613,7 @@ long new_sdds_beam(
 #  ifdef MPI_DEBUG
     printf("Counting particles on all processors.\n");
 #  endif
-    MPI_Allreduce(&(beam->n_to_track), &(beam->n_to_track_total), 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&(beam->n_to_track), &(beam->n_to_track_total), 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     beam->n_original_total = beam->n_to_track_total;
     /* Record the global size of the saved/reusable beam.  In the reuse branch
      * beam->n_to_track was just set to beam->n_saved on every processor (and the
@@ -650,9 +650,9 @@ long new_sdds_beam(
         bombElegant("logic error in new_sdds_beam: array for original coordinates is missing", NULL);
 #if SDDS_MPI_IO
       if (!distributedBeam && new_particle_data) { /* Each processor will hold a copy of the whole beam */
-        long np_total, np = beam->n_to_track;
+        int64_t np_total, np = beam->n_to_track;
         double **data_all = NULL, **data = beam->particle;
-        long *n_vector_long = (long *)tmalloc(n_processors * sizeof(*n_vector_long));
+        int64_t *n_vector_long = tmalloc(n_processors * sizeof(*n_vector_long));
         /* MPI-4 provides large-count Allgatherv (MPI_Count recvcounts, MPI_Aint
          * displs). Use it so the whole-beam gather is not limited to INT_MAX total
          * elements (~INT_MAX/properties particles). On pre-MPI-4 libraries the
@@ -668,7 +668,7 @@ long new_sdds_beam(
 #  ifdef MPI_DEBUG
         printf("Preparing to share all particles across all processors\n");
 #  endif
-        MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 
 #  if !(defined(MPI_VERSION) && MPI_VERSION >= 4)
         /* Pre-MPI-4: the cumulative int offset over all ranks is the tightest limit
@@ -681,7 +681,7 @@ long new_sdds_beam(
 
         data_all = (double **)resize_czarray_2d((void **)data_all, sizeof(double), (long)(np_total), totalPropertiesPerParticle);
 
-        MPI_Allgather(&np, 1, MPI_LONG, n_vector_long, 1, MPI_LONG, MPI_COMM_WORLD);
+        MPI_Allgather(&np, 1, MPI_INT64_T, n_vector_long, 1, MPI_INT64_T, MPI_COMM_WORLD);
         offset_array[0] = 0;
         for (i = 0; i < n_processors - 1; i++) {
           n_vector[i] = (int64_t)totalPropertiesPerParticle * n_vector_long[i];
@@ -724,12 +724,12 @@ long new_sdds_beam(
         bombElegant("beam->particle is NULL (new_sdds_beam.4)", NULL);
       for (i = 0; i < beam->n_to_track; i++) {
         if (!beam->original[i]) {
-          printf("error: beam->original[%ld] is NULL (new_sdds_beam.4)\n", i);
+          printf("error: beam->original[%" PRId64 "] is NULL (new_sdds_beam.4)\n", i);
           fflush(stdout);
           exitElegant(1);
         }
         if (!beam->particle[i]) {
-          printf("error: beam->particle[%ld] is NULL (new_sdds_beam.4)\n", i);
+          printf("error: beam->particle[%" PRId64 "] is NULL (new_sdds_beam.4)\n", i);
           fflush(stdout);
           exitElegant(1);
         }
@@ -828,12 +828,12 @@ long new_sdds_beam(
 #endif
 
 #if USE_MPI
-    printf("%ld particles on master\n", beam->n_particle);
+    printf("%" PRId64 " particles on master\n", beam->n_particle);
     if (!partOnMaster) {
-      long buffer[5];
+      int64_t buffer[5];
       if (myid != 0) {
         buffer[0] = beam->n_particle;
-        buffer[1] = buffer[3] = LONG_MAX;
+        buffer[1] = buffer[3] = INT64_MAX;
         buffer[2] = buffer[4] = 0;
         for (i = 0; i < beam->n_particle; i++) {
           if (beam->particle[i][particleIDIndex] < buffer[1])
@@ -845,12 +845,12 @@ long new_sdds_beam(
           if (beam->particle[i][bunchIndex] > buffer[4])
             buffer[4] = beam->particle[i][bunchIndex];
         }
-        MPI_Send(&buffer[0], 5, MPI_LONG, 0, 1, MPI_COMM_WORLD);
+        MPI_Send(&buffer[0], 5, MPI_INT64_T, 0, 1, MPI_COMM_WORLD);
       } else {
         for (i = 1; i < n_processors; i++) {
           MPI_Status status;
-          MPI_Recv(&buffer[0], 5, MPI_LONG, i, 1, MPI_COMM_WORLD, &status);
-          printf("%ld particles on processor %ld, PID: [%ld, %ld], bunch: [%ld, %ld]\n",
+          MPI_Recv(&buffer[0], 5, MPI_INT64_T, i, 1, MPI_COMM_WORLD, &status);
+          printf("%" PRId64 " particles on processor %" PRId64 ", PID: [%" PRId64 ", %" PRId64 "], bunch: [%" PRId64 ", %" PRId64 "]\n",
                  buffer[0], i, buffer[1], buffer[2], buffer[3], buffer[4]);
         }
       }
@@ -1166,8 +1166,8 @@ long get_sdds_particles(double ***particle,
           break;
 #else
         if (SDDS_MPI_IO) {
-          long np_total;
-          MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+          int64_t np_local = np, np_total;
+          MPI_Allreduce(&np_local, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
           if (np_total)
             break;
         }
@@ -1226,9 +1226,9 @@ long get_sdds_particles(double ***particle,
         if (distributedBeam) {
           if (isSlave) {
             double total_sum;
-            long total_particles;
+            int64_t total_particles;
             MPI_Allreduce(&tave, &total_sum, 1, MPI_DOUBLE, MPI_SUM, workers);
-            MPI_Allreduce(&np, &total_particles, 1, MPI_LONG, MPI_SUM, workers);
+            MPI_Allreduce(&np, &total_particles, 1, MPI_INT64_T, MPI_SUM, workers);
             tave = total_sum / total_particles;
           }
         } else {

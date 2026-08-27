@@ -111,9 +111,9 @@ void readMomentumAperture(char *momApFile) {
                  "Only the first page is used.");
 }
 
-static void deltaOffsetFunction(double **coord, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral) {
+static void deltaOffsetFunction(double **coord, int64_t np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral) {
   long idelta, particleID, ie;
-  long ip;
+  int64_t ip;
   long sharedData[2];
   long nKicksMade = 0;
   double ddelta;
@@ -318,7 +318,8 @@ long runInelasticScattering(
   double *startingCoord) {
 #if USE_MPI
   double **coord;
-  long nTotal, ie, idelta, nLost, nLeft, nElem, nEachProcessor, code, iRow;
+  long ie, idelta, nElem, code, iRow;
+  int64_t nTotal, nLost, nLeft, nEachProcessor;
   long ip;
   long nWorkingProcessors = n_processors - 1;
   double **lostParticles;
@@ -383,7 +384,7 @@ long runInelasticScattering(
   }
 
   if (myid == 0 || mpiDebug) {
-    printf("nTotal = %ld, nWorkingProcessors = %ld, n_k = %ld, nElements = %ld, nEachProcessor = %ld\n",
+    printf("nTotal = %" PRId64 ", nWorkingProcessors = %ld, n_k = %ld, nElements = %ld, nEachProcessor = %" PRId64 "\n",
            nTotal, nWorkingProcessors, n_k, nElements, nEachProcessor);
     fflush(stdout);
   }
@@ -471,7 +472,7 @@ long runInelasticScattering(
                         FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL + SILENT_RUNNING + INHIBIT_FILE_OUTPUT,
                         control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     nLost -= nLeft;
-    printf("Done tracking nLeft = %ld, nLost = %ld\n", nLeft, nLost);
+    printf("Done tracking nLeft = %" PRId64 ", nLost = %" PRId64 "\n", nLeft, nLost);
     fflush(stdout);
     setTrackingOmniWedgeFunction(NULL);
   }
@@ -537,7 +538,7 @@ long runInelasticScattering(
   gatherLostParticles(&lostParticles, &nLost, coord, nLeft, n_processors, myid);
 
   if (myid == 0 || mpiDebug) {
-    printf("Lost-particle gather done, nLost = %ld\n", nLost);
+    printf("Lost-particle gather done, nLost = %" PRId64 "\n", nLost);
     fflush(stdout);
   }
 

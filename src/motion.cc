@@ -401,9 +401,9 @@ long motion(
 #ifdef DEBUG
   printf("change_p0=%ld, n_part=%ld\n", change_p0, n_part);
 #endif
-  long nTotal = n_part;
+  int64_t nTotal = n_part;
 #if USE_MPI
-  MPI_Allreduce(&n_part, &nTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(&n_part, &nTotal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #endif
   if (change_p0 && nTotal!=0) {
 #ifdef DEBUG
@@ -1489,7 +1489,7 @@ double *select_fiducial(double **part, int64_t n_part, char *var_mode_in) {
   double value, best_value, sum;
   char *var, *mode, *var_mode, *ptr;
 #if USE_MPI
-  long n_part_total;
+  int64_t n_part_total;
 #endif
 
   log_entry((char *)"select_fiducial");
@@ -1505,7 +1505,7 @@ double *select_fiducial(double **part, int64_t n_part, char *var_mode_in) {
   }
 #else
   if (distributedBeam)
-    MPI_Allreduce(&n_part, &n_part_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&n_part, &n_part_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #endif
 
   if (strlen(var_mode) != 0) {

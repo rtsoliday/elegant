@@ -22,7 +22,7 @@
 void propagateLfbCavity(double *V, double *Vp, double *VResidual, double dt0, TFBDRIVER *tfbd,
                         std::complex<double> Ig, std::complex<double> Zc);
 
-void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pass, double Po, long idSlotsPerBunch) {
+void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, int64_t np0, long pass, double Po, long idSlotsPerBunch) {
   double sum, position, output;
   long j;
   int64_t i;
@@ -36,7 +36,7 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
   long gpuTracking = 0;
 #endif
 #if USE_MPI
-  long npTotal;
+  int64_t npTotal;
   double sumTotal;
   MPI_Status mpiStatus;
 #endif
@@ -135,7 +135,7 @@ void transverseFeedbackPickup(TFBPICKUP *tfbp, double **part0, long np0, long pa
     if (myid == 0)
       np = 0;
     MPI_Allreduce(&sum, &sumTotal, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&np, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&np, &npTotal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     if (npTotal > 0)
       position = sumTotal / npTotal;
 #else
@@ -254,7 +254,7 @@ void initializeTransverseFeedbackPickup(TFBPICKUP *tfbp) {
   tfbp->initialized = 1;
 }
 
-void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LIST *beamline, long pass, long nPasses, char *rootname, double Po, long idSlotsPerBunch, CHARGE *charge) {
+void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, int64_t np0, LINE_LIST *beamline, long pass, long nPasses, char *rootname, double Po, long idSlotsPerBunch, CHARGE *charge) {
   double kick, nomKick;
   int64_t i;
   long j;
@@ -416,7 +416,7 @@ void transverseFeedbackDriver(TFBDRIVER *tfbd, double **part0, long np0, LINE_LI
       int64_t npTotal=0, np1=0;
       if (myid!=0)
 	np1 = npBucket[iBucket];
-      MPI_Allreduce(&np1, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+      MPI_Allreduce(&np1, &npTotal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
       qBunch = npTotal*charge->macroParticleCharge;
 #else
       qBunch = npBucket[iBucket]*charge->macroParticleCharge;

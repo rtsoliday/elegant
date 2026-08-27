@@ -69,11 +69,11 @@ static long batchedMomentumTargetToken(ELEMENT_LIST *eptr) {
 }
 
 static void momentumOffsetFunctionBatched(
-  double **coord, long np, long pass, long i_elem, long n_elem,
+  double **coord, int64_t np, long pass, long i_elem, long n_elem,
   ELEMENT_LIST *eptr, double *pCentral) {
   MALIGN mal;
   long id, target, turn;
-  long ip;
+  int64_t ip;
   (void)i_elem;
   (void)n_elem;
 
@@ -108,7 +108,7 @@ static void momentumOffsetFunctionBatched(
 }
 
 static long momentumOffsetFunctionBatchedGpu(
-  long np, long pass, long i_elem, long n_elem,
+  int64_t np, long pass, long i_elem, long n_elem,
   ELEMENT_LIST *eptr, double *pCentral) {
   long target;
   (void)i_elem;
@@ -134,7 +134,7 @@ static void clearBatchedMomentumCallbackState(void) {
 }
 #endif
 
-static void momentumOffsetFunction(double **coord, long np, long pass, double *pCentral) {
+static void momentumOffsetFunction(double **coord, int64_t np, long pass, double *pCentral) {
   MALIGN mal;
 
   if (pass == fireOnPass) {
@@ -1222,9 +1222,9 @@ static long nDelta;
 FILE *fpoffset = NULL;
 #  endif
 
-static void momentumOffsetFunctionOmni(double **coord, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral) {
+static void momentumOffsetFunctionOmni(double **coord, int64_t np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral) {
   long id, ie, particleID;
-  long ip;
+  int64_t ip;
   MALIGN mal;
 #  ifdef DEBUG
   if (fpoffset == NULL) {
@@ -1290,7 +1290,8 @@ long multiparticleLocalMomentumAcceptance(
   double *startingCoord) {
 #if USE_MPI
   double **coord;
-  long nTotal, ip, ie, idelta, nLeft, nLost, nElem, nEachProcessor, code;
+  long ip, ie, idelta, nElem, code;
+  int64_t nTotal, nLeft, nLost, nEachProcessor;
   double pCentral, delta;
   double *sStart, **deltaSurvived, **deltaLost;
   char **ElementName, **ElementType;
@@ -1321,7 +1322,7 @@ long multiparticleLocalMomentumAcceptance(
   }
 
   if (myid == 0) {
-    printf("nTotal = %ld, n_working_processors = %ld, nDelta = %ld, deltaStep = %le, nElements = %ld, nEachProcessor = %ld\n",
+    printf("nTotal = %" PRId64 ", n_working_processors = %ld, nDelta = %ld, deltaStep = %le, nElements = %ld, nEachProcessor = %" PRId64 "\n",
            nTotal, n_working_processors, nDelta, deltaStep, nElements, nEachProcessor);
     fflush(stdout);
   }
@@ -1608,7 +1609,7 @@ long determineTunesFromTrackingData(double *tune, double **turnByTurnCoord, long
 }
 
 #if USE_MPI
-void gatherLostParticles(double ***lostParticle, long *nLost, double **coord, long nSurvived, long n_processors, int myid)
+void gatherLostParticles(double ***lostParticle, int64_t *nLost, double **coord, int64_t nSurvived, long n_processors, int myid)
 /* gather lost particle data to the non-tracking master
    * For the master, we'll allocate a 2-D particle array and return it in *lostParticle. The size of the
    * array is (*nLost, totalPropertiesPerParticle).
@@ -1618,18 +1619,18 @@ void gatherLostParticles(double ***lostParticle, long *nLost, double **coord, lo
 {
   long work_processors = n_processors - 1;
   int root = 0, i, nItems, displs;
-  long my_nLost, *nLostCounts, nLost_total;
+  int64_t my_nLost, *nLostCounts, nLost_total;
 
   MPI_Status status;
-  nLostCounts = malloc(sizeof(long) * n_processors);
+  nLostCounts = malloc(sizeof(*nLostCounts) * n_processors);
 
   if (myid == 0)
     my_nLost = 0;
   else
     my_nLost = *nLost;
 
-  MPI_Gather(&my_nLost, 1, MPI_LONG, nLostCounts, 1, MPI_LONG, root, MPI_COMM_WORLD);
-  MPI_Reduce(&my_nLost, &nLost_total, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Gather(&my_nLost, 1, MPI_INT64_T, nLostCounts, 1, MPI_INT64_T, root, MPI_COMM_WORLD);
+  MPI_Reduce(&my_nLost, &nLost_total, 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
   if (myid == 0) {
     /* set up the displacement array and the number of elements that are received from each processor */
     nLostCounts[0] = 0;

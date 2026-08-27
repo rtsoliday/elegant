@@ -615,7 +615,7 @@ static long track_through_lgbend_impl(
 	if (iSlice==lgbend->nSlices && iSegment!=(lgbend->nSegments-1))
 	  continue;
 #if USE_MPI
-	MPI_Allreduce(MPI_IN_PLACE, &beamSums[iRow].n_part, 1, MPI_LONG, MPI_SUM, workers);
+	MPI_Allreduce(MPI_IN_PLACE, &beamSums[iRow].n_part, 1, MPI_INT64_T, MPI_SUM, workers);
 	MPI_Allreduce(MPI_IN_PLACE, beamSums[iRow].centroid, 6, MPI_DOUBLE, MPI_SUM, workers);
 #endif	  
 	if (beamSums[iRow].n_part) {

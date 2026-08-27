@@ -34,7 +34,7 @@ void forth_propagate_twiss(IBSCATTER *IBS, long islice, double betax0, double al
                            double betay0, double alphay0, RUN *run);
 void copy_twiss(TWISS *tp0, TWISS *tp1);
 
-void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
+void track_IBS(double **part0, int64_t np0, ELEMENT_LIST *eptr, double Po,
                ELEMENT_LIST *element, CHARGE *charge, long i_pass, long n_passes, RUN *run) {
   double *time0 = NULL;    /* array to record arrival time of each particle */
   double *time = NULL;     /* array to record arrival time of each particle */
@@ -43,8 +43,8 @@ void track_IBS(double **part0, long np0, ELEMENT_LIST *eptr, double Po,
   int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
   int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
   long max_np = 0, np;
-  int64_t ip, nBuckets = 0;
-  long iBucket;
+  int64_t ip;
+  long iBucket, nBuckets = 0;
 
   long *index = NULL, *count = NULL;
   long istart, iend, ipart, icoord, ihcoord, islice;
@@ -992,7 +992,7 @@ void slicebeam(double **coord, int64_t np, double *time, double Po, long nslice,
       total += count[islice];
     }
     if (total != np) {
-      printf("IBSCATTER: slice-beam (nslice=%ld), total (%ld) is not equal to np (%ld). Report it to code developer.\n", nslice, total, np);
+      printf("IBSCATTER: slice-beam (nslice=%ld), total (%ld) is not equal to np (%" PRId64 "). Report it to code developer.\n", nslice, total, np);
       for (islice = 0; islice < nslice; islice++)
         printf("count[%ld] = %ld\n", islice, count[islice]);
       bombElegant(NULL, NULL);

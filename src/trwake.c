@@ -19,7 +19,7 @@ void dumpTransverseTimeDistributions(double **posItime, long nb);
 #  include <gpu_base.h>
 #  include <gpu_trwake.h>
 #endif
-void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
+void track_through_trwake(double **part0, int64_t np0, TRWAKE *wakeData, double Po,
                           RUN *run, long i_pass, CHARGE *charge) {
   double *posItime[2] = {NULL, NULL}; /* array for histogram of particle density times x, y*/
   double *Vtime = NULL;               /* array for voltage acting on each bin */
@@ -32,9 +32,10 @@ void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
   int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
   int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
-  long max_np = 0;
+  int64_t max_np = 0;
   long ib, nb = 0, n_binned = 0, plane;
-  long iBucket, nBuckets, np;
+  long iBucket, nBuckets;
+  int64_t np;
   int64_t ip;
   double factor, tmin, tmean = 0, tmax, dt = 0, rampFactor = 1;
 #if USE_MPI
@@ -162,7 +163,7 @@ void track_through_trwake(double **part0, long np0, TRWAKE *wakeData, double Po,
 #if (!USE_MPI)
       if (n_binned != np) {
         char warningBuffer[1024];
-        snprintf(warningBuffer, 1024, "Only %ld of %ld particles were binned. Consider setting N_BINS=0 to invoke autoscaling.",
+        snprintf(warningBuffer, 1024, "Only %ld of %" PRId64 " particles were binned. Consider setting N_BINS=0 to invoke autoscaling.",
                  n_binned, np);
         printWarningForTracking("Some particles not binned in TRWAKE.", warningBuffer);
       }
@@ -571,7 +572,7 @@ double computeTimeCoordinates(double *time, double Po, double **part, int64_t np
 #else /* MPI */
   tmean = 0;
   if (!partOnMaster) {
-    long np_total = 0;
+    int64_t np_total = 0;
     double tmean_total;
     if (isSlave || !distributedBeam) {
       for (ip = 0; ip < np; ip++) {
@@ -590,7 +591,7 @@ double computeTimeCoordinates(double *time, double Po, double **part, int64_t np
         tmean = 0;
         np = 0;
       }
-      MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+      MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifndef USE_KAHAN
       MPI_Allreduce(&tmean, &tmean_total, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 #  else

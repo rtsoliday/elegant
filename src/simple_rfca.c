@@ -305,13 +305,13 @@ double findFiducialTime(double **part, int64_t np, double s0, double sOffset,
     if (distributedBeam) {
       if (USE_MPI) {
         double tsum_total;
-        long nsum_total;
+        int64_t nsum_total;
 
         if (isMaster) {
           tsum = 0.0;
           nsum = 0;
         }
-        MPI_Allreduce(&nsum, &nsum_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&nsum, &nsum_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifndef USE_KAHAN
         MPI_Allreduce(&tsum, &tsum_total, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 #  else
@@ -445,7 +445,7 @@ long trackRfCavityWithWakes(
   if (isSlave || !distributedBeam) {
     for (ip = 0; ip < np; ip++)
       if (!part[ip]) {
-        fprintf(stderr, "NULL pointer for particle %ld (trackRfCavityWithWakes)\n", ip);
+        fprintf(stderr, "NULL pointer for particle %" PRId64 " (trackRfCavityWithWakes)\n", ip);
         fflush(stderr);
 #if USE_MPI
         MPI_Abort(MPI_COMM_WORLD, 1);

@@ -56,9 +56,9 @@ void computeScatteringAngles(long itheta, long iphi, double *xpReturn, double *y
     *phiReturn = phi;
 }
 
-static void slopeOffsetFunction(double **coord, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral) {
+static void slopeOffsetFunction(double **coord, int64_t np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral) {
   long itheta, iphi, id, ie, particleID;
-  long ip;
+  int64_t ip;
   long sharedData[2];
   MALIGN mal;
   long nKicksMade = 0;
@@ -262,7 +262,8 @@ long runElasticScattering(
   double *startingCoord) {
 #if USE_MPI
   double **coord;
-  long nTotal, id, ie, itheta, iphi, nLost, nLeft, nElem, nEachProcessor, code, iRow;
+  long id, ie, itheta, iphi, nElem, code, iRow;
+  int64_t nTotal, nLost, nLeft, nEachProcessor;
   long ip;
   long nWorkingProcessors = n_processors - 1;
   double **lostParticles;
@@ -345,7 +346,7 @@ long runElasticScattering(
   }
 
   if (myid == 0 || mpiDebug) {
-    printf("nTotal = %ld, nWorkingProcessors = %ld, n_theta = %ld, n_phi = %ld, nElements = %ld, nEachProcessor = %ld\n",
+    printf("nTotal = %" PRId64 ", nWorkingProcessors = %ld, n_theta = %ld, n_phi = %ld, nElements = %ld, nEachProcessor = %" PRId64 "\n",
            nTotal, nWorkingProcessors, n_theta, n_phi, nElements, nEachProcessor);
     fflush(stdout);
   }
@@ -435,7 +436,7 @@ long runElasticScattering(
                         FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL + SILENT_RUNNING + INHIBIT_FILE_OUTPUT,
                         control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     nLost -= nLeft;
-    printf("Done tracking nLeft = %ld, nLost = %ld\n", nLeft, nLost);
+    printf("Done tracking nLeft = %" PRId64 ", nLost = %" PRId64 "\n", nLeft, nLost);
     fflush(stdout);
     if (verbosity > 9) {
       /*
@@ -507,7 +508,7 @@ long runElasticScattering(
 
   gatherLostParticles(&lostParticles, &nLost, coord, nLeft, n_processors, myid);
   if (myid == 0 || mpiDebug) {
-    printf("Lost-particle gather done, nLost = %ld\n", nLost);
+    printf("Lost-particle gather done, nLost = %" PRId64 "\n", nLost);
     fflush(stdout);
   }
 

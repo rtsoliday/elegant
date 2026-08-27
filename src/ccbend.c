@@ -87,7 +87,7 @@ long track_through_ccbend(
                            * for handling the coordinates appropriately outside this routine.
                            * The element must have been previously optimized to determine FSE and X offsets.
                            */
-                          long iPart,
+                          int64_t iPart,
                           /* If iFinalSlice is positive, we terminate integration inside the magnet. The caller is responsible
                            * for handling the coordinates appropriately outside this routine.
                            * The element must have been previously optimized to determine FSE and X offsets.
@@ -698,7 +698,7 @@ long track_through_ccbend(
     }
     for (int iSlice=0; iSlice<=ccbend->nSlices; iSlice++, iRow++) {
 #if USE_MPI
-      MPI_Allreduce(MPI_IN_PLACE, &beamSums[iRow].n_part, 1, MPI_LONG, MPI_SUM, workers);
+      MPI_Allreduce(MPI_IN_PLACE, &beamSums[iRow].n_part, 1, MPI_INT64_T, MPI_SUM, workers);
       MPI_Allreduce(MPI_IN_PLACE, beamSums[iRow].centroid, 6, MPI_DOUBLE, MPI_SUM, workers);
 #endif
       if (beamSums[iRow].n_part) {
@@ -789,7 +789,7 @@ int integrate_kick_KnL(double *restrict coord, /* coordinates of the particle */
                        const long nTerms,            /* Number of terms, between 0 and 9 */
                        const long integration_order, /* 2, 4, or 6 */
                        const long n_parts,           /* NSLICES */
-                       const long iPart,             /* If <0, integrate the full magnet. If >=0, integrate just a single part and return.
+                       const int64_t iPart,          /* If <0, integrate the full magnet. If >=0, integrate just a single part and return.
                                                       * This is needed to allow propagation of the radiation matrix. */
                        long iFinalSlice,             /* If >0, integrate to the indicated slice. Needed to allow extracting the
                                                       * interior matrix from tracking data. */

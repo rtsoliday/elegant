@@ -24,7 +24,7 @@
 
 #define DEBUG 0
 
-void coolerPickup(CPICKUP *cpickup, double **part0, long np0, long pass, double Po, long idSlotsPerBunch) {
+void coolerPickup(CPICKUP *cpickup, double **part0, int64_t np0, long pass, double Po, long idSlotsPerBunch) {
 
   /*Initialize some variables */
   double t_sum, t_min, t_max;
@@ -269,13 +269,13 @@ double Ex(double theta, void *params) {
 #endif
 
 #if !defined(USE_GSL)
-void coolerKicker(CKICKER *ckicker, double **part0, long np0, LINE_LIST *beamline,
+void coolerKicker(CKICKER *ckicker, double **part0, int64_t np0, LINE_LIST *beamline,
   long pass, long nPasses, char *rootname, double Po, long idSlotsPerBunch) {
     fprintf(stderr, "Error: Cannot run generateBunchForMoments, elegant was not build with GSL support.\n");
    exit(1);
 }
 #else
-void coolerKicker(CKICKER *ckicker, double **part0, long np0, LINE_LIST *beamline,
+void coolerKicker(CKICKER *ckicker, double **part0, int64_t np0, LINE_LIST *beamline,
 		  long pass, long nPasses, char *rootname, double Po, long idSlotsPerBunch) {
   int64_t i;
   int64_t j;

@@ -189,12 +189,12 @@ long polynomialSeries_tracking(
   i_top = n_part - 1;
   for (i_part = 0; i_part <= i_top; i_part++) {
     if (!(coord = particle[i_part])) {
-      printf("null coordinate pointer for particle %ld (polynomialSeries)", i_part);
+      printf("null coordinate pointer for particle %" PRId64 " (polynomialSeries)", i_part);
       fflush(stdout);
       abort();
     }
     if (accepted && !accepted[i_part]) {
-      printf("null accepted coordinates pointer for particle %ld (polynomialSeries)", i_part);
+      printf("null accepted coordinates pointer for particle %" PRId64 " (polynomialSeries)", i_part);
       fflush(stdout);
       abort();
     }

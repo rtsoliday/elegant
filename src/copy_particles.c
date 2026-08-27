@@ -34,11 +34,11 @@ void copy_particles(
     cptr = *copy++;
     optr = *original++;
     if (!cptr) {
-      snprintf(buffer, 1024, "element %ld of target array is NULL pointer (copy_particles)", ip);
+      snprintf(buffer, 1024, "element %" PRId64 " of target array is NULL pointer (copy_particles)", ip);
       bombElegant(buffer, NULL);
     }
     if (!optr) {
-      snprintf(buffer, 1024, "element %ld of source array is NULL pointer (copy_particles)", ip);
+      snprintf(buffer, 1024, "element %" PRId64 " of source array is NULL pointer (copy_particles)", ip);
       bombElegant(buffer, NULL);
     }
     for (ic = 6; ic >= 0; ic--)

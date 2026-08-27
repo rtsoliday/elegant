@@ -219,7 +219,7 @@ long track_through_tubend(double **part, int64_t n_part, TUBEND *tubend,
       /* lost particle */
       if (!part[i_top]) {
         printf(
-          "error: couldn't swap particles %ld and %ld--latter is null pointer (track_through_tubend)\n",
+          "error: couldn't swap particles %" PRId64 " and %" PRId64 "--latter is null pointer (track_through_tubend)\n",
           ip, i_top);
         fflush(stdout);
         abort();
@@ -228,7 +228,7 @@ long track_through_tubend(double **part, int64_t n_part, TUBEND *tubend,
       if (accepted) {
         if (!accepted[i_top]) {
           printf(
-            "error: couldn't swap acceptance data for particles %ld and %ld--latter is null pointer (track_through_tubend)\n",
+            "error: couldn't swap acceptance data for particles %" PRId64 " and %" PRId64 "--latter is null pointer (track_through_tubend)\n",
             ip, i_top);
           fflush(stdout);
           abort();

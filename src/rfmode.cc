@@ -40,13 +40,13 @@ void runBinlessRfMode(double **part, int64_t np, RFMODE *rfmode, double Po,
 void fillBerencABMatrices(MATRIX *A, MATRIX *B, RFMODE *rfmode, double dt);
 
 void track_through_rfmode(
-  double **part0, long np0, RFMODE *rfmode, double Po,
+  double **part0, int64_t np0, RFMODE *rfmode, double Po,
   char *element_name, double element_z, long pass, long n_passes,
   CHARGE *charge) {
   long *Ihist = NULL;  /* array for histogram of particle density */
   double *Vbin = NULL; /* array for voltage acting on each bin */
   long max_n_bins = 0;
-  long max_np = 0;
+  int64_t max_np = 0;
   long *pbin = NULL;       /* array to record which bin each particle is in */
   double *time0 = NULL;    /* array to record arrival time of each particle */
   double *time = NULL;     /* array to record arrival time of each particle */
@@ -54,7 +54,8 @@ void track_through_rfmode(
   long *ibParticle = NULL; /* array to record which bucket each particle is in */
   int64_t **ipBucket = NULL;  /* array to record particle indices in part0 array for all particles in each bucket */
   int64_t *npBucket = NULL;   /* array to record how many particles are in each bucket */
-  long iBucket, nBuckets = 0, np, effectiveBuckets, jBucket, adjusting, outputing;
+  long iBucket, nBuckets = 0, effectiveBuckets, jBucket, adjusting, outputing;
+  int64_t np;
   double tOffset;
   /*
     static FILE *fpdeb = NULL;
@@ -73,14 +74,14 @@ void track_through_rfmode(
   long n_summed, max_hist=0, n_occupied;
   double Qrp, VbImagFactor, Q = 0;
   long deltaPass;
-  long np_total;
+  int64_t np_total;
 #ifdef HAVE_GPU
   long gpuTracking = 0;
 #endif
 #if USE_MPI
   long nonEmptyBins = 0;
   MPI_Status mpiStatus;
-  long n_binned_global = 0;
+  int64_t n_binned_global = 0;
 #endif
 
   /* These are here just to quash apparently spurious compiler warnings about possibly using uninitialzed variables */
@@ -126,7 +127,7 @@ void track_through_rfmode(
   }
 
 #if USE_MPI
-  MPI_Allreduce(&np0, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(&np0, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifdef DEBUG
   if (myid == 0) {
     printf("np_total = %ld\n", np_total);
@@ -293,7 +294,7 @@ void track_through_rfmode(
     } else {
       np = 0;
     }
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifdef DEBUG
     printf("np_total = %ld\n", np_total);
     fflush(stdout);
@@ -345,7 +346,7 @@ void track_through_rfmode(
       if (distributedBeam) {
         if (isSlave) {
           double t_total;
-          MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+          MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
           MPI_Allreduce(&tmean, &t_total, 1, MPI_DOUBLE, MPI_SUM, workers);
           tmean = t_total;
         }
@@ -746,8 +747,8 @@ void track_through_rfmode(
 #  endif
     if (myid == 0)
       n_binned = np = 0;
-    MPI_Allreduce(&n_binned, &n_binned_global, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&n_binned, &n_binned_global, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifdef DEBUG
     printf("n_binned = %ld, n_binned_global = %ld, np = %ld, np_total = %ld\n",
            n_binned, n_binned_global, np, np_total);
@@ -757,7 +758,7 @@ void track_through_rfmode(
       TRACKING_CONTEXT tcontext;
       getTrackingContext(&tcontext);
       if (myid == 0) {
-        printf("%ld of %ld particles outside of binning region in RFMODE %s #%ld. Consider increasing number of bins.\n",
+        printf("%" PRId64 " of %" PRId64 " particles outside of binning region in RFMODE %s #%ld. Consider increasing number of bins.\n",
                np_total - n_binned_global,
                np_total, tcontext.elementName, tcontext.elementOccurrence);
         printf("Also, check particleID assignments for bunch identification. Bunches should be on separate pages of the input file.\n");
@@ -775,7 +776,7 @@ void track_through_rfmode(
       if (!rfmode->allowUnbinnedParticles) {
         bombElegantVA((char *)"%ld of %ld particles  outside of binning region in RFMODE %s #%ld. Consider increasing number of bins. Also, particleID assignments should be checked.", np - n_binned, np, tcontext.elementName, tcontext.elementOccurrence);
       } else {
-        printf("%ld of %ld particles  outside of binning region in RFMODE %s #%ld. Consider increasing number of bins. Also, particleID assignments should be checked.\n", np - n_binned, np, tcontext.elementName, tcontext.elementOccurrence);
+      printf("%" PRId64 " of %" PRId64 " particles  outside of binning region in RFMODE %s #%ld. Consider increasing number of bins. Also, particleID assignments should be checked.\n", np - n_binned, np, tcontext.elementName, tcontext.elementOccurrence);
         fflush(stdout);
       }
     }
@@ -1502,10 +1503,10 @@ void runBinlessRfMode(
   double clockPhaseNow = 0;
   long deltaPass;
 #if USE_MPI
-  long np_total;
+  int64_t np_total;
 
   if (isSlave)
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+    MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
 #endif
 
   if (charge) {

@@ -108,9 +108,9 @@ void track_through_lscdrift(double **part, int64_t np, LSCDRIFT *LSC, double Po,
   }
 #if USE_MPI
   else if (USE_MPI && distributedBeam) {
-    long np_total;
+    int64_t np_total;
     if (isSlave) {
-      MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+      MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
       if (np_total > max_np) {
         /* if the total number of particles is increased, we do reallocation for every CPU */
         pbin = trealloc(pbin, sizeof(*pbin) * (max_np = np));
@@ -155,7 +155,7 @@ void track_through_lscdrift(double **part, int64_t np, LSCDRIFT *LSC, double Po,
       if (n_binned != np) {
         char warningText[1024];
         snprintf(warningText, 1024,
-                 "Only %ld of %ld particles were binned. This shouldn't happen.", n_binned, np);
+                 "Only %ld of %" PRId64 " particles were binned. This shouldn't happen.", n_binned, np);
         printWarningForTracking("Some particles were not binned in LSCDRIFT.",
                                 warningText);
       }
@@ -457,7 +457,7 @@ void addLSCKick(double **part, int64_t np, LSCKICK *LSC, double Po, CHARGE *char
   if (n_binned != np && !USE_MPI) { /* This will not be checked in Pelegant to avoid communications */
     char warningText[1024];
     snprintf(warningText, 1024,
-             "Only %ld of %ld particles were binned, which shouldn't happen.", n_binned, np);
+             "Only %ld of %" PRId64 " particles were binned, which shouldn't happen.", n_binned, np);
     printWarningForTracking("Some particles were not binned in LSCKICK.",
                             warningText);
   }

@@ -145,7 +145,7 @@ void setupSCEffect(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
 }
 
 /* track through space charge element */
-void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT_LIST *eptr, CHARGE *charge) {
+void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEMENT_LIST *eptr, CHARGE *charge) {
   int64_t i;
   long *pbin = NULL;       /* array to record which bin each particle is in */
   double *time0 = NULL;    /* array to record arrival time of each particle */
@@ -289,9 +289,9 @@ void trackThroughSCMULT(double **part0, long np0, double Po, long iPass, ELEMENT
 #if USE_MPI
       totalCharge = 0;
       if (isSlave && distributedBeam) {
-	long np_total;
+	int64_t np_total;
 	find_global_min_max(&tmin, &tmax, np, workers);
-	MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+	MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
 	totalCharge = np_total*charge->macroParticleCharge;
 #ifdef DEBUG
 	printf("SCMULT: global tmin=%21.15le, tmax=%21.15le, np=%ld, Q=%le C\n", tmin, tmax, np_total, totalCharge);
@@ -605,7 +605,7 @@ int nonlinearSCKick(double *coord, ELEMENT_LIST *eptr, double *centroid, double 
   return (1);
 }
 
-void initializeSCMULT(ELEMENT_LIST *eptr, double **part0, long np0, double Po, long i_pass, long idSlotsPerBunch) {
+void initializeSCMULT(ELEMENT_LIST *eptr, double **part0, int64_t np0, double Po, long i_pass, long idSlotsPerBunch) {
   long *pbin = NULL;       /* array to record which bin each particle is in */
   double *time0 = NULL;    /* array to record arrival time of each particle */
   double *time = NULL;     /* array to record arrival time of each particle, for working bucket */
@@ -744,7 +744,7 @@ void initializeSCMULT(ELEMENT_LIST *eptr, double **part0, long np0, double Po, l
 #endif
 }
 
-void accumulateSCMULT(double **part0, long np0, double Po, ELEMENT_LIST *eptr, long idSlotsPerBunch) {
+void accumulateSCMULT(double **part0, int64_t np0, double Po, ELEMENT_LIST *eptr, long idSlotsPerBunch) {
   long *pbin = NULL;       /* array to record which bin each particle is in */
   double *time0 = NULL;    /* array to record arrival time of each particle */
   double *time = NULL;     /* array to record arrival time of each particle, for working bucket */
@@ -878,7 +878,7 @@ double computeRmsCoordinate(double **coord, long i1, int64_t np, double *meanRet
   int64_t i;
 #if USE_MPI
   double xc_sum = 0.0, vrms_sum = 0.0;
-  long np_total;
+  int64_t np_total;
 #endif
 
   if (!USE_MPI || !distributedBeam) {
@@ -889,7 +889,7 @@ double computeRmsCoordinate(double **coord, long i1, int64_t np, double *meanRet
   else {
     if (isMaster)
       np = 0;
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, workers);
+    MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, workers);
     if (!np_total)
       return (0.0);
   }
@@ -934,9 +934,9 @@ double computeRmsCoordinate(double **coord, long i1, int64_t np, double *meanRet
 
 #if USE_MPI
 /* We have this new function as we need treat the parallel and serial element separately */
-double computeRmsCoordinate_p(double **coord, long i1, int64_t np, double *centroid, long *npTotal, unsigned long classFlags) {
+double computeRmsCoordinate_p(double **coord, long i1, int64_t np, double *centroid, int64_t *npTotal, unsigned long classFlags) {
   double vrms = 0.0, xc = 0.0;
-  long np_total;
+  int64_t np_total;
   int64_t i;
 
   if (centroid)
@@ -945,7 +945,7 @@ double computeRmsCoordinate_p(double **coord, long i1, int64_t np, double *centr
     *npTotal = 0;
 
   if (classFlags & UNIPROCESSOR) { /* serial element, only master works */
-    MPI_Bcast(&np, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&np, 1, MPI_INT64_T, 0, MPI_COMM_WORLD);
     if (npTotal)
       *npTotal = np;
     if (!np)
@@ -975,7 +975,7 @@ double computeRmsCoordinate_p(double **coord, long i1, int64_t np, double *centr
 
     if (isMaster)
       np = 0;
-    MPI_Allreduce(&np, &np_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&np, &np_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     if (npTotal)
       *npTotal = np_total;
 

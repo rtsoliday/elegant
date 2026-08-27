@@ -339,7 +339,7 @@ long transformBeamWithScript_s(SCRIPT *script, double pCentral, CHARGE *charge,
     if (failSoftly)
       printf("Problem reading script output file---all particles considered lost (SOFT_FAILURE=1)\n");
     else
-      printf("%ld particles in script output file (was %ld)\n", npNew, np);
+      printf("%ld particles in script output file (was %" PRId64 ")\n", npNew, np);
     fflush(stdout);
   }
 
@@ -385,7 +385,7 @@ long transformBeamWithScript_s(SCRIPT *script, double pCentral, CHARGE *charge,
         }
       }
       if (script->verbosity > 1)
-        printf("%ld particles of %ld lost based on particleID matching\n", nLost2, np);
+        printf("%ld particles of %" PRId64 " lost based on particleID matching\n", nLost2, np);
       if (beam && nLost2) {
         long il;
         if (lostParticle) {
@@ -546,7 +546,8 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
   SDDS_DATASET SDDSout, SDDSin;
   double *data = NULL;
   char *dataname[6] = {"x", "xp", "y", "yp", "t", "p"};
-  long i, j, npNew, npTotal, npNewTotal, nameLength;
+  long i, j, npNew, npNewTotal, nameLength;
+  int64_t npTotal;
   double *pID = NULL;
   TRACKING_CONTEXT trackingContext;
   double **lostParticle;
@@ -560,7 +561,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
 #  endif
 
   if (distributedBeam) {
-    MPI_Allreduce(&np, &npTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&np, &npTotal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     if (npTotal == 0)
       return 0;
   } else
@@ -577,7 +578,7 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
   }
 
 #  if MPI_DEBUG
-  printf("npTotal = %ld\n", npTotal);
+  printf("npTotal = %" PRId64 "\n", npTotal);
   fflush(stdout);
 #  endif
 
@@ -745,15 +746,15 @@ long transformBeamWithScript_p(SCRIPT *script, double pCentral, CHARGE *charge,
 
   if (npNewTotal > npTotal)
     if (script->noNewParticles)
-      bombElegantVA("The number of particles increased from %ld to %ld after the SCRIPT element, even though NO_NEW_PARTICLES=0.",
+      bombElegantVA("The number of particles increased from %" PRId64 " to %ld after the SCRIPT element, even though NO_NEW_PARTICLES=0.",
                     npTotal, npNewTotal);
 
   if (script->verbosity > 0 && isMaster) {
-    printf("%ld particles in script output file (was %ld)\n", npNewTotal, npTotal);
+    printf("%ld particles in script output file (was %" PRId64 ")\n", npNewTotal, npTotal);
     fflush(stdout);
   } else {
 #  if MPI_DEBUG
-    printf("%ld particles in script output file (was %ld)\n", npNewTotal, npTotal);
+    printf("%ld particles in script output file (was %" PRId64 ")\n", npNewTotal, npTotal);
     fflush(stdout);
 #  endif
   }

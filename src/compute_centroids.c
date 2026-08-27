@@ -94,7 +94,7 @@ void compute_centroids(
 #endif /* HAVE_GPU */
 
 #if USE_MPI /* In the non-parallel mode, it will be same with the serial version */
-  long n_total;
+  int64_t n_total;
 #  ifdef USE_KAHAN
   long j;
   double error_sum = 0.0, error_total = 0.0,
@@ -167,7 +167,7 @@ void compute_centroids(
       }
 #  endif
       /* compute total number of particles over processors */
-      MPI_Allreduce(&n_part, &n_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(&n_part, &n_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
       if (n_total)
         for (i_coord = 0; i_coord < 6; i_coord++)
           centroid[i_coord] /= n_total;
@@ -206,7 +206,7 @@ void compute_sigmas(
   double sum2[6], *part, value;
   long active = 1;
 #if USE_MPI /* In the non-parallel mode, it will be same with the serial version */
-  long n_total = 0;
+  int64_t n_total = 0;
   double sum2_total[6];
 
   if (distributedBeam) {
@@ -235,7 +235,7 @@ void compute_sigmas(
     if (distributedBeam) {
       /* compute total number of particles over processors */
       MPI_Allreduce(sum2, sum2_total, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-      MPI_Allreduce(&n_part, &n_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(&n_part, &n_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
     }
     if (n_total) {
       for (i_coord = 0; i_coord < 6; i_coord++)

@@ -184,7 +184,8 @@ void do_transport_analysis(
   CHROM_DERIVS chromDeriv;
   double symCheck[3][2];
 #if USE_MPI
-  long *nToTrackCounts, my_nTrack, my_offset, n_leftTotal, nItems;
+  long *nToTrackCounts, my_nTrack, my_offset, nItems;
+  int64_t n_leftTotal;
   MPI_Status status;
   long nWorking;
   distributedBeam = 0;
@@ -301,10 +302,10 @@ void do_transport_analysis(
   printf("Tracking done\n");
   fflush(stdout);
 #  endif
-  MPI_Allreduce(&n_left, &n_leftTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(&n_left, &n_leftTotal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
   if (n_leftTotal != (n_track - 1)) {
     char buffer[16834];
-    snprintf(buffer, 16384, "%ld particles lost, continuing with next step", n_track - 1 - n_leftTotal);
+    snprintf(buffer, 16384, "%" PRId64 " particles lost, continuing with next step", n_track - 1 - n_leftTotal);
     printWarning("analyze_map: particle(s) lost during transport analysis", buffer);
     return;
   }
@@ -315,7 +316,7 @@ void do_transport_analysis(
                        1, 0, NULL, NULL, NULL, NULL, NULL);
   if (n_left != (n_track - 1)) {
     char buffer[16834];
-    snprintf(buffer, 16384, "%ld particles lost, continuing with next step", n_track - 1 - n_left);
+    snprintf(buffer, 16384, "%" PRId64 " particles lost, continuing with next step", n_track - 1 - n_left);
     printWarning("analyze_map: particle(s) lost during transport analysis", buffer);
     return;
   }

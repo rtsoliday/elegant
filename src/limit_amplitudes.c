@@ -942,9 +942,9 @@ long elimit_amplitudes(
 #if USE_MPI
       if (distributedBeam) {
         if (USE_MPI) {
-          long itop_total;
+          int64_t itop_total;
           double reference_total;
-          MPI_Allreduce(&itop, &itop_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+          MPI_Allreduce(&itop, &itop_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
           MPI_Allreduce(&reference, &reference_total, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
           reference = reference_total / (itop_total + n_processors);
         }
