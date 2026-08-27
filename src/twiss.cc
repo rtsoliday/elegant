@@ -122,8 +122,8 @@ static short mustResetRfcaMatrices = 0;
 static short periodicTwissComputed = 0;
 static TWISS lastPeriodicTwiss;
 static short mirror;
-static long nRfca = 0;
-static ELEMENT_LIST **rfcaElem = NULL;
+static long nRfElem = 0;
+static ELEMENT_LIST **rfElem = NULL;
 static FILE *fpRf = NULL;
 static FILE *fpBucket = NULL;
 
@@ -5556,26 +5556,31 @@ void setup_rf_setup(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline, long d
       rf_setup_struct.name = expand_ranges(rf_setup_struct.name);
   }
 
-  free(rfcaElem);
-  nRfca = 0;
-  rfcaElem = NULL;
+  free(rfElem);
+  nRfElem = 0;
+  rfElem = NULL;
 
   if (!rf_setup_struct.output_only) {
     eptr = beamline->elem;
 
     while (eptr) {
-      if (eptr->type != T_RFCA || (rf_setup_struct.name && !wild_match(eptr->name, rf_setup_struct.name)) || (rf_setup_struct.start_occurence > 0 && eptr->occurence < rf_setup_struct.start_occurence) || (rf_setup_struct.end_occurence > 0 && eptr->occurence > rf_setup_struct.end_occurence) || (rf_setup_struct.s_start > 0 && eptr->end_pos < rf_setup_struct.s_start) || (rf_setup_struct.s_end > 0 && eptr->end_pos > rf_setup_struct.s_end)) {
+      if ((eptr->type != T_RFCA && (eptr->type!=T_MODRF))
+	  || (rf_setup_struct.name && !wild_match(eptr->name, rf_setup_struct.name))
+	  || (rf_setup_struct.start_occurence > 0 && eptr->occurence < rf_setup_struct.start_occurence)
+	  || (rf_setup_struct.end_occurence > 0 && eptr->occurence > rf_setup_struct.end_occurence)
+	  || (rf_setup_struct.s_start > 0 && eptr->end_pos < rf_setup_struct.s_start)
+	  || (rf_setup_struct.s_end > 0 && eptr->end_pos > rf_setup_struct.s_end)) {
         eptr = eptr->succ;
         continue;
       }
-      rfcaElem = (ELEMENT_LIST **)SDDS_Realloc(rfcaElem, sizeof(*rfcaElem) * (nRfca + 1));
-      rfcaElem[nRfca] = eptr;
-      nRfca++;
+      rfElem = (ELEMENT_LIST **)SDDS_Realloc(rfElem, sizeof(*rfElem) * (nRfElem + 1));
+      rfElem[nRfElem] = eptr;
+      nRfElem++;
       eptr = eptr->succ;
     }
 
-    if (nRfca == 0)
-      bombElegant("No RFCA elements found meeting requirements", NULL);
+    if (nRfElem == 0)
+      bombElegant("No RFCA or MODRF elements found meeting requirements", NULL);
   } else {
     if (rf_setup_struct.filename == NULL || strlen(rf_setup_struct.filename) == 0)
       bombElegant("No filename provided but output_only requested.", NULL);
@@ -5629,7 +5634,9 @@ void run_rf_setup(RUN *run, LINE_LIST *beamline, long writeToFile) {
   double beta, T0, frf, q, voltage;
   long harmonic, i;
   RFCA *rfca;
-  long iFreq, iVolt, iPhase;
+  MODRF *modrf;
+  long iFreqRfca, iVoltRfca, iPhaseRfca;
+  long iFreqModrf, iVoltModrf, iPhaseModrf;
   double phase;
   double St0, Sz0, nus, rfAcceptance = -1;
   double wrf, w0, Vdot, E;
@@ -5666,20 +5673,30 @@ void run_rf_setup(RUN *run, LINE_LIST *beamline, long writeToFile) {
   else
     harmonic = rf_setup_struct.near_frequency * T0 + 0.5;
 
-  iFreq = confirm_parameter((char *)"FREQ", T_RFCA);
-  iVolt = confirm_parameter((char *)"VOLT", T_RFCA);
-  iPhase = confirm_parameter((char *)"PHASE", T_RFCA);
+  iFreqRfca = confirm_parameter((char *)"FREQ", T_RFCA);
+  iVoltRfca = confirm_parameter((char *)"VOLT", T_RFCA);
+  iPhaseRfca = confirm_parameter((char *)"PHASE", T_RFCA);
+  iFreqModrf = confirm_parameter((char *)"FREQ", T_MODRF);
+  iVoltModrf = confirm_parameter((char *)"VOLT", T_MODRF);
+  iPhaseModrf = confirm_parameter((char *)"PHASE", T_MODRF);
   frf = harmonic / T0 * (1 + rf_setup_struct.fractional_frequency_change);
   printf("\nRf setup: frequency is %21.15e Hz (h=%ld)\n", frf, harmonic);
-  for (i = 0; i < nRfca; i++) {
-    rfca = (RFCA *)(rfcaElem[i]->p_elem);
-    rfca->freq = frf;
-    change_defined_parameter(rfcaElem[i]->name, iFreq, T_RFCA, frf, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
-    change_used_parameter(beamline, rfcaElem[i]->name, iFreq, T_RFCA, frf, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
-    if (rfcaElem[i]->matrix) {
-      free_matrices(rfcaElem[i]->matrix);
-      free(rfcaElem[i]->matrix);
-      rfcaElem[i]->matrix = NULL;
+  for (i = 0; i < nRfElem; i++) {
+    if (rfElem[i]->type == T_RFCA) {
+      rfca = (RFCA *)(rfElem[i]->p_elem);
+      rfca->freq = frf;
+      change_defined_parameter(rfElem[i]->name, iFreqRfca, T_RFCA, frf, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
+      change_used_parameter(beamline, rfElem[i]->name, iFreqRfca, T_RFCA, frf, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
+    } else {
+      modrf = (MODRF *)(rfElem[i]->p_elem);
+      modrf->freq = frf;
+      change_defined_parameter(rfElem[i]->name, iFreqModrf, T_MODRF, frf, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
+      change_used_parameter(beamline, rfElem[i]->name, iFreqModrf, T_MODRF, frf, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
+    }
+    if (rfElem[i]->matrix) {
+      free_matrices(rfElem[i]->matrix);
+      free(rfElem[i]->matrix);
+      rfElem[i]->matrix = NULL;
     }
   }
 
@@ -5694,11 +5711,11 @@ void run_rf_setup(RUN *run, LINE_LIST *beamline, long writeToFile) {
     E = sqrt(sqr(pCentral) + 1) * particleMassMV;
     F = sqr(rf_setup_struct.bucket_half_height) / (beamline->radIntegrals.Uo / (PI * fabs(eta) * harmonic * E));
     q = (F + 2) / 2;
-    voltage = (q = solveForOverVoltage(F, q)) * beamline->radIntegrals.Uo * 1e6 / nRfca;
+    voltage = (q = solveForOverVoltage(F, q)) * beamline->radIntegrals.Uo * 1e6 / nRfElem;
   } else if (rf_setup_struct.over_voltage)
-    voltage = (q = rf_setup_struct.over_voltage) * beamline->radIntegrals.Uo * 1e6 / nRfca;
+    voltage = (q = rf_setup_struct.over_voltage) * beamline->radIntegrals.Uo * 1e6 / nRfElem;
   else {
-    voltage = rf_setup_struct.total_voltage / nRfca;
+    voltage = rf_setup_struct.total_voltage / nRfElem;
     q = rf_setup_struct.total_voltage / (beamline->radIntegrals.Uo * 1e6);
   }
 
@@ -5710,17 +5727,28 @@ void run_rf_setup(RUN *run, LINE_LIST *beamline, long writeToFile) {
       phase = asin(1 / q) * 180 / PI;
     printf("Voltage per cavity is %21.15e V, overvoltage is %21.15e, phase is %21.15e deg\n\n", voltage, q, phase);
     fflush(stdout);
-    for (i = 0; i < nRfca; i++) {
-      rfca = (RFCA *)(rfcaElem[i]->p_elem);
-      rfca->volt = voltage;
-      rfca->phase = phase;
-      rfca->fiducial_seen = 0;
-      change_defined_parameter(rfcaElem[i]->name, iVolt, T_RFCA, voltage, NULL, LOAD_FLAG_ABSOLUTE);
-      change_used_parameter(beamline, rfcaElem[i]->name, iVolt, T_RFCA, voltage, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
-      change_defined_parameter(rfcaElem[i]->name, iPhase, T_RFCA, phase + rf_setup_struct.phase_offset, NULL, LOAD_FLAG_ABSOLUTE);
-      change_used_parameter(beamline, rfcaElem[i]->name, iPhase, T_RFCA, phase + rf_setup_struct.phase_offset, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
+    for (i = 0; i < nRfElem; i++) {
+      if (rfElem[i]->type == T_RFCA) {
+        rfca = (RFCA *)(rfElem[i]->p_elem);
+        rfca->volt = voltage;
+        rfca->phase = phase;
+        rfca->fiducial_seen = 0;
+        change_defined_parameter(rfElem[i]->name, iVoltRfca, T_RFCA, voltage, NULL, LOAD_FLAG_ABSOLUTE);
+        change_used_parameter(beamline, rfElem[i]->name, iVoltRfca, T_RFCA, voltage, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
+        change_defined_parameter(rfElem[i]->name, iPhaseRfca, T_RFCA, phase + rf_setup_struct.phase_offset, NULL, LOAD_FLAG_ABSOLUTE);
+        change_used_parameter(beamline, rfElem[i]->name, iPhaseRfca, T_RFCA, phase + rf_setup_struct.phase_offset, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
+      } else {
+        modrf = (MODRF *)(rfElem[i]->p_elem);
+        modrf->volt = voltage;
+        modrf->phase = phase;
+        modrf->fiducial_seen = 0;
+        change_defined_parameter(rfElem[i]->name, iVoltModrf, T_MODRF, voltage, NULL, LOAD_FLAG_ABSOLUTE);
+        change_used_parameter(beamline, rfElem[i]->name, iVoltModrf, T_MODRF, voltage, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
+        change_defined_parameter(rfElem[i]->name, iPhaseModrf, T_MODRF, phase + rf_setup_struct.phase_offset, NULL, LOAD_FLAG_ABSOLUTE);
+        change_used_parameter(beamline, rfElem[i]->name, iPhaseModrf, T_MODRF, phase + rf_setup_struct.phase_offset, NULL, LOAD_FLAG_ABSOLUTE | LOAD_FLAG_VERBOSE);
+      }
       printf("Set phase of %s to %21.15e deg\n",
-             rfcaElem[i]->name, phase + rf_setup_struct.phase_offset);
+             rfElem[i]->name, phase + rf_setup_struct.phase_offset);
     }
   }
 
@@ -5728,14 +5756,14 @@ void run_rf_setup(RUN *run, LINE_LIST *beamline, long writeToFile) {
   wrf = frf * PIx2;
   w0 = PIx2 / T0;
   h = wrf / w0 + 0.5;
-  Vdot = nRfca * h * w0 * voltage * cos(phase * PI / 180);
+  Vdot = nRfElem * h * w0 * voltage * cos(phase * PI / 180);
   E = sqrt(sqr(pCentral) + 1) * particleMassMV * 1e6;
 
   if ((eta * Vdot) < 0) {
     nus = sqrt(eta / PIx2 * (-Vdot / w0) / E);
     St0 = fabs(beamline->radIntegrals.sigmadelta * eta / (nus * w0));
     Sz0 = St0 * c_mks;
-    if ((q = nRfca * voltage / (1e6 * beamline->radIntegrals.Uo)) > 1)
+    if ((q = nRfElem * voltage / (1e6 * beamline->radIntegrals.Uo)) > 1)
       rfAcceptance = sqrt(2 * beamline->radIntegrals.Uo * 1e6 / (PI * fabs(eta) * h * E) * (sqrt(q * q - 1) - acos(1 / q)));
   } else {
     q = rfAcceptance = nus = St0 = Sz0 = -1;
@@ -5748,7 +5776,7 @@ void run_rf_setup(RUN *run, LINE_LIST *beamline, long writeToFile) {
 
   if (writeToFile && fpRf) {
     fprintf(fpRf, "%21.15le\n%21.15le\n%21.15le\n%21.15le\n%21.15le\n%21.15le\n%21.15le\n%ld\n",
-            phase, voltage * nRfca, rfAcceptance, nus, Sz0, St0, frf, h);
+            phase, voltage * nRfElem, rfAcceptance, nus, Sz0, St0, frf, h);
   }
 
   if (writeToFile && fpBucket) {
@@ -5758,11 +5786,12 @@ void run_rf_setup(RUN *run, LINE_LIST *beamline, long writeToFile) {
        whose peak equals the bucket half height (rfAcceptance) computed above.
        phi is converted to time via t = (phi - phi_s)/wrf (relative to the
        synchronous particle) and to momentum via p = pCentral*(1 + delta). */
-    long np = rf_setup_struct.bucket_points, ip;
+    int64_t np = rf_setup_struct.bucket_points;
+    long ip;
     double phi_s = phase * PI / 180.0;
     double phi_u = PI - phi_s;
     double sins = sin(phi_s);
-    double Vtot = voltage * nRfca;
+    double Vtot = voltage * nRfElem;
     double A = Vtot / (PI * h * E); /* delta^2 = A*bracket(phi)/eta */
     double phi2, dphi, phi, d2, delta, tval, a, b, fa, fm, m;
     long k, nRows = 0;
