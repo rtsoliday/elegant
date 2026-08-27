@@ -140,6 +140,7 @@ char *option[N_OPTIONS] = {
              of the number of multipoles and derivatives relative to the previous best; this is often much\n\
              faster.\n\n\
 Rectangular Boundary Generalized Gradient Expansion by Ryan Lindberg, Robert Soliday, and Michael Borland.\n\
+Note: if a full three-dimensional field map is available, computeLBGGE will provide much better results.\n\
 (" __DATE__ " " __TIME__ ", SVN revision: " SVN_VERSION ")\n"
 
 #define AUTOTUNE_VERBOSE 0x0001UL
