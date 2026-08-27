@@ -32,7 +32,7 @@ void index_bunch_assignments(double **part, int64_t np, long idSlotsPerBunch, do
 #endif
 
 #ifdef DEBUG
-  printf("index_bunch_assignments called, np=%ld, idSlotsPerBunch=%ld, lastNBunches=%ld\n",
+  printf("index_bunch_assignments called, np=%" PRId64 ", idSlotsPerBunch=%ld, lastNBunches=%ld\n",
          np, idSlotsPerBunch, lastNBunches);
   printf("pointer check: part %s, time %s, ibParticle %s, ipBunch %s, npBunch %s, nBunches %s\n",
          part ? "ok" : "NULL",
@@ -115,7 +115,7 @@ void index_bunch_assignments(double **part, int64_t np, long idSlotsPerBunch, do
 #endif
       if (np) {
 #ifdef DEBUG
-        printf("Doing branch for np!=0 (np=%ld)\n", np);
+        printf("Doing branch for np!=0 (np=%" PRId64 ")\n", np);
         fflush(stdout);
 #endif
         /* Compute time coordinate of each particle */
@@ -205,7 +205,7 @@ void index_bunch_assignments(double **part, int64_t np, long idSlotsPerBunch, do
   if (!partOnMaster || myid == 0) {
 #endif
     for (ib = 0; ib < *nBunches; ib++)
-      printf("npBunch[%ld] = %ld\n", ib, (*npBunch)[ib]);
+      printf("npBunch[%ld] = %" PRId64 "\n", ib, (*npBunch)[ib]);
     fflush(stdout);
 #if USE_MPI
   }
@@ -294,7 +294,7 @@ void track_through_lrwake(double **part, int64_t np, LRWAKE *wakeData, double *P
 
 #ifdef DEBUG
     fputs("index_bunch_assignment returned\n", stdout);
-    printf("np = %ld, nBunches = %ld\n", np, nBunches);
+    printf("np = %" PRId64 ", nBunches = %ld\n", np, nBunches);
 #endif
 
     set_up_lrwake(wakeData, run, i_pass, np, charge, nBunches);

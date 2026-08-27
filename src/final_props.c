@@ -1097,7 +1097,7 @@ double rms_longitudinal_emittance_p(double **coord, int64_t n, double Po, int64_
       return (0.0);
   }
 #  ifdef DEBUG
-  printf("rms_longitudinal_emittance_p, n=%ld, n_total=%ld\n", n, n_total);
+  printf("rms_longitudinal_emittance_p, n=%" PRId64 ", n_total=%" PRId64 "\n", n, n_total);
   fflush(stdout);
 #  endif
 
@@ -1110,7 +1110,7 @@ double rms_longitudinal_emittance_p(double **coord, int64_t n, double Po, int64_
     }
   }
 #  ifdef DEBUG
-  printf("rms_longitudinal_emittance_p, npCount=%ld\n", npCount);
+  printf("rms_longitudinal_emittance_p, npCount=%" PRId64 "\n", npCount);
   fflush(stdout);
 #  endif
 
@@ -1121,7 +1121,7 @@ double rms_longitudinal_emittance_p(double **coord, int64_t n, double Po, int64_
     return 0.0;
 
 #  ifdef DEBUG
-  printf("rms_longitudinal_emittance_p, npCount_total=%ld\n", npCount_total);
+  printf("rms_longitudinal_emittance_p, npCount_total=%" PRId64 "\n", npCount_total);
   fflush(stdout);
 #  endif
   time = tmalloc(sizeof(*time) * n);

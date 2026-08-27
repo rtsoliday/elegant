@@ -421,7 +421,7 @@ void coolerKicker(CKICKER *ckicker, double **part0, int64_t np0, LINE_LIST *beam
       }
 
 #if DEBUG
-      printf("Bunch %ld has %ld particles, dt_ref = %le\n", ib, npBucket[ib], dt_ref);
+      printf("Bunch %ld has %" PRId64 " particles, dt_ref = %le\n", ib, npBucket[ib], dt_ref);
       fflush(stdout);
 #endif
 
@@ -570,7 +570,7 @@ void coolerKicker(CKICKER *ckicker, double **part0, int64_t np0, LINE_LIST *beam
 	  phase_bin = (time_i_ku - (pickup_rad_start + dt_ref)) / rad_bin_length;
 	  wave_packet_kick = pickup_rad[phase_bin];
 #if DEBUG
-	  printf("Giving particle %ld a kick %le from the numerical wave packet\n", i, wave_packet_kick);
+	  printf("Giving particle %" PRId64 " a kick %le from the numerical wave packet\n", i, wave_packet_kick);
 	  fflush(stdout);
 #endif
 	  part0[ipBucket[ib][i]][5] += wave_packet_kick;
@@ -597,7 +597,7 @@ void coolerKicker(CKICKER *ckicker, double **part0, int64_t np0, LINE_LIST *beam
 	  modulation_strength = pow(cos(modulation_phase), 2);
 	  coherent_kick = ckicker->strength * envelope_strength * modulation_strength * sin(total_phi*twopi);
 #if DEBUG
-	  printf("Giving particle %ld (global id %ld) a coherent kick %le\n", i, i+ibOffset, coherent_kick);
+	  printf("Giving particle %" PRId64 " (global id %" PRId64 ") a coherent kick %le\n", i, i+ibOffset, coherent_kick);
 	  fflush(stdout);
 #endif
 
@@ -647,7 +647,7 @@ void coolerKicker(CKICKER *ckicker, double **part0, int64_t np0, LINE_LIST *beam
 	      incoherent_kick = ckicker->strength * incoherent_strength * sin(total_phi*twopi);
 
 #if DEBUG
-	      printf("Giving particle %ld (global id %ld) a kick %le from particle %ld\n",
+	      printf("Giving particle %" PRId64 " (global id %ld) a kick %le from particle %" PRId64 "\n",
 		     i, i_gbucket, incoherent_kick, j);
 	      fflush(stdout);
 #endif
