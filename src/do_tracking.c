@@ -14,6 +14,51 @@
  */
 #include "mdb.h"
 #include "track.h"
+#include "oagphy.h" /* COUPLED_RESULTS, ComputeCoupledParameters() for MARK coupled_fitpoint */
+#include <limits.h>
+
+#if USE_MPI
+/* MPI-4 provides "large count" bindings (MPI_Send_c, MPI_Recv_c, MPI_Allgatherv_c,
+ * ...) whose count/displacement arguments are MPI_Count/MPI_Aint (64-bit) rather
+ * than int. When available we use them so the number of particles per transfer is
+ * not limited to INT_MAX/totalPropertiesPerParticle (~2e8). On pre-MPI-4 libraries
+ * we fall back to the classic int-count calls and guard against overflow so a run
+ * that would exceed the limit aborts cleanly instead of silently corrupting.
+ * See the "number of particles" note in doc/elegant.tex. */
+#  if defined(MPI_VERSION) && MPI_VERSION >= 4
+#    define ELEGANT_MPI_HAVE_LARGE_COUNT 1
+#  else
+#    define ELEGANT_MPI_HAVE_LARGE_COUNT 0
+#  endif
+
+#  if ELEGANT_MPI_HAVE_LARGE_COUNT
+#    define CHECK_MPI_PARTICLE_COUNT(nParticlesOnRank) ((void)0)
+#  else
+#    define CHECK_MPI_PARTICLE_COUNT(nParticlesOnRank)                              \
+  do {                                                                              \
+    if ((int64_t)(nParticlesOnRank) > (int64_t)(INT_MAX / totalPropertiesPerParticle)) \
+      bombElegant("Per-processor particle count exceeds the MPI int element-count " \
+                  "limit (~INT_MAX/properties) and this MPI is pre-4.0. "           \
+                  "Use more processors or an MPI-4 library.", NULL);                \
+  } while (0)
+#  endif
+
+/* Send/receive a block of doubles with a 64-bit element count. */
+static int elegant_MPI_Send_doubles(const void *buf, int64_t count, int dest, int tag, MPI_Comm comm) {
+#  if ELEGANT_MPI_HAVE_LARGE_COUNT
+  return MPI_Send_c(buf, (MPI_Count)count, MPI_DOUBLE, dest, tag, comm);
+#  else
+  return MPI_Send((void *)buf, (int)count, MPI_DOUBLE, dest, tag, comm);
+#  endif
+}
+static int elegant_MPI_Recv_doubles(void *buf, int64_t count, int source, int tag, MPI_Comm comm, MPI_Status *status) {
+#  if ELEGANT_MPI_HAVE_LARGE_COUNT
+  return MPI_Recv_c(buf, (MPI_Count)count, MPI_DOUBLE, source, tag, comm, status);
+#  else
+  return MPI_Recv(buf, (int)count, MPI_DOUBLE, source, tag, comm, status);
+#  endif
+}
+#endif
 #ifdef USE_GSL
 #  include "gsl/gsl_poly.h"
 #endif
@@ -30,17 +75,17 @@
 #endif /* HAVE_GPU */
 
 void flushTransverseFeedbackDriverFiles(TFBDRIVER *tfbd);
-void set_up_frfmode(FRFMODE *rfmode, char *element_name, double element_z, long n_passes, RUN *run, long n_particles, double Po, double total_length);
-void track_through_frfmode(double **part, long np, FRFMODE *rfmode, double Po, char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
-void set_up_ftrfmode(FTRFMODE *rfmode, char *element_name, double element_z, long n_passes, RUN *run, long n_particles, double Po, double total_length);
-void track_through_ftrfmode(double **part, long np, FTRFMODE *trfmode, double Po, char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
-void transformEmittances(double **coord, long np, double pCentral, EMITTANCEELEMENT *ee);
+void set_up_frfmode(FRFMODE *rfmode, char *element_name, double element_z, long n_passes, RUN *run, int64_t n_particles, double Po, double total_length);
+void track_through_frfmode(double **part, int64_t np, FRFMODE *rfmode, double Po, char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
+void set_up_ftrfmode(FTRFMODE *rfmode, char *element_name, double element_z, long n_passes, RUN *run, int64_t n_particles, double Po, double total_length);
+void track_through_ftrfmode(double **part, int64_t np, FTRFMODE *trfmode, double Po, char *element_name, double element_z, long pass, long n_passes, CHARGE *charge);
+void transformEmittances(double **coord, int64_t np, double pCentral, EMITTANCEELEMENT *ee);
 void checkRFCAChangeTConflicts(LINE_LIST *beamline);
 
 ELEMENT_LIST *findBeamlineMatrixElement(ELEMENT_LIST *eptr);
-void trackLongitudinalOnlyRing(double **part, long np, VMATRIX *M, double *alpha);
+void trackLongitudinalOnlyRing(double **part, int64_t np, VMATRIX *M, double *alpha);
 void store_fitpoint_matrix_values(MARK *fpt, char *name, long occurence, VMATRIX *M);
-void storeBPMReading(ELEMENT_LIST *eptr, double **coord, long np, double Po);
+void storeBPMReading(ELEMENT_LIST *eptr, double **coord, int64_t np, double Po);
 long trackWithIndividualizedLinearMatrix(double **particle, long particles,
                                          double **accepted, double Po, double z,
                                          ELEMENT_LIST *eptr,
@@ -50,24 +95,24 @@ long trackWithIndividualizedLinearMatrix(double **particle, long particles,
                                          double *alphac, double *eta2,
                                          ILMATRIX *ilmat);
 void matr_element_tracking(double **coord, VMATRIX *M, MATR *matr,
-                           long np, double z);
+                           int64_t np, double z);
 void ematrix_element_tracking(double **coord, VMATRIX *M, EMATRIX *matr,
-                              long np, double z, double *Pcentral);
-void distributionScatter(double **part, long np, double Po, DSCATTER *scat, long iPass);
-void storeMonitorOrbitValues(ELEMENT_LIST *eptr, double **part, long np);
-void mhist_table(ELEMENT_LIST *eptr0, ELEMENT_LIST *eptr, long step, long pass, double **coord, long np,
+                              int64_t np, double z, double *Pcentral);
+void distributionScatter(double **part, int64_t np, double Po, DSCATTER *scat, long iPass);
+void storeMonitorOrbitValues(ELEMENT_LIST *eptr, double **part, int64_t np);
+void mhist_table(ELEMENT_LIST *eptr0, ELEMENT_LIST *eptr, long step, long pass, double **coord, int64_t np,
                  double Po, double length, double charge, double z);
 void set_up_mhist(MHISTOGRAM *mhist, RUN *run, long occurence);
-void findMinMax(double **coord, long np, double *min, double *max, double *c0, double Po);
+void findMinMax(double **coord, int64_t np, double *min, double *max, double *c0, double Po);
 
 void interpolateFTable(double *B, double *xyz, FTABLE *ftable);
-void ftable_frame_converter(double **coord, long np, FTABLE *ftable, long entrance_exit);
+void ftable_frame_converter(double **coord, int64_t np, FTABLE *ftable, long entrance_exit);
 double choose_theta(double rho, double x0, double x1, double x2);
 void track_through_space_harmonic_deflector(
                                             double **final,
                                             SHRFDF *rf_param,
                                             double **initial,
-                                            long n_particles,
+                                            int64_t n_particles,
                                             double pc_central);
 
 short determineP0ChangeBlocking(ELEMENT_LIST *eptr);
@@ -94,7 +139,7 @@ static void checkBeamStructure(BEAM *beam);
 int comp_IDs(const void *coord1, const void *coord2);
 #endif
 
-void applyBeamBeamKicks(double **part, long np, BEAMBEAM *bb, double P0);
+void applyBeamBeamKicks(double **part, int64_t np, BEAMBEAM *bb, double P0);
 
 double beta_from_delta(double p, double delta) {
   p *= 1 + delta;
@@ -105,9 +150,9 @@ double beta_from_delta(double p, double delta) {
  * location
  */
 
-static void (*trackingWedgeFunction)(double **part, long np, long pass, double *pCentral) = NULL;
+static void (*trackingWedgeFunction)(double **part, int64_t np, long pass, double *pCentral) = NULL;
 static ELEMENT_LIST *trackingWedgeElement = NULL;
-void setTrackingWedgeFunction(void (*wedgeFunc)(double **part, long np, long pass, double *pCentral),
+void setTrackingWedgeFunction(void (*wedgeFunc)(double **part, int64_t np, long pass, double *pCentral),
                               ELEMENT_LIST *eptr) {
   trackingWedgeFunction = wedgeFunc;
   trackingWedgeElement = eptr;
@@ -116,14 +161,14 @@ void setTrackingWedgeFunction(void (*wedgeFunc)(double **part, long np, long pas
 /* This is used if one needs to wedge a function after each element location
  */
 
-static void (*trackingOmniWedgeFunction)(double **part, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral);
-static long (*trackingOmniWedgeGpuFunction)(long np, long pass, long i_elem,
+static void (*trackingOmniWedgeFunction)(double **part, int64_t np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral);
+static long (*trackingOmniWedgeGpuFunction)(int64_t np, long pass, long i_elem,
                                            long n_elem, ELEMENT_LIST *eptr,
                                            double *pCentral) = NULL;
-void setTrackingOmniWedgeFunction(void (*wedgeFunc)(double **part, long np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral)) {
+void setTrackingOmniWedgeFunction(void (*wedgeFunc)(double **part, int64_t np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral)) {
   trackingOmniWedgeFunction = wedgeFunc;
 }
-void setTrackingOmniWedgeGpuFunction(long (*wedgeFunc)(long np, long pass,
+void setTrackingOmniWedgeGpuFunction(long (*wedgeFunc)(int64_t np, long pass,
                                                        long i_elem, long n_elem,
                                                        ELEMENT_LIST *eptr,
                                                        double *pCentral)) {
@@ -199,7 +244,7 @@ long do_tracking(
                  /* Either the beam pointer or the coord pointer must be supplied, but not both */
                  BEAM *beam,
                  double **coord,
-                 long nOriginal, /* Used only if coord is supplied */
+                 int64_t nOriginal, /* Used only if coord is supplied */
                  long *effort,
                  LINE_LIST *beamline,
                  double *P_central, /* beta*gamma for central particle */
@@ -238,14 +283,15 @@ long do_tracking(
   ELEMENT_LIST *eptr, *eptrPred, *eptrCLMatrix = NULL;
   double sMaxTransmittedMonitor; /* maximum s coordinate of transmitted particles at MONI, HMON, or VMON */
   static int sMaxTransmittedMonitorMemory = -1;
-  long nToTrack;     /* number of particles being tracked */
-  long nLeft;        /* number of those that are left after a tracking routine returns */
-  long nLost = 0;    /* accumulated number lost */
-  long nMaximum = 0; /* maximum number of particles seen */
+  int64_t nToTrack;     /* number of particles being tracked */
+  int64_t nLeft;        /* number of those that are left after a tracking routine returns */
+  int64_t nLost = 0;    /* accumulated number lost */
+  int64_t nMaximum = 0; /* maximum number of particles seen */
   /* long show_dE; */
   long maxampOpenCode = 0, maxampExponent = 0, maxampYExponent = 0;
   double dgamma, dP[3], z, z_recirc, last_z, z_travel;
-  long i, j, i_traj = 0, i_sums, i_pass, isConcat, i_elem;
+  long i, i_traj = 0, i_sums, i_pass, isConcat, i_elem;
+  int64_t j;
   long i_sums_recirc, saveISR = 0;
   long watch_pt_seen, feedbackDriverSeen;
   double sum, x_max, y_max;
@@ -269,7 +315,7 @@ long do_tracking(
   long memoryBefore = 0, memoryAfter = 0;
 #if USE_MPI
 #  ifdef SORT
-  int nToTrackAtLastSort;
+  int64_t nToTrackAtLastSort;
 #  endif
   int needSort = 0;
   int lostSinceSeqMode = 0;
@@ -489,6 +535,8 @@ long do_tracking(
     }
   }
   reset_driftCSR();
+  resetTrackingClock(); /* Bundle P2: zero the CHANGE_T accum for this do_tracking call (per step);
+                           the P1 step_frequency base, set in track_beam, is untouched */
 
   checkRFCAChangeTConflicts(beamline);
 
@@ -1312,7 +1360,7 @@ long do_tracking(
                   }
                   if (IS_MONITOR(eptr->type) && eptr->end_pos > sMaxTransmittedMonitor) {
 #if USE_MPI
-                    long nToTrackTotal = nToTrack;
+                    int64_t nToTrackTotal = nToTrack;
                     if (beam) {
                       if (!partOnMaster && distributedBeam)
                         MPI_Allreduce(&nToTrack, &nToTrackTotal, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -2208,6 +2256,10 @@ long do_tracking(
                 case T_SCATTER:
                   if (!(flags & TEST_PARTICLES))
                     scatter_ele(coord, nToTrack, *P_central, (SCATTER *)eptr->p_elem, i_pass);
+                  break;
+                case T_CBSCAT:
+                  if (!(flags & TEST_PARTICLES))
+                    track_CBScat(coord, nToTrack, *P_central, (CBSCAT *)eptr->p_elem, i_pass, eptr->occurence);
                   break;
                 case T_DSCATTER:
                   if (!(flags & TEST_PARTICLES))
@@ -3529,10 +3581,10 @@ long do_tracking(
 
       void offset_beam(
                        double **coord,
-                       long nToTrack,
+                       int64_t nToTrack,
                        MALIGN *offset,
                        double P_central) {
-        long i_part, allParticles;
+        int64_t i_part, allParticles;
         double *part, pc, beta, gamma, t;
         double ds;
 
@@ -3594,10 +3646,10 @@ long do_tracking(
 
       void do_match_energy(
                            double **coord,
-                           long np,
+                           int64_t np,
                            double *P_central,
                            long change_beam) {
-        long ip;
+        int64_t ip;
         double P_average, dP_centroid, P, t, dp, dr;
         long active = 1;
 #ifdef USE_KAHAN
@@ -3770,7 +3822,7 @@ long do_tracking(
 
       void set_central_energy(
                               double **coord,
-                              long np,
+                              int64_t np,
                               double new_energy, /* new central gamma - 1*/
                               double *P_central) {
 
@@ -3781,10 +3833,10 @@ long do_tracking(
 
       void set_central_momentum(
                                 double **coord,
-                                long np,
+                                int64_t np,
                                 double P_new, /* new central beta*gamma */
                                 double *P_central) {
-        long ip;
+        int64_t ip;
 
 #ifdef HAVE_GPU
         if (getElementOnGpu()) {
@@ -3846,9 +3898,10 @@ long do_tracking(
 #endif
       }
 
-      void remove_correlations(double **part, REMCOR *remcor, long np) {
+      void remove_correlations(double **part, REMCOR *remcor, int64_t np) {
         double sumxy, sumy2, ratio;
-        long ip, ic, wc;
+        int64_t ip;
+        long ic, wc;
         long removeFrom[4];
 
         if (!np)
@@ -3883,9 +3936,10 @@ long do_tracking(
         }
       }
 
-      void center_beam(double **part, CENTER *center, long np, long iPass, double p0) {
+      void center_beam(double **part, CENTER *center, int64_t np, long iPass, double p0) {
         double sum, offset;
-        long i, ic;
+        long ic;
+        int64_t i;
         /*
           printf("center_beam called with np=%ld\n", np);
           fflush(stdout);
@@ -3970,7 +4024,7 @@ long do_tracking(
         */
       }
 
-      void drift_beam(double **part, long np, double length, long order) {
+      void drift_beam(double **part, int64_t np, double length, long order) {
         VMATRIX *M;
 
         log_entry("drift_beam");
@@ -3985,8 +4039,9 @@ long do_tracking(
         log_exit("drift_beam");
       }
 
-      void scatter_ele(double **part, long np, double Po, SCATTER *scat, long iPass) {
-        long i, ip;
+      void scatter_ele(double **part, int64_t np, double Po, SCATTER *scat, long iPass) {
+        long i;
+        int64_t ip;
         double t, P, beta;
 
         if (!np)
@@ -4122,7 +4177,7 @@ long do_tracking(
                   rpn_store(M->Q[i][j][k][l], NULL, fpt->matrix_mem[count++]);
       }
 
-      void store_fitpoint_beam_parameters(MARK *fpt, char *name, long occurence, double **coord, long np, double Po) {
+      void store_fitpoint_beam_parameters(MARK *fpt, char *name, long occurence, double **coord, int64_t np, double Po) {
         long i, j, k;
         long npTotal;
         static double emit[3], sigma[7], centroid[7], beta[3], alpha[3], emitc[3], min[7], max[7];
@@ -4145,6 +4200,15 @@ long do_tracking(
           "max1", "max2", "max3", "max4", "max5", "max6", "max7"};
         static char *min_name_suffix[7] = {
           "min1", "min2", "min3", "min4", "min5", "min6", "min7"};
+        /* Per-mode suffixes for the coupled beam parameters (coupled_fitpoint); the "%ld"
+           receives the mode number (1..3).  "Beam" suffix mirrors betaxBeam/alphaxBeam and
+           avoids collision with the coupled_twiss (betax1, ...) and moments (e1m, ...) symbols. */
+        static char *coupled_name_suffix[15] = {
+          "e%ldBeam", "en%ldBeam",
+          "betax%ldBeam", "betay%ldBeam", "betaz%ldBeam",
+          "alphax%ldBeam", "alphay%ldBeam", "alphaz%ldBeam",
+          "gammax%ldBeam", "gammay%ldBeam", "gammaz%ldBeam",
+          "A_xy_%ldBeam", "A_xpy_%ldBeam", "A_xyp_%ldBeam", "A_xpyp_%ldBeam"};
         static char s[1000];
 
         sums = allocateBeamSums(0, 1);
@@ -4236,10 +4300,58 @@ long do_tracking(
         rpn_store(Po, NULL, fpt->centroid_mem[7]);
         rpn_store((double)npTotal, NULL, fpt->centroid_mem[8]);
         /* } */
+
+        if (fpt->coupled_fitpoint) {
+          /* Coupled (eigen-)emittance and coupled lattice-function analysis of the tracked beam
+             matrix via the Sigma.J (Wolski) method (same as sddsanalyzebeam -coupled).  The 6x6
+             leading submatrix of sums->beamSums2->sigma is already in (x,x',y,y',s,delta) with s
+             in meters, so sLongScale=1.  Values are stored under NAME#occ.<param>Beam. */
+          COUPLED_RESULTS cr;
+          double S6[6][6];
+          long mode;
+          memset(&cr, 0, sizeof(cr));
+          for (i = 0; i < 6; i++)
+            for (j = 0; j < 6; j++)
+              S6[i][j] = sums->beamSums2->sigma[i][j];
+          if (npTotal)
+            ComputeCoupledParameters(&cr, S6, 1.0);
+          if (!(fpt->init_flags & 64)) {
+            fpt->coupledBeam_mem = tmalloc(sizeof(*fpt->coupledBeam_mem) * 45);
+            for (mode = 0; mode < 3; mode++)
+              for (k = 0; k < 15; k++) {
+                char suffix[32];
+                sprintf(suffix, coupled_name_suffix[k], mode + 1);
+                sprintf(s, "%s#%ld.%s", name, occurence, suffix);
+                fpt->coupledBeam_mem[mode * 15 + k] = rpn_create_mem(s, 0);
+              }
+            fpt->init_flags |= 64;
+          }
+          for (mode = 0; mode < 3; mode++) {
+            double d[15];
+            d[0] = cr.emit[mode];
+            d[1] = cr.emit[mode] * Po * (1 + centroid[5]); /* normalized eigen-emittance */
+            d[2] = cr.betax[mode];
+            d[3] = cr.betay[mode];
+            d[4] = cr.betaz[mode];
+            d[5] = cr.alphax[mode];
+            d[6] = cr.alphay[mode];
+            d[7] = cr.alphaz[mode];
+            d[8] = cr.gammax[mode];
+            d[9] = cr.gammay[mode];
+            d[10] = cr.gammaz[mode];
+            d[11] = cr.A_xy[mode];
+            d[12] = cr.A_xpy[mode];
+            d[13] = cr.A_xyp[mode];
+            d[14] = cr.A_xpyp[mode];
+            for (k = 0; k < 15; k++)
+              rpn_store(d[k], NULL, fpt->coupledBeam_mem[mode * 15 + k]);
+          }
+        }
+
         freeBeamSums(sums, 1);
       }
 
-      void createBPMReadingMemories(ELEMENT_LIST *eptr, double **coord, long np, double Po) {
+      void createBPMReadingMemories(ELEMENT_LIST *eptr, double **coord, int64_t np, double Po) {
         /* run through the beamline and force creation of some variables for storing BPM readings */
         while (eptr) {
           switch (eptr->type) {
@@ -4262,7 +4374,7 @@ long do_tracking(
         }
       }
 
-      void storeBPMReading(ELEMENT_LIST *eptr, double **coord, long np, double Po) {
+      void storeBPMReading(ELEMENT_LIST *eptr, double **coord, int64_t np, double Po) {
         BEAM_SUMS *sums;
         char s[1000];
         MONI *moni;
@@ -4362,7 +4474,8 @@ long do_tracking(
                                                double *eta2,   /* x = x(0) + eta*delta + eta2*delta^2 */
                                                ILMATRIX *ilmat /* used only if twiss==NULL */
                                                ) {
-        long ip, plane, offset, i, j, itop, is_lost;
+        int64_t ip, i, j, itop;
+        long plane, offset, is_lost;
         double *coord, deltaPoP, tune2pi, sin_phi, cos_phi;
         double alpha[2], beta[2], eta[4], beta1, alpha1, eta1, etap1, A[2];
         double R11, R22, R12;
@@ -4524,8 +4637,8 @@ long do_tracking(
         return particles;
       }
 
-      void trackLongitudinalOnlyRing(double **part, long np, VMATRIX *M, double *alpha) {
-        long ip;
+      void trackLongitudinalOnlyRing(double **part, int64_t np, VMATRIX *M, double *alpha) {
+        int64_t ip;
         double *coord, length, alpha1, alpha2;
 
         alpha1 = alpha[0];
@@ -4539,12 +4652,12 @@ long do_tracking(
       }
 
       void matr_element_tracking(double **coord, VMATRIX *M, MATR *matr,
-                                 long np, double z)
+                                 int64_t np, double z)
       /* subtract off <s> prior to using a user-supplied matrix to avoid possible
        * problems with R5? and T?5? elements
        */
       {
-        long i;
+        int64_t i;
 
 #ifdef HAVE_GPU
         if (getElementOnGpu()) {
@@ -4599,12 +4712,12 @@ long do_tracking(
       }
 
       void ematrix_element_tracking(double **coord, VMATRIX *M, EMATRIX *matr,
-                                    long np, double z, double *P_central)
+                                    int64_t np, double z, double *P_central)
       /* subtract off <s> prior to using a user-supplied matrix to avoid possible
        * problems with R5? and T?5? elements
        */
       {
-        long i;
+        int64_t i;
 
 #ifdef HAVE_GPU
         if (getElementOnGpu()) {
@@ -4665,10 +4778,11 @@ long do_tracking(
           *P_central += matr->deltaP;
       }
 
-      void distributionScatter(double **part, long np, double Po, DSCATTER *scat, long iPass) {
+      void distributionScatter(double **part, int64_t np, double Po, DSCATTER *scat, long iPass) {
         static DSCATTER_GROUP *dscatterGroup = NULL;
         static long dscatterGroups = 0;
-        long i, ip, interpCode, nScattered, nLeftThisPass;
+        long i, interpCode, nScattered, nLeftThisPass;
+        int64_t ip;
         double t, P, beta, amplitude, cdf;
         TRACKING_CONTEXT context;
 
@@ -4883,11 +4997,11 @@ long do_tracking(
       void recordLostParticles(
                                BEAM *beam,
                                double **coord, /* particle coordinates, with lost particles swapped to the top of the array */
-                               long nLeft,     /* coord+nLeft is first lost particle */
-                               long nToTrack,
+                               int64_t nLeft,     /* coord+nLeft is first lost particle */
+                               int64_t nToTrack,
                                long pass /* pass on which loss occurred */
                                ) {
-        long i;
+        int64_t i;
 
 #if USE_MPI && MPI_DEBUG
         static FILE *fp = NULL;
@@ -4943,7 +5057,7 @@ long do_tracking(
         }
       }
 
-      void storeMonitorOrbitValues(ELEMENT_LIST *eptr, double **part, long np) {
+      void storeMonitorOrbitValues(ELEMENT_LIST *eptr, double **part, int64_t np) {
         MONI *moni;
         HMON *hmon;
         VMON *vmon;
@@ -5039,7 +5153,7 @@ long do_tracking(
                             long *reAllocate, double *P_central) {
         long work_processors = n_processors - 1;
         int root = 0, i, j;
-        int my_nToTrack, nItems, *nToTrackCounts;
+        int64_t my_nToTrack, nItems, *nToTrackCounts;
         double total_rate, constTime, *rateCounts;
         MPI_Status status;
 #  if DEBUG_SCATTER
@@ -5076,7 +5190,7 @@ long do_tracking(
 #  endif
         }
 
-        nToTrackCounts = malloc(sizeof(int) * n_processors);
+        nToTrackCounts = malloc(sizeof(*nToTrackCounts) * n_processors);
         rateCounts = malloc(sizeof(double) * n_processors);
 
         /* The particles will be distributed to slave processors evenly for the first pass */
@@ -5103,7 +5217,7 @@ long do_tracking(
           printf("scatterParticles, branch 1.2\n");
           fflush(stdout);
 #  endif
-          MPI_Gather(&my_nToTrack, 1, MPI_INT, nToTrackCounts, 1, MPI_INT, root, MPI_COMM_WORLD);
+          MPI_Gather(&my_nToTrack, 1, MPI_INT64_T, nToTrackCounts, 1, MPI_INT64_T, root, MPI_COMM_WORLD);
           *distributed = 1;
 #  if DEBUG_SCATTER
           printf("scatterParticles, branch 1.3, my_nToTrack=%d\n", my_nToTrack);
@@ -5130,7 +5244,7 @@ long do_tracking(
                 my_nToTrack++;
             }
             /* gather the number of particles to be sent to each processor */
-            MPI_Gather(&my_nToTrack, 1, MPI_INT, nToTrackCounts, 1, MPI_INT, root, MPI_COMM_WORLD);
+            MPI_Gather(&my_nToTrack, 1, MPI_INT64_T, nToTrackCounts, 1, MPI_INT64_T, root, MPI_COMM_WORLD);
           } else {
 #  if DEBUG_SCATTER
             printf("scatterParticles, branch 3\n");
@@ -5167,7 +5281,7 @@ long do_tracking(
 #  endif
             }
             /* scatter the number of particles to be sent to each processor */
-            MPI_Scatter(nToTrackCounts, 1, MPI_INT, &my_nToTrack, 1, MPI_INT, root, MPI_COMM_WORLD);
+            MPI_Scatter(nToTrackCounts, 1, MPI_INT64_T, &my_nToTrack, 1, MPI_INT64_T, root, MPI_COMM_WORLD);
             *reAllocate = 0; /* set the flag back to 0 after scattering */
           }
         } else { /* keep the nToTrack unchanged */
@@ -5180,7 +5294,7 @@ long do_tracking(
           else
             my_nToTrack = *nToTrack;
           /* gather the number of particles to be sent to each processor */
-          MPI_Gather(&my_nToTrack, 1, MPI_INT, nToTrackCounts, 1, MPI_INT, root, MPI_COMM_WORLD);
+          MPI_Gather(&my_nToTrack, 1, MPI_INT64_T, nToTrackCounts, 1, MPI_INT64_T, root, MPI_COMM_WORLD);
         }
 
         /* scatter particles to all of the slave processors */
@@ -5191,10 +5305,11 @@ long do_tracking(
 #  if DEBUG_SCATTER
             printf("Sending %d particles to processor %d\n", nToTrackCounts[i], i);
 #  endif
-            nItems = nToTrackCounts[i] * totalPropertiesPerParticle;
-            MPI_Send(&coord[my_nToTrack][0], nItems, MPI_DOUBLE, i, 104, MPI_COMM_WORLD);
+            CHECK_MPI_PARTICLE_COUNT(nToTrackCounts[i]);
+            nItems = nToTrackCounts[i] * (int64_t)totalPropertiesPerParticle;
+            elegant_MPI_Send_doubles(&coord[my_nToTrack][0], nItems, i, 104, MPI_COMM_WORLD);
             if (accepted != NULL)
-              MPI_Send(&accepted[my_nToTrack][0], nItems, MPI_DOUBLE, i, 105, MPI_COMM_WORLD);
+              elegant_MPI_Send_doubles(&accepted[my_nToTrack][0], nItems, i, 105, MPI_COMM_WORLD);
             /* count the total number of particles that have been scattered */
             my_nToTrack = my_nToTrack + nToTrackCounts[i];
           }
@@ -5203,11 +5318,12 @@ long do_tracking(
 #  if DEBUG_SCATTER
           printf("receiving %d particles for processor %d\n", my_nToTrack, myid);
 #  endif
-          MPI_Recv(&coord[0][0], my_nToTrack * totalPropertiesPerParticle, MPI_DOUBLE, 0,
-                   104, MPI_COMM_WORLD, &status);
+          CHECK_MPI_PARTICLE_COUNT(my_nToTrack);
+          elegant_MPI_Recv_doubles(&coord[0][0], my_nToTrack * (int64_t)totalPropertiesPerParticle, 0,
+                                   104, MPI_COMM_WORLD, &status);
           if (accepted != NULL)
-            MPI_Recv(&accepted[0][0], my_nToTrack * totalPropertiesPerParticle,
-                     MPI_DOUBLE, 0, 105, MPI_COMM_WORLD, &status);
+            elegant_MPI_Recv_doubles(&accepted[0][0], my_nToTrack * (int64_t)totalPropertiesPerParticle,
+                                     0, 105, MPI_COMM_WORLD, &status);
           *nToTrack = my_nToTrack;
         }
         /* broadcast the P_central to all the slave processors */
@@ -5262,7 +5378,8 @@ long do_tracking(
 
       void gatherParticles(double ***coord, long *nToTrack, long *nLost, double ***accepted, long n_processors, int myid, double *round) {
         long work_processors = n_processors - 1;
-        int root = 0, nItems, displs;
+        int root = 0;
+        int64_t nItems, displs;
         long i;
         long my_nToTrack, my_nLost, *nToTrackCounts,
           *nLostCounts, current_nLost = 0, nToTrack_total, nLost_total;
@@ -5317,9 +5434,10 @@ long do_tracking(
         if (myid == 0) {
           for (i = 1; i <= work_processors; i++) {
             /* the number of elements that are received from each processor (for root only) */
-            nItems = nToTrackCounts[i] * totalPropertiesPerParticle;
+            CHECK_MPI_PARTICLE_COUNT(nToTrackCounts[i]);
+            nItems = nToTrackCounts[i] * (int64_t)totalPropertiesPerParticle;
             /* collect information for the left particles */
-            MPI_Recv(&(*coord)[my_nToTrack][0], nItems, MPI_DOUBLE, i, 100, MPI_COMM_WORLD, &status);
+            elegant_MPI_Recv_doubles(&(*coord)[my_nToTrack][0], nItems, i, 100, MPI_COMM_WORLD, &status);
 
             /* count the total number of particles to track and the total number of lost after the most recent scattering */
             my_nToTrack = my_nToTrack + nToTrackCounts[i];
@@ -5328,7 +5446,8 @@ long do_tracking(
           *nLost = *nLost + current_nLost;
           *nToTrack = my_nToTrack;
         } else {
-          MPI_Send(&(*coord)[0][0], my_nToTrack * totalPropertiesPerParticle, MPI_DOUBLE, 0, 100, MPI_COMM_WORLD);
+          CHECK_MPI_PARTICLE_COUNT(my_nToTrack);
+          elegant_MPI_Send_doubles(&(*coord)[0][0], my_nToTrack * (int64_t)totalPropertiesPerParticle, 0, 100, MPI_COMM_WORLD);
         }
 
         /* collect information for the lost particles and gather the accepted array */
@@ -5343,11 +5462,12 @@ long do_tracking(
           for (i = 1; i <= work_processors; i++) {
             /* gather information for lost particles */
             displs = displs + nLostCounts[i - 1];
-            nItems = nLostCounts[i] * totalPropertiesPerParticle;
-            MPI_Recv(&(*coord)[displs][0], nItems, MPI_DOUBLE, i, 102, MPI_COMM_WORLD, &status);
+            CHECK_MPI_PARTICLE_COUNT(nLostCounts[i]);
+            nItems = nLostCounts[i] * (int64_t)totalPropertiesPerParticle;
+            elegant_MPI_Recv_doubles(&(*coord)[displs][0], nItems, i, 102, MPI_COMM_WORLD, &status);
             if (accepted && *accepted != NULL) {
-              MPI_Recv(&(*accepted)[my_nToTrack][0], nToTrackCounts[i] * totalPropertiesPerParticle, MPI_DOUBLE, i, 101, MPI_COMM_WORLD, &status);
-              MPI_Recv(&(*accepted)[displs][0], nItems, MPI_DOUBLE, i, 103, MPI_COMM_WORLD, &status);
+              elegant_MPI_Recv_doubles(&(*accepted)[my_nToTrack][0], nToTrackCounts[i] * (int64_t)totalPropertiesPerParticle, i, 101, MPI_COMM_WORLD, &status);
+              elegant_MPI_Recv_doubles(&(*accepted)[displs][0], nItems, i, 103, MPI_COMM_WORLD, &status);
               my_nToTrack = my_nToTrack + nToTrackCounts[i];
             }
           }
@@ -5357,10 +5477,10 @@ long do_tracking(
             *round = 0.0;
         } else {
           /* send information for lost particles */
-          MPI_Send(&(*coord)[my_nToTrack][0], my_nLost * totalPropertiesPerParticle, MPI_DOUBLE, root, 102, MPI_COMM_WORLD);
+          elegant_MPI_Send_doubles(&(*coord)[my_nToTrack][0], my_nLost * (int64_t)totalPropertiesPerParticle, root, 102, MPI_COMM_WORLD);
           if (accepted && *accepted != NULL) {
-            MPI_Send(&(*accepted)[0][0], my_nToTrack * totalPropertiesPerParticle, MPI_DOUBLE, root, 101, MPI_COMM_WORLD);
-            MPI_Send(&(*accepted)[my_nToTrack][0], my_nLost * totalPropertiesPerParticle, MPI_DOUBLE, root, 103, MPI_COMM_WORLD);
+            elegant_MPI_Send_doubles(&(*accepted)[0][0], my_nToTrack * (int64_t)totalPropertiesPerParticle, root, 101, MPI_COMM_WORLD);
+            elegant_MPI_Send_doubles(&(*accepted)[my_nToTrack][0], my_nLost * (int64_t)totalPropertiesPerParticle, root, 103, MPI_COMM_WORLD);
           }
         }
         MPI_Bcast(round, 1, MPI_DOUBLE, root, MPI_COMM_WORLD);
@@ -5477,9 +5597,10 @@ long do_tracking(
       }
 #endif
 
-      void transformEmittances(double **coord, long np, double pCentral, EMITTANCEELEMENT *ee) {
+      void transformEmittances(double **coord, int64_t np, double pCentral, EMITTANCEELEMENT *ee) {
         double emit, emitc, factor, pAverage, eta, etap;
-        long i, j;
+        long i;
+        int64_t j;
         BEAM_SUMS *sums;
 
 #if USE_MPI
@@ -5610,12 +5731,13 @@ long do_tracking(
       };
       static void *mhist_table_paraValue[MHISTOGRAM_TABLE_PARAMETERS];
 
-      void mhist_table(ELEMENT_LIST *eptr0, ELEMENT_LIST *eptr, long step, long pass, double **coord, long np,
+      void mhist_table(ELEMENT_LIST *eptr0, ELEMENT_LIST *eptr, long step, long pass, double **coord, int64_t np,
                        double Po, double length, double charge, double z) {
         char *Name[6] = {"x", "xp", "y", "yp", "dt", "delta"};
         char *Units[6] = {"m", "", "m", "", "s", ""};
         double Min[6], Max[6], c0[6], t0;
-        long i, j;
+        long j;
+        int64_t i;
         double part[6], P, beta;
         MHISTOGRAM *mhist;
 
@@ -5716,8 +5838,9 @@ long do_tracking(
         return;
       }
 
-      void findMinMax(double **coord, long np, double *min, double *max, double *c0, double Po) {
-        long i, j;
+      void findMinMax(double **coord, int64_t np, double *min, double *max, double *c0, double Po) {
+        long j;
+        int64_t i;
         double P, beta, time;
 
         for (j = 0; j < 6; j++) {
@@ -5746,8 +5869,8 @@ long do_tracking(
         return;
       }
 
-      void field_table_tracking(double **particle, long np, FTABLE *ftable, double Po, RUN *run) {
-        long ip, ik, nKicks, debug = ftable->verbose;
+      void field_table_tracking(double **particle, int64_t np, FTABLE *ftable, double Po, RUN *run) {
+        int64_t ip, ik, nKicks, debug = ftable->verbose;
         double *coord, p0, factor;
         double xyz[3], p[3], B[3], BA, pA, **A;
         /* double pz0; */
@@ -5913,10 +6036,11 @@ long do_tracking(
       }
 
       /* 0: entrance; 1: exit */
-      void ftable_frame_converter(double **particle, long np, FTABLE *ftable, long entrance_exit) {
+      void ftable_frame_converter(double **particle, int64_t np, FTABLE *ftable, long entrance_exit) {
         double *coord, x0, xp0, y0, yp0;
         double s, c, temp, dx, length;
-        long ip, entrance = 0, exit = 1;
+        int64_t ip;
+        long entrance = 0, exit = 1;
 
         if (entrance_exit == entrance) {
           if (!ftable->e1) {
@@ -6021,8 +6145,8 @@ long do_tracking(
         return 0;
       }
 
-      void convertToCanonicalCoordinates(double **coord, long np, double p0, long includeTimeCoordinate) {
-        long ip;
+      void convertToCanonicalCoordinates(double **coord, int64_t np, double p0, long includeTimeCoordinate) {
+        int64_t ip;
         double factor;
         /* double p, beta; */
         for (ip = 0; ip < np; ip++) {
@@ -6034,8 +6158,8 @@ long do_tracking(
         }
       }
 
-      void convertFromCanonicalCoordinates(double **coord, long np, double p0, long includeTimeCoordinate) {
-        long ip;
+      void convertFromCanonicalCoordinates(double **coord, int64_t np, double p0, long includeTimeCoordinate) {
+        int64_t ip;
         double px, py, factor, delta;
         /* double p, beta; */
         for (ip = 0; ip < np; ip++) {
@@ -6051,7 +6175,7 @@ long do_tracking(
       }
 
       static void checkBeamStructure(BEAM *beam) {
-        long i;
+        int64_t i;
         char bad = 0;
         if (beam->original && beam->n_saved) {
           for (i = 1; i < beam->n_original; i++) {
@@ -6133,8 +6257,8 @@ long do_tracking(
         tfbd->outputIndex = 0;
       }
 
-      void applyBeamBeamKicks(double **part, long np, BEAMBEAM *bb, double P0) {
-        long ip;
+      void applyBeamBeamKicks(double **part, int64_t np, BEAMBEAM *bb, double P0) {
+        int64_t ip;
         short code;
         double kick[2], qx, qy, qz, delta, denom;
         if (bb->size[0] <= 0 || bb->size[1] <= 0)
