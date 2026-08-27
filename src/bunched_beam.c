@@ -45,7 +45,7 @@ void fill_longitudinal_structure(LONGITUDINAL *xlongit, double xsigma_dp,
                                  double xemit, double xbeta, double xalpha, double xchirp,
                                  long xbeam_type, double xcutoff,
                                  double *xcentroid);
-long generateBunchForMoments(double **particle, long np, long symmetrize,
+long generateBunchForMoments(double **particle, int64_t np, long symmetrize,
                              long *haltonID, long haltonOpt, double cutoff);
 void finish_bunched_beam_setup(BEAM *beam, RUN *run, VARY *control, ERRORVAL *errcon,
                                OPTIM_VARIABLES *optim, OUTPUT_FILES *output, LINE_LIST *beamline,
@@ -441,7 +441,8 @@ long new_bunched_beam(
   OUTPUT_FILES *output,
   long flags) {
   static long n_actual_particles;
-  long i_particle, i_coord;
+  long i_coord;
+  int64_t i_particle;
   unsigned long unstable;
   double s_offset, beta;
   double p_central, dummy, p, gamma;
@@ -731,7 +732,8 @@ long track_beam(
   long delayOutput,
   double *finalCharge) {
   double p_central;
-  long n_left, effort;
+  int64_t n_left;
+  long effort;
 
   log_entry("track_beam");
 
@@ -771,6 +773,13 @@ long track_beam(
     fflush(stdout);
   }
   effort = 0;
+
+  /* Macro-scale per-step timing offset (seconds) that is deliberately kept out
+     of the bunch coordinates part[][4]; time-dependent elements (RFMODE damping,
+     BUMPER/MBUMPER, ion effects, ...) and time outputs pick it up through
+     trackingClockOffset().  step_frequency==0 -> base 0 -> bit-identical to before.
+     i_step starts at 1, so the first step has base 0.  Set on all ranks. */
+  setTrackingClockBase(control->step_frequency ? (control->i_step - 1) / control->step_frequency : 0.0);
 
 #if USE_MPI
   if (isSlave && beam->n_to_track < 1 && !lessPartAllowed)
@@ -882,7 +891,7 @@ void do_track_beam_output(RUN *run, VARY *control,
                           OUTPUT_FILES *output, unsigned long flags,
                           double finalCharge) {
   VMATRIX *M;
-  long n_left;
+  int64_t n_left;
   double p_central, p_central0;
 
   p_central = beam->p0;
@@ -1000,7 +1009,8 @@ void do_track_beam_output(RUN *run, VARY *control,
     if (flags & CENTROID_SUMS_ONLY) {
       bombElegant("sigma output requested but data wasn't accumulated. This is a bug!", NULL);
     }
-    dump_sigma(&output->SDDS_sigma, output->sums_vs_z, beamline, output->n_z_points, control->i_step, p_central);
+    dump_sigma(&output->SDDS_sigma, output->sums_vs_z, beamline, output->n_z_points, control->i_step, p_central,
+	       run->coupledSigmaOutput);
     if (!(flags & SILENT_RUNNING)) {
       printf("done.\n");
       fflush(stdout);
@@ -1126,7 +1136,7 @@ void setup_output(
   if (run->sigma) {
     /* prepare dump of sigma vs z */
     SDDS_SigmaOutputSetup(&output->SDDS_sigma, run->sigma, SDDS_BINARY, 1, run->runfile,
-                          run->lattice, "setup_output");
+                          run->lattice, "setup_output", run->coupledSigmaOutput);
     output->sigma_initialized = 1;
   }
 
@@ -1228,7 +1238,7 @@ void finish_output(
       bombElegant("'sigma' file is uninitialized (finish_output)", NULL);
     if (!output->sums_vs_z)
       bombElegant("missing beam sums pointer (finish_output)", NULL);
-    dump_sigma(&output->SDDS_sigma, output->sums_vs_z, beamline, output->n_z_points, 0, beam->p0);
+    dump_sigma(&output->SDDS_sigma, output->sums_vs_z, beamline, output->n_z_points, 0, beam->p0, run->coupledSigmaOutput);
   }
   if (run->final && run->combine_bunch_statistics) {
     VMATRIX *M;
@@ -1396,7 +1406,7 @@ void fill_longitudinal_structure(
 }
 
 #if !defined(USE_GSL)
-long generateBunchForMoments(double **particle, long np, long symmetrize,
+long generateBunchForMoments(double **particle, int64_t np, long symmetrize,
   long *haltonID, long haltonOpt, double cutoff) {
     bombElegant("Error: Cannot run generateBunchForMoments, elegant was not build with GSL support.", NULL);
     return(0);
@@ -1404,9 +1414,10 @@ long generateBunchForMoments(double **particle, long np, long symmetrize,
 #else
 #include "gsl/gsl_linalg.h"
 
-long generateBunchForMoments(double **particle, long np, long symmetrize,
+long generateBunchForMoments(double **particle, int64_t np, long symmetrize,
                              long *haltonID, long haltonOpt, double cutoff) {
-  long ip, i, j;
+  int64_t ip;
+  long i, j;
   double Mm[6][6], Cm[6], ptemp[6];
   gsl_matrix *M;
 
