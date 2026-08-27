@@ -54,7 +54,8 @@ void setFiducializationBunch(long b, int64_t n) {
   fiducializationBunch = b;
   idSlotsPerBunch = n;
 #if USE_MPI && MPI_DEBUG
-  printf("Fiducialization will use bunch %ld, idSlotsPerBunch=%ld\n", fiducializationBunch, (long)idSlotsPerBunch);
+  printf("Fiducialization will use bunch %ld, idSlotsPerBunch=%" PRId64 "\n",
+         fiducializationBunch, idSlotsPerBunch);
   fflush(stdout);
 #endif
 }
@@ -131,8 +132,8 @@ double trackingClockPhase(double omega) {
   return (double)((long double)omega * resid);
 }
 
-long getFiducializationPidRange(unsigned long mode, long *startPID,
-                                long *endPID) {
+long getFiducializationPidRange(unsigned long mode, int64_t *startPID,
+                                int64_t *endPID) {
   if (!startPID || !endPID)
     return 0;
   if (fiducializationBunch < 0 || idSlotsPerBunch <= 0 ||
@@ -149,13 +150,13 @@ double findFiducialTime(double **part, int64_t np, double s0, double sOffset,
                         double p0, unsigned long mode) {
   double tFid = 0.0;
   int64_t i;
-  long startPID, endPID;
+  int64_t startPID, endPID;
 
   getFiducializationPidRange(mode, &startPID, &endPID);
 #if USE_MPI
   mpiAbort = 0;
 #  if MPI_DEBUG
-  printf("startPID = %ld, endPID = %ld\n", startPID, endPID);
+  printf("startPID = %" PRId64 ", endPID = %" PRId64 "\n", startPID, endPID);
 #  endif
 #endif
 

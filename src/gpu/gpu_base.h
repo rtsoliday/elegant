@@ -1,6 +1,8 @@
 #ifndef GPU_BASE_H
 #define GPU_BASE_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -125,7 +127,7 @@ typedef struct GPU_MATRIX_DATA {
 } GPU_MATRIX_DATA;
 
 typedef struct GPU_BEAM_SUM_DATA {
-  long count;
+  int64_t count;
   double pSum;
   double gammaSum;
   double centroidSum[7];
@@ -136,19 +138,19 @@ typedef struct GPU_BEAM_SUM_DATA {
 } GPU_BEAM_SUM_DATA;
 
 typedef struct GPU_HISTOGRAM_RANGE_DATA {
-  long count;
+  int64_t count;
   double minimum[7];
   double maximum[7];
 } GPU_HISTOGRAM_RANGE_DATA;
 
 typedef struct GPU_LONG_MIN_MAX_DATA {
-  long count;
+  int64_t count;
   long min;
   long max;
 } GPU_LONG_MIN_MAX_DATA;
 
 typedef struct GPU_DOUBLE_MIN_MAX_DATA {
-  long count;
+  int64_t count;
   double min;
   double max;
 } GPU_DOUBLE_MIN_MAX_DATA;
@@ -654,7 +656,7 @@ typedef struct GPU_SCMULT_LINEAR_DATA {
 } GPU_SCMULT_LINEAR_DATA;
 
 typedef struct GPU_SCMULT_MOMENT_DATA {
-  long count;
+  int64_t count;
   double sum[3];
   double squareSum[3];
 } GPU_SCMULT_MOMENT_DATA;
@@ -862,14 +864,14 @@ double **copyParticlesToCpuReadOnly(const char *reason);
 long gpu_matrix_supported(void *M);
 long gpu_reductions_enabled(long nParticles);
 long gpu_watch_parameters_supported(void *watch, long nParticles);
-long gpu_watch_parameter_sums(long nParticles, long *count,
+long gpu_watch_parameter_sums(long nParticles, int64_t *count,
                               double *pSum, double *gammaSum);
-long gpu_histogram_ranges(long nParticles, double pCentral,
-                          long startPID, long endPID,
-                          unsigned int coordinateMask,
-                          double *minimum, double *maximum);
+int64_t gpu_histogram_ranges(long nParticles, double pCentral,
+                             int64_t startPID, int64_t endPID,
+                             unsigned int coordinateMask,
+                             double *minimum, double *maximum);
 void gpu_histogram_bins(long nParticles, double pCentral,
-                        long startPID, long endPID, long bins,
+                        int64_t startPID, int64_t endPID, long bins,
                         unsigned int coordinateMask,
                         double timeOffset,
                         const double *lower, const double *upper,

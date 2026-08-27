@@ -1,0 +1,12 @@
+SDDS1
+&description text="Single-particle seed with a particle ID above INT32_MAX", contents="elegant phase space", &end
+&column name=x, units=m, type=double, &end
+&column name=xp, type=double, &end
+&column name=y, units=m, type=double, &end
+&column name=yp, type=double, &end
+&column name=t, units=s, type=double, &end
+&column name=p, units="m$be$nc", type=double, &end
+&column name=particleID, type=long64, &end
+&data mode=ascii, &end
+1
+0 0 0 0 0 1000 2147483648

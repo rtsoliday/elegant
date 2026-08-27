@@ -10,7 +10,7 @@ extern "C" {
 void gpu_compute_centroids(double *centroid, long n_part);
 void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double mp_charge,
                               double *timeValue, double tMin, double tMax,
-                              long startPID, long endPID, unsigned long flags);
+                              int64_t startPID, int64_t endPID, unsigned long flags);
 long gpu_reductions_enabled(long nParticles);
 
 #ifdef __cplusplus

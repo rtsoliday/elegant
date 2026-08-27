@@ -1080,7 +1080,8 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
 
   MPI_Allreduce(&particles, &particles_total, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #  ifdef DEBUG
-  printf("particles = %ld, particles_total = %ld\n", particles, particles_total);
+  printf("particles = %" PRId64 ", particles_total = %" PRId64 "\n",
+         particles, particles_total);
   fflush(stdout);
 #  endif
 #endif
@@ -1592,16 +1593,18 @@ void do_watch_FFT(double **data, long n_data, long slot, long window_code) {
   log_exit("do_watch_FFT");
 }
 
-void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double **particle, long particles,
+void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double **particle, int64_t particles,
                              double Po, double length, double charge, double z) {
-  long icoord, ipart, ibin, jpart;
+  long icoord, ibin;
+  int64_t ipart, jpart;
   double p, t0;
-  static long maxBins = 0, maxParticles = 0;
+  static long maxBins = 0;
+  static int64_t maxParticles = 0;
   static double *frequency = NULL, *coordinate = NULL, *histData = NULL;
   static double *gpuFrequency = NULL;
   double center, range, lower, upper;
   static short *chosen = NULL;
-  long nChosen = 0;
+  int64_t nChosen = 0;
 #ifdef HAVE_GPU
   double gpuMinimum[7], gpuMaximum[7], gpuLower[7], gpuUpper[7];
   unsigned int gpuCoordinateMask = 0;
@@ -1610,7 +1613,7 @@ void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double 
 
 #if USE_MPI
   static double *buffer = NULL;
-  long particles_total, nChosen_total;
+  int64_t particles_total, nChosen_total;
 #endif
 
   log_entry("dump_particle_histogram");
@@ -1644,7 +1647,7 @@ void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double 
     if (!(buffer = SDDS_Realloc(buffer, sizeof(*buffer) * maxBins))) {
       SDDS_Bomb("Memory allocation failure (dump_particle_histogram)");
     }
-    MPI_Reduce(&particles, &particles_total, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&particles, &particles_total, 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
 #endif
   }
   if (isSlave) {
@@ -1805,7 +1808,7 @@ void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double 
       make_histogram(frequency, histogram->bins, lower, upper, histData, nChosen, 1);
 #if USE_MPI
     if (USE_MPI) /* This will update the number of particles locally on master if there are lost on slaves */
-      MPI_Reduce(&nChosen, &nChosen_total, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+      MPI_Reduce(&nChosen, &nChosen_total, 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
     if (isMaster)
       nChosen = nChosen_total;
     MPI_Allreduce(frequency, buffer, histogram->bins, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);

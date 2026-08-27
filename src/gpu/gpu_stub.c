@@ -210,7 +210,7 @@ extern int gpuCudaLinearDrift(void *coord, long nParticles, int stride,
 extern int gpuCudaOffsetBeam(void *coord, long nParticles, int stride,
                              double dx, double dxp, double dy, double dyp,
                              double dz, double dt, double dp, double de,
-                             double pCentral, long startPID, long endPID,
+                             double pCentral, int64_t startPID, int64_t endPID,
                              int allParticles, double cMks, float *milliseconds);
 extern int gpuCudaApplyBatchedMomentumSearch(
   void *coord, long nParticles, int stride, const void *searchData,
@@ -353,19 +353,19 @@ extern int gpuCudaSelectedTimeSums(void *coord, long nParticles, int stride,
 extern int gpuCudaFiducialTimeSums(void *coord, long nParticles, int stride,
                                    double pCentral, double sOffset,
                                    double cMks, int particleIdColumn,
-                                   long startPID, long endPID,
+                                   int64_t startPID, int64_t endPID,
                                    GPU_BEAM_SUM_DATA *result,
                                    float *milliseconds);
 extern int gpuCudaFiducialPmaximum(void *coord, long nParticles, int stride,
                                    double pCentral, double sOffset,
                                    double cMks, int particleIdColumn,
-                                   long startPID, long endPID,
+                                   int64_t startPID, int64_t endPID,
                                    GPU_BEAM_SUM_DATA *result,
                                    float *milliseconds);
 extern int gpuCudaFiducialFirst(void *coord, long nParticles, int stride,
                                 double pCentral, double sOffset,
                                 double cMks, int particleIdColumn,
-                                long startPID, long endPID,
+                                int64_t startPID, int64_t endPID,
                                 GPU_BEAM_SUM_DATA *result,
                                 float *milliseconds);
 extern int gpuCudaCentroidTimeSums(void *coord, long nParticles, int stride,
@@ -383,11 +383,11 @@ extern int gpuCudaBeamSums2(void *coord, long nParticles, int stride,
                             float *milliseconds);
 extern int gpuCudaHistogramRanges(
   void *coord, long nParticles, int stride, double pCentral, double cMks,
-  long startPID, long endPID, unsigned int coordinateMask,
+  int64_t startPID, int64_t endPID, unsigned int coordinateMask,
   GPU_HISTOGRAM_RANGE_DATA *result, float *milliseconds);
 extern int gpuCudaHistogramBins(
   void *coord, long nParticles, int stride, double pCentral, double cMks,
-  long startPID, long endPID, long bins, unsigned int coordinateMask,
+  int64_t startPID, int64_t endPID, long bins, unsigned int coordinateMask,
   double timeOffset, const double *lower, const double *upper,
   unsigned long long *histogramReturn, float *milliseconds);
 extern void gpuCudaHistogramRelease(void);
@@ -1584,8 +1584,8 @@ static unsigned long gpuRfcwFiducialMode(const char *mode) {
   return 0;
 }
 
-static long gpuFiducialPidRange(unsigned long mode, long *startPID,
-                                long *endPID) {
+static long gpuFiducialPidRange(unsigned long mode, int64_t *startPID,
+                                int64_t *endPID) {
   if (!startPID || !endPID)
     return 0;
   *startPID = *endPID = -1;
@@ -1595,7 +1595,7 @@ static long gpuFiducialPidRange(unsigned long mode, long *startPID,
 }
 
 static long gpuFiducialModeSupported(unsigned long mode) {
-  long startPID = -1, endPID = -1;
+  int64_t startPID = -1, endPID = -1;
 
   if (!mode)
     return 0;
@@ -4917,7 +4917,7 @@ long gpu_watch_parameters_supported(void *watch0, long nParticles) {
 #endif
 }
 
-long gpu_watch_parameter_sums(long nParticles, long *count,
+long gpu_watch_parameter_sums(long nParticles, int64_t *count,
                               double *pSum, double *gammaSum) {
   if (!gpuLastBeamSumResultValid ||
       gpuLastBeamSumResult.count != nParticles ||
@@ -4943,16 +4943,16 @@ static double gpuHistogramCpuCoordinate(const double *part, long coordinate,
 }
 
 static long gpuHistogramCpuParticleSelected(const double *part,
-                                            long startPID, long endPID) {
+                                            int64_t startPID, int64_t endPID) {
   return (startPID < 0 && endPID < 0) ||
          (part[6] >= startPID && part[6] <= endPID);
 }
 #endif
 
-long gpu_histogram_ranges(long nParticles, double pCentral,
-                          long startPID, long endPID,
-                          unsigned int coordinateMask,
-                          double *minimum, double *maximum) {
+int64_t gpu_histogram_ranges(long nParticles, double pCentral,
+                             int64_t startPID, int64_t endPID,
+                             unsigned int coordinateMask,
+                             double *minimum, double *maximum) {
   GPU_HISTOGRAM_RANGE_DATA result;
   float milliseconds = 0;
   int status;
@@ -4979,7 +4979,8 @@ long gpu_histogram_ranges(long nParticles, double pCentral,
     double cpuMinimum[7], cpuMaximum[7];
     double absTol = gpuEnvDouble("ELEGANT_GPU_HISTOGRAM_COMPARE_ABS", 1e-15);
     double relTol = gpuEnvDouble("ELEGANT_GPU_HISTOGRAM_COMPARE_REL", 1e-12);
-    long cpuCount = 0, mismatches = 0;
+    int64_t cpuCount = 0;
+    long mismatches = 0;
 
     for (long icoord = 0; icoord < 7; icoord++) {
       cpuMinimum[icoord] = DBL_MAX;
@@ -5003,7 +5004,7 @@ long gpu_histogram_ranges(long nParticles, double pCentral,
     }
     if (cpuCount != result.count) {
       fprintf(stderr,
-              "elegant CUDA VERIFY mismatch HISTOGRAM selection count cpu=%ld gpu=%ld\n",
+              "elegant CUDA VERIFY mismatch HISTOGRAM selection count cpu=%" PRId64 " gpu=%" PRId64 "\n",
               cpuCount, result.count);
       mismatches++;
     }
@@ -5035,7 +5036,7 @@ long gpu_histogram_ranges(long nParticles, double pCentral,
       gpuRequiredFailure("HISTOGRAM CUDA range verification failed");
     if (gpuVerbose)
       fprintf(stderr,
-              "elegant CUDA VERIFY passed for HISTOGRAM ranges: %ld selected particles\n",
+              "elegant CUDA VERIFY passed for HISTOGRAM ranges: %" PRId64 " selected particles\n",
               result.count);
   }
 #endif
@@ -5044,7 +5045,7 @@ long gpu_histogram_ranges(long nParticles, double pCentral,
 }
 
 void gpu_histogram_bins(long nParticles, double pCentral,
-                        long startPID, long endPID, long bins,
+                        int64_t startPID, int64_t endPID, long bins,
                         unsigned int coordinateMask, double timeOffset,
                         const double *lower, const double *upper,
                         double *histogram) {
@@ -5411,8 +5412,12 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuEnvLong("ELEGANT_GPU_MIN_CCBEND_PARTICLES", 64);
   if (gpuCcbendMinParticles < 1)
     gpuCcbendMinParticles = 1;
+  /* The current checked LGBEND kernel is numerically validated, but measured
+     no useful crossover through 262144 particles on the reference RTX 3060.
+     Keep it available for explicit validation and future tuning without
+     slowing production jobs by default. */
   gpuEnableLgbend =
-    !gpuEnvSet("ELEGANT_GPU_ENABLE_LGBEND") ||
+    gpuEnvSet("ELEGANT_GPU_ENABLE_LGBEND") &&
     gpuEnvFlag("ELEGANT_GPU_ENABLE_LGBEND");
   gpuLgbendMinParticles =
     gpuEnvLong("ELEGANT_GPU_MIN_LGBEND_PARTICLES", 64);
@@ -8341,7 +8346,7 @@ void gpu_compute_centroids(double *centroid, long n_part) {
 
 static long gpuBeamSumsSupported(BEAM_SUMS *sums, double *timeValue,
                                  double tMin, double tMax,
-                                 long startPID, long endPID,
+                                 int64_t startPID, int64_t endPID,
                                  unsigned long flags) {
   if (!sums)
     return 0;
@@ -8360,7 +8365,7 @@ static long gpuBeamSumsSupported(BEAM_SUMS *sums, double *timeValue,
 
 static void gpuAccumulateBeamSumsOnCpu(void *sums, long n_part, double p_central, double mp_charge,
                                        double *timeValue, double tMin, double tMax,
-                                       long startPID, long endPID, unsigned long flags) {
+                                       int64_t startPID, int64_t endPID, unsigned long flags) {
   long restoreElementOnGpu = gpuBase.elementOnGpu;
   forceParticlesToCpu("accumulate_beam_sums");
   if (accumulate_beam_sums)
@@ -8373,11 +8378,12 @@ static void gpuAccumulateBeamSumsOnCpu(void *sums, long n_part, double p_central
 
 void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double mp_charge,
                               double *timeValue, double tMin, double tMax,
-                              long startPID, long endPID, unsigned long flags) {
+                              int64_t startPID, int64_t endPID, unsigned long flags) {
   GPU_BEAM_SUM_DATA result, centeredResult;
   BEAM_SUMS *beamSums = (BEAM_SUMS *)sums;
   float milliseconds = 0;
-  long oldCount, newCount, i, j, sparseAllowed;
+  int64_t oldCount, newCount;
+  long i, j, sparseAllowed;
   unsigned int productMask = 0;
   int status;
   static short sparse[7][7] = {
@@ -15649,7 +15655,7 @@ double gpu_findFiducialTime(long np, double s0, double sOffset,
   GPU_BEAM_SUM_DATA result;
   float milliseconds = 0;
   int status = 0;
-  long startPID = -1, endPID = -1;
+  int64_t startPID = -1, endPID = -1;
 
   if (mode & FID_MODE_LIGHT)
     return (s0 + sOffset) / c_mks;

@@ -4506,8 +4506,8 @@ double findFiducialTime(double **part, int64_t np, double s0, double sOffset,
                         double p0, unsigned long mode);
 extern unsigned long parseFiducialMode(char *mode);
 void setFiducializationBunch(long b, int64_t n);
-long getFiducializationPidRange(unsigned long mode, long *startPID,
-                                long *endPID);
+long getFiducializationPidRange(unsigned long mode, int64_t *startPID,
+                                int64_t *endPID);
 
 /* prototypes for final_props.c */
 extern void SDDS_FinalOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row,
@@ -5304,7 +5304,7 @@ extern int32_t SDDS_Parallel_InitializeOutputElegant(SDDS_DATASET *SDDS_dataset,
 
 void SDDS_HistogramSetup(HISTOGRAM *histogram, char *filename, long mode, long lines_per_row,
                          char *command_file, char *lattice_file, char *caller);
-void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double **particle, long particles, 
+void dump_particle_histogram(HISTOGRAM *histogram, long step, long pass, double **particle, int64_t particles,
                              double Po, double length, double charge, double z);
 extern void dump_watch_particles(WATCH *watch, long step, long pass, double **particle, int64_t particles, double Po,
                                  double length, double mp_charge, double z, int64_t idSlotsPerBunch);

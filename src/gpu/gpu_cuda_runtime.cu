@@ -132,7 +132,7 @@ static int ensureGenericReductionScratch(void) {
 }
 
 typedef struct GPU_MATCH_ENERGY_PARTIAL {
-  long count;
+  int64_t count;
   double sum;
   double error;
 } GPU_MATCH_ENERGY_PARTIAL;
@@ -249,8 +249,8 @@ typedef struct GPU_HISTOGRAM_SCRATCH {
 
 typedef struct GPU_HISTOGRAM_BIN_DATA {
   long bins;
-  long startPID;
-  long endPID;
+  int64_t startPID;
+  int64_t endPID;
   unsigned int coordinateMask;
   double pCentral;
   double cMks;
@@ -3166,7 +3166,7 @@ __global__ void gpuAddCoordinateKernel(double *coord, long nParticles, int strid
 __global__ void gpuOffsetBeamKernel(double *coord, long nParticles, int stride,
                                     double dx, double dxp, double dy, double dyp,
                                     double dz, double dt, double dp, double de,
-                                    double pCentral, long startPID, long endPID,
+                                    double pCentral, int64_t startPID, int64_t endPID,
                                     int allParticles, double cMks) {
   long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, pc, beta, gamma, t, ds;
@@ -3279,7 +3279,7 @@ __global__ void gpuMatchEnergyAndAverageKernel(double *coord, long nParticles,
                                                int stride, double oldP,
                                                int changeBeam,
                                                GPU_BEAM_SUM_DATA *result) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double sum[GPU_REDUCTION_THREADS];
   __shared__ double error[GPU_REDUCTION_THREADS];
   long tid = threadIdx.x;
@@ -3352,7 +3352,7 @@ __global__ void gpuMatchEnergyAndAverageKernel(double *coord, long nParticles,
 __global__ void gpuMatchEnergyPartialKernel(
   double *coord, long nParticles, int stride, double oldP,
   GPU_MATCH_ENERGY_PARTIAL *partial) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double sum[GPU_REDUCTION_THREADS];
   __shared__ double error[GPU_REDUCTION_THREADS];
   long tid = threadIdx.x;
@@ -3399,7 +3399,7 @@ __global__ void gpuMatchEnergyPartialKernel(
 __global__ void gpuMatchEnergyFinalizeKernel(
   const GPU_MATCH_ENERGY_PARTIAL *partial, int blocks,
   GPU_BEAM_SUM_DATA *result, double *averageP) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double sum[GPU_REDUCTION_THREADS];
   __shared__ double error[GPU_REDUCTION_THREADS];
   int tid = threadIdx.x;
@@ -5015,7 +5015,7 @@ __global__ void gpuRfcwDgammaOverGammaSumsKernel(double *coord, long nParticles,
                                                  double omega, double phase,
                                                  double cMks,
                                                  GPU_BEAM_SUM_DATA *result) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double sum[GPU_REDUCTION_THREADS];
   long tid = threadIdx.x;
   long ip;
@@ -6183,7 +6183,7 @@ __device__ __forceinline__ double gpuParticleTime(double *part, double pCentral,
 }
 
 __device__ __forceinline__ int gpuHistogramParticleSelected(
-  const double *part, long startPID, long endPID) {
+  const double *part, int64_t startPID, int64_t endPID) {
   return (startPID < 0 && endPID < 0) ||
          (part[6] >= startPID && part[6] <= endPID);
 }
@@ -6196,9 +6196,9 @@ __device__ __forceinline__ double gpuHistogramParticleTime(
 
 __global__ void gpuHistogramRangePartialKernel(
   const double *coord, long nParticles, int stride, double pCentral,
-  double cMks, long startPID, long endPID,
+  double cMks, int64_t startPID, int64_t endPID,
   unsigned int coordinateMask, GPU_HISTOGRAM_RANGE_DATA *partial) {
-  __shared__ long count[GPU_HISTOGRAM_THREADS];
+  __shared__ int64_t count[GPU_HISTOGRAM_THREADS];
   __shared__ double minimum[7][GPU_HISTOGRAM_THREADS];
   __shared__ double maximum[7][GPU_HISTOGRAM_THREADS];
   long tid = threadIdx.x;
@@ -6258,7 +6258,7 @@ __global__ void gpuHistogramRangePartialKernel(
 __global__ void gpuHistogramRangeFinalizeKernel(
   const GPU_HISTOGRAM_RANGE_DATA *partial,
   GPU_HISTOGRAM_RANGE_DATA *result) {
-  __shared__ long count[GPU_HISTOGRAM_THREADS];
+  __shared__ int64_t count[GPU_HISTOGRAM_THREADS];
   __shared__ double minimum[7][GPU_HISTOGRAM_THREADS];
   __shared__ double maximum[7][GPU_HISTOGRAM_THREADS];
   long tid = threadIdx.x;
@@ -6690,7 +6690,7 @@ __global__ void gpuLscApplyKickAndDriftKernel(double *coord, long nParticles,
 __global__ void gpuScmultMomentPartialKernel(
   double *coord, long nParticles, int stride,
   GPU_SCMULT_MOMENT_DATA *partial) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double sum[3][GPU_REDUCTION_THREADS];
   __shared__ double squareSum[3][GPU_REDUCTION_THREADS];
   long tid = threadIdx.x;
@@ -6738,7 +6738,7 @@ __global__ void gpuScmultMomentPartialKernel(
 __global__ void gpuScmultMomentFinalizeKernel(
   const GPU_SCMULT_MOMENT_DATA *partial,
   GPU_SCMULT_MOMENT_DATA *result) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double sum[3][GPU_REDUCTION_THREADS];
   __shared__ double squareSum[3][GPU_REDUCTION_THREADS];
   long tid = threadIdx.x;
@@ -7771,7 +7771,7 @@ __global__ void gpuSelectedTimeSumsKernel(double *coord, long nParticles,
                                           double cMks, int bunchColumn,
                                           long selectedBunch,
                                           GPU_BEAM_SUM_DATA *result) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double sum[GPU_REDUCTION_THREADS];
   __shared__ double minValue[GPU_REDUCTION_THREADS];
   __shared__ double maxValue[GPU_REDUCTION_THREADS];
@@ -7820,9 +7820,9 @@ __global__ void gpuSelectedTimeSumsKernel(double *coord, long nParticles,
 __global__ void gpuFiducialTimeSumsKernel(double *coord, long nParticles, int stride,
                                           double pCentral, double sOffset,
                                           double cMks, int particleIdColumn,
-                                          long startPID, long endPID,
+                                          int64_t startPID, int64_t endPID,
                                           GPU_BEAM_SUM_DATA *result) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double sum[GPU_REDUCTION_THREADS];
   long tid = threadIdx.x;
   long ip;
@@ -7839,8 +7839,8 @@ __global__ void gpuFiducialTimeSumsKernel(double *coord, long nParticles, int st
 
     if ((startPID >= 0 || endPID >= 0) &&
         (particleIdColumn < 0 || particleIdColumn >= stride ||
-         static_cast<long>(part[particleIdColumn]) < startPID ||
-         static_cast<long>(part[particleIdColumn]) > endPID))
+         static_cast<int64_t>(part[particleIdColumn]) < startPID ||
+         static_cast<int64_t>(part[particleIdColumn]) > endPID))
       continue;
     value = (part[4] + sOffset) / (cMks * beta);
     y = value - error;
@@ -7874,7 +7874,7 @@ __global__ void gpuFiducialFirstKernel(double *coord, long nParticles,
                                        int stride, double pCentral,
                                        double sOffset, double cMks,
                                        int particleIdColumn,
-                                       long startPID, long endPID,
+                                       int64_t startPID, int64_t endPID,
                                        GPU_BEAM_SUM_DATA *result) {
   __shared__ double bestTime[GPU_REDUCTION_THREADS];
   __shared__ long bestIndex[GPU_REDUCTION_THREADS];
@@ -7888,8 +7888,8 @@ __global__ void gpuFiducialFirstKernel(double *coord, long nParticles,
 
     if ((startPID >= 0 || endPID >= 0) &&
         (particleIdColumn < 0 || particleIdColumn >= stride ||
-         static_cast<long>(part[particleIdColumn]) < startPID ||
-         static_cast<long>(part[particleIdColumn]) > endPID))
+         static_cast<int64_t>(part[particleIdColumn]) < startPID ||
+         static_cast<int64_t>(part[particleIdColumn]) > endPID))
       continue;
     if (ip < bestIndex[tid]) {
       double p = pCentral * (1 + part[5]);
@@ -7920,7 +7920,7 @@ __global__ void gpuFiducialPmaximumKernel(double *coord, long nParticles,
                                           int stride, double pCentral,
                                           double sOffset, double cMks,
                                           int particleIdColumn,
-                                          long startPID, long endPID,
+                                          int64_t startPID, int64_t endPID,
                                           GPU_BEAM_SUM_DATA *result) {
   __shared__ double bestDelta[GPU_REDUCTION_THREADS];
   __shared__ double bestTime[GPU_REDUCTION_THREADS];
@@ -7942,8 +7942,8 @@ __global__ void gpuFiducialPmaximumKernel(double *coord, long nParticles,
 
     if ((startPID >= 0 || endPID >= 0) &&
         (particleIdColumn < 0 || particleIdColumn >= stride ||
-         static_cast<long>(part[particleIdColumn]) < startPID ||
-         static_cast<long>(part[particleIdColumn]) > endPID))
+         static_cast<int64_t>(part[particleIdColumn]) < startPID ||
+         static_cast<int64_t>(part[particleIdColumn]) > endPID))
       continue;
     if (delta > baselineDelta &&
         (delta > bestDelta[tid] ||
@@ -8022,10 +8022,10 @@ __global__ void gpuCentroidTimeSumsKernel(double *coord, long nParticles, int st
 __global__ void gpuSimpleSumsPartialKernel(
   double *coord, long nParticles, int stride, double pCentral, double cMks,
   int mode, GPU_BEAM_SUM_DATA *partial) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double sum[7][GPU_REDUCTION_THREADS];
   double localSum[7];
-  long localCount = 0;
+  int64_t localCount = 0;
   long tid = threadIdx.x;
   long ip;
   int i;
@@ -8067,7 +8067,7 @@ __global__ void gpuSimpleSumsPartialKernel(
 __global__ void gpuSimpleSumsFinalizeKernel(
   const GPU_BEAM_SUM_DATA *partial, int blocks,
   GPU_BEAM_SUM_DATA *result) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double sum[7][GPU_REDUCTION_THREADS];
   int tid = threadIdx.x;
   int i;
@@ -8101,7 +8101,7 @@ __global__ void gpuSimpleSumsFinalizeKernel(
 __global__ void gpuBeamSumsKernel(double *coord, long nParticles, int stride,
                                   double pCentral, double cMks,
                                   GPU_BEAM_SUM_DATA *result) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double pSum[GPU_REDUCTION_THREADS];
   __shared__ double gammaSum[GPU_REDUCTION_THREADS];
   __shared__ double sum[7][GPU_REDUCTION_THREADS];
@@ -8194,7 +8194,7 @@ __global__ void gpuCenteredBeamSumsKernel(double *coord, long nParticles,
                                           double cMks,
                                           const double *centroid,
                                           GPU_BEAM_SUM_DATA *result) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double product[28][GPU_REDUCTION_THREADS];
   long tid = threadIdx.x;
   long ip;
@@ -8248,14 +8248,14 @@ __global__ void gpuCenteredBeamSumsKernel(double *coord, long nParticles,
 __global__ void gpuBeamStatisticsPartialKernel(
   double *coord, long nParticles, int stride, double pCentral, double cMks,
   GPU_BEAM_SUM_DATA *partial, double *timeValue) {
-  __shared__ long count[GPU_BEAM_OUTPUT_THREADS];
+  __shared__ int64_t count[GPU_BEAM_OUTPUT_THREADS];
   __shared__ double pSum[GPU_BEAM_OUTPUT_THREADS];
   __shared__ double gammaSum[GPU_BEAM_OUTPUT_THREADS];
   __shared__ double sum[7][GPU_BEAM_OUTPUT_THREADS];
   __shared__ double maxabs[7][GPU_BEAM_OUTPUT_THREADS];
   __shared__ double minValue[7][GPU_BEAM_OUTPUT_THREADS];
   __shared__ double maxValue[7][GPU_BEAM_OUTPUT_THREADS];
-  long localCount;
+  int64_t localCount;
   double localPSum, localGammaSum;
   double localSum[7], localMaxabs[7], localMin[7], localMax[7];
   long tid = threadIdx.x;
@@ -8343,7 +8343,7 @@ __global__ void gpuBeamStatisticsPartialKernel(
 __global__ void gpuBeamStatisticsFinalizeKernel(
   const GPU_BEAM_SUM_DATA *partial, int blocks, GPU_BEAM_SUM_DATA *result,
   double *centroid) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double pSum[GPU_REDUCTION_THREADS];
   __shared__ double gammaSum[GPU_REDUCTION_THREADS];
   __shared__ double sum[7][GPU_REDUCTION_THREADS];
@@ -8410,9 +8410,9 @@ __global__ void gpuCenteredBeamSumsPartialKernel(
   double *coord, long nParticles, int stride, double pCentral, double cMks,
   const double *centroid, const double *timeValue, unsigned int productMask,
   GPU_BEAM_SUM_DATA *partial) {
-  __shared__ long count[GPU_BEAM_OUTPUT_THREADS];
+  __shared__ int64_t count[GPU_BEAM_OUTPUT_THREADS];
   __shared__ double product[28][GPU_BEAM_OUTPUT_THREADS];
-  long localCount;
+  int64_t localCount;
   double localProduct[28];
   long tid = threadIdx.x;
   long ip;
@@ -8465,7 +8465,7 @@ __global__ void gpuCenteredBeamSumsPartialKernel(
 __global__ void gpuCenteredBeamSumsFinalizeKernel(
   const GPU_BEAM_SUM_DATA *partial, int blocks,
   GPU_BEAM_SUM_DATA *result) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double product[28][GPU_REDUCTION_THREADS];
   int tid = threadIdx.x;
   int i;
@@ -8586,7 +8586,7 @@ __global__ void gpuLscTransverseSumsKernel(double *coord, long nParticles,
 __global__ void gpuLongMinMaxKernel(double *coord, long nParticles, int stride,
                                     int coordinateIndex,
                                     GPU_LONG_MIN_MAX_DATA *result) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ long minValue[GPU_REDUCTION_THREADS];
   __shared__ long maxValue[GPU_REDUCTION_THREADS];
   long tid = threadIdx.x;
@@ -8672,7 +8672,7 @@ __global__ void gpuSortedBunchRangesKernel(
 __global__ void gpuDoubleMinMaxKernel(double *coord, long nParticles, int stride,
                                       int coordinateIndex,
                                       GPU_DOUBLE_MIN_MAX_DATA *result) {
-  __shared__ long count[GPU_REDUCTION_THREADS];
+  __shared__ int64_t count[GPU_REDUCTION_THREADS];
   __shared__ double minValue[GPU_REDUCTION_THREADS];
   __shared__ double maxValue[GPU_REDUCTION_THREADS];
   long tid = threadIdx.x;
@@ -12990,7 +12990,7 @@ extern "C" int gpuCudaAddCoordinate(void *coord, long nParticles, int stride,
 extern "C" int gpuCudaOffsetBeam(void *coord, long nParticles, int stride,
                                  double dx, double dxp, double dy, double dyp,
                                  double dz, double dt, double dp, double de,
-                                 double pCentral, long startPID, long endPID,
+                                 double pCentral, int64_t startPID, int64_t endPID,
                                  int allParticles, double cMks, float *milliseconds) {
   cudaEvent_t start, stop;
   int threads = 256;
@@ -14028,7 +14028,7 @@ extern "C" int gpuCudaCenterBeam(void *coord, long nParticles, int stride,
 
 extern "C" int gpuCudaHistogramRanges(
   void *coord, long nParticles, int stride, double pCentral, double cMks,
-  long startPID, long endPID, unsigned int coordinateMask,
+  int64_t startPID, int64_t endPID, unsigned int coordinateMask,
   GPU_HISTOGRAM_RANGE_DATA *result, float *milliseconds) {
   static cudaEvent_t start = NULL, stop = NULL;
   cudaError_t cudaStatus;
@@ -14063,7 +14063,7 @@ extern "C" int gpuCudaHistogramRanges(
 
 extern "C" int gpuCudaHistogramBins(
   void *coord, long nParticles, int stride, double pCentral, double cMks,
-  long startPID, long endPID, long bins, unsigned int coordinateMask,
+  int64_t startPID, int64_t endPID, long bins, unsigned int coordinateMask,
   double timeOffset, const double *lower, const double *upper,
   unsigned long long *histogramReturn, float *milliseconds) {
   static cudaEvent_t start = NULL, stop = NULL;
@@ -14222,7 +14222,7 @@ extern "C" int gpuCudaSelectedTimeSums(void *coord, long nParticles, int stride,
 extern "C" int gpuCudaFiducialTimeSums(void *coord, long nParticles, int stride,
                                        double pCentral, double sOffset,
                                        double cMks, int particleIdColumn,
-                                       long startPID, long endPID,
+                                       int64_t startPID, int64_t endPID,
                                        GPU_BEAM_SUM_DATA *result,
                                        float *milliseconds) {
   cudaEvent_t start, stop;
@@ -14262,8 +14262,8 @@ extern "C" int gpuCudaFiducialTimeSums(void *coord, long nParticles, int stride,
 extern "C" int gpuCudaFiducialPmaximum(void *coord, long nParticles,
                                        int stride, double pCentral,
                                        double sOffset, double cMks,
-                                       int particleIdColumn, long startPID,
-                                       long endPID,
+                                       int particleIdColumn, int64_t startPID,
+                                       int64_t endPID,
                                        GPU_BEAM_SUM_DATA *result,
                                        float *milliseconds) {
   cudaEvent_t start, stop;
@@ -14304,8 +14304,8 @@ extern "C" int gpuCudaFiducialPmaximum(void *coord, long nParticles,
 extern "C" int gpuCudaFiducialFirst(void *coord, long nParticles,
                                     int stride, double pCentral,
                                     double sOffset, double cMks,
-                                    int particleIdColumn, long startPID,
-                                    long endPID, GPU_BEAM_SUM_DATA *result,
+                                    int particleIdColumn, int64_t startPID,
+                                    int64_t endPID, GPU_BEAM_SUM_DATA *result,
                                     float *milliseconds) {
   cudaEvent_t start, stop;
   cudaError_t cudaStatus;

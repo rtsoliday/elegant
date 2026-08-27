@@ -188,6 +188,13 @@ trajectory and path-length corrections computed during host optimization are
 applied on the GPU.  Companion inputs cover the below-threshold and soft-fringe
 CPU fallbacks.
 
+`lgbend-deterministic-heavy` explicitly enables the validated order-2 LGBEND
+CUDA subset for parity coverage.  The path remains opt-in through
+`ELEGANT_GPU_ENABLE_LGBEND=1`: crossover measurements at 32768, 65536, 131072,
+and 262144 particles on the reference RTX 3060 were only 0.98--1.02x versus
+the serial implementation, so production runs retain the faster CPU policy by
+default until the kernel is optimized.
+
 `bmapxy-fixed-step-heavy`, `nibend-fixed-step-heavy`, and
 `nisept-fixed-step-heavy` exercise the fixed-step Lorentz-family integrator.
 The CUDA subsets are respectively file-backed bilinear `BMAPXY`, hard-edge
@@ -207,6 +214,11 @@ Companion inputs cover binless or mode-output diagnostics and the
 below-threshold CPU fallback.  The measured production crossover threshold is
 8192 particles.  Generator feedback, noise, multiple physical bunches, and MPI
 remain CPU paths.
+
+The `run-clock.ele` companion combines a serial `RFCA,CHANGE_T=1` producer
+with the supported single-bunch CUDA `RFMODE` histogram and kick path.  Its RF
+frequencies are deliberately non-harmonic so the resonator phase depends on
+the removed whole-period offsets accumulated by the tracking clock.
 
 `tfeedback-deterministic-heavy` tracks 262144 particles for 500 passes through
 a deterministic single-bunch transverse `TFBPICKUP`/`TFBDRIVER` pair.  CUDA

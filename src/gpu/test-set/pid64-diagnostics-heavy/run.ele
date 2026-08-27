@@ -1,0 +1,23 @@
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central = 1000,
+  rootname = "run",
+  final = "%s.fin",
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+  show_element_timing = 0,
+  load_balancing_on = 0,
+&end
+
+&run_control
+  n_passes = 256,
+&end
+
+&sdds_beam
+  input = "input.sdds",
+  n_duplicates = 32767,
+&end
+
+&track
+&end
