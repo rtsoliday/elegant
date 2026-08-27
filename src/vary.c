@@ -47,10 +47,12 @@ void vary_setup(VARY *_control, NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beam
   if (n_steps <= 0 && n_indices <= 0)
     bombElegant("n_steps <= 0  and  n_indices <= 0", NULL);
   if (n_indices <= 0) {
-    if (bunch_frequency) {
-      if (bunch_frequency < 0)
+    if (bunch_frequency && bunch_frequency < 0)
         bombElegant("bunch_frequency<0", NULL);
-    }
+    if (step_frequency && step_frequency<0)
+        bombElegant("step_frequency<0", NULL);
+    if (bunch_frequency && step_frequency)
+      bombElegant("step_frequency and bunch_frequency can't be non-zero simultaneously", NULL);
   }
 
   /* reset flags on elements (necessary for multiple step runs) */
@@ -68,6 +70,7 @@ void vary_setup(VARY *_control, NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beam
   _control->i_step = 0;
   _control->n_steps = n_steps;
   _control->bunch_frequency = bunch_frequency;
+  _control->step_frequency = step_frequency;
   _control->n_passes = n_passes;
   _control->reset_rf_each_step = reset_rf_for_each_step;
   _control->reset_scattering_seed = reset_scattering_seed;
@@ -724,6 +727,10 @@ void reset_parameter_values(char **elem_name, long *param_number, long *type, lo
         *((long *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
           *((long *)(p_elem0 + entity_description[elem_type].parameter[param].offset));
         break;
+      case IS_INT64:
+        *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
+          *((int64_t *)(p_elem0 + entity_description[elem_type].parameter[param].offset));
+        break;
       case IS_SHORT:
         *((short *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
           *((short *)(p_elem0 + entity_description[elem_type].parameter[param].offset));
@@ -793,6 +800,10 @@ void assert_parameter_values(char **elem_name, long *param_number, long *type, d
         *((long *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
           nearestInteger(value[i_elem]);
         break;
+      case IS_INT64:
+        *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
+          nearestInteger64(value[i_elem]);
+        break;
       case IS_SHORT:
         *((short *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
           nearestInteger(value[i_elem]);
@@ -831,6 +842,10 @@ long get_parameter_value(double *value, char *elem_name, long param_number, long
       return (1);
     case IS_LONG:
       *value = *((long *)(p_elem + entity_description[type].parameter[param_number].offset));
+      log_exit("get_parameter_value");
+      return (1);
+    case IS_INT64:
+      *value = *((int64_t *)(p_elem + entity_description[type].parameter[param_number].offset));
       log_exit("get_parameter_value");
       return (1);
     case IS_SHORT:
@@ -982,6 +997,30 @@ void assert_perturbations(char **elem_name, long *param_number, long *type, long
             else
               *((long *)(p_elem + entity_description[elem_type].parameter[param].offset)) +=
                 nearestInteger(delta);
+          }
+        }
+        break;
+      case IS_INT64:
+        if (permit_flags & FORCE_ZERO_ERRORS) {
+          delta = 0;
+          if (elem_perturb_flags[i_elem] & NONADDITIVE_ERRORS)
+            delta = *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset));
+        } else {
+          if (!(elem_perturb_flags[i_elem] & BIND_ERRORS_MASK) ||
+              (bind_number[i_elem] >= 1 && i_group % bind_number[i_elem] == 0) ||
+              i_group == 0)
+            delta = perturbation(amplitude[i_elem], cutoff[i_elem], error_type[i_elem], sampleIndex[i_elem], errorSamples);
+          else if (bound_to[i_elem] >= 0)
+            delta = perturb[bound_to[i_elem]];
+          if (elem_perturb_flags[i_elem] & FRACTIONAL_ERRORS)
+            *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) *= (1 + delta);
+          else {
+            if (elem_perturb_flags[i_elem] & NONADDITIVE_ERRORS)
+              *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
+                nearestInteger64(delta);
+            else
+              *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) +=
+                nearestInteger64(delta);
           }
         }
         break;
