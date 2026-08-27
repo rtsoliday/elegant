@@ -31,8 +31,11 @@ cavities in a ring, you need only use this feature on one of them.
 Also, you can use \verb|CHANGE_T=1| if you simply prefer to have the
 offset time coordinates in output files and analysis. 
 
-N.B.: {\em Do not use \verb|CHANGE_T=1| if you have rf cavities that
-are not at harmonics of one another or if you have other
-time-dependent elements that are not resonant. Also, if you have harmonic
-cavities, only use CHANGE_T on the cavity with the lowest frequency.
-Failure to follow these rules can result in wrong results and crashes.}
+As of version 2026.4, if there are rf cavities that are not harmonically-related
+to the cavity with \verb|CHANGE_T=1|, there will be phase adjustments made to
+correct for the time offsets. The time offsets are accumulated in extended-precision
+registers, then used to compute the phase adjustments modulo $2\pi$, which reduces
+phase jumps due to insufficient precision.
+In addition, elements with longer-term, non-resonant time dependence (e.g., \verb|BUMPER|
+or a damped \verb|RFMODE|) will behave properly as they'll be provided with the accumulated
+time offset.
