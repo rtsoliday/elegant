@@ -217,7 +217,7 @@ long loadModulationTable(double **t, double **value, char *file, char *timeColum
 }
 
 long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, double pCentral,
-                             double **coord, long np, RUN *run, long iPass) {
+                             double **coord, int64_t np, RUN *run, long iPass) {
   long iMod, code, matricesUpdated, jMod;
   /* short modulationValid = 0; */
   double modulation, value, t, tBeam, lastValue, beta;
@@ -428,6 +428,17 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
         printf("Modulation value for element %s#%ld, parameter %s changed to %ld at t = %21.15le (originally %ld)\n",
                modData->element[iMod]->name, modData->element[iMod]->occurence,
                entity_description[type].parameter[param].name, (long)(value + 0.5), t, (long)(modData->unperturbedValue[iMod]));
+        modData->lastVerboseValue[iMod] = value;
+      }
+      break;
+    case IS_INT64:
+      lastValue = modData->lastVerboseValue[iMod];
+      value = (int64_t)(value + 0.5);
+      *((int64_t *)(p_elem + entity_description[type].parameter[param].offset)) = value;
+      if (modData->flags[iMod] & VERBOSE_MOD && value != lastValue) {
+        printf("Modulation value for element %s#%ld, parameter %s changed to %" PRId64 " at t = %21.15le (originally %" PRId64 ")\n",
+               modData->element[iMod]->name, modData->element[iMod]->occurence,
+               entity_description[type].parameter[param].name, (int64_t)(value + 0.5), t, (int64_t)(modData->unperturbedValue[iMod]));
         modData->lastVerboseValue[iMod] = value;
       }
       break;

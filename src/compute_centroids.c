@@ -63,8 +63,9 @@ void freeBeamSums(BEAM_SUMS *sums, long nz) {
 void compute_centroids(
   double *centroid,
   double **coordinates,
-  long n_part) {
-  long i_part, i_coord;
+  int64_t n_part) {
+  int64_t i_part;
+  long i_coord;
   double sum[6], *part;
   long active = 1;
 #ifdef USE_KAHAN
@@ -199,8 +200,9 @@ void compute_sigmas(
   double *sigma,
   double *centroid,
   double **coordinates,
-  long n_part) {
-  long i_part, i_coord;
+  int64_t n_part) {
+  int64_t i_part;
+  long i_coord;
   double sum2[6], *part, value;
   long active = 1;
 #if USE_MPI /* In the non-parallel mode, it will be same with the serial version */
@@ -315,13 +317,14 @@ void zero_beam_sums(
 void accumulate_beam_sums(
   BEAM_SUMS *sums,
   double **coord,
-  long n_part,
+  int64_t n_part,
   double p_central,
   double mp_charge,
   double *timeValue, double tMin, double tMax, /* time filter */
-  long startPID, long endPID,
+  int64_t startPID, int64_t endPID,
   unsigned long flags) {
-  long i_part, i, j;
+  int64_t i_part, i;
+  long j;
   double centroid[7], centroidn[7], *timeCoord, *pz = NULL;
   double spinCentroid[3];
   double value, Sij, Sijn;
@@ -590,11 +593,11 @@ void accumulate_beam_sums(
 void accumulate_beam_sums(
   BEAM_SUMS *sums,
   double **coord,
-  long n_part,
+  int64_t n_part,
   double p_central,
   double mp_charge,
   double *timeValue, double tMin, double tMax, /* time filter */
-  long startPID, long endPID,
+  int64_t startPID, int64_t endPID,
   unsigned long flags) {
   /* The order of these calls must not be changed, since the second call uses results from the first */
   accumulate_beam_sums1(sums, coord, n_part, p_central, mp_charge, timeValue, tMin, tMax, startPID, endPID, flags);
@@ -606,13 +609,14 @@ void accumulate_beam_sums(
 void accumulate_beam_sums1(
   BEAM_SUMS *sums,
   double **coord,
-  long n_part,
+  int64_t n_part,
   double p_central,
   double mp_charge,
   double *timeValue, double tMin, double tMax, /* time filter */
-  long startPID, long endPID,
+  int64_t startPID, int64_t endPID,
   unsigned long flags) {
-  long i_part, i, j;
+  int64_t i_part, i;
+  long j;
   double centroid[7], *timeCoord;
   double spinCentroid[3];
   double value;
@@ -1147,9 +1151,10 @@ void copy_beam_sums(
 }
 
 long computeSliceMoments(double C[6], double S[6][6],
-                         double **part, long np,
+                         double **part, int64_t np,
                          double sMin, double sMax) {
-  long i, j, k, count = 0;
+  long j, k, count = 0;
+  int64_t i;
   if (!part)
     bombElegant("NULL pointer passed to computeSliceMoments", NULL);
   for (j = 0; j < 6; j++) {

@@ -82,7 +82,7 @@ typedef struct {
   double tune1[2], beta1[2], alpha1[2];
 } CHROM_DERIVS;
 
-void copyParticles(double ***coordCopy, double **coord, long np);
+void copyParticles(double ***coordCopy, double **coord, int64_t np);
 void performChromaticAnalysisFromMap(VMATRIX *M, TWISS *twiss, CHROM_DERIVS *chromDeriv);
 void printMapAnalysisResults(FILE *fp, long printoutOrder, char *printoutFormat,
                              VMATRIX *M, TWISS *twiss, CHROM_DERIVS *chromDeriv, double *data);
@@ -175,7 +175,8 @@ void do_transport_analysis(
   double *data, *offset, *orbit_p, *orbit_m;
   MATRIX *R;
   double p_central;
-  long n_left, n_track, i, j, k, index, code;
+  int64_t n_left, n_track;
+  long i, j, k, index, code;
   TRAJECTORY *clorb = NULL;
   double stepSize[6], maximumValue[6], sum2Difference, maxAbsDifference, difference;
   VMATRIX *M = NULL;
@@ -2176,7 +2177,7 @@ void determineRadiationMatrix(VMATRIX *Mr, RUN *run, ELEMENT_LIST *eptr, double 
 
   if (eptr->type == T_BGGEXP && trackingBasedDiffusionMatrixParticles > 1) {
     BEAM_SUMS sums;
-    long nPart;
+    int64_t nPart;
     /* track an ensemble to get approximation to total diffusion matrix */
     double **part;
     bggexp.isr = 1;
@@ -2386,8 +2387,8 @@ void determineRadiationMatrix1(VMATRIX *Mr, RUN *run, ELEMENT_LIST *elem, double
   free_czarray_2d((void **)coord, 1 + 2 * 6, totalPropertiesPerParticle);
 }
 
-void copyParticles(double ***coordCopy, double **coord, long np) {
-  long i;
+void copyParticles(double ***coordCopy, double **coord, int64_t np) {
+  int64_t i;
   *coordCopy = (double **)zarray_2d(sizeof(***coordCopy), np, totalPropertiesPerParticle);
   for (i = 0; i < np; i++)
     memcpy((*coordCopy)[i], coord[i], sizeof(double) * totalPropertiesPerParticle);
@@ -2630,6 +2631,14 @@ long compareElements(ELEMENT_LIST *e1, ELEMENT_LIST *e2) {
       if (l1 != l2)
         return l1 < l2 ? -1 : 1;
       break;
+    case IS_INT64: {
+      int64_t li1, li2;
+      li1 = *((int64_t *)((e1->p_elem) + entity_description[e1->type].parameter[i].offset));
+      li2 = *((int64_t *)((e2->p_elem) + entity_description[e2->type].parameter[i].offset));
+      if (li1 != li2)
+        return li1 < li2 ? -1 : 1;
+      break;
+    }
     case IS_SHORT:
       s1 = *((short *)((e1->p_elem) + entity_description[e1->type].parameter[i].offset));
       s2 = *((short *)((e2->p_elem) + entity_description[e2->type].parameter[i].offset));

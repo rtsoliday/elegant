@@ -138,13 +138,14 @@ long setupParticleTunes
 void accumulateParticleTuneData
 (
  double **coord,
- long np,
+ int64_t np,
  long pass,
  PARTICLE_TUNES *ptunes
  )
 {
   char pidText[32];
-  long turnIndex, ic, ip;
+  long turnIndex, ic;
+  int64_t ip;
   
   if (pass<ptunes->startPass)
     return;
@@ -155,13 +156,14 @@ void accumulateParticleTuneData
   turnIndex = pass - ptunes->pass0;
 
   if (ptunes->np==0) {
-    long pid, jp;
+    long jp;
+    int64_t pid;
     char *useParticle = NULL;
     if (ptunes->startPID>0 || ptunes->endPID>0 || ptunes->PIDInterval>1) {
       ptunes->np = 0;
       useParticle = calloc(np, sizeof(*useParticle));
       for (ip=0; ip<np; ip++) {
-        pid = (long)coord[ip][particleIDIndex];
+        pid = (int64_t)coord[ip][particleIDIndex];
         if ((ptunes->startPID<=0 || pid>=ptunes->startPID) &&
             (ptunes->endPID<=0 || pid<=ptunes->endPID) &&
             (ptunes->PIDInterval<=1 || (pid%ptunes->PIDInterval==0))) {
@@ -201,8 +203,9 @@ void accumulateParticleTuneData
   }
   
   for (ip=0; ip<np; ip++) {
-    long *pIndexPtr, pIndex, pid;
-    pid = (long)coord[ip][particleIDIndex];
+    long *pIndexPtr, pIndex;
+    int64_t pid;
+    pid = (int64_t)coord[ip][particleIDIndex];
     if ((ptunes->startPID<=0 || pid>=ptunes->startPID) &&
         (ptunes->endPID<=0 || pid<=ptunes->endPID) &&
         (ptunes->PIDInterval<=1 || (pid%ptunes->PIDInterval==0))) {
@@ -238,7 +241,9 @@ void accumulateParticleTuneData
 
 void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
 {
-  long ip, pid, it;
+  int64_t ip;
+  long it;
+  int64_t pid;
   short ic, ic1;
   double frequency[2], phase[2], amplitude[2], dummy;
   double *tuneData = NULL, *J = NULL;
