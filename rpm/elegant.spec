@@ -40,9 +40,9 @@ install    -m 755 brightnessEnvelope %{buildroot}%{_bindir}/brightnessEnvelope
 install    -m 755 bucketParameters %{buildroot}%{_bindir}/bucketParameters
 install -s -m 755 centroid2floor %{buildroot}%{_bindir}/centroid2floor
 install    -m 755 computeCoherentFraction %{buildroot}%{_bindir}/computeCoherentFraction
-install    -m 755 computeGeneralizedGradients %{buildroot}%{_bindir}/computeGeneralizedGradients
 install    -m 755 computeQuadFringeIntegrals %{buildroot}%{_bindir}/computeQuadFringeIntegrals
 install -s -m 755 computeCBGGE %{buildroot}%{_bindir}/computeCBGGE
+install -s -m 755 computeLBGGE %{buildroot}%{_bindir}/computeLBGGE
 install -s -m 755 computeRBGGE %{buildroot}%{_bindir}/computeRBGGE
 install    -m 755 computeSCTuneSpread %{buildroot}%{_bindir}/computeSCTuneSpread
 install    -m 755 computeTwissBeats %{buildroot}%{_bindir}/computeTwissBeats
@@ -173,9 +173,9 @@ install -m 444 undulatorTuningCurve.spin %{buildroot}%{_prefix}/local/oag/apps/c
 %{_bindir}/bucketParameters
 %{_bindir}/centroid2floor
 %{_bindir}/computeCoherentFraction
-%{_bindir}/computeGeneralizedGradients
 %{_bindir}/computeQuadFringeIntegrals
 %{_bindir}/computeCBGGE
+%{_bindir}/computeLBGGE
 %{_bindir}/computeRBGGE
 %{_bindir}/computeSCTuneSpread
 %{_bindir}/computeTwissBeats
