@@ -38,7 +38,7 @@ long computeGGEVectorPotential(double *Ax, double *dAx_dx, double *dAx_dy,
                                BGGEXP *bgg, STORED_BGGEXP_DATA *bggData[2], long igLimit[2]);
 
 #ifdef HAVE_GPU
-static long trackBGGExpansionOnGpu(long np, BGGEXP *bgg, double pCentral,
+static long trackBGGExpansionOnGpu(int64_t np, BGGEXP *bgg, double pCentral,
                                    STORED_BGGEXP_DATA *bggData[2],
                                    long igLimit[2]) {
   GPU_BGGEXP_DATA data;
@@ -258,9 +258,11 @@ long addBGGExpData(char *filename, char *nameFragment, short skew) {
       dz0 = z[1] - z[0];
       for (iz = 1; iz < nz; iz++) {
         dz = z[iz] - z[iz - 1];
-        if (dz <= 0 || fabs(dz0 / dz - 1) > 1e-6)
-          bombElegantVA("Data not uniformly and monotonically increasing in z column from %s for BGGEXP %s #%ld\n", filename, tcontext.elementName, tcontext.elementOccurrence);
-      }
+        if (dz <= 0) 
+          bombElegantVA("Data not monotonically increasing in z column from %s for BGGEXP %s #%ld\n", filename, tcontext.elementName, tcontext.elementOccurrence);
+	if (fabs(dz0 / dz - 1) > 1e-6)
+          bombElegantVA("Data not uniformly increasing in z column from %s for BGGEXP %s #%ld at z=%le: |dz0/dz-1|=%le\n", filename, tcontext.elementName, tcontext.elementOccurrence, z[iz], fabs(dz0 / dz - 1));
+	}
       free(z);
       storedBGGExpData[nBGGExpDataSets].dz = dz0;
     } else {
@@ -311,8 +313,8 @@ long addBGGExpData(char *filename, char *nameFragment, short skew) {
   return nBGGExpDataSets++;
 }
 
-long trackBGGExpansion(double **part, long np, BGGEXP *bgg, double pCentral, double **accepted, double *sigmaDelta2) {
-  long ip, iz, irow, igLimit[2], nz;
+long trackBGGExpansion(double **part, int64_t np, BGGEXP *bgg, double pCentral, double **accepted, double *sigmaDelta2) {
+  int64_t ip, iz, irow, igLimit[2], nz;
   STORED_BGGEXP_DATA *bggData[2];
   double ds, dz, x, y, xp, yp, delta, s, phi, denom;
   double step, length;
