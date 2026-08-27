@@ -2069,6 +2069,7 @@ VMATRIX *compute_matrix(
   case T_SCRAPER:
   case T_CENTER:
   case T_SCATTER:
+  case T_CBSCAT:
   case T_RAMPRF:
   case T_RAMPP:
   case T_KICKER:
@@ -2119,7 +2120,7 @@ char *fft_window_name[N_FFT_WINDOWS] = {
 };
 
 void set_up_watch_point(WATCH *watch, RUN *run, long occurence, char *previousElementName, long previousElementOccurence,
-                        long i_pass, ELEMENT_LIST *eptr, long IDSlotsPerBunch) {
+                        long i_pass, ELEMENT_LIST *eptr, int64_t IDSlotsPerBunch) {
   char *mode, *qualifier;
 
 #if MPI_DEBUG
@@ -2178,7 +2179,7 @@ void set_up_watch_point(WATCH *watch, RUN *run, long occurence, char *previousEl
   }
 }
 
-void set_up_histogram(HISTOGRAM *histogram, RUN *run, long occurence, long IDSlotsPerBunch) {
+void set_up_histogram(HISTOGRAM *histogram, RUN *run, long occurence, int64_t IDSlotsPerBunch) {
   if (histogram->disable)
     return;
   if (histogram->interval <= 0)
