@@ -353,10 +353,16 @@ void do_alter_elements(RUN *run, LINE_LIST *beamline, short before_load_paramete
           fflush(stdout);
         }
         break;
+      case IS_INT64:
       case IS_LONG:
       case IS_SHORT:
         if (alterSpec[i].verbose && printingEnabled) {
-          if (entity_description[eptr->type].parameter[iParam].type == IS_LONG)
+          if (entity_description[eptr->type].parameter[iParam].type == IS_INT64)
+            printf("Changing %s#%ld.%s at %le m from %" PRId64 " to ",
+                   eptr->name, eptr->occurence,
+                   entity_description[eptr->type].parameter[iParam].name, eptr->end_pos,
+                   *((int64_t *)(p_elem + entity_description[eptr->type].parameter[iParam].offset)));
+          else if (entity_description[eptr->type].parameter[iParam].type == IS_LONG)
             printf("Changing %s#%ld.%s at %le m from %ld to ",
                    eptr->name, eptr->occurence,
                    entity_description[eptr->type].parameter[iParam].name, eptr->end_pos,
@@ -381,7 +387,23 @@ void do_alter_elements(RUN *run, LINE_LIST *beamline, short before_load_paramete
           }
           changedDefinedParameter[nChangedDefinedParameter++] = eptr->name;
         }
-        if (entity_description[eptr->type].parameter[iParam].type == IS_LONG) {
+        if (entity_description[eptr->type].parameter[iParam].type == IS_INT64) {
+          if (alterSpec[i].differential)
+            *((int64_t *)(p_elem + entity_description[eptr->type].parameter[iParam].offset)) +=
+              nearestInteger64(alterSpec[i].value);
+          else if (alterSpec[i].multiplicative)
+            *((int64_t *)(p_elem + entity_description[eptr->type].parameter[iParam].offset)) *= 1 + alterSpec[i].value;
+          else
+            *((int64_t *)(p_elem + entity_description[eptr->type].parameter[iParam].offset)) =
+              nearestInteger64(alterSpec[i].value);
+          *((int64_t *)(p_elem0 + entity_description[eptr->type].parameter[iParam].offset)) =
+            *((int64_t *)(p_elem + entity_description[eptr->type].parameter[iParam].offset));
+          if (alterSpec[i].verbose && printingEnabled) {
+            printf("%" PRId64 "\n",
+                   *((int64_t *)(p_elem + entity_description[eptr->type].parameter[iParam].offset)));
+            fflush(stdout);
+          }
+        } else if (entity_description[eptr->type].parameter[iParam].type == IS_LONG) {
           if (alterSpec[i].differential)
             *((long *)(p_elem + entity_description[eptr->type].parameter[iParam].offset)) +=
               nearestInteger(alterSpec[i].value);

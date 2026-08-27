@@ -962,6 +962,13 @@ void show_elem(ELEMENT_LIST *eptr, long type) {
              parameter[j].offset);
       fflush(stdout);
       break;
+    case IS_INT64:
+      printf("    %s = %" PRId64 " with offset %ld\n",
+             parameter[j].name,
+             *(int64_t *)(eptr->p_elem + parameter[j].offset),
+             parameter[j].offset);
+      fflush(stdout);
+      break;
     case IS_SHORT:
       printf("    %s = %hd with offset %ld\n",
              parameter[j].name,
@@ -1251,6 +1258,17 @@ void do_save_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
                   strcat(s, ",");
               }
               break;
+            case IS_INT64: {
+              int64_t i64value = *(int64_t *)(eptr->p_elem + parameter[j].offset);
+              if (!suppress_defaults || i64value != parameter[j].integer) {
+                /* value is not the default, so add to output */
+                sprintf(t, "%s=%" PRId64, parameter[j].name, i64value);
+                strcat(s, t);
+                if (j != entity_description[eptr->type].n_params - 1)
+                  strcat(s, ",");
+              }
+              break;
+            }
             case IS_SHORT:
               svalue = *(short *)(eptr->p_elem + parameter[j].offset);
               if (!suppress_defaults || svalue != parameter[j].integer) {
@@ -1336,6 +1354,17 @@ void do_save_lattice(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
                     strcat(s, ",");
                 }
                 break;
+              case IS_INT64: {
+                int64_t i64value = *(int64_t *)(eptr->p_elem + parameter[j].offset);
+                if (!suppress_defaults || i64value != parameter[j].integer) {
+                  /* value is not the default, so add to output */
+                  sprintf(t, "%s=%" PRId64, parameter[j].name, i64value);
+                  strcat(s, t);
+                  if (j != entity_description[eptr->type].n_params - 1)
+                    strcat(s, ",");
+                }
+                break;
+              }
               case IS_SHORT:
                 svalue = *(short *)(eptr->p_elem + parameter[j].offset);
                 if (!suppress_defaults || svalue != parameter[j].integer) {
@@ -1507,6 +1536,17 @@ void change_defined_parameter_values(char **elem_name, long *param_number, long 
         fflush(stdout);
 #endif
         break;
+      case IS_INT64:
+        *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
+          nearestInteger64(value[i_elem]);
+#if DEBUG
+        printf("   changing parameter %s of %s #%ld to %" PRId64 "\n",
+               entity_description[elem_type].parameter[param].name,
+               eptr->name, eptr->occurence,
+               *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)));
+        fflush(stdout);
+#endif
+        break;
       case IS_SHORT:
         *((short *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
           nearestInteger(value[i_elem]);
@@ -1581,6 +1621,7 @@ void change_defined_parameter_divopt(char *elem_name, long param, long elem_type
                *((double *)(p_elem + entity_description[elem_type].parameter[param].offset)));
       fflush(stdout);
       break;
+    case IS_INT64:
     case IS_LONG:
     case IS_SHORT:
       if (valueString) {
@@ -1595,7 +1636,10 @@ void change_defined_parameter_divopt(char *elem_name, long param, long elem_type
                (mode & LOAD_FLAG_ABSOLUTE) ? "absolute" : ((mode & LOAD_FLAG_DIFFERENTIAL) ? "differential" : (mode & LOAD_FLAG_FRACTIONAL) ? "fractional"
                                                            : "unknown"),
                elem_name, entity_description[elem_type].parameter[param].name);
-        if (data_type == IS_LONG)
+        if (data_type == IS_INT64)
+          printf("from %" PRId64 " to ",
+                 *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)));
+        else if (data_type == IS_LONG)
           printf("from %ld to ",
                  *((long *)(p_elem + entity_description[elem_type].parameter[param].offset)));
         else
@@ -1603,7 +1647,16 @@ void change_defined_parameter_divopt(char *elem_name, long param, long elem_type
                  *((short *)(p_elem + entity_description[elem_type].parameter[param].offset)));
         fflush(stdout);
       }
-      if (data_type == IS_LONG) {
+      if (data_type == IS_INT64) {
+        if (mode & LOAD_FLAG_ABSOLUTE)
+          *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
+            nearestInteger64(value);
+        else if (mode & LOAD_FLAG_DIFFERENTIAL)
+          *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) +=
+            nearestInteger64(value);
+        else if (mode & LOAD_FLAG_FRACTIONAL)
+          *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) *= 1 + value;
+      } else if (data_type == IS_LONG) {
         if (mode & LOAD_FLAG_ABSOLUTE)
           *((long *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
             nearestInteger(value);
@@ -1623,7 +1676,10 @@ void change_defined_parameter_divopt(char *elem_name, long param, long elem_type
           *((short *)(p_elem + entity_description[elem_type].parameter[param].offset)) *= 1 + value;
       }
       if (mode & LOAD_FLAG_VERBOSE) {
-        if (data_type == IS_LONG)
+        if (data_type == IS_INT64)
+          printf("%" PRId64 "\n",
+                 *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)));
+        else if (data_type == IS_LONG)
           printf("%ld\n",
                  *((long *)(p_elem + entity_description[elem_type].parameter[param].offset)));
         else
@@ -1717,6 +1773,7 @@ void change_used_parameter_divopt(LINE_LIST *beamline, char *elem_name, long par
                *((double *)(p_elem + entity_description[elem_type].parameter[param].offset)));
       fflush(stdout);
       break;
+    case IS_INT64:
     case IS_LONG:
     case IS_SHORT:
       if (valueString) {
@@ -1731,7 +1788,10 @@ void change_used_parameter_divopt(LINE_LIST *beamline, char *elem_name, long par
                (mode & LOAD_FLAG_ABSOLUTE) ? "absolute" : ((mode & LOAD_FLAG_DIFFERENTIAL) ? "differential" : (mode & LOAD_FLAG_FRACTIONAL) ? "fractional"
                                                            : "unknown"),
                elem_name, entity_description[elem_type].parameter[param].name);
-        if (data_type == IS_LONG)
+        if (data_type == IS_INT64)
+          printf("from %" PRId64 " to ",
+                 *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)));
+        else if (data_type == IS_LONG)
           printf("from %ld to ",
                  *((long *)(p_elem + entity_description[elem_type].parameter[param].offset)));
         else
@@ -1739,7 +1799,16 @@ void change_used_parameter_divopt(LINE_LIST *beamline, char *elem_name, long par
                  *((short *)(p_elem + entity_description[elem_type].parameter[param].offset)));
         fflush(stdout);
       }
-      if (data_type == IS_LONG) {
+      if (data_type == IS_INT64) {
+        if (mode & LOAD_FLAG_ABSOLUTE)
+          *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
+            nearestInteger64(value);
+        else if (mode & LOAD_FLAG_DIFFERENTIAL)
+          *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) +=
+            nearestInteger64(value);
+        else if (mode & LOAD_FLAG_FRACTIONAL)
+          *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)) *= 1 + value;
+      } else if (data_type == IS_LONG) {
         if (mode & LOAD_FLAG_ABSOLUTE)
           *((long *)(p_elem + entity_description[elem_type].parameter[param].offset)) =
             nearestInteger(value);
@@ -1759,7 +1828,10 @@ void change_used_parameter_divopt(LINE_LIST *beamline, char *elem_name, long par
           *((short *)(p_elem + entity_description[elem_type].parameter[param].offset)) *= 1 + value;
       }
       if (mode & LOAD_FLAG_VERBOSE) {
-        if (data_type == IS_LONG)
+        if (data_type == IS_INT64)
+          printf("%" PRId64 "\n",
+                 *((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset)));
+        else if (data_type == IS_LONG)
           printf("%ld\n",
                  *((long *)(p_elem + entity_description[elem_type].parameter[param].offset)));
         else
@@ -1833,6 +1905,12 @@ long nearestInteger(double value) {
   if (value < 0)
     return -1 * ((long)(-value + 0.5));
   return (long)(value + 0.5);
+}
+
+int64_t nearestInteger64(double value) {
+  if (value < 0)
+    return -1 * ((int64_t)(-value + 0.5));
+  return (int64_t)(value + 0.5);
 }
 
 /* add element "elem1" after "elem0" */

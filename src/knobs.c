@@ -61,6 +61,9 @@ void set_knob_value(long knobIndex, double newValue, LINE_LIST *beamline) {
     case IS_LONG:
       *((long *)(p_elem + offset)) += nearestInteger(delta * factor);
       break;
+    case IS_INT64:
+      *((int64_t *)(p_elem + offset)) += nearestInteger64(delta * factor);
+      break;
     case IS_SHORT:
       *((short *)(p_elem + offset)) += nearestInteger(delta * factor);
       break;
@@ -221,7 +224,7 @@ void setup_load_knobs(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
                         knobNameUpper, iRow, pName, context->name);
         }
         pType = entity_description[context->type].parameter[pIdx].type;
-        if (pType != IS_DOUBLE && pType != IS_LONG && pType != IS_SHORT) {
+        if (pType != IS_DOUBLE && pType != IS_LONG && pType != IS_INT64 && pType != IS_SHORT) {
           bombElegantVA("load_knobs: knob '%s' row %ld: parameter %s of %s is not numeric\n",
                         knobNameUpper, iRow, pName, context->name);
         }

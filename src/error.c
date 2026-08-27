@@ -552,6 +552,9 @@ double parameter_value(char *pname, long elem_type, long param, LINE_LIST *beaml
       lresult = *((long *)(p_elem + entity_description[elem_type].parameter[param].offset));
       log_exit("parameter_value");
       return ((double)lresult);
+    case IS_INT64:
+      log_exit("parameter_value");
+      return ((double)(*((int64_t *)(p_elem + entity_description[elem_type].parameter[param].offset))));
     case IS_SHORT:
       sresult = *((short *)(p_elem + entity_description[elem_type].parameter[param].offset));
       log_exit("parameter_value");

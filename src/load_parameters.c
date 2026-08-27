@@ -353,6 +353,9 @@ long do_load_parameters(LINE_LIST *beamline, long change_definitions, char *scri
           case IS_LONG:
             *((long *)(load_request[i].reset_address[j])) = nearestInteger(load_request[i].starting_value[j]);
             break;
+          case IS_INT64:
+            *((int64_t *)(load_request[i].reset_address[j])) = nearestInteger64(load_request[i].starting_value[j]);
+            break;
           case IS_SHORT:
             *((short *)(load_request[i].reset_address[j])) = nearestInteger(load_request[i].starting_value[j]);
             break;
@@ -694,6 +697,7 @@ long do_load_parameters(LINE_LIST *beamline, long change_definitions, char *scri
             fflush(stdout);
           }
           break;
+        case IS_INT64:
         case IS_LONG:
         case IS_SHORT:
           if (valueString && !value) {
@@ -711,7 +715,10 @@ long do_load_parameters(LINE_LIST *beamline, long change_definitions, char *scri
             printf("Changing %s.%s #%" PRId32 " ",
                    eptr->name,
                    entity_description[eptr->type].parameter[param].name, numberChanged);
-            if (entity_description[eptr->type].parameter[param].type == IS_LONG)
+            if (entity_description[eptr->type].parameter[param].type == IS_INT64)
+              printf("%" PRId64 "  to ",
+                     *((int64_t *)(p_elem + entity_description[eptr->type].parameter[param].offset)));
+            else if (entity_description[eptr->type].parameter[param].type == IS_LONG)
               printf("%ld  to ",
                      *((long *)(p_elem + entity_description[eptr->type].parameter[param].offset)));
             else
@@ -719,7 +726,27 @@ long do_load_parameters(LINE_LIST *beamline, long change_definitions, char *scri
                      *((short *)(p_elem + entity_description[eptr->type].parameter[param].offset)));
             fflush(stdout);
           }
-          if (entity_description[eptr->type].parameter[param].type == IS_LONG) {
+          if (entity_description[eptr->type].parameter[param].type == IS_INT64) {
+            load_request[i].starting_value[load_request[i].values] = *((int64_t *)(p_elem + entity_description[eptr->type].parameter[param].offset));
+            load_request[i].value_type[load_request[i].values] = IS_INT64;
+            if (mode_flags & LOAD_FLAG_ABSOLUTE) {
+              *((int64_t *)(p_elem + entity_description[eptr->type].parameter[param].offset)) =
+                nearestInteger64(newValue);
+              if (load_request[i].flags & COMMAND_FLAG_CHANGE_DEFINITIONS)
+                *((int64_t *)(p_elem0 + entity_description[eptr->type].parameter[param].offset)) =
+                  nearestInteger64(newValue);
+            } else if (mode_flags & LOAD_FLAG_DIFFERENTIAL) {
+              *((int64_t *)(p_elem + entity_description[eptr->type].parameter[param].offset)) +=
+                nearestInteger64(newValue);
+              if (load_request[i].flags & COMMAND_FLAG_CHANGE_DEFINITIONS)
+                *((int64_t *)(p_elem0 + entity_description[eptr->type].parameter[param].offset)) =
+                  nearestInteger64(newValue);
+            } else if (mode_flags & LOAD_FLAG_FRACTIONAL) {
+              *((int64_t *)(p_elem + entity_description[eptr->type].parameter[param].offset)) *= 1 + newValue;
+              if (load_request[i].flags & COMMAND_FLAG_CHANGE_DEFINITIONS)
+                *((int64_t *)(p_elem0 + entity_description[eptr->type].parameter[param].offset)) *= 1 + newValue;
+            }
+          } else if (entity_description[eptr->type].parameter[param].type == IS_LONG) {
             load_request[i].starting_value[load_request[i].values] = *((long *)(p_elem + entity_description[eptr->type].parameter[param].offset));
             load_request[i].value_type[load_request[i].values] = IS_LONG;
             if (mode_flags & LOAD_FLAG_ABSOLUTE) {
@@ -761,7 +788,10 @@ long do_load_parameters(LINE_LIST *beamline, long change_definitions, char *scri
             }
           }
           if (verbose && printingEnabled) {
-            if (entity_description[eptr->type].parameter[param].type == IS_LONG)
+            if (entity_description[eptr->type].parameter[param].type == IS_INT64)
+              printf("%" PRId64 " \n",
+                     *((int64_t *)(p_elem + entity_description[eptr->type].parameter[param].offset)));
+            else if (entity_description[eptr->type].parameter[param].type == IS_LONG)
               printf("%ld \n",
                      *((long *)(p_elem + entity_description[eptr->type].parameter[param].offset)));
             else
@@ -1017,6 +1047,17 @@ void dumpLatticeParameters(char *filename, RUN *run, LINE_LIST *beamline, long s
         if (!doSave) {
           double refValue;
           refValue = *(long *)(eptr->p_elem0 + parameter[iParam].offset);
+          if (value != refValue)
+            doSave = 1;
+        }
+        break;
+      case IS_INT64:
+        value = *(int64_t *)(eptr->p_elem + parameter[iParam].offset);
+        if (suppressDefaults && value == parameter[iParam].integer)
+          doSave = 0;
+        if (!doSave) {
+          double refValue;
+          refValue = *(int64_t *)(eptr->p_elem0 + parameter[iParam].offset);
           if (value != refValue)
             doSave = 1;
         }

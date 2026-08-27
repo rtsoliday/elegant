@@ -948,6 +948,9 @@ void parse_element(
     case IS_LONG:
       *(long *)(p_elem + parameter[i].offset) = parameter[i].integer;
       break;
+    case IS_INT64:
+      *(int64_t *)(p_elem + parameter[i].offset) = parameter[i].integer;
+      break;
     case IS_SHORT:
       *(short *)(p_elem + parameter[i].offset) = parameter[i].integer;
       break;
@@ -1004,6 +1007,12 @@ void parse_element(
         case IS_LONG:
           printf("%s (%ld %s)\n",
                  parameter[i].name, parameter[i].integer,
+                 parameter[i].unit);
+          fflush(stdout);
+          break;
+        case IS_INT64:
+          printf("%s (%" PRId64 " %s)\n",
+                 parameter[i].name, (int64_t)parameter[i].integer,
                  parameter[i].unit);
           fflush(stdout);
           break;
@@ -1068,6 +1077,25 @@ void parse_element(
         fflush(stdout);
       } else {
         if (sscanf(ptr, "%ld", (long *)(p_elem + parameter[i].offset)) != 1) {
+          printf("Error scanning token %s for integer value for parameter %s of %s.  Please check syntax.\n",
+                 ptr, parameter[i].name, eptr->name);
+          exitElegant(1);
+        }
+      }
+      break;
+    case IS_INT64:
+      if (!isdigit(*ptr) && *ptr != '-' && *ptr != '+') {
+        rpn_token = get_token(ptr);
+        SDDS_UnescapeQuotes(rpn_token, '"');
+        *((int64_t *)(p_elem + parameter[i].offset)) = rpn(rpn_token);
+        if (rpn_check_error())
+          exitElegant(1);
+        printf("computed value for %s.%s is %" PRId64 "\n",
+               eptr->name, parameter[i].name,
+               *((int64_t *)(p_elem + parameter[i].offset)));
+        fflush(stdout);
+      } else {
+        if (sscanf(ptr, "%" SCNd64, (int64_t *)(p_elem + parameter[i].offset)) != 1) {
           printf("Error scanning token %s for integer value for parameter %s of %s.  Please check syntax.\n",
                  ptr, parameter[i].name, eptr->name);
           exitElegant(1);
@@ -1232,6 +1260,10 @@ void copy_p_elem(char *target, char *source, long type) {
       *((long *)(target + entity_description[type].parameter[i].offset)) =
         *((long *)(source + entity_description[type].parameter[i].offset));
       break;
+    case IS_INT64:
+      *((int64_t *)(target + entity_description[type].parameter[i].offset)) =
+        *((int64_t *)(source + entity_description[type].parameter[i].offset));
+      break;
     case IS_SHORT:
       *((short *)(target + entity_description[type].parameter[i].offset)) =
         *((short *)(source + entity_description[type].parameter[i].offset));
@@ -1335,6 +1367,9 @@ void resetElementToDefaults(char *p_elem, long type) {
       break;
     case IS_LONG:
       *((long *)(p_elem + parameter[i].offset)) = parameter[i].integer;
+      break;
+    case IS_INT64:
+      *((int64_t *)(p_elem + parameter[i].offset)) = parameter[i].integer;
       break;
     case IS_SHORT:
       *((short *)(p_elem + parameter[i].offset)) = parameter[i].integer;

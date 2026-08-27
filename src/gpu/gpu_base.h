@@ -673,8 +673,8 @@ typedef struct GPU_POLYNOMIAL_SERIES_DATA {
 
 typedef struct GPU_RFDF_DATA {
   long nKicks;
-  long startPID;
-  long endPID;
+  int64_t startPID;
+  int64_t endPID;
   int standingWave;
   int magneticDeflection;
   double length;
