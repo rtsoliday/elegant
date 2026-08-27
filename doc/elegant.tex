@@ -7,7 +7,7 @@
 \usepackage{hyperref}
 \usepackage{longtable}
 %\usepackage{subfigure} 
-\usepackage{amsmath}
+\usepackage{amsmath,amssymb}
 \usepackage{breqn}
 \usepackage{graphicx}
 \usepackage{listings}
@@ -67,12 +67,32 @@ Here is a summary of what's changed since release 2026.3.  Historical change log
 
 \subsection{New and Modified Elements}
 \begin{itemize}
-\item None.
+\item The \verb|MARK| element will now provide optimizable parameters from coupled-beam eigen-analysis\cite{Wolski-PRSTAB9-024001}
+  if \verb|COUPLED_FITPOINT=1|.
+\item The \verb|CBSCAT| element was added, providing simulation of Compton backscattering using a method based on \cite{PhysRevAccelBeams.22.040702},
+   as well as less approximate methods.
+\item The \verb|CHANGE_T| feature of \verb|RFCA| has been enhanced so that subtracted time values are accumulated in extended-precision registers,
+  the values from which are used to provide long-scale time offsets (e.g., for slowly-varying, non-harmonic elements) and phase offsets modulo
+  $2\pi$ to rf elements. For the latter, this is important if the rf frequency is not a subharmonic of the frequency for which the time value
+  changes are done.
 \end{itemize}
 
 \subsection{New and Modified Commands}
 \begin{itemize}
-\item The \verb|save_lattice| command now has a \verb|comment| parameter that can be used to provide a text that
+\item The \verb|run_control| command now has a \verb|step_frequency| parameter that can be used to advance the timing of
+  some elements independent of the particle time coordinates. This allows slow processes such as ion drift or mode damping to
+  occur without introducing rounding-error issues in rf cavities, for example. The need for this was brought to our attention
+  by N. Sereno (JLAB).
+\item The \verb|sigma| output file from \verb|run_setup| can now optionally include coupled-beam eigen-analysis\cite{Wolski-PRSTAB9-024001}.
+  This is invoked by setting \verb|coupled_sigma=1|.
+\item Particle counts and particle-loop indices are now stored internally as 64-bit signed integers
+  (\verb|int64_t|) throughout tracking, rather than the platform \verb|long| (which is only 32 bits on
+  some platforms, such as Windows). This removes the previous $2^{31}$ limit on the number of particles.
+  The effective ceiling is now $2^{52}\approx 4.5\times 10^{15}$, which is infinite for all practical purposes.
+  This change affects several output files, including the \verb|acceptance|, \verb|centroid|, \verb|final|, \verb|losses|, and \verb|output|, 
+  outputs from \verb|run_setup| ; output from \verb|WATCH| elements; \verb|bunch| output from \verb|bunched_beam|; and
+  input files to \verb|sdds_beam|.
+\item The \verb|save_lattice| command now has a \verb|comment| parameter that can be used to provide a text string that
   will be placed into the saved lattice file as a comment.
 \item The \verb|rf_setup| command can now generate a file with the rf separatrix.
 \end{itemize}
@@ -91,10 +111,11 @@ are listed in Section \ref{sect:tools}.
 
 Changes to these tools in this release include
 \begin{itemize}
-\item The \verb|touschekLifetime| program now computes the lifetime including polarization, based on
-  \cite{PhysRevAccelBeams.27.124401}.
-\item The script \verb|swapOutPolarization| was added to model the build-up of polarization during swap-out operation and
-  the effect on the beam lifetime.
+\item The program \verb|computeLBGGE| was added, which implements the local generalized gradient expansion
+  method developed by D. Sagan {\em et al.} \cite{sagan:ipac23-wepl015}. It is slower but provides much better fits
+  than \verb|computeRBGGE|, although the latter is able to work with boundary data only.
+\item The program \verb|sddsanalyzebeam| now optionally computes the eigen-emittances and coupled lattice
+  functions for the particle distribution.
 \end{itemize}
 
 \subsection{Known Bugs, Problems, and Limitations}
@@ -1235,7 +1256,7 @@ generated shall be a single particle beam, which is suitable for
 fiducialization.  See the section on ``Fiducialization in
 \verb|elegant|'' for more discussion.
 
-\item \verb|save_initial_coordinates| --- A flag that, if set, results
+\item \verb|save_initial_coordinates| --- A flag that, if non-zero, results
 in saving initial coordinates of tracked particles in memory.  This is
 the default behavior.  If unset, the initial coordinates are not
 saved, but are regenerated each time they are needed.  This is more
@@ -1430,7 +1451,7 @@ generated shall be a single particle beam, which is suitable for
 fiducialization.  See the section on ``Fiducialization in
 \verb|elegant|'' for more discussion.
 
-\item \verb|save_initial_coordinates| --- A flag that, if set, results
+\item \verb|save_initial_coordinates| --- A flag that, if non-zero, results
 in saving initial coordinates of tracked particles in memory.  This is
 the default behavior.  If unset, the initial coordinates are not
 saved, but are regenerated each time they are needed.  This is more
@@ -2005,18 +2026,18 @@ response to horizontal correctors), ``\%s.vrm'' (vertical response to vertical c
 inverse response matrices. Recommended values: ``\%s.hirm'' and ``\%s.virm''.
 \item \verb|slope_response| --- Array of  (incomplete) filenames for SDDS output of the $x^\prime$ and $y^\prime$ response
 matrices.
-\item \verb|full_names| --- Flag that, if set, indicates that corrector columns should be named with the element name and
+\item \verb|full_names| --- Flag that, if non-zero, indicates that corrector columns should be named with the element name and
   item name, instead of just the element name.
-\item \verb|KnL_units| --- Flag that, if set, indicates use of ``units'' of m/K0L rather than
+\item \verb|KnL_units| --- Flag that, if non-zero, indicates use of ``units'' of m/K0L rather than
 m/rad.  This results in a sign change for the horizontal data.
-\item \verb|BnL_units| --- Flag that, if set, indicates use of ``units'' of m/(T*m) rather than
+\item \verb|BnL_units| --- Flag that, if non-zero, indicates use of ``units'' of m/(T*m) rather than
 m/rad.  This is useful for linac work in that the responses are automatically scaled with 
 beam momentum.
-\item \verb|output_at_each_step| --- Flag that, if set, specifies output of the data at
+\item \verb|output_at_each_step| --- Flag that, if non-zero, specifies output of the data at
 each simulation step.  By default, the data is output immediately for the defined lattice.
-\item \verb|output_before_tune_correction| --- Flag that, if set, specifies that when 
+\item \verb|output_before_tune_correction| --- Flag that, if non-zero, specifies that when 
 \verb|output_at_each_step| is set, that output shall occur prior to correcting the tunes.
-\item \verb|fixed_length| --- Flag that, if set, specifies output of the fixed-path-length
+\item \verb|fixed_length| --- Flag that, if non-zero, specifies output of the fixed-path-length
 matrix.
 \item \verb|coupled| --- If nonzero, the cross-plane response matrices are computed.
 \item \verb|use_response_from_computed_orbits| --- If nonzero, in-plane response matrices are computed
@@ -2908,7 +2929,7 @@ resolved measurement-point and knob inventories.
   to the output file as columns named \verb|S|$ij$ (1-indexed), in addition to the standard beam-size
   columns.
 
-\item \verb|matched| --- A flag indicating, if set, that the periodic (matched) coupled-twiss
+\item \verb|matched| --- A flag indicating, if non-zero, that the periodic (matched) coupled-twiss
   solution should be found, by diagonalizing the one-turn matrix.  If zero, calculations are
   performed in transport-line mode starting from the user-supplied initial values
   \verb|beta_x1|, \verb|alpha_x1|, etc.\ (or from a \verb|reference_file|).  The longitudinal
@@ -3429,15 +3450,15 @@ aperture for use in the penalty function.  This is available only for the line s
 \item \verb|filename| --- The (incomplete) name of an SDDS file to send output to.  
  Recommended value: ``\%s.flr''.
 \item \verb|X0|, \verb|Z0|, \verb|theta0| --- Initial X, Z, and angle coordinate of the beamline.
-\item \verb|include_vertices| --- Flag that, if set, specifies including  in the output
+\item \verb|include_vertices| --- Flag that, if non-zero, specifies including  in the output
 the coordinates of the vertices of bending magnets. 
-\item \verb|vertices_only| --- Flag that, if set, specifies that output will contain only
+\item \verb|vertices_only| --- Flag that, if non-zero, specifies that output will contain only
 the coordinates of the vertices of bending magnets. 
-\item \verb|magnet_centers| --- Flag that, if set, specifies that output will contain 
+\item \verb|magnet_centers| --- Flag that, if non-zero, specifies that output will contain 
 the coordinates of the centers of all magnets, where the center is defined as the average of the
 entrance and exit points. By default, the coordinates of the downstream
 end are given.
-\item \verb|store_vertices| --- Flag that, if set, results in storing the floor coordinates for
+\item \verb|store_vertices| --- Flag that, if non-zero, results in storing the floor coordinates for
   dipole magnet vertex points. The coordinates are stored in variables with names of the form
   {\em magnetName}\verb|#|{\em occurrenceNumber}\verb|-VP.|{\em property}, where {\em property}
   is \verb|X|, \verb|Y|, \verb|Z|, \verb|theta|, \verb|phi|, and \verb|psi|.
@@ -5007,21 +5028,24 @@ modulation will be applied.
 \begin{itemize}
 \item \verb|filename| --- The (incomplete) name of a file to which the moments results will be written.
   Recommended value: ``\%s.mom''.
-\item \verb|output_at_each_step| --- A flag indicating, if set, that computations and/or output is desired at each step of the simulation.
+\item \verb|output_at_each_step| --- A flag indicating, if non-zero, that computations and/or output is desired at each step of the simulation.
   If you wish to compute Twiss parameters on a closed orbit or after other calculations, be sure to set this control to a nonzero value.
-\item \verb|output_before_tune_correction| --- A flag indicating, if set, that output is desired both before and after
+\item \verb|output_before_tune_correction| --- A flag indicating, if non-zero, that output is desired both before and after
 tune correction.
-\item \verb|final_values_only| --- A flag indicating, if set, that only the final values of the Twiss parameters should
+\item \verb|final_values_only| --- A flag indicating, if non-zero, that only the final values of the Twiss parameters should
 be output, and not the parameters as a function of s.
 \item \verb|verbosity| --- Larger numbers result in an increasing amount of informational output to the standard output stream.
-\item \verb|matched| --- A flag indicating, if set, that the periodic or matched moments should be found.
-\item \verb|equilibrium| --- A flag indicating, if set, that the equilibrium moments should be found.  If \verb|matched=1| and \verb|equilibrium=0|,
-  then the initial twiss parameters are computed from the periodic solution for the beamline.
+\item \verb|matched| --- A flag indicating, if non-zero, that the initial values of the lattice functions should be taken from the
+  matched twiss output values.  If zero, then the values given in the command are propagated through the beamline.
+\item \verb|radiation| --- A flag indicating, if non-zero, that synchrotron radiation effects should be included.
+  N.B.: this flag is all that needs to be set if the lattice contains no kick elements.
+  However, if the lattice contains \verb|CSBEND|, \verb|CSRCSBEND|, \verb|KQUAD|, 
+  \verb|KSEXT|, or other elements with \verb|SYNCH_RAD| and \verb|ISR| parameters, then the \verb|SYNCH_RAD| and\verb|ISR| must be set to 1 for
+  those elements as well.
+\item \verb|equilibrium| --- A flag indicating, if non-zero, that the equilibrium moments should be found. 
+  Setting this is only of interest for storage rings and usually one wants \verb|radiation=1| at the same time.
 \item \verb|force_e1_gt_e2| --- Sometimes the two transverse modes are misidentified, leading to $e_1 < e_2$. If set, this
   flag exchanges the two modes to force $e_1>e_2$.
-\item \verb|radiation| --- A flag indicating, if set, that synchrotron radiation effects should be included.
-  N.B.: this flag is all that needs to be set if the lattice contains no kick elements. However, if the lattice contains \verb|CSBEND|, \verb|CSRCSBEND|, \verb|KQUAD|, 
-  or \verb|KQUAD| elements (or other elements with \verb|SYNCH_RAD| and \verb|ISR| parameters), then the \verb|SYNCH_RAD| and\verb|ISR| must be set to 1 as well.
 \item \verb|ibs_iterations|, \verb|ibs_output_iterations|, \verb|ibs_iteration_fraction|, \verb|ibs_coulomb_log| ---
   If \verb|ibs_iterations| is non-zero, intrabeam scattering computations will be performed using the diffusion matrix \cite{KuboOide}.
   Because IBS depends on the beam dimensions, the computation is iterative. A suggested minimum value of \verb|ibs_iterations| is
@@ -5371,7 +5395,7 @@ run that starts from the optimized result.
 
 \begin{itemize}
 
-\item \verb|summarize_setup| --- A flag indicating, if set, that a
+\item \verb|summarize_setup| --- A flag indicating, if non-zero, that a
 summary of the optimization parameters should be printed.
 \end{itemize}
 
@@ -5524,6 +5548,24 @@ monitors with {\tt CO\_FITPOINT=1} may be used via symbols of the form
 documentation for the {\tt MARK}, {\tt MONI}, {\tt HMON}, and {\tt
 VMON} elements for detailed discussion and listing.
 
+If a MARK element has {\tt FITPOINT=1} and {\tt COUPLED\_FITPOINT=1}, the
+coupled (eigen-)emittances and coupled lattice functions of the tracked beam
+(the $\Sigma\cdot J$ / Wolski analysis of the beam matrix, as in {\tt
+sddsanalyzebeam -coupled} and the {\tt run\_setup} {\tt coupled\_sigma}
+output \cite{Wolski-PRSTAB9-024001}) are made available as additional
+symbols.  For each of the three modes $m=1,2,3$ these are
+\verb|e|$m$\verb|Beam| and \verb|en|$m$\verb|Beam| (geometric and normalized
+eigen-emittance), \verb|betax|$m$\verb|Beam|, \verb|betay|$m$\verb|Beam|,
+\verb|betaz|$m$\verb|Beam|, \verb|alphax|$m$\verb|Beam|,
+\verb|alphay|$m$\verb|Beam|, \verb|alphaz|$m$\verb|Beam|,
+\verb|gammax|$m$\verb|Beam|, \verb|gammay|$m$\verb|Beam|,
+\verb|gammaz|$m$\verb|Beam|, and the cross-plane coupling terms
+\verb|A_xy_|$m$\verb|Beam|, \verb|A_xpy_|$m$\verb|Beam|,
+\verb|A_xyp_|$m$\verb|Beam|, and \verb|A_xpyp_|$m$\verb|Beam|.  The \verb|Beam|
+suffix distinguishes these tracked-beam quantities from the like-named
+lattice-based coupled Twiss parameters supplied by the \verb|coupled_twiss|
+command.
+
 If response matrix calculation is requested, response matrix values
 are available in variables with names {\em Plane}{\tt R\_}{\em
 bpmName}\verb|#|{\em occurence}{\tt \_}{\em corrName}\verb|#|{\em occurence}{\tt
@@ -5644,7 +5686,7 @@ whether it has converged or not.
 
 \item \verb|center_momentum_also| --- A flag indicating whether to center the momentum coordinate also.
 
-\item \verb|soft_failure| --- A flag indicating, if set, that failure of an optimization pass should not
+\item \verb|soft_failure| --- A flag indicating, if non-zero, that failure of an optimization pass should not
 result in termination of the optimization.
 
 \item \verb|n_evaluations| --- The number of allowed evaluations of
@@ -5680,11 +5722,13 @@ factor at the beginning of a restart.
 
 \item \verb|matrix_order| --- Specifies the highest order of matrix elements that
 should be available for fitting.  Elements up to third order are available for
-the terminal point of the beamline, and up to secod order for interior fit points.
+the terminal point of the beamline, and up to second order for interior fit points.
 Names for first-, second-, and third-order elements are of the form
 {\tt R}{\em ij}, {\tt T}{\em ijk}, and {\tt U}{\em ijkl}.
 \item \verb|log_file| --- A file to which progress reports will be written as optimization proceeds.
 For SDDS data, use the \verb|final| output file from the \verb|run_setup| namelist.
+If \verb|matrix_order=0|, no matrices are computed, which can dramatically speed up optimization for
+cases when the matrix must be computed by tracking.
 
 \item \verb|term_log_file| --- This names a file to which the
   values of the optimization terms are written at the completion of optimization, which can be convenient when large numbers
@@ -6421,6 +6465,7 @@ a different run.
 &run_control
     long n_steps = 1;
     double bunch_frequency = 0;
+    double step_frequency = 0;
     long n_indices = 0;
     long n_passes = 1;
     long n_passes_fiducial = 0;
@@ -6437,8 +6482,14 @@ a different run.
 \begin{itemize}
 \item \verb|n_steps| --- The number of separate repetitions of the action implied by the next action command.
 If random errors are defined, this is also the number of separate error ensembles.
-\item \verb|bunch_frequency| --- The frequency to use in calculating the time delay between repetitions.
-\item \verb|n_indices| --- The number of looping indices for which to expect definitions in subsequent \verb|vary_element| commands.  If nonzero, then \verb|n_steps| is ignored.
+\item \verb|bunch_frequency|, \verb|step_frequency| --- The frequency to use in calculating the time delay between repetitions.
+  These parameters work in similar ways, with an important difference: with \verb|bunch_frequency|, the delay is added to the particle
+  coordinates when the beam is generated or loaded. With \verb|step_frequency|, the delay is added to an external register and included
+  only in computations related to slow time variation, e.g., cavity mode damping (\verb|RFMODE|, \verb|TRFMODE|, \verb|FRFMODE|, \verb|FTRFMODE|),
+  ramping (\verb|RAMPP|, \verb|RAMPRF|), or time-dependent kickers (\verb|BUMPER|). In both cases, the added time delay is $(s-1)/f$, where
+  $s=1,...$ is the step and $f$ is the frequency.
+\item \verb|n_indices| --- The number of looping indices for which to expect definitions in subsequent
+  \verb|vary_element| commands.  If nonzero, then \verb|n_steps| is ignored.
 \item \verb|n_passes| --- The number of passes to make through the beamline per repetition.
 \item \verb|n_passes_fiducial| --- The number of passes to make through the beamline per repetition for the fiducial beam. If non-positive, use \verb|n_passes|.
   For ring tracking, should probably always be set to 1.
@@ -6494,6 +6545,7 @@ in \verb|run_setup|.
     long suppress_parameter_defaults = 0;
     STRING rfc_reference_output = NULL;
     long combine_bunch_statistics = 0;
+    long coupled_sigma = 0;
     long wrap_around = 1;
     long final_pass = 0;
     long default_order = 2;
@@ -6536,6 +6588,18 @@ only as a function of s will be written.   Recommended value: ``\%s.bpmcen''.
 which the beam sigma matrix as a function of z will be written.
 Recommended value: ``\%s.sig''.  N.B.: confusion sometimes occurs about some of the quantities related to
 the {\tt s} coordinate in this file.  Please see Section \ref{sec:longitCoord} above.
+\item \verb|coupled_sigma| --- If nonzero, the coupled (eigen-)emittances and coupled
+lattice functions of the full 6$\times$6 beam matrix are computed at each element (using the
+$\Sigma\cdot J$ eigen-analysis of A. Wolski \cite{Wolski-PRSTAB9-024001}) and appended to the
+\verb|sigma| output file.  For each of the three modes $m=1,2,3$ (ordered so that mode~1 is
+$x$-dominated, mode~2 $y$-dominated, and mode~3 longitudinal-dominated), the columns
+\verb|e|$m$, \verb|en|$m$ (eigen-emittance and normalized eigen-emittance), the per-plane Twiss
+functions \verb|betax|$m$, \verb|betay|$m$, \verb|betaz|$m$, \verb|alphax|$m$, \verb|alphay|$m$,
+\verb|alphaz|$m$, \verb|gammax|$m$, \verb|gammay|$m$, \verb|gammaz|$m$, and the $x$-$y$ cross-plane
+coupling terms \verb|A_xy_|$m$, \verb|A_xpy_|$m$, \verb|A_xyp_|$m$, \verb|A_xpyp_|$m$ are written.
+These use the same conventions and column names as the \verb|-coupled| output of
+\verb|sddsanalyzebeam|.  The longitudinal plane uses $s$ in meters (see Section
+\ref{sec:longitCoord}); default is 0 (off), leaving the file format unchanged.
 \item \verb|final| --- The (incomplete) name of an SDDS file into
 which final beam and transport parameters will be written. Recommended
 value: ``\%s.fin''.   N.B.: confusion sometimes occurs about some of the quantities related to
@@ -6808,7 +6872,7 @@ steps is limited to the number of bunches (e.g., the number of pages in the file
 accelerator is set to zero.
 \item \verb|sample_fraction| --- If non-unity, the randomly selected fraction of the distribution to use.
 \item \verb|p_lower|, \verb|p_upper| --- If different, the lower and upper limit on ${\rm \beta\gamma}$ of particles to use.
-\item \verb|save_initial_coordinates| --- A flag that, if set, results in saving initial coordinates
+\item \verb|save_initial_coordinates| --- A flag that, if non-zero, results in saving initial coordinates
 of tracked particles in memory.  This is the default behavior.  If unset, the initial coordinates
 are not saved, but are reread from disk each time they are needed.  This is more memory efficient
 and is useful for tracking very large numbers of particles.
@@ -7408,7 +7472,7 @@ I.e., one wants the maximum stable region for momentum and position deviations w
 \begin{itemize}
 \item \verb|filename| --- The (incomplete) name of an SDDS file to which the Twiss parameters will be written.
  Recommended value: ``\%s.twi''.
-\item \verb|matched| --- A flag indicating, if set, that the periodic or matched Twiss parameters should be found.
+\item \verb|matched| --- A flag indicating, if non-zero, that the periodic or matched Twiss parameters should be found.
   If zero, calculations are performed in transport line mode starting from the given initial values of \verb|betax|, \verb|alphax|,
   etc. 
   As a special case, if \verb|matched=-1| the solution is for a half periodic cell, with mirror symmetry; this will probably
@@ -7416,15 +7480,15 @@ I.e., one wants the maximum stable region for momentum and position deviations w
 
   N.B.: This may give different values for the chromaticity even if the initial values are identical to those for a periodic solution.
   The reason has to do with different assumptions about the initial conditions for particles in a transport line vs a ring.
-\item \verb|output_at_each_step| --- A flag indicating, if set, that output is desired at each step of the simulation.
+\item \verb|output_at_each_step| --- A flag indicating, if non-zero, that output is desired at each step of the simulation.
   If you wish to compute Twiss parameters on a closed orbit or after other calculations, be sure to set this control to a nonzero value.
-\item \verb|output_before_tune_correction| --- A flag indicating, if set, that output is desired both before and after
+\item \verb|output_before_tune_correction| --- A flag indicating, if non-zero, that output is desired both before and after
 tune correction.
-\item \verb|final_values_only| --- A flag indicating, if set, that only the final values of the Twiss parameters should
+\item \verb|final_values_only| --- A flag indicating, if non-zero, that only the final values of the Twiss parameters should
 be output, and not the parameters as a function of s.
-\item \verb|statistics| --- A flag indicating, if set, that minimum, maximum, and average values of
+\item \verb|statistics| --- A flag indicating, if non-zero, that minimum, maximum, and average values of
 Twiss parameters should be computed and included in output.
-\item \verb|radiation_integrals| --- A flag indicating, if set, that radiation integrals should be computed
+\item \verb|radiation_integrals| --- A flag indicating, if non-zero, that radiation integrals should be computed
 and included in output. {\em N.B.: Radiation integral computation is not correct for systems with vertical
 bending, nor does it take into account coupling.  See the \verb|moments_output| command if you need such
 computations.}
@@ -8105,9 +8169,11 @@ up-to-date than these manual pages.
 \item {\tt computeCoherentFraction} --- Computes the coherent fraction for undulator radiation.
 \item {\tt computeCBGGE} --- Computes generalized gradients from data on a circular cylinder
   for use with the \verb|BGGEXP| element. 
-\item {\tt computeGeneralizedGradients} --- Deprecated.  Use \verb|computeCBGGE|.
+\item {\tt computeLBGGE} --- Computes generalized gradients from data on a rectangular grid
+  for use with the \verb|BGGEXP| element, using the method of D. Sagan {\em et al.} \cite{sagan:ipac23-wepl015}.
 \item {\tt computeRBGGE} --- Computes generalized gradients from data on a rectangular boundary 
-  for use with the \verb|BGGEXP| element.
+  for use with the \verb|BGGEXP| element. \verb|computeLBGGE| provides better results and is recommended instead
+  when a full three-dimensional field maps is available.
 \item {\tt computeSCTuneSpread} --- Compute space charge tune spread.
 \item {\tt coreEmittance} --- Computes the slice emittance for the beam core (e.g., 80\% of the beam).
   (Program by X. Dong.)
@@ -8446,13 +8512,94 @@ computeCBGGE -input=<filename>[,z=<colName>][,phi=<colName>][,Brho=<colName>][,B
 
 %\begin{latexonly}
 \newpage
+\begin{center}{\Large\verb|computeLBGGE|}\end{center}
+%\end{latexonly}
+\subsection{computeLBGGE\label{computeLBGGE}}
+
+\begin{itemize}
+\item {\bf description:} Compute generalized gradients \cite{Venturini-NIMA427-387} from a three-dimensional field map
+  using the local least-squares (``Bmad'') method of D. Sagan {\em et al.} \cite{sagan:ipac23-wepl015}, for use with
+  {\tt elegant}'s \verb|BGGEXP| element. Unlike \verb|computeRBGGE|, which reconstructs the generalized gradients from
+  field data on four rectangular boundary planes, \verb|computeLBGGE| performs an independent weighted least-squares fit
+  at each $z$ plane using field samples drawn from the surrounding volume within a short $z$ window. It is slower than
+  \verb|computeRBGGE| but typically provides considerably more accurate fits, and is recommended instead when a full
+  three-dimensional field map is available. The output files are in the same format as those from \verb|computeRBGGE|
+  and \verb|computeCBGGE|.
+
+\item {\bf synopsis:}
+\begin{flushleft}{\tt
+computeLBGGE -fieldMap=<filename> -normal=<output> [-skew=<output>]
+   [-derivatives=<integer>] [-multipoles=<integer>] [-fundamental=<integer>]
+   [-varyDerivatives] [-deltaZ=<meters>] [-coreWeight=<value>]
+   [-xMax=<meters>] [-yMax=<meters>] [-xCenter=<meters>] [-yCenter=<meters>]
+   [-threads=<integer>] [-verbose]
+   [-autotune[,significance=<fieldValue>][,minimize=\{rms|mav|maximum\}]
+             [,radiusLimit=<meters>][,xLimit=<meters>][,yLimit=<meters>]
+             [,increaseOnly][,evaluate][,verbose][,log=<filename>]
+             [,minDerivatives=<integer>][,minMultipoles=<integer>]]
+   [-evaluate=<filename>]
+}\end{flushleft}
+
+\item {\bf switches:}
+\begin{itemize}
+\item {\tt fieldMap} --- SDDS file containing the three-dimensional field map, with columns \verb|x|, \verb|y|,
+  \verb|z| (in meters) and \verb|Bx|, \verb|By|, \verb|Bz| (in Tesla). The distinct \verb|z| values in the map
+  define the output $z$ planes and must be uniformly spaced.
+\item {\tt normal} ---  Output file for normal-component generalized gradients. Supply to \verb|NORMAL_FILENAME|
+  parameter of \verb|BGGEXP|.
+\item {\tt skew} ---  Output file for skew-component generalized gradients. Supply to \verb|SKEW_FILENAME|
+  parameter of \verb|BGGEXP|. NB: if $B_z$ is non-zero on axis, this option is essential in getting
+  valid results.
+\item {\tt derivatives} --- Number of derivatives vs z desired in output. Default: 7. With \verb|-autotune|,
+  this is the maximum number of derivatives.
+\item {\tt multipoles} ---  Number of multipoles desired in output. Default: 8. With \verb|-autotune|,
+  this is the maximum number of multipoles.
+\item {\tt fundamental} --- Fundamental multipole of sequence. 0=none (default), 1=dipole, 2=quadrupole, etc.
+\item {\tt varyDerivatives} --- If given, the number of derivatives used varies with multipole order so as to
+  maintain an approximately consistent maximum transverse order.
+\item {\tt deltaZ} --- Half-width (in meters) of the $z$ window used for each local fit. By default, twice the
+  $z$-plane spacing, giving a five-plane window in the interior.
+\item {\tt coreWeight} --- Core weighting factor $w_c\ge 1$; larger values up-weight near-axis samples in the
+  fit. Default: 1 (uniform weighting).
+\item {\tt xMax}, {\tt yMax} --- Half-aperture of the expansion, in meters. Default: the transverse extent of
+  the field map.
+\item {\tt xCenter}, {\tt yCenter} --- Center of the expansion, in meters. Default: the midpoint of the field
+  map's transverse extent.
+\item {\tt threads} --- Number of threads to use for the per-plane fits. Default: 1.
+\item {\tt verbose} --- Print progress information.
+\item {\tt evaluate} --- Asks to evaluate the GGE and write the reconstructed field, together with the residual
+  relative to the field map, at each in-aperture sample point.
+\item {\tt autotune} --- Optimizes the number of derivatives and multipoles up to the values given with the
+  \verb|-derivatives| and \verb|-multipoles| options, in order to minimize the deviation of the GGE-derived
+  fields from the values given in the field map. Because this is a least-squares method, the fit is repeated
+  for each candidate model. The three-dimensional map used for the goodness-of-fit test is simply the
+  \verb|-fieldMap| already supplied, so no map filename is given here. By default, minimizes the maximum
+  deviation, but the user can ask to minimize the rms or mean-absolute-value deviation. Differences below the
+  \verb|significance| value are ignored. The \verb|xLimit|, \verb|yLimit|, and \verb|radiusLimit| qualifiers
+  restrict the goodness-of-fit test to samples near the axis, measured from the expansion center. The user may
+  request verbose output to see results printed to the terminal, and also a log file for a detailed record.
+  The \verb|increaseOnly| qualifier specifies that the scan over multipoles $m$ and derivatives $d$ is
+  restricted to never be less than the previous optimal values; for example, if the best value so far was
+  obtained with $m=4$ and $d=3$, the remainder of the scan would be restricted to $m\ge 4$ and $d\ge 3$; this
+  can save considerable run time. The \verb|evaluate| qualifier disables tuning and simply reports the residual
+  at the maximum model. The \verb|minDerivatives| and \verb|minMultipoles| parameters allow requiring the
+  auto-tuner to use a minimum number of derivatives and multipoles, respectively; by default, as few as 1 of
+  each might be used.
+\end{itemize}
+
+\item {\bf authors:} Claude Code, M. Borland, R. Soliday, R. Lindberg (ANL/APS); local least-squares method by D. Sagan {\em et al.}
+\end{itemize}
+
+%\begin{latexonly}
+\newpage
 \begin{center}{\Large\verb|computeRBGGE|}\end{center}
 %\end{latexonly}
 \subsection{computeRBGGE\label{computeRBGGE}}
 
 \begin{itemize}
 \item {\bf description:}  Compute generalized gradients \cite{Venturini-NIMA427-387} from data on a rectangular
-boundary \cite{Mitchell-2007} for use with {\tt elegant}'s \verb|BGGEXP| element.
+  boundary \cite{Mitchell-2007} for use with {\tt elegant}'s \verb|BGGEXP| element. When a full three-dimensional
+  field map is available, it is better to use \verb|computeLBGGE|, which produces significantly better fits to the field map.
 
 \item {\bf synopsis:}
 \begin{flushleft}{\tt
@@ -8924,7 +9071,7 @@ sddsanalyzebeam run.out run.analysis
 \item {\bf synopsis:}
 \begin{flushleft}{\tt
 sddsanalyzebeam [-pipe=[input][,output]] [{\em inputfile}] [{\em outputfile}]
-[-nowarnings] [-correctedOnly] [-canonical]
+[-nowarnings] [-correctedOnly] [-canonical] [-coupled]
 }\end{flushleft}
 
 \item {\bf files:}
@@ -8956,8 +9103,21 @@ computed but given names like \verb|betacx|, \verb|ecx|, etc. whereas the uncorr
 \verb|betax|, \verb|ex|, etc. The corrected parameters are the correct ones to match a beamline to, since they have the
  dispersive and mono-energetic terms properly separated.  The uncorrected values are more relevant if the dispersion
 is spurious (i.e., uncorrected or due to something like CSR that doesn't admit of correction).
-\item {\tt -canonical} --- If given, all computations are performed using canonical momenta 
+\item {\tt -canonical} --- If given, all computations are performed using canonical momenta
   $q_x = p_x/p_0 = x^\prime (1 + \delta)/\sqrt{1 + x^{\prime 2} + y^{\prime 2}}$ etc.
+\item {\tt -coupled} --- If given, a fully coupled analysis of the beam is performed and additional
+  columns giving the coupled (eigen-)emittances and coupled lattice functions are written to the
+  output file.  The analysis is a $6\times6$ eigen-analysis of the beam (sigma) matrix itself: the
+  eigenvalues of $\Sigma J$ (with $J$ the block-diagonal symplectic form on the
+  $(x,x^\prime)$, $(y,y^\prime)$, and $(s,\delta)$ pairs) are $\pm i\,\epsilon_k$, where the three
+  invariant eigen-emittances $\epsilon_1,\epsilon_2,\epsilon_3$ reduce to the ordinary $x$, $y$, and
+  longitudinal emittances when the planes are uncoupled \cite{Wolski-PRSTAB9-024001}.  The
+  longitudinal coordinate is taken as $s = \beta c t$ (m), and the per-mode lattice functions
+  ($\beta_{x,k}$, $\alpha_{x,k}$, $\gamma_{x,k}$, the vertical and longitudinal analogs, and the
+  $x$--$y$ cross terms) follow the same conventions as {\tt elegant}'s {\tt coupled\_twiss\_output}
+  command (Section~\ref{subsec:coupledtwissoutput}), so the results are directly comparable to the
+  eigen-emittances $\epsilon_1,\epsilon_2,\epsilon_3$ reported by {\tt moments\_output}
+  (Section~\ref{subsec:momentsoutput}).  
 \end{itemize}
 
 \item {\bf author:} M. Borland, ANL/APS.
@@ -11165,8 +11325,6 @@ Here is a summary of what's changed since release 2021.4.  Historical change log
   system and are collected in the summary at the end of the run.
 \item The type of the \verb|particleID| field in beam output files was changed from \verb|long| (typically
   a 32-bit signed integer) to \verb|ulong64| (a 64-bit signed integer). Internally, only 52 bits are used.
-  This is a step toward increasing the number of particles that can be tracked, which is presently limited
-  to $2^{31}$.
 \end{itemize}
 
 \subsubsection{Changes Specific to the MPI Parallel Version}
