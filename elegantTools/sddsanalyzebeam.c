@@ -17,19 +17,21 @@
 #include "mdb.h"
 #include "scan.h"
 #include "SDDS.h"
+#include "oagphy.h" /* COUPLED_RESULTS, ComputeCoupledParameters() */
 
 #define SET_PIPE 0
 #define SET_NOWARNINGS 1
 #define SET_CORRECTED_ONLY 2
 #define SET_GENERATE 3
 #define SET_CANONICAL 4
-#define N_OPTIONS 5
+#define SET_COUPLED 5
+#define N_OPTIONS 6
 
 char *option[N_OPTIONS] = {
-  "pipe", "nowarnings", "correctedonly", "generate", "canonical"};
+  "pipe", "nowarnings", "correctedonly", "generate", "canonical", "coupled"};
 
 char *USAGE = "sddsanalyzebeam [-pipe=[input][,output]] [<SDDSinputfile>] [<SDDSoutputfile>]\n\
-  [-nowarnings] [-correctedOnly] [-canonical] [-generate=<outputFile>,<particles>,<cutoff>]\n\
+  [-nowarnings] [-correctedOnly] [-canonical] [-coupled] [-generate=<outputFile>,<particles>,<cutoff>]\n\
 Computes Twiss parameters and other properties of a particle beam.\n\
 The input file must have columns x, xp, y, yp, t, and p; for example, an elegant\n\
 beam output file is acceptable.\nIf -correctedOnly is given, then only the\n\
@@ -37,11 +39,18 @@ beam output file is acceptable.\nIf -correctedOnly is given, then only the\n\
 Use this if you plan to use the output as input to the twiss_output command in\n\
 elegant.\n\
 If -canonical is given, all computations are performed for canonical variables.\n\
+If -coupled is given, the coupled (eigen-)emittances and coupled lattice functions\n\
+of the full 6x6 beam matrix are computed and saved.  The longitudinal coordinate is\n\
+taken as s=beta*c*t (m) so the eigen-emittances match elegant's moments_output.\n\
 If -generate is given, a new gaussian distribution with the specified number of\n\
 particles is generated based on the analysis.\n\n\
 Program by Michael Borland.  (This is version 4, August 2008.)\n";
 
-long SetUpOutputFile(SDDS_DATASET *SDDSout, char *outputfile, long correctedOnly, long canonical, SDDS_DATASET *SDDSin);
+/* COUPLED_RESULTS and ComputeCoupledParameters() now live in the oagphy library
+   (physics/coupledBeamAnalysis.c, declared in oagphy.h) so that elegant itself can
+   use the same coupled (eigen-)emittance analysis for beam distributions. */
+
+long SetUpOutputFile(SDDS_DATASET *SDDSout, char *outputfile, long correctedOnly, long canonical, long coupled, SDDS_DATASET *SDDSin);
 long check_sdds_beam_column(SDDS_TABLE *SDDS_table, char *name, char *units);
 long SetUpGenerateFile(SDDS_DATASET *SDDSgen, char *generateFile);
 void GenerateAndDumpParticles(SDDS_DATASET *SDDSgen, double C[6], double S[6][6], double pAve,
@@ -68,8 +77,9 @@ int main(int argc, char **argv) {
   double S[6][6], C[6], beta[3], alpha[3], eta[4], emit[3], emitcor[3], beamsize[6];
   double betacor[3], alphacor[3];
   double *data[6], Sbeta[6][6];
-  long tmpFileUsed, correctedOnly, canonical = 0;
+  long tmpFileUsed, correctedOnly, canonical = 0, coupled = 0;
   double cutoff = 3;
+  COUPLED_RESULTS coupledResults;
 
   SDDS_RegisterProgramName(argv[0]);
   argc = scanargs(&s_arg, argc, argv);
@@ -103,6 +113,9 @@ int main(int argc, char **argv) {
       case SET_CANONICAL:
         canonical = 1;
         break;
+      case SET_COUPLED:
+        coupled = 1;
+        break;
       default:
         fprintf(stdout, "error: unknown switch: %s\n", s_arg[i_arg].list[0]);
         fflush(stdout);
@@ -118,6 +131,11 @@ int main(int argc, char **argv) {
         SDDS_Bomb("too many filenames");
     }
   }
+
+#ifndef USE_GSL
+  if (coupled)
+    SDDS_Bomb("-coupled requires that sddsanalyzebeam be compiled with GSL support");
+#endif
 
   processFilenames("sddsanalyzebeam", &inputfile, &outputfile, pipeFlags, noWarnings, &tmpFileUsed);
   if (tmpFileUsed)
@@ -140,7 +158,7 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
-  if (!SetUpOutputFile(&SDDSout, outputfile, correctedOnly, canonical, &SDDSin) ||
+  if (!SetUpOutputFile(&SDDSout, outputfile, correctedOnly, canonical, coupled, &SDDSin) ||
       !SDDS_SetParameters(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                           "canonical", canonical, NULL))
     SDDS_Bomb("problem setting up output file");
@@ -160,6 +178,7 @@ int main(int argc, char **argv) {
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     for (i = 0; i < 3; i++)
       beta[i] = alpha[i] = emit[i] = emitcor[i] = eta[i] = eta[i + 1] = betacor[i] = alphacor[i] = 0;
+    memset(&coupledResults, 0, sizeof(coupledResults));
     for (i = 0; i < 6; i++) {
       for (j = C[i] = beamsize[i] = 0; j <= i; j++)
         S[i][j] = 0;
@@ -254,6 +273,12 @@ int main(int argc, char **argv) {
         } else
           emitcor[i] = 0;
       }
+      if (coupled && transverseData) {
+        /* Analyze in moments_output coordinates: convert the longitudinal
+           coordinate from t (s) to s=beta*c*t (m) using the beam-average beta. */
+        double beta0 = pAve / sqrt(pAve * pAve + 1);
+        ComputeCoupledParameters(&coupledResults, S, beta0 * c_mks);
+      }
     }
     /* set centroids and sigmas */
     for (i = 0; i < 6; i++) {
@@ -310,6 +335,49 @@ int main(int argc, char **argv) {
       }
     }
 
+    /* set coupled (eigen-)emittances and coupled lattice functions (three modes) */
+    if (coupled) {
+      long ok = 1, mode;
+      char cn[32];
+      for (mode = 0; mode < 3; mode++) {
+        long m1 = mode + 1;
+        sprintf(cn, "e%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.emit[mode], NULL);
+        sprintf(cn, "en%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.emit[mode] * pAve, NULL);
+        sprintf(cn, "betax%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.betax[mode], NULL);
+        sprintf(cn, "betay%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.betay[mode], NULL);
+        sprintf(cn, "betaz%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.betaz[mode], NULL);
+        sprintf(cn, "alphax%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.alphax[mode], NULL);
+        sprintf(cn, "alphay%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.alphay[mode], NULL);
+        sprintf(cn, "alphaz%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.alphaz[mode], NULL);
+        sprintf(cn, "gammax%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.gammax[mode], NULL);
+        sprintf(cn, "gammay%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.gammay[mode], NULL);
+        sprintf(cn, "gammaz%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.gammaz[mode], NULL);
+        sprintf(cn, "A_xy_%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.A_xy[mode], NULL);
+        sprintf(cn, "A_xpy_%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.A_xpy[mode], NULL);
+        sprintf(cn, "A_xyp_%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.A_xyp[mode], NULL);
+        sprintf(cn, "A_xpyp_%ld", m1);
+        ok &= SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, row, cn, coupledResults.A_xpyp[mode], NULL);
+      }
+      if (!ok) {
+        SDDS_SetError("Problem setting coupled values");
+        SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+      }
+    }
+
     /* copy parameters from the input file to columns in the output file */
     for (i = 0; i < pColumns; i++) {
       long buffer[16];
@@ -335,7 +403,7 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-long SetUpOutputFile(SDDS_DATASET *SDDSout, char *outputfile, long correctedOnly, long canonical, SDDS_DATASET *SDDSin) {
+long SetUpOutputFile(SDDS_DATASET *SDDSout, char *outputfile, long correctedOnly, long canonical, long coupled, SDDS_DATASET *SDDSin) {
   char units[128], name[128];
   char *ppUnits[6] = {"m", 0, "m", 0, "s", 0};
   long i, j;
@@ -375,6 +443,63 @@ long SetUpOutputFile(SDDS_DATASET *SDDSout, char *outputfile, long correctedOnly
        SDDS_DefineColumn(SDDSout, "betacy", "$gb$r$bcy$n", "m", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
        SDDS_DefineColumn(SDDSout, "alphacy", "$ga$r$bcy$n", NULL, NULL, NULL, SDDS_DOUBLE, 0) < 0)) {
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  }
+  if (coupled) {
+    /* Three-mode 6x6 coupled results.  Per mode m=1,2,3: eigen-emittance e{m}
+       (and normalized en{m}), per-plane Twiss for x, y, and longitudinal (z=s,delta),
+       and the x-y cross-plane coupling terms.  Longitudinal beta is in m, gamma in
+       1/m, matching the transverse conventions (s is in m). */
+    char sym[128];
+    long ok = 1;
+    for (i = 1; i <= 3; i++) {
+      sprintf(name, "e%ld", i);
+      sprintf(sym, "$ge$r$b%ld$n", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, sym, "m", NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "en%ld", i);
+      sprintf(sym, "$ge$r$bn%ld$n", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, sym, "m", NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+    }
+    for (i = 1; i <= 3; i++) {
+      sprintf(name, "betax%ld", i);
+      sprintf(sym, "$gb$r$bx,%ld$n", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, sym, "m", NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "betay%ld", i);
+      sprintf(sym, "$gb$r$by,%ld$n", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, sym, "m", NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "betaz%ld", i);
+      sprintf(sym, "$gb$r$bs,%ld$n", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, sym, "m", NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "alphax%ld", i);
+      sprintf(sym, "$ga$r$bx,%ld$n", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, sym, NULL, NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "alphay%ld", i);
+      sprintf(sym, "$ga$r$by,%ld$n", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, sym, NULL, NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "alphaz%ld", i);
+      sprintf(sym, "$ga$r$bs,%ld$n", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, sym, NULL, NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "gammax%ld", i);
+      sprintf(sym, "$gg$r$bx,%ld$n", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, sym, "1/m", NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "gammay%ld", i);
+      sprintf(sym, "$gg$r$by,%ld$n", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, sym, "1/m", NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "gammaz%ld", i);
+      sprintf(sym, "$gg$r$bs,%ld$n", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, sym, "1/m", NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+    }
+    for (i = 1; i <= 3; i++) {
+      sprintf(name, "A_xy_%ld", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, NULL, "m", NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "A_xpy_%ld", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, NULL, NULL, NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "A_xyp_%ld", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, NULL, NULL, NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+      sprintf(name, "A_xpyp_%ld", i);
+      ok &= SDDS_DefineColumn(SDDSout, name, NULL, "1/m", NULL, NULL, SDDS_DOUBLE, 0) >= 0;
+    }
+    if (!ok)
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
   }
   for (i = 0; i < 6; i++) {
     sprintf(name, "C%s", canonical == 0 ? psName[i] : qsName[i]);
@@ -588,3 +713,4 @@ void TransformToCanonicalMomenta(double **data, long np, double pAve) {
     }
   }
 }
+
