@@ -35,7 +35,7 @@ char *option[N_OPTIONS] = {
 
 char *USAGE1 = "elasticScatteringAnalysis <SDDSinputfile> <outputRootname>\n\
   [-twiss=<filename>] [-pressure=<filename>[,periodic]]\n\
-  [-storedCharge=<Coulombs>] [-verbose]\n\n\
+  [-storedCharge=<nanoCoulombs>] [-verbose]\n\n\
 The input file should be created by the &elastic_scattering command in Pelegant.\n\
 Three output files are created with different extensions:\n\
  + .sdds : out-scattering rate and other quantities as a function of scattering location s.\n\
