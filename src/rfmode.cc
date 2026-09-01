@@ -814,12 +814,19 @@ void track_through_rfmode(
         fflush(stdout);
       }
 #  endif
-      if (isSlave || !distributedBeam) {
-        long *buffer;
-        buffer = (long *)calloc(lastBin - firstBin + 1, sizeof(long));
-        MPI_Allreduce(&Ihist[firstBin], buffer, lastBin - firstBin + 1, MPI_LONG, MPI_SUM, workers);
-        memcpy(Ihist + firstBin, buffer, sizeof(long) * (lastBin - firstBin + 1));
-        free(buffer);
+      if (distributedBeam) {
+        /* Sum the per-worker histograms.  Only slaves are in the "workers" communicator;
+         * "workers" is MPI_COMM_NULL on the master, so it must never call this collective.
+         * When the beam is NOT distributed (e.g. fewer particles than workers, so every rank
+         * tracks the full beam), each rank already holds the complete histogram and no
+         * cross-worker sum is needed. */
+        if (isSlave) {
+          long *buffer;
+          buffer = (long *)calloc(lastBin - firstBin + 1, sizeof(long));
+          MPI_Allreduce(&Ihist[firstBin], buffer, lastBin - firstBin + 1, MPI_LONG, MPI_SUM, workers);
+          memcpy(Ihist + firstBin, buffer, sizeof(long) * (lastBin - firstBin + 1));
+          free(buffer);
+        }
       }
 #  ifdef DEBUG
       printf("Summed histogram across processors\n");
