@@ -2602,7 +2602,7 @@ char *translateUnitsToTex(char *source);
 char *makeTexSafeString(char *source, long checkMath);
 
 void print_dictionary_entry(FILE *fp, long type, long latex_form, long SDDS_form) {
-  char *type_name[4] = {"double", "long", "STRING", "short"};
+  char *type_name[5] = {"double", "long", "STRING", "short", "int64"};
   char *description;
   long j, texLines, specialEntry, xyWaveforms;
   char buffer[16384];

@@ -1,9 +1,10 @@
+ELEGANT ?= elegant
 
 all:: elegant.ps elegant.pdf overview.ps overview.pdf Pelegant.ps Pelegant.pdf elegantOverview.pdf html
 
 elegant.ps:
 	rm -f elegant.aux elegant.dvi elegant.log elegant.toc dictionary.tex
-	elegant print_dict.ele
+	$(ELEGANT) print_dict.ele
 	examples/collectDescriptions 
 	latex elegant
 	bibtex elegant
@@ -45,7 +46,7 @@ elegantOverview.pdf: elegantOverview.tex references.bib
 
 html:
 	mkdir -p elegant
-	elegant print_dict.ele
+	$(ELEGANT) print_dict.ele
 	htlatex elegant "html,3" "" "-delegant/"
 	bibtex elegant
 	htlatex elegant "html,3" "" "-delegant/"
