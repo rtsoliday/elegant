@@ -60,6 +60,7 @@ void track_CBScat(double **part, int64_t np, double Po, CBSCAT *cb, long iPass, 
   int64_t ip;
   TRACKING_CONTEXT tc;
   static long muWarnings = 0;
+  static long noPhotonWarnings = 0;
 
   /* pass gating (same convention as SCATTER).  These tests depend only on
      parameters and the pass number, which are identical on every processor, so
@@ -68,6 +69,8 @@ void track_CBScat(double **part, int64_t np, double Po, CBSCAT *cb, long iPass, 
      Pelegant every active (slave) rank must reach computeAverage_p() so the
      inter-slave reduction does not deadlock, even if this rank holds no
      particles. */
+  if (cb->passInterval < 1)
+    bombElegant("CBSCAT: PASS_INTERVAL must be >= 1", NULL);
   if (iPass < cb->startOnPass)
     return;
   if (cb->endOnPass >= 0 && iPass > cb->endOnPass)
@@ -101,11 +104,24 @@ void track_CBScat(double **part, int64_t np, double Po, CBSCAT *cb, long iPass, 
      values.  This gives the correct per-electron Compton kinematics for a beam
      with finite energy spread. */
 
+  /* Reject unphysical rate parameters.  Either photon source may legitimately be
+     zero (N_PHOTONS=0 selects the PULSE_ENERGY path; FACTOR=0 disables scattering),
+     but a negative value is meaningless. */
+  if (cb->pulseEnergy < 0)
+    bombElegant("CBSCAT: PULSE_ENERGY must not be negative", NULL);
+  if (cb->nPhotons < 0)
+    bombElegant("CBSCAT: N_PHOTONS must not be negative", NULL);
+  if (cb->factor < 0)
+    bombElegant("CBSCAT: FACTOR must not be negative", NULL);
+
   /* laser photon number */
   if (cb->nPhotons > 0)
     Nph = cb->nPhotons;
   else
     Nph = cb->pulseEnergy / (h_mks * c_mks / cb->laserWavelength);
+  if (Nph <= 0 && noPhotonWarnings++ < 10)
+    printWarningForTracking("CBSCAT: no laser photons (N_PHOTONS and PULSE_ENERGY both non-positive); no scattering will occur.",
+                            "Set PULSE_ENERGY>0 or N_PHOTONS>0.");
 
   /* Rayleigh ranges from the focus spot sizes */
   if (cb->sigmax <= 0 || cb->sigmay <= 0 || cb->sigmaz <= 0)
@@ -384,7 +400,7 @@ void track_CBScat(double **part, int64_t np, double Po, CBSCAT *cb, long iPass, 
       /* optional emitted-photon record (exact lab 4-momentum) */
       if (cb->photonFileActive) {
         double Eg = Eg_out * mMc2; /* lab photon energy (MeV) */
-        if (Eg > 0 && pz != 0)
+        if (Eg > 0 && pg_out[2] != 0)
           logCBSPhoton(Eg * 1e6, x0, pg_out[0] / pg_out[2], y0, pg_out[1] / pg_out[2]);
       }
     }
