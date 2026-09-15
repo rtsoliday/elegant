@@ -403,7 +403,12 @@ long motion(
 #endif
   int64_t nTotal = n_part;
 #if USE_MPI
-  MPI_Allreduce(&n_part, &nTotal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
+  /* Only reduce across ranks when the beam is genuinely distributed.  Under
+     rank-parallel optimization (independentRunPerRank -> distributedBeam==0)
+     each rank tracks its own full beam, so nTotal==n_part locally; calling a
+     collective here would deadlock when ranks diverge. */
+  if (distributedBeam)
+    MPI_Allreduce(&n_part, &nTotal, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
 #endif
   if (change_p0 && nTotal!=0) {
 #ifdef DEBUG

@@ -195,7 +195,26 @@ double findFiducialTime(double **part, int64_t np, double s0, double sOffset,
     if (!found)
       bombElegant("No available particle for the FID_MODE_FIRST mode in findFiducialTime", NULL);
 #else
-    if (myid == 1) { /* If the first particle is lost, Pelegant and elegant will not have the same fiducial time */
+    if (distributedBeam) {
+      if (myid == 1) { /* If the first particle is lost, Pelegant and elegant will not have the same fiducial time */
+        long found = 0;
+        if (np) {
+          for (i = 0; i < np; i++) {
+            if ((startPID < 0 && endPID < 0) || (part[i][6] >= startPID && part[i][6] <= endPID)) {
+              tFid = (part[i][4] + sOffset) / (c_mks * beta_from_delta(p0, part[i][5]));
+              found = 1;
+              break;
+            }
+          }
+        }
+        if (!found)
+          mpiAbort = MPI_ABORT_RF_FIDUCIALIZATION_ERROR;
+      }
+      MPI_Bcast(&tFid, 1, MPI_DOUBLE, 1, MPI_COMM_WORLD);
+    } else {
+      /* Replicated beam (e.g. rank-parallel optimization): each rank holds the
+         full beam and computes tFid locally, exactly as the serial path does.
+         No collective here — ranks may diverge in control flow. */
       long found = 0;
       if (np) {
         for (i = 0; i < np; i++) {
@@ -207,9 +226,8 @@ double findFiducialTime(double **part, int64_t np, double s0, double sOffset,
         }
       }
       if (!found)
-        mpiAbort = MPI_ABORT_RF_FIDUCIALIZATION_ERROR;
+        bombElegant("No available particle for the FID_MODE_FIRST mode in findFiducialTime", NULL);
     }
-    MPI_Bcast(&tFid, 1, MPI_DOUBLE, 1, MPI_COMM_WORLD);
 #endif
   } else if (mode & FID_MODE_PMAX) {
     long ibest;

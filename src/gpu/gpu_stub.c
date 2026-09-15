@@ -6280,7 +6280,7 @@ long gpu_batched_frequency_map_beamline_supported(void *beamline0) {
     if (eptr->ignore)
       continue;
     flags = entity_description[eptr->type].flags;
-    if (flags & (COLLECTIVE_EFFECTS | UNIPROCESSOR)) {
+    if (flags & (HAS_MPI_COLLECTIVE | UNIPROCESSOR)) {
       if (gpuVerbose)
         fprintf(stderr,
                 "elegant CUDA: batched tune tracking disabled by "
@@ -6569,7 +6569,7 @@ long gpu_batched_search_beamline_supported(void *beamline0) {
         return 0;
     }
     flags = entity_description[eptr->type].flags;
-    if (flags & (COLLECTIVE_EFFECTS | UNIPROCESSOR))
+    if (flags & (HAS_MPI_COLLECTIVE | UNIPROCESSOR))
       return 0;
     /* Reuse the actual CUDA option guards, rather than element metadata
      * alone.  This excludes ISR/noise and unsupported option combinations

@@ -1453,7 +1453,7 @@ typedef struct {
    * swarm, hybsimplex, genetic) because each rank tracks its own beam
    * independently and the collectives deadlock as soon as ranks
    * diverge.  Detected at parallel_optimization_setup time. */
-#define COLLECTIVE_EFFECTS 0x00100000UL
+#define HAS_MPI_COLLECTIVE 0x00100000UL
   
 typedef struct {
     long n_params;

@@ -1862,6 +1862,10 @@ long do_tracking(
                   }
                   break;
                 case T_HISTOGRAM:
+#if USE_MPI
+                  if (!distributedBeam) /* When each processor tracks the beam independently, the histogram is disabled in Pelegant (the reductions and parallel I/O are collective) */
+                    break;
+#endif
                   if (!(flags & TEST_PARTICLES) && !(flags & INHIBIT_FILE_OUTPUT)) {
                     histogram = (HISTOGRAM *)eptr->p_elem;
                     if (!histogram->disable) {
@@ -5600,8 +5604,12 @@ long do_tracking(
         BEAM_SUMS *sums;
 
 #if USE_MPI
-        int64_t npTotal;
-        MPI_Reduce(&np, &npTotal, 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
+        /* Only reduce across ranks when the beam is genuinely distributed; under
+           rank-parallel optimization (distributedBeam==0) each rank holds the
+           full beam, so npTotal==np and a collective here would deadlock. */
+        int64_t npTotal = np;
+        if (distributedBeam)
+          MPI_Reduce(&np, &npTotal, 1, MPI_INT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
         if (isMaster && npTotal < 10) {
           printf("*** Error: too few particles (<10) for emittance modification\n");
           exitElegant(1);

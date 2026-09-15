@@ -1012,14 +1012,14 @@ void do_optimize(NAMELIST_TEXT *nltext, RUN *run1, VARY *control1, ERRORVAL *err
    * all ranks to participate.  When one rank exits the optimization loop
    * early (e.g. randomSampleMin's result<target break) the others' embedded
    * collectives deadlock.  Catch this at startup with a clear error.
-   * Elements that carry COLLECTIVE_EFFECTS in entity_description[].flags
+   * Elements that carry HAS_MPI_COLLECTIVE in entity_description[].flags
    * are the ones with such embedded collectives. */
   if (independentRunPerRank && beamline) {
     ELEMENT_LIST *eptr = beamline->elem;
     char *firstName = NULL, *firstType = NULL;
     long nFound = 0;
     while (eptr) {
-      if (entity_description[eptr->type].flags & COLLECTIVE_EFFECTS) {
+      if (entity_description[eptr->type].flags & HAS_MPI_COLLECTIVE) {
         if (!firstName) {
           firstName = eptr->name;
           firstType = entity_name[eptr->type];

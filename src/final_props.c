@@ -1449,7 +1449,13 @@ void computeBeamTwissParameters(TWISS *twiss, double **data, long particles) {
   long particles_total, index = 0;
   double S_p[21], S_p_sum[21], Sbeta_p[10], Sbeta_p_sum[10];
 
-  MPI_Allreduce(&particles, &particles_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  /* Under rank-parallel optimization (distributedBeam==0) each rank holds the
+     full beam, so the per-rank partial sums are already the totals; reduce only
+     when the beam is genuinely distributed to avoid a deadlock on divergence. */
+  if (distributedBeam)
+    MPI_Allreduce(&particles, &particles_total, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+  else
+    particles_total = particles;
 #endif
 
   compute_centroids(C, data, particles);
@@ -1468,7 +1474,10 @@ void computeBeamTwissParameters(TWISS *twiss, double **data, long particles) {
   }
 
 #if USE_MPI
-  MPI_Allreduce(S_p, S_p_sum, 21, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  if (distributedBeam)
+    MPI_Allreduce(S_p, S_p_sum, 21, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  else
+    memcpy(S_p_sum, S_p, sizeof(S_p));
   index = 0;
   for (i = 0; i < 6; i++) {
     for (j = 0; j <= i; j++) {
@@ -1502,7 +1511,10 @@ void computeBeamTwissParameters(TWISS *twiss, double **data, long particles) {
     }
   }
 #if USE_MPI
-  MPI_Allreduce(Sbeta_p, Sbeta_p_sum, 10, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  if (distributedBeam)
+    MPI_Allreduce(Sbeta_p, Sbeta_p_sum, 10, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  else
+    memcpy(Sbeta_p_sum, Sbeta_p, sizeof(Sbeta_p));
   index = 0;
   for (i = 0; i < 4; i++) {
     for (j = 0; j <= i; j++) {
