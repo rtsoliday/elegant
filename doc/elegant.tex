@@ -33,7 +33,7 @@
 \begin{document}
 
 \title{User's Manual for {\tt elegant}}
-\author{Program Version 2026.4\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
+\author{Program Version 2026.5\\Advanced Photon Source\\Michael Borland\\ \date{\today}}
 \maketitle
 
 Note: another source of help for {\tt elegant} is the on-line
@@ -49,15 +49,16 @@ at a high level.
 Starting in Version 2025.4, AI coding assistants have been used for addition of new features and generation
 of documentation.
 
-\section{Highlights of What's New in Version 2026.4}
+\section{Highlights of What's New in Version 2026.5}
 
-Here is a summary of what's changed since release 2026.3.  Historical change logs are collected in Section
+Here is a summary of what's changed since release 2026.4.  Historical change logs are collected in Section
 \ref{sect:changeLog}.
 
 \subsection{Bug Fixes for Elements}
 
 \begin{itemize}
-\item None.
+\item \verb|CBSCAT| (Compton backscattering) automatically uses the exact-recoil model when the Klein-Nishina cross-section is chosen,
+   to correct an inconsistency in the conventions for the reference angle (photon vs electron).
 \end{itemize}
 
 \subsection{Bug Fixes for Commands}
@@ -67,34 +68,12 @@ Here is a summary of what's changed since release 2026.3.  Historical change log
 
 \subsection{New and Modified Elements}
 \begin{itemize}
-\item The \verb|MARK| element will now provide optimizable parameters from coupled-beam eigen-analysis\cite{Wolski-PRSTAB9-024001}
-  if \verb|COUPLED_FITPOINT=1|.
-\item The \verb|CBSCAT| element was added, providing simulation of Compton backscattering using a method based on \cite{PhysRevAccelBeams.22.040702},
-   as well as less approximate methods.
-\item The \verb|CHANGE_T| feature of \verb|RFCA| has been enhanced so that subtracted time values are accumulated in extended-precision registers,
-  the values from which are used to provide long-scale time offsets (e.g., for slowly-varying, non-harmonic elements) and phase offsets modulo
-  $2\pi$ to rf elements. For the latter, this is important if the rf frequency is not a subharmonic of the frequency for which the time value
-  changes are done.
+\item None.
 \end{itemize}
 
 \subsection{New and Modified Commands}
 \begin{itemize}
-\item The \verb|run_control| command now has a \verb|step_frequency| parameter that can be used to advance the timing of
-  some elements independent of the particle time coordinates. This allows slow processes such as ion drift or mode damping to
-  occur without introducing rounding-error issues in rf cavities, for example. The need for this was brought to our attention
-  by N. Sereno (JLAB).
-\item The \verb|sigma| output file from \verb|run_setup| can now optionally include coupled-beam eigen-analysis\cite{Wolski-PRSTAB9-024001}.
-  This is invoked by setting \verb|coupled_sigma=1|.
-\item Particle counts and particle-loop indices are now stored internally as 64-bit signed integers
-  (\verb|int64_t|) throughout tracking, rather than the platform \verb|long| (which is only 32 bits on
-  some platforms, such as Windows). This removes the previous $2^{31}$ limit on the number of particles.
-  The effective ceiling is now $2^{52}\approx 4.5\times 10^{15}$, which is infinite for all practical purposes.
-  This change affects several output files, including the \verb|acceptance|, \verb|centroid|, \verb|final|, \verb|losses|, and \verb|output|, 
-  outputs from \verb|run_setup| ; output from \verb|WATCH| elements; \verb|bunch| output from \verb|bunched_beam|; and
-  input files to \verb|sdds_beam|.
-\item The \verb|save_lattice| command now has a \verb|comment| parameter that can be used to provide a text string that
-  will be placed into the saved lattice file as a comment.
-\item The \verb|rf_setup| command can now generate a file with the rf separatrix.
+\item None.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -111,11 +90,7 @@ are listed in Section \ref{sect:tools}.
 
 Changes to these tools in this release include
 \begin{itemize}
-\item The program \verb|computeLBGGE| was added, which implements the local generalized gradient expansion
-  method developed by D. Sagan {\em et al.} \cite{sagan:ipac23-wepl015}. It is slower but provides much better fits
-  than \verb|computeRBGGE|, although the latter is able to work with boundary data only.
-\item The program \verb|sddsanalyzebeam| now optionally computes the eigen-emittances and coupled lattice
-  functions for the particle distribution.
+\item None.
 \end{itemize}
 
 \subsection{Known Bugs, Problems, and Limitations}
@@ -154,6 +129,9 @@ Contributors to related programs and scripts include M. Borland, R. Dejus, L. Em
 A. Xiao, and B. Yang.
 R. Soliday is responsible for multi-platform builds and distribution.
 Of course, we also appreciate the many suggestions, comments, and bug reports from users.
+
+Starting in Version 2025.4, AI coding assistants, primarily Claude and ChatGPT, have been used for addition of new
+features and generation of documentation.
 
 If you use {\tt elegant} in your research, we appreciate a citation. For {\tt elegant}, the citation is
 \begin{flushleft}
@@ -10413,6 +10391,74 @@ terminal input and terminal output, respectively.
 \newpage
 
 \section{Change Log\label{sect:changeLog}}
+
+\subsection{Highlights of What's New in Version 2026.4}
+
+Here is a summary of what's changed since release 2026.3.
+
+\subsubsection{Bug Fixes for Elements}
+
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{Bug Fixes for Commands}
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{New and Modified Elements}
+\begin{itemize}
+\item The \verb|MARK| element will now provide optimizable parameters from coupled-beam eigen-analysis\cite{Wolski-PRSTAB9-024001}
+  if \verb|COUPLED_FITPOINT=1|.
+\item The \verb|CBSCAT| element was added, providing simulation of Compton backscattering using a method based on \cite{PhysRevAccelBeams.22.040702},
+   as well as less approximate methods.
+\item The \verb|CHANGE_T| feature of \verb|RFCA| has been enhanced so that subtracted time values are accumulated in extended-precision registers,
+  the values from which are used to provide long-scale time offsets (e.g., for slowly-varying, non-harmonic elements) and phase offsets modulo
+  $2\pi$ to rf elements. For the latter, this is important if the rf frequency is not a subharmonic of the frequency for which the time value
+  changes are done.
+\end{itemize}
+
+\subsubsection{New and Modified Commands}
+\begin{itemize}
+\item The \verb|run_control| command now has a \verb|step_frequency| parameter that can be used to advance the timing of
+  some elements independent of the particle time coordinates. This allows slow processes such as ion drift or mode damping to
+  occur without introducing rounding-error issues in rf cavities, for example. The need for this was brought to our attention
+  by N. Sereno (JLAB).
+\item The \verb|sigma| output file from \verb|run_setup| can now optionally include coupled-beam eigen-analysis\cite{Wolski-PRSTAB9-024001}.
+  This is invoked by setting \verb|coupled_sigma=1|.
+\item Particle counts and particle-loop indices are now stored internally as 64-bit signed integers
+  (\verb|int64_t|) throughout tracking, rather than the platform \verb|long| (which is only 32 bits on
+  some platforms, such as Windows). This removes the previous $2^{31}$ limit on the number of particles.
+  The effective ceiling is now $2^{52}\approx 4.5\times 10^{15}$, which is infinite for all practical purposes.
+  This change affects several output files, including the \verb|acceptance|, \verb|centroid|, \verb|final|, \verb|losses|, and \verb|output|, 
+  outputs from \verb|run_setup| ; output from \verb|WATCH| elements; \verb|bunch| output from \verb|bunched_beam|; and
+  input files to \verb|sdds_beam|.
+\item The \verb|save_lattice| command now has a \verb|comment| parameter that can be used to provide a text string that
+  will be placed into the saved lattice file as a comment.
+\item The \verb|rf_setup| command can now generate a file with the rf separatrix.
+\end{itemize}
+
+\subsubsection{Changes to Examples}
+
+\begin{itemize}
+\item None.
+\end{itemize}
+
+\subsubsection{Changes to Related Programs and Files}
+
+The {\tt elegant} distribution includes many programs and scripts that perform computations with {\tt elegant}
+output data, provide interfaces with other programs, or prepare data for use with {\tt elegant}. These
+are listed in Section \ref{sect:tools}. 
+
+Changes to these tools in this release include
+\begin{itemize}
+\item The program \verb|computeLBGGE| was added, which implements the local generalized gradient expansion
+  method developed by D. Sagan {\em et al.} \cite{sagan:ipac23-wepl015}. It is slower but provides much better fits
+  than \verb|computeRBGGE|, although the latter is able to work with boundary data only.
+\item The program \verb|sddsanalyzebeam| now optionally computes the eigen-emittances and coupled lattice
+  functions for the particle distribution.
+\end{itemize}
 
 \subsection{Highlights of What's New in Version 2026.3}
 

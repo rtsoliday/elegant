@@ -28,7 +28,7 @@ The maximum energy transferred to the photon (the Compton edge) is recovered at
 $\theta=0$ and is $E_{\gamma,\mathrm{max}}\approx 4\gamma^2 E_h$ for a head-on
 collision.
 
-The Eq.~(4) mapping above is a linearized lab-frame recoil: the transverse terms
+The mapping above is a linearized lab-frame recoil: the transverse terms
 are the paraxial projection $x'=p_x/p_z$, and the energy change is evaluated using
 the {\em incident} rest-frame photon energy $E'$.  It is therefore exact only in
 the Thomson limit $\epsilon\equiv E'/(m_e c^2)\to 0$; for $\epsilon$ not small it
@@ -47,7 +47,7 @@ $4\gamma^2 E_h/(1+2\epsilon)$ and should be used in the hard inverse-Compton /
 $\gamma$-ray regime ($\epsilon\gtrsim 0.1$); at small $\epsilon$ it agrees with the
 default to a few percent.  The overlap integral and the sampling of $\theta$ are
 identical in both modes.  The default (\verb|EXACT_RECOIL|$=0$) retains the
-Eq.~(4) mapping for backward compatibility.
+above mapping for backward compatibility.
 
 \paragraph{Cross section.}
 The scattered-photon polar angle is sampled from the differential cross section
@@ -58,6 +58,7 @@ selected by \verb|CROSS_SECTION|:
 \item \verb|"klein-nishina"| (default): the full Klein--Nishina
   expression~\cite{KleinNishina1929} with $\epsilon = E'/(m_e c^2)$, and the
   corresponding Klein--Nishina total cross section.
+  When chosen, forces \verb|EXACT_RECOIL|=1.
 \end{itemize}
 In the keV rest-frame-energy regime typical of optical-laser Compton sources the
 two choices agree to order $\epsilon$; both are provided for generality.
