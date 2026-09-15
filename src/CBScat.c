@@ -26,11 +26,13 @@
  *   3. The scattered-photon polar angle theta is sampled from the chosen
  *      (Thomson or Klein-Nishina) differential cross section and the azimuth phi
  *      uniformly.  The recoil is then applied to x', y', and delta either by the
- *      default approximate lab-frame mapping of Eq. (4) (valid in the Thomson
- *      limit eps=E'/m_e c^2 << 1), or -- when EXACT_RECOIL is set -- by an exact
- *      per-particle Lorentz boost into the electron rest frame, exact Compton
+ *      approximate lab-frame mapping of Eq. (4) (valid in the Thomson limit
+ *      eps=E'/m_e c^2 << 1, and used only for the Thomson cross section), or by an
+ *      exact per-particle Lorentz boost into the electron rest frame, exact Compton
  *      energy-momentum conservation there, and a boost back to the lab.  The two
- *      agree to O(eps); the exact path matters for hard (large-eps) collisions.
+ *      agree to O(eps); the exact path matters for hard (large-eps) collisions and
+ *      is forced for Klein-Nishina, whose forward-peaked angular distribution makes
+ *      the approximate mapping's scattering-angle convention inconsistent.
  *   4. Optionally the emitted (back-scattered) photon is written to an SDDS file.
  */
 
@@ -87,6 +89,24 @@ void track_CBScat(double **part, int64_t np, double Po, CBSCAT *cb, long iPass, 
       crossSectionType = CBS_KLEIN_NISHINA;
     else
       bombElegant("CBSCAT: CROSS_SECTION must be \"klein-nishina\" or \"thomson\"", NULL);
+  }
+
+  /* Force the exact per-particle recoil for Klein-Nishina.  The approximate
+     lab-frame mapping of Eq. (4) samples theta from the incident-photon
+     direction (sampleTheta, standard KN convention) but applies its energy
+     recoil -(gamma E'/E_e beta) cos(theta) with theta measured from the electron
+     direction; the two differ by theta -> pi - theta.  Thomson [1+cos^2(theta)]
+     is symmetric under that flip and so is immune, but the forward-peaked KN
+     cross section is not, which biases the mean energy transfer the wrong way
+     (above the Thomson value -- impossible physically) once eps is not tiny.
+     The exact branch rotates the incident photon in the rest frame and is
+     self-consistent for either cross section, so KN always uses it. */
+  if (crossSectionType == CBS_KLEIN_NISHINA && !cb->exactRecoil) {
+    static long recoilForcedWarnings = 0;
+    if (recoilForcedWarnings++ < 10)
+      printWarningForTracking("CBSCAT: Klein-Nishina requires the exact recoil; forcing EXACT_RECOIL=1.",
+                              "The approximate recoil of Eq. (4) is theta-convention-consistent only for Thomson.");
+    cb->exactRecoil = 1;
   }
 
   /* incident laser photon energy in the lab, E_h = h c / lambda (MeV) */
@@ -291,10 +311,15 @@ void track_CBScat(double **part, int64_t np, double Po, CBSCAT *cb, long iPass, 
     sinPhi = sin(phi);
 
     if (!cb->exactRecoil) {
-      /* Default: approximate lab-frame recoil, Eq. (4) of Ref. [pan2019].  Exact
-         in the Thomson limit eps->0; the transverse terms are the paraxial
-         projection x'=px/pz and the energy term uses the incident rest-frame
-         photon energy E' (no rest-frame Compton down-shift). */
+      /* Approximate lab-frame recoil, Eq. (4) of Ref. [pan2019].  Reached only for
+         Thomson (Klein-Nishina forces EXACT_RECOIL=1 above), for which it is exact
+         to the extent the Thomson cross section itself is: the (1+cos^2 theta)
+         angular distribution is symmetric under theta -> pi - theta, so the
+         electron-direction convention of this energy term matches the incident-
+         photon-direction convention of sampleTheta().  The transverse terms are the
+         paraxial projection x'=px/pz and the energy term uses the incident rest-
+         frame photon energy E' (no rest-frame Compton down-shift), valid for
+         eps=E'/m_e c^2 -> 0. */
       coef = EprimeP / (EeP * betaP);
       dxp = -coef * sinTheta * cosPhi;
       dyp = -coef * sinTheta * sinPhi;
@@ -430,9 +455,11 @@ static double kleinNishinaTotalXsec(double eps) {
   return pre * (term1 + term2 - term3);
 }
 
-/* Sample the scattered-photon polar angle theta (from the electron direction)
- * by rejection from the chosen differential cross section.  cos(theta) is drawn
- * uniformly and accepted against dsigma/dOmega normalized to its theta=0 value. */
+/* Sample the scattered-photon polar angle theta, measured from the INCIDENT-
+ * photon direction (the standard Thomson/Klein-Nishina convention: theta=0 is
+ * forward, theta=pi is backscatter), by rejection from the chosen differential
+ * cross section.  cos(theta) is drawn uniformly and accepted against dsigma/dOmega
+ * normalized to its theta=0 value. */
 static double sampleTheta(long crossSectionType, double eps) {
   double ct, st2, f, fmax, P;
   fmax = 2.0; /* bound on f below for both Thomson and Klein-Nishina */
