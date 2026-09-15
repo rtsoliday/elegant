@@ -213,10 +213,12 @@ void computeAverageGasPressures(double sStart, double sEnd, double *pressure, PR
     else
       break;
   }
-  if (iStart==-1 || iEnd==-1 || iEnd<=iStart)
-    bombVA("Failed to find indices corresponding to pressure region s:[%le, %le] m\n",
-                  sStart, sEnd);
-
+  if (iStart==-1 || iEnd==-1)
+    bombVA("Failed to find indices corresponding to pressure region s:[%le, %le] m (%ld=>%le, %ld=>%le)\n",
+	   sStart, sEnd, iStart, pressureData->s[iStart], iEnd, pressureData->s[iEnd]);
+  if (iEnd<iStart)
+    SWAP_LONG(iEnd, iStart);
+  
   for (iGas=0; iGas<pressureData->nGasses; iGas++) {
     sum = 0;
     for (iLocation=iStart; iLocation<=iEnd; iLocation++)
