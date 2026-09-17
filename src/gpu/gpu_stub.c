@@ -815,6 +815,7 @@ static GPU_BASE gpuBase;
  * search.  The surrounding do_tracking call still initializes normal GPU
  * bookkeeping, but no element is dispatched to CUDA while this is set. */
 static long gpuTrackingSuppressed = 0;
+static long gpuMomentumBatchScope = 0;
 /* OpenMP tracking is deliberately opt-in and is active only while a
  * loss-sensitive batched frequency map is using the CPU fallback. */
 static long gpuOmpTrackingThreads = 1;
@@ -3216,6 +3217,102 @@ static long gpuElementEligible(ELEMENT_LIST *eptr, long nParticles) {
   return 0;
 }
 
+long gpuGetTrackingSuppressed(void) { return gpuTrackingSuppressed; }
+
+void gpu_momentum_search_batch_scope(long active) {
+  gpuMomentumBatchScope = active ? 1 : 0;
+}
+
+extern int gpuCudaMemoryAvailable(unsigned long long *bytes);
+unsigned long gpu_momentum_search_batch_capacity(long turns, long stride) {
+  unsigned long long available = 0, limit = 512ULL * 1024 * 1024, perParticle;
+  long override;
+  if (turns <= 0 || stride <= 0 || gpuBase.activeDevice < 0 ||
+      gpuCudaMemoryAvailable(&available) != 0)
+    return 0;
+  if (available / 4 < limit)
+    limit = available / 4;
+  /* Host+device histories, coordinates, target/delta arrays, and bookkeeping.
+   * Conservatively count both copies against the same allocation budget. */
+  perParticle = 8ULL * (10ULL * turns + 4ULL * stride + 32);
+  override = gpuEnvLong("ELEGANT_GPU_MOMENTUM_BATCH_PARTICLES", LONG_MAX);
+  if (override < 1)
+    return 0;
+  return (unsigned long)MIN(limit / perParticle, (unsigned long long)override);
+}
+
+/* Deliberately separate from the dynamic-aperture/tune admission policies.
+ * Classical radiation and high-order CSBEND maps are allowed here only with
+ * CPU boundary certification. Stochastic and shared mutable state is not. */
+long gpu_momentum_search_beamline_supported(void *beamline0, const char **reason) {
+  LINE_LIST *beamline = beamline0;
+  ELEMENT_LIST *eptr;
+  *reason = NULL;
+  if (!gpuBase.initialized || gpuBase.activeDevice < 0 || gpuBase.backtrack || spinCoordOffset) {
+    *reason = "CUDA unavailable, backtracking, or spin tracking";
+    return 0;
+  }
+  for (eptr = beamline->elem; eptr; eptr = eptr->succ) {
+    long supported = 0;
+    const char *restriction = "unsupported state/options";
+    if (eptr->ignore)
+      continue;
+    switch (eptr->type) {
+    case T_MARK: case T_RECIRC: case T_MAXAMP:
+      /* MAXAMP updates per-tracking-call aperture limits, not element state.
+       * It is passive and deliberately has no standalone CUDA kernel. */
+      supported = 1;
+      break;
+    case T_RFCA: {
+      RFCA *rf = (RFCA *)eptr->p_elem;
+      if (rf && !rf->change_p0 && !rf->change_t && rf->Q == 0)
+        supported = gpuRfcaNoOpElementSupported(eptr) ||
+                    gpuElementEligible(eptr, LONG_MAX / 4);
+      break;
+    }
+    case T_LGBEND: {
+      long saved = gpuEnableLgbend;
+      /* A disabled CUDA LGBEND remains a deterministic batched CPU element. */
+      gpuEnableLgbend = 1;
+      supported = gpuLgbendElementSupported(eptr);
+      gpuEnableLgbend = saved;
+      break;
+    }
+    case T_MALIGN: {
+      MALIGN *malign = (MALIGN *)eptr->p_elem;
+      restriction = "particle-ID-dependent MALIGN";
+      if (malign && malign->startPID == -1 && malign->endPID == -1)
+        supported = gpuElementEligible(eptr, LONG_MAX / 4);
+      break;
+    }
+    case T_SCRAPER: {
+      SCRAPER *scraper = (SCRAPER *)eptr->p_elem;
+      restriction = "SCRAPER material interaction changes random-number consumption";
+      if (scraper && !(scraper->length && (scraper->Xo || scraper->Z)))
+        supported = gpuElementEligible(eptr, LONG_MAX / 4);
+      break;
+    }
+    case T_DRIF: case T_EDRIFT: case T_CSBEND: case T_CCBEND:
+    case T_KQUAD: case T_KSEXT: case T_KOCT: case T_MULT:
+    case T_HCOR: case T_VCOR: case T_EHCOR: case T_EVCOR:
+    case T_RCOL: case T_ECOL:
+    case T_TAPERAPC: case T_TAPERAPR: case T_SPEEDBUMP:
+      supported = gpuElementEligible(eptr, LONG_MAX / 4);
+      break;
+    default:
+      break;
+    }
+    if (!supported) {
+      static char detail[256];
+      snprintf(detail, sizeof(detail), "%s at %s#%ld (%s)",
+               restriction, eptr->name, eptr->occurence, entity_name[eptr->type]);
+      *reason = detail;
+      return 0;
+    }
+  }
+  return 1;
+}
+
 void gpuSetTrackingSuppressed(long suppressed) {
   gpuTrackingSuppressed = suppressed ? 1 : 0;
 }
@@ -5572,6 +5669,15 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuAvoidShortGpuIslands = !gpuEnvSet("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS") ||
                             gpuEnvFlag("ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS");
   gpuShortGpuIslandMaxElements = gpuEnvLong("ELEGANT_GPU_SHORT_GPU_ISLAND_MAX_ELEMENTS", 4);
+  /* Apply the batch's dispatch policy once, not in every element's threshold
+   * test. The next gpuBaseInit reloads the ordinary environment thresholds. */
+  if (gpuMomentumBatchScope) {
+    gpuBase.matrixMinParticles = gpuBase.helperMinParticles = 32;
+    gpuBase.exactDriftMinParticles = gpuBase.reductionMinParticles = 32;
+    gpuBase.apertureMinParticles = gpuBase.magnetMinParticles = 32;
+    gpuCcbendMinParticles = gpuLgbendMinParticles = 32;
+  }
+
 
   if (strcmp(mode, "off") == 0) {
     gpuBase.initialized = 1;

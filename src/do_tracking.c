@@ -171,6 +171,10 @@ void setTrackingOmniWedgeGpuFunction(long (*wedgeFunc)(int64_t np, long pass,
   trackingOmniWedgeGpuFunction = wedgeFunc;
 }
 
+long trackingWedgeFunctionsActive(void) {
+  return trackingWedgeFunction || trackingOmniWedgeFunction || trackingOmniWedgeGpuFunction;
+}
+
 static double timeCounter[N_TYPES], tStart;
 static long runCounter[N_TYPES];
 static long elementTimingActive = 0;

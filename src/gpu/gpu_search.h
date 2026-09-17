@@ -14,6 +14,10 @@ long gpu_run_batched_aperture_search(
   double *xLimit, double *yLimit, double *xLost, double *yLost,
   double *sLost, long *lossPass, long *lossElement, long *originStable);
 void gpuSetTrackingSuppressed(long suppressed);
+long gpuGetTrackingSuppressed(void);
+long gpu_momentum_search_beamline_supported(void *beamline, const char **reason);
+unsigned long gpu_momentum_search_batch_capacity(long turns, long stride);
+void gpu_momentum_search_batch_scope(long active);
 void gpu_configure_batched_momentum_search(const double *deltaById,
                                            const long *targetById,
                                            long particles, long turns,

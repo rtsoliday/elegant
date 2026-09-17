@@ -4458,6 +4458,12 @@ void scatter_ele(double **part, int64_t np, double Po, SCATTER *scatter, long iP
 void track_CBScat(double **part, int64_t np, double Po, CBSCAT *cb, long iPass, long iOccurence);
 void store_fitpoint_twiss_parameters(MARK *fpt, char *name, long occurence, TWISS *twiss, RADIATION_INTEGRALS *radIntegrals);
 void store_fitpoint_beam_parameters(MARK *fpt, char *name, long occurence, double **coord, int64_t np, double Po);
+/* Opaque copies of the phase-reference table own their allocation. */
+void *save_phase_references(void);
+void restore_phase_references(const void *state);
+void free_phase_references(void *state);
+long trackingWedgeFunctionsActive(void);
+
 void setTrackingWedgeFunction(void (*wedgeFunc)(double **part, int64_t np, long pass, double *pCentral),
                               ELEMENT_LIST *eptr);
 void setTrackingOmniWedgeFunction(void (*wedgeFunc)(double **part, int64_t np, long pass, long i_elem, long n_elem, ELEMENT_LIST *eptr, double *pCentral));

@@ -15590,3 +15590,10 @@ extern "C" int gpuCudaApertureDataStableCompact(
     *remaining = survivors;
   return status;
 }
+
+extern "C" int gpuCudaMemoryAvailable(unsigned long long *bytes) {
+  size_t available = 0, total = 0;
+  cudaError_t status = cudaMemGetInfo(&available, &total);
+  *bytes = available;
+  return (int)status;
+}

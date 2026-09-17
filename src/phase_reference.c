@@ -164,3 +164,44 @@ double get_reference_phase(long phase_ref, double phase0)
     return (phase0);
   }
 }
+
+/* Snapshot only scalar table entries, never element structures or their owned
+ * pointers. Restoring preserves the auto-generated reference-number allocator. */
+typedef struct {
+  long count;
+  struct phase_reference *entry;
+} PHASE_REFERENCE_SNAPSHOT;
+
+void *save_phase_references(void) {
+  PHASE_REFERENCE_SNAPSHOT *state = tmalloc(sizeof(*state));
+  state->count = n_references;
+  state->entry = n_references ? tmalloc(n_references * sizeof(*reference)) : NULL;
+  if (n_references)
+    memcpy(state->entry, reference, n_references * sizeof(*reference));
+  return state;
+}
+
+void restore_phase_references(const void *snapshot) {
+  const PHASE_REFERENCE_SNAPSHOT *state = snapshot;
+  long i;
+  if (!state)
+    return;
+  /* Auto-assigned references can be added after capture. Keep their numbers
+   * allocated, but unset, just as delete_phase_references would. */
+  for (i = 0; i < n_references; i++)
+    reference[i].flags = 0;
+  if (n_references < state->count) {
+    reference = trealloc(reference, state->count * sizeof(*reference));
+    n_references = state->count;
+  }
+  if (state->count)
+    memcpy(reference, state->entry, state->count * sizeof(*reference));
+}
+
+void free_phase_references(void *snapshot) {
+  PHASE_REFERENCE_SNAPSHOT *state = snapshot;
+  if (state) {
+    free(state->entry);
+    free(state);
+  }
+}

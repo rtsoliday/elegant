@@ -489,6 +489,10 @@ static long doMomentumApertureSearchBatched(
 }
 #endif
 
+#if defined(HAVE_GPU) && !USE_MPI
+#include "gpu/momentum_search.h"
+#endif
+
 void setupMomentumApertureSearch(
   NAMELIST_TEXT *nltext,
   RUN *run,
@@ -853,6 +857,13 @@ long doMomentumApertureSearch(
 #endif
 
 #if defined(HAVE_GPU) && !USE_MPI
+  outputRow = doMomentumApertureSearchIndependent(
+    run, control, beamline, startingCoord, elem0, nElem,
+    lostOnPass, loserFound, survivorFound, deltaSurvived,
+    xTuneSurvived, yTuneSurvived, xLost, yLost, deltaWhenLost, sLost,
+    sStart, ElementName, ElementType, ElementOccurence, direction);
+  if (outputRow >= 0)
+    goto momentumSearchComplete;
   outputRow = doMomentumApertureSearchBatched(
     run, control, beamline, startingCoord, elem0, nElem,
     lostOnPass, loserFound, survivorFound, deltaSurvived,
