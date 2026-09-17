@@ -122,3 +122,12 @@ technique, stop and ask the user rather than constructing an ad hoc workaround.
   - `GPU parity: checked` with the GPU files or call sites reviewed
   - `GPU parity: updated` with the CPU and GPU files changed
 - If a CPU behavior change affects a GPU-supported element, update the GPU path in the same change or explicitly call out the required GPU follow-up and why it was not completed.
+
+### Approved GPU numerical review
+- Before changing GPU comparison tolerances or investigating `trajCorrect2`, read
+  [GPU parity validation](src/gpu/PARITY-VALIDATION.md#numerical-acceptance).
+- The user approved the documented `trajCorrect2` field-specific numerical
+  review on September 16, 2026. Preserve its limited scope: named fields only,
+  unchanged global tolerances, no additional ignored outputs, and retain the
+  strict comparison alongside the reviewed result. This is not blanket approval
+  to relax other tests or accept larger future discrepancies.

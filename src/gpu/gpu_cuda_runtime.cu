@@ -1,4 +1,5 @@
 #include "gpu_base.h"
+#include "../manual.h"
 
 #include <cuda_runtime_api.h>
 #include <cufft.h>
@@ -1121,9 +1122,18 @@ __device__ __forceinline__ void gpuApplyPackedMatrixData(
       double sum = matrix->C[i];
       for (j = matrix->termOffset[i]; j < matrix->termOffset[i + 1]; j++) {
         const GPU_MATRIX_TERM *term = matrix->term + j;
-        double value = term->coefficient * ini[term->j];
-        if (term->degree >= 2)
-          value *= ini[term->k];
+        /* Match track_particles: form coord_jk before multiplying by T/Q.
+         * Reassociation here changes sensitive derived beam statistics. */
+        if (matrix->order == 3 && ini[term->j] == 0)
+          continue;
+        double value;
+        if (term->degree >= 2) {
+          if (ini[term->k] == 0)
+            continue;
+          double coord_jk = ini[term->j] * ini[term->k];
+          value = term->coefficient * coord_jk;
+        } else
+          value = term->coefficient * ini[term->j];
         if (term->degree >= 3)
           value *= ini[term->l];
         sum += value;
@@ -1435,9 +1445,16 @@ __device__ __forceinline__ int gpuMultipoleConvertSlopesToMomenta(double *qx,
     *qx = (1 + delta) * xp;
     *qy = (1 + delta) * yp;
   } else {
-    double factor = (1 + delta) / sqrt(1 + xp * xp + yp * yp);
-    *qx = xp * factor;
-    *qy = yp * factor;
+    double denom = sqrt(1 + xp * xp + yp * yp);
+#if TURBO_RECIPROCALS
+    double factor = (1 + delta) / denom;
+    *qx = factor * xp;
+    *qy = factor * yp;
+#else
+    /* Match multipole.h: division is not reciprocal multiplication. */
+    *qx = __ddiv_rn((1 + delta) * xp, denom);
+    *qy = __ddiv_rn((1 + delta) * yp, denom);
+#endif
   }
   return 1;
 }
@@ -1451,6 +1468,52 @@ __device__ __forceinline__ int gpuMultipoleConvertMomentaToSlopes(double *xp,
   if (expandHamiltonian) {
     *xp = qx / (1 + delta);
     *yp = qy / (1 + delta);
+  } else {
+    double factor = (1 + delta) * (1 + delta) - qx * qx - qy * qy;
+    if (factor <= 0)
+      return 0;
+    factor = sqrt(factor);
+#if TURBO_RECIPROCALS
+    factor = 1 / factor;
+    *xp = qx * factor;
+    *yp = qy * factor;
+#else
+    *xp = __ddiv_rn(qx, factor);
+    *yp = __ddiv_rn(qy, factor);
+#endif
+  }
+  return 1;
+}
+
+/* Dipole conversions deliberately use reciprocal multiplication on CPU,
+ * independently of the multipole TURBO_RECIPROCALS setting. */
+__device__ __forceinline__ int gpuDipoleConvertSlopesToMomenta(double *qx,
+                                                                  double *qy,
+                                                                  double xp,
+                                                                  double yp,
+                                                                  double delta,
+                                                                  int expandHamiltonian) {
+  if (expandHamiltonian) {
+    *qx = (1 + delta) * xp;
+    *qy = (1 + delta) * yp;
+  } else {
+    double factor = (1 + delta) / sqrt(1 + xp * xp + yp * yp);
+    *qx = xp * factor;
+    *qy = yp * factor;
+  }
+  return 1;
+}
+
+__device__ __forceinline__ int gpuDipoleConvertMomentaToSlopes(double *xp,
+                                                                  double *yp,
+                                                                  double qx,
+                                                                  double qy,
+                                                                  double delta,
+                                                                  int expandHamiltonian) {
+  if (expandHamiltonian) {
+    double factor = 1 / (1 + delta);
+    *xp = qx * factor;
+    *yp = qy * factor;
   } else {
     double factor = (1 + delta) * (1 + delta) - qx * qx - qy * qy;
     if (factor <= 0)
@@ -2373,8 +2436,11 @@ __device__ int gpuSpeedbumpTrackParticle(
       double dy = -data.length * dsign * part[data.plane + 1];
       double y2 = y1 + dy;
       double D = x1 * y2 - x2 * y1;
-      double dr2 = dx * dx + dy * dy;
-      double disc = data.radius * data.radius * dr2 - D * D;
+      /* Preserve the CPU circle-line intersection's rounding sequence. */
+      double dr = sqrt(dx * dx + dy * dy);
+      double dr2 = dr * dr;
+      double radiusDr = data.radius * dr;
+      double disc = radiusDr * radiusDr - D * D;
 
       if (disc >= 0) {
         if (disc == 0) {
@@ -3467,10 +3533,25 @@ __global__ void gpuMatchEnergyApplyKernel(double *coord, long nParticles,
   }
 }
 
+/* Keep phase construction and tracking on CUDA; reference-sensitive output
+ * may evaluate the sine with the same host math library as CPU tracking. */
+__global__ void gpuRfcaPhaseKernel(const double *coord, double *phaseValue,
+  long nParticles, int stride, double pCentral, double omega,
+  double phase, double cMks) {
+  long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (ip >= nParticles)
+    return;
+  const double *part = coord + ip * stride;
+  double p = pCentral * (1 + part[5]);
+  double beta = p / sqrt(p * p + 1);
+  double t = part[4] / (cMks * beta);
+  phaseValue[ip] = part[5] == -1 ? 0 : omega * t + phase;
+}
+
 __global__ void gpuRfcaThinKickKernel(double *coord, long nParticles, int stride,
                                       double pCentral, double volt,
                                       double omega, double phase,
-                                      double cMks) {
+                                      double cMks, const double *referenceKick) {
   long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, p, gamma, beta, t, dgamma, gamma1Raw, gamma1;
   double p1, pz, pz1, pRatio;
@@ -3486,7 +3567,7 @@ __global__ void gpuRfcaThinKickKernel(double *coord, long nParticles, int stride
   gamma = sqrt(p * p + 1);
   beta = p / gamma;
   t = part[4] / (cMks * beta);
-  dgamma = volt * sin(omega * t + phase);
+  dgamma = referenceKick ? referenceKick[ip] : volt * sin(omega * t + phase);
   gamma1Raw = gamma + dgamma;
   gamma1 = gamma1Raw;
   if (gamma1 <= 1)
@@ -5565,8 +5646,10 @@ __device__ __forceinline__ int gpuRectangularCollimatorLostAt(double *part,
                                                               double yCenter,
                                                               double length,
                                                               long openCode) {
-  double x = part[0] + length * part[1];
-  double y = part[2] + length * part[3];
+  /* Entrance checks do not advance the particle (in particular, avoid
+   * turning a finite position into NaN via 0 * an infinite slope). */
+  double x = length == 0 ? part[0] : part[0] + length * part[1];
+  double y = length == 0 ? part[2] : part[2] + length * part[3];
   return gpuRectangularCollimatorLostAtPosition(x, y, xmax, ymax, xCenter, yCenter,
                                                 openCode, length > 0);
 }
@@ -5875,8 +5958,10 @@ __device__ __forceinline__ int gpuEllipticalCollimatorLostAt(double *part,
                                                              long yExponent,
                                                              double length,
                                                              long openCode) {
-  double x = part[0] + length * part[1];
-  double y = part[2] + length * part[3];
+  /* Entrance checks do not advance the particle (in particular, avoid
+   * turning a finite position into NaN via 0 * an infinite slope). */
+  double x = length == 0 ? part[0] : part[0] + length * part[1];
+  double y = length == 0 ? part[2] : part[2] + length * part[3];
   double normalizedX, normalizedY, normalized;
   long effectiveYExponent = length == 0 ? yExponent : exponent;
 
@@ -5890,6 +5975,41 @@ __device__ __forceinline__ int gpuEllipticalCollimatorLostAt(double *part,
   if (normalized > 1)
     return openCode ? gpuEvaluateLostWithOpenSides(openCode, normalizedX, normalizedY, 1, 1) : 1;
   return 0;
+}
+
+/* Finite collimators remove entrance and exit losses in separate passes.
+ * A union of their loss masks gives the same survivors but a different
+ * swap-with-tail permutation. Keep the CPU's two passes on the device. */
+template <bool elliptical>
+__global__ void gpuCollimatorLossOrderKernel(
+  double *coord, long *order, long nParticles, int stride,
+  double xmax, double ymax, double xCenter, double yCenter,
+  double length, long openCode, long exponent, long yExponent) {
+  if (blockIdx.x || threadIdx.x)
+    return;
+  long *destination = order + nParticles;
+  for (long i = 0; i < nParticles; i++)
+    order[i] = i;
+  long active = nParticles;
+  for (int pass = 0; pass < (length > 0 ? 2 : 1); pass++) {
+    double distance = pass ? length : 0;
+    for (long i = 0; i < active; ) {
+      double *part = coord + order[i] * stride;
+      int lost = elliptical ?
+        gpuEllipticalCollimatorLostAt(part, xmax, ymax, xCenter, yCenter,
+                                     exponent, yExponent, distance, openCode) :
+        gpuRectangularCollimatorLostAt(part, xmax, ymax, xCenter, yCenter,
+                                       distance, openCode);
+      if (lost) {
+        long source = order[i];
+        order[i] = order[--active];
+        order[active] = source;
+      } else
+        i++;
+    }
+  }
+  for (long i = 0; i < nParticles; i++)
+    destination[order[i]] = i;
 }
 
 __global__ void gpuEllipticalCollimatorSurvivorFlagKernel(double *coord,
@@ -10024,7 +10144,7 @@ __device__ int gpuCsbendApplyCurvedDipoleFringe(
   double intK6 = integrals[6];
 
   if (onePlusDp == 0 ||
-      !gpuMultipoleConvertSlopesToMomenta(
+      !gpuDipoleConvertSlopesToMomenta(
         &px0, &py0, *xp, *yp, dp, data->expandHamiltonian))
     return 0;
 
@@ -10207,7 +10327,7 @@ __device__ int gpuCsbendApplyCurvedDipoleFringe(
   px2 = px0 + (px2 - px0);
   y2 = y0 + (y2 - y0);
   py2 = py0 + (py2 - py0);
-  if (!gpuMultipoleConvertMomentaToSlopes(
+  if (!gpuDipoleConvertMomentaToSlopes(
         xp, yp, px2, py2, dp, data->expandHamiltonian))
     return 0;
   *x = x2;
@@ -10319,7 +10439,7 @@ __device__ int gpuCsbendTrackParticleData(
       return 0;
   }
 
-  if (!gpuMultipoleConvertSlopesToMomenta(&qx, &qy, xp, yp, dp,
+  if (!gpuDipoleConvertSlopesToMomenta(&qx, &qy, xp, yp, dp,
                                           data->expandHamiltonian))
     return 0;
 
@@ -10328,7 +10448,7 @@ __device__ int gpuCsbendTrackParticleData(
   for (long i = 0; i < data->nSlices; i++) {
     if (!gpuInsideApertureLimit(x, y, data->aperture)) {
       if (writeOutput &&
-        gpuMultipoleConvertMomentaToSlopes(
+        gpuDipoleConvertMomentaToSlopes(
             &xp, &yp, qx, qy, dp, data->expandHamiltonian))
         gpuCsbendWriteLoss(part, x, xp, y, yp, dp, lossDistance, data);
       return 0;
@@ -10409,7 +10529,7 @@ __device__ int gpuCsbendTrackParticleData(
     }
   }
 
-  if (!gpuMultipoleConvertMomentaToSlopes(&xp, &yp, qx, qy, dp,
+  if (!gpuDipoleConvertMomentaToSlopes(&xp, &yp, qx, qy, dp,
                                           data->expandHamiltonian))
     return 0;
   if (!gpuInsideApertureLimit(x, y, data->aperture)) {
@@ -10512,7 +10632,7 @@ __device__ int gpuCsrCsbendTrackBodySliceParticle(double *part, int stride,
   if (!gpuLoadSymplecticFractions(data->integrationOrder, driftFrac,
                                   kickFrac, &nSubsteps))
     return 0;
-  if (!gpuMultipoleConvertSlopesToMomenta(&qx, &qy, xp, yp, dp,
+  if (!gpuDipoleConvertSlopesToMomenta(&qx, &qy, xp, yp, dp,
                                           data->expandHamiltonian))
     return 0;
 
@@ -10567,7 +10687,7 @@ __device__ int gpuCsrCsbendTrackBodySliceParticle(double *part, int stride,
     }
   }
 
-  if (!gpuMultipoleConvertMomentaToSlopes(&xp, &yp, qx, qy, dp,
+  if (!gpuDipoleConvertMomentaToSlopes(&xp, &yp, qx, qy, dp,
                                           data->expandHamiltonian))
     return 0;
   if (!isfinite(x) || !isfinite(xp) || !isfinite(y) || !isfinite(yp))
@@ -13519,21 +13639,33 @@ extern "C" unsigned long gpuCudaMatchEnergyScratchBytes(void) {
          sizeof(GPU_BEAM_SUM_DATA) + sizeof(double);
 }
 
+extern "C" int gpuCudaRfcaPhaseValues(void *coord, void *phaseValues,
+  long nParticles, int stride, double pCentral, double omega,
+  double phase, double cMks, float *milliseconds) {
+  cudaEvent_t start, stop;
+  int status = prepareTimedLaunch(&start, &stop, milliseconds);
+  if (status != static_cast<int>(cudaSuccess))
+    return status;
+  gpuRfcaPhaseKernel<<<(nParticles + 255) / 256, 256>>>(
+    static_cast<double *>(coord), static_cast<double *>(phaseValues),
+    nParticles, stride, pCentral, omega, phase, cMks);
+  return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
+}
+
 extern "C" int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
                                    double pCentral, double volt, double omega,
                                    double phase, double cMks,
+                                   const void *referenceKick,
                                    float *milliseconds) {
   cudaEvent_t start, stop;
   int threads = 256;
   int blocks = static_cast<int>((nParticles + threads - 1) / threads);
-  int status;
-
-  status = prepareTimedLaunch(&start, &stop, milliseconds);
+  int status = prepareTimedLaunch(&start, &stop, milliseconds);
   if (status != static_cast<int>(cudaSuccess))
     return status;
   gpuRfcaThinKickKernel<<<blocks, threads>>>(static_cast<double *>(coord), nParticles,
-                                             stride, pCentral, volt, omega,
-                                             phase, cMks);
+    stride, pCentral, volt, omega, phase, cMks,
+    static_cast<const double *>(referenceKick));
   return launchTimedKernel(cudaSuccess, start, stop, milliseconds);
 }
 
@@ -15128,9 +15260,12 @@ extern "C" int gpuCudaRectangularCollimatorStableCompact(
     survivors = thrust::reduce(flags, flags + nParticles, 0L, thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
-    if (cudaStatus == cudaSuccess)
-      cudaStatus = gpuBuildCpuLossOrderDestination(
-        devicePrefix, nParticles, survivors);
+    if (cudaStatus == cudaSuccess) {
+      gpuCollimatorLossOrderKernel<false><<<1, 1>>>(
+        static_cast<double *>(coord), devicePrefix, nParticles, stride,
+        xmax, ymax, xCenter, yCenter, length, openCode, 0, 0);
+      cudaStatus = cudaGetLastError();
+    }
   } else {
     survivors = nParticles;
   }
@@ -15230,9 +15365,12 @@ extern "C" int gpuCudaEllipticalCollimatorStableCompact(
     survivors = thrust::reduce(flags, flags + nParticles, 0L, thrust::plus<long>());
     thrust::exclusive_scan(flags, flags + nParticles, flags);
     cudaStatus = cudaGetLastError();
-    if (cudaStatus == cudaSuccess)
-      cudaStatus = gpuBuildCpuLossOrderDestination(
-        devicePrefix, nParticles, survivors);
+    if (cudaStatus == cudaSuccess) {
+      gpuCollimatorLossOrderKernel<true><<<1, 1>>>(
+        static_cast<double *>(coord), devicePrefix, nParticles, stride,
+        xmax, ymax, xCenter, yCenter, length, openCode, exponent, yExponent);
+      cudaStatus = cudaGetLastError();
+    }
   } else {
     survivors = nParticles;
   }

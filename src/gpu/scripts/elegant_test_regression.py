@@ -362,7 +362,9 @@ def test_set_description(metadata: dict[str, Any]) -> str:
     return f"local suite {name!r}" if name else "local test set"
 
 
-def validate_suite_run_settings(metadata: dict[str, Any], jobs: int) -> None:
+def validate_suite_run_settings(metadata: dict[str, Any], jobs: int, *, correctness_only: bool = False) -> None:
+    if correctness_only:
+        return
     suite = metadata.get("suite", {})
     if not isinstance(suite, dict):
         return
@@ -1368,7 +1370,8 @@ def utc_timestamp() -> str:
 def write_performance_baseline_summary(
     artifact_root: Path, manifest: dict[str, Any]
 ) -> None:
-    if not is_gpu_performance_suite(manifest.get("test_set", {})):
+    if (manifest.get("run_options", {}).get("correctness_only", False)
+            or not is_gpu_performance_suite(manifest.get("test_set", {}))):
         return
     tests: list[dict[str, Any]] = []
     for result in manifest.get("tests", []):
@@ -1440,11 +1443,13 @@ def baseline_command(args: argparse.Namespace) -> int:
     require_commands()
     test_set = Path(args.test_set).expanduser().resolve()
     source_metadata = test_set_metadata(test_set)
-    validate_suite_run_settings(source_metadata, args.jobs)
+    validate_suite_run_settings(source_metadata, args.jobs, correctness_only=args.correctness_only)
     environment_overrides = suite_environment(source_metadata)
     warmup_runs, repetitions, extend_noisy_samples = timing_run_options(
         source_metadata, args.warmup_runs, args.repetitions
     )
+    if args.correctness_only:
+        warmup_runs, repetitions, extend_noisy_samples = 0, 1, False
     executable = resolve_executable(args.elegant)
     names, excluded = select_tests(
         test_set, args.tests, include_excluded=args.include_excluded
@@ -1487,6 +1492,7 @@ def baseline_command(args: argparse.Namespace) -> int:
         "executable": executable_metadata(executable),
         "run_options": {
             "jobs": args.jobs,
+            "correctness_only": args.correctness_only,
             "timeout_seconds": args.timeout,
             "executable_arguments": args.elegant_argument,
             "timing_metric": "execution_seconds",
@@ -2674,11 +2680,13 @@ def compare_command(args: argparse.Namespace) -> int:
     baseline = load_baseline(baseline_root)
     test_set = Path(args.test_set).expanduser().resolve()
     source_metadata = test_set_metadata(test_set)
-    validate_suite_run_settings(source_metadata, args.jobs)
+    validate_suite_run_settings(source_metadata, args.jobs, correctness_only=args.correctness_only)
     environment_overrides = suite_environment(source_metadata)
     warmup_runs, repetitions, extend_noisy_samples = timing_run_options(
         source_metadata, args.warmup_runs, args.repetitions
     )
+    if args.correctness_only:
+        warmup_runs, repetitions, extend_noisy_samples = 0, 1, False
     expected = baseline["test_set"]
     validate_test_set_identity(expected, source_metadata, actual_label="candidate")
     executable = resolve_executable(args.elegant)
@@ -2726,6 +2734,7 @@ def compare_command(args: argparse.Namespace) -> int:
         "executable": executable_metadata(executable),
         "run_options": {
             "jobs": args.jobs,
+            "correctness_only": args.correctness_only,
             "timeout_seconds": args.timeout,
             "executable_arguments": args.elegant_argument,
             "timing_metric": "execution_seconds",
@@ -2828,6 +2837,25 @@ def compare_existing_command(args: argparse.Namespace) -> int:
         baseline, args.minimum_speedup
     )
     performance_enabled = performance_enabled or pre_change is not None
+    correctness_only = any(
+        run.get("run_options", {}).get("correctness_only", False)
+        for run in (baseline, candidate)
+    )
+    missing_activity: list[str] = []
+    if correctness_only:
+        if args.minimum_speedup is not None or pre_change is not None:
+            raise RegressionError("correctness-only runs cannot support timing gates")
+        performance_enabled = False
+        report.extend(["", "Runtime performance was not assessed: correctness-only run."])
+        if require_gpu_activity:
+            missing_activity = [
+                item["name"] for item in candidate["tests"]
+                if (item.get("gpu_usage") or {}).get("total_elements", 0) <= 0
+            ]
+            if missing_activity:
+                report.append("CUDA coverage failed (no activity): " + ", ".join(missing_activity))
+            else:
+                report.append("CUDA activity confirmed in every candidate test.")
     performance = None
     if performance_enabled:
         performance = assess_runtime_performance(
@@ -2851,7 +2879,7 @@ def compare_existing_command(args: argparse.Namespace) -> int:
         "format_version": FORMAT_VERSION,
         "mode": "existing-comparison",
         "created_at": utc_timestamp(),
-        "complete": not changed and (performance is None or performance["complete"]),
+        "complete": not changed and not missing_activity and (performance is None or performance["complete"]),
         "baseline": {
             "path": str(baseline_root),
             "created_at": baseline.get("created_at"),
@@ -2892,6 +2920,7 @@ def compare_existing_command(args: argparse.Namespace) -> int:
         },
         "comparisons": comparisons,
     }
+    manifest["missing_cuda_activity"] = missing_activity
     if performance is not None:
         manifest["performance_comparison"] = performance
     write_manifest(output / "manifest.json", manifest)
@@ -2927,7 +2956,7 @@ def compare_existing_command(args: argparse.Namespace) -> int:
         )
     print(f"Comparison report written to {output}")
     performance_failed = performance is not None and not performance["complete"]
-    return 1 if changed or performance_failed else 0
+    return 1 if changed or performance_failed or missing_activity else 0
 
 
 def parallel_jobs(value: str) -> int:
@@ -2975,6 +3004,10 @@ def repetition_count(value: str) -> int:
 
 
 def add_run_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--correctness-only", action="store_true",
+        help="one run per test, allow parallel tests, and exclude timing gates",
+    )
     parser.add_argument(
         "--test-set",
         default=os.environ.get("ELEGANT_TEST_SET", "elegantTestSet"),

@@ -265,8 +265,12 @@ extern int gpuCudaLscTransverseSums(void *coord, long nParticles, int stride,
                                     float *milliseconds);
 extern int gpuCudaRfcaThinKick(void *coord, long nParticles, int stride,
                                double pCentral, double volt, double omega,
-                               double phase, double cMks,
+                               double phase, double cMks, const void *referenceKick,
                                float *milliseconds);
+extern int gpuCudaRfcaPhaseValues(void *coord, void *phaseValues,
+                                  long nParticles, int stride, double pCentral,
+                                  double omega, double phase, double cMks,
+                                  float *milliseconds);
 extern int gpuCudaTfeedbackKick(void *coord, long nParticles, int stride,
                                 int pickupCoordinate, int longitudinal,
                                 double kick, float *milliseconds);
@@ -788,6 +792,9 @@ typedef struct GPU_BEAM_SUMS_SCRATCH {
 typedef struct GPU_RFCA_SCRATCH {
   void *lostCount;
   void *matchEnergy;
+  void *referenceKick;
+  double *hostReferenceKick;
+  long referenceCapacity;
 } GPU_RFCA_SCRATCH;
 
 typedef struct GPU_BUNCH_RANGE_CACHE {
@@ -821,6 +828,9 @@ static GPU_RFCW_KICK_SCRATCH gpuRfcwKickScratch;
 static GPU_LSC_SCRATCH gpuLscScratch;
 static GPU_BEAM_SUMS_SCRATCH gpuBeamSumsScratch;
 static GPU_RFCA_SCRATCH gpuRfcaScratch;
+static unsigned long gpuRfcaReferenceCalls = 0;
+static unsigned long gpuRfcaReferenceParticles = 0;
+static unsigned long gpuLscReferenceCalls = 0;
 static GPU_BUNCH_RANGE_CACHE gpuBunchRangeCache;
 typedef struct GPU_POLYNOMIAL_SERIES_CACHE {
   POLYNOMIALSERIES *owner;
@@ -1186,6 +1196,15 @@ static long gpuReferenceOutputUsesCpuHelpers(void) {
   return gpuBase.orderSensitiveOutputNeeded && !gpuHelperMinParticlesExplicit;
 }
 
+/* CPU-compatible reference values avoid systematic phase shifts over many
+ * turns. Particle tracking remains on CUDA. Explicit opt-out retains the
+ * device-libm path for workloads with an appropriate numerical envelope. */
+static long gpuRfcaReferenceMathEnabled(void) {
+  if (gpuEnvSet("ELEGANT_GPU_RFCA_REFERENCE_MATH"))
+    return gpuEnvFlag("ELEGANT_GPU_RFCA_REFERENCE_MATH");
+  return gpuBase.orderSensitiveOutputNeeded;
+}
+
 void gpuDescribeUsageSettings(char *buffer, unsigned long bufferSize) {
   const char *modeEnv = getenv("ELEGANT_GPU_MODE");
   const char *minParticlesEnv = getenv("ELEGANT_GPU_MIN_PARTICLES");
@@ -1411,7 +1430,7 @@ static const char *gpuApertureParallelCompactionStatus(void) {
   if (gpuEnableApertureParallelCompaction)
     return gpuApertureParallelCompactionExplicit ?
            "; aperture parallel compaction explicitly enabled" :
-           "; aperture parallel compaction enabled for no-loss-output runs";
+           "; aperture device compaction preserves CPU loss order";
   return gpuApertureParallelCompactionExplicit ?
          "; aperture parallel compaction explicitly disabled" : "";
 }
@@ -1426,6 +1445,11 @@ static const char *gpuMagnetLossCompactionStatus(void) {
 }
 
 static const char *gpuCsbendDriftStatus(void) {
+#ifndef GPU_VERIFY
+  if (gpuEnableCsbendDrift && gpuBase.orderSensitiveOutputNeeded &&
+      !gpuCsbendDriftExplicit && !gpuBase.requiredMode)
+    return "; non-expanded CSBEND uses CPU for reference-output libm parity";
+#endif
   if (gpuEnableCsbendDrift)
     return gpuCsbendDriftExplicit ?
            "; CSBEND drift paths explicitly enabled" :
@@ -2297,6 +2321,17 @@ static long gpuCsbendElementSupported(ELEMENT_LIST *eptr) {
     return 0;
   if (!eptr || !eptr->p_elem || eptr->type != T_CSBEND)
     return 0;
+#ifndef GPU_VERIFY
+  /* Non-expanded sector drifts subtract nearly equal cosines and multiply
+   * the residual by the bend radius. Host/device libm differences can then
+   * seed larger changes in collective tracking. Preserve reference output
+   * until this path has a CPU-compatible transcendental implementation.
+   * Explicit CSBEND enablement and required mode retain the CUDA path. */
+  if (!((CSBEND *)eptr->p_elem)->expandHamiltonian &&
+      gpuBase.orderSensitiveOutputNeeded && !gpuCsbendDriftExplicit &&
+      !gpuBase.requiredMode)
+    return 0;
+#endif
   return gpuCsbendCommonSupported((CSBEND *)eptr->p_elem);
 }
 
@@ -2912,6 +2947,13 @@ static long gpuLscDataSupported(LSCDRIFT *lsc) {
 static long gpuLscElementSupported(ELEMENT_LIST *eptr) {
   LSCDRIFT *lsc;
 
+#if USE_MPI
+  /* The CUDA histogram/variance path is local to a rank. The CPU element
+   * performs collective reductions, including master participation. Mixing
+   * these paths deadlocks and would not give a global space-charge field. */
+  if (distributedBeam)
+    return 0;
+#endif
   if (!gpuEnableLscTracking)
     return 0;
   if (!eptr || !eptr->p_elem || eptr->type != T_LSCDRIFT)
@@ -3373,6 +3415,12 @@ static void gpuReleaseRfcaScratch(void) {
     if (status != 0)
       gpuFatalStatus("cudaFree(RFCA match-energy scratch)", status);
   }
+  if (gpuRfcaScratch.referenceKick) {
+    status = gpuCudaFree(gpuRfcaScratch.referenceKick);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(RFCA reference-kick scratch)", status);
+  }
+  free(gpuRfcaScratch.hostReferenceKick);
   memset(&gpuRfcaScratch, 0, sizeof(gpuRfcaScratch));
 }
 
@@ -3602,6 +3650,25 @@ static void gpuEnsureRfcaScratch(void) {
     if (status != 0)
       gpuFatalStatus("cudaMalloc(RFCA match-energy scratch)", status);
   }
+}
+
+static void gpuEnsureRfcaReferenceScratch(long nParticles) {
+  int status;
+  if (nParticles <= gpuRfcaScratch.referenceCapacity)
+    return;
+  if (gpuRfcaScratch.referenceKick) {
+    status = gpuCudaFree(gpuRfcaScratch.referenceKick);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(RFCA reference-kick scratch resize)", status);
+    gpuRfcaScratch.referenceKick = NULL;
+  }
+  gpuRfcaScratch.hostReferenceKick = trealloc(
+    gpuRfcaScratch.hostReferenceKick, sizeof(double) * nParticles);
+  status = gpuCudaMallocBytes(&gpuRfcaScratch.referenceKick,
+                               sizeof(double) * nParticles);
+  if (status != 0)
+    gpuFatalStatus("cudaMalloc(RFCA reference-kick scratch)", status);
+  gpuRfcaScratch.referenceCapacity = nParticles;
 }
 
 static void gpuEnsureApertureScratch(long nParticles) {
@@ -5235,6 +5302,8 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
   gpuBase.isMaster = isMaster;
   gpuBase.lossOutputNeeded = lossOutputNeeded ? 1 : 0;
   gpuBase.orderSensitiveOutputNeeded = orderSensitiveOutputNeeded ? 1 : 0;
+  gpuRfcaReferenceCalls = gpuRfcaReferenceParticles = 0;
+  gpuLscReferenceCalls = 0;
   gpuBase.reductionOutputNeeded = reductionOutputNeeded ? 1 : 0;
   gpuBase.backtrack = backtrack ? 1 : 0;
   gpuDeviceIslandHasCsbend = 0;
@@ -6965,6 +7034,14 @@ void displayTimings(void) {
           gpuBase.gpuKernelSeconds,
           gpuBase.gpuTransferToDeviceSeconds,
           gpuBase.gpuTransferToHostSeconds);
+  if (gpuLscReferenceCalls)
+    fprintf(stderr, "elegant CUDA: LSC reference variance calls=%lu; "
+                    "CPU reference sum, CUDA particle tracking\n",
+            gpuLscReferenceCalls);
+  if (gpuRfcaReferenceCalls)
+    fprintf(stderr, "elegant CUDA: RF reference math calls=%lu particles=%lu; "
+                    "CPU reference/sine, CUDA particle updates\n",
+            gpuRfcaReferenceCalls, gpuRfcaReferenceParticles);
   if (gpuBase.gpuTrackParticleCount || gpuBase.gpuReductionCount)
     fprintf(stderr,
             "elegant CUDA: kernel detail matrix=%.6fs reduction=%.6fs sparseMatrixTerms=%lu\n",
@@ -10274,6 +10351,19 @@ static void gpuLscCenteredVariances(const GPU_BEAM_SUM_DATA *sums,
   if (!sums || sums->count <= 0 || nParticles <= 0)
     return;
 
+  if ((gpuEnvSet("ELEGANT_GPU_LSC_REFERENCE_VARIANCE") ?
+         gpuEnvFlag("ELEGANT_GPU_LSC_REFERENCE_VARIANCE") :
+         gpuBase.orderSensitiveOutputNeeded) && rms_emittance) {
+    /* Beam radius controls both impedance and adaptive step length. A parallel
+     * sum changes this shared reference value and can seed coherent changes
+     * in all particle kicks. Keep CPU summation order for reference outputs;
+     * binning, drift and voltage kicks still run on CUDA. */
+    double **coord = forceParticlesToCpu("LSC reference beam-size preparation");
+    rms_emittance(coord, 0, 2, nParticles, S11, NULL, S33, NULL, NULL);
+    gpuLscReferenceCalls++;
+    return;
+  }
+
   xCentroid = sums->centroidSum[0] / sums->count;
   yCentroid = sums->centroidSum[2] / sums->count;
   memset(&centeredSums, 0, sizeof(centeredSums));
@@ -11258,7 +11348,8 @@ static long gpuPackSpeedbump(GPU_SPEEDBUMP_DATA *data,
     data->offset = speedbump->dy;
   }
   data->plusDirection = direction[0] != '-';
-  data->minusDirection = direction[0] == '-';
+  /* An unsigned direction selects both sides, as in interpretScraperDirection. */
+  data->minusDirection = direction[0] != '+';
   if (speedbump->chord && speedbump->height)
     data->radius =
       (sqr(speedbump->chord) + 4 * sqr(speedbump->height)) /
@@ -14758,6 +14849,7 @@ static long gpuRfcaThinKickOnDevice(long np, RFCA *rfca, double **accepted,
   float milliseconds = 0;
   int status;
   long remaining;
+  void *referenceKick = NULL;
 
   if (np <= 0)
     return np;
@@ -14768,9 +14860,35 @@ static long gpuRfcaThinKickOnDevice(long np, RFCA *rfca, double **accepted,
   volt = rfca->volt / (1e6 * particleMassMV * particleRelSign);
   startGpuTimer();
   gpuCopyHostToDevice(np);
+  if (gpuRfcaReferenceMathEnabled()) {
+    long ip;
+    gpuEnsureRfcaReferenceScratch(np);
+    referenceKick = gpuRfcaScratch.referenceKick;
+    status = gpuCudaRfcaPhaseValues(gpuBase.deviceCoord, referenceKick, np,
+      (int)gpuBase.deviceStride, *P_central, omega, phase, c_mks, &milliseconds);
+    if (status != 0)
+      gpuFatalStatus("RFCA reference phase kernel", status);
+    gpuRecordHelperKernel(milliseconds);
+    status = gpuCudaCopyDeviceToHost(gpuRfcaScratch.hostReferenceKick,
+                                      referenceKick, np, &milliseconds);
+    if (status != 0)
+      gpuFatalStatus("RFCA reference phase transfer", status);
+    gpuRecordMilliseconds(&gpuBase.gpuTransferToHostSeconds, milliseconds);
+    for (ip = 0; ip < np; ip++)
+      gpuRfcaScratch.hostReferenceKick[ip] =
+        volt * sin(gpuRfcaScratch.hostReferenceKick[ip]);
+    status = gpuCudaCopyHostToDevice(referenceKick,
+      gpuRfcaScratch.hostReferenceKick, np, &milliseconds);
+    if (status != 0)
+      gpuFatalStatus("RFCA reference kick transfer", status);
+    gpuRecordMilliseconds(&gpuBase.gpuTransferToDeviceSeconds, milliseconds);
+    gpuRfcaReferenceCalls++;
+    gpuRfcaReferenceParticles += np;
+  }
+  milliseconds = 0;
   status = gpuCudaRfcaThinKick(gpuBase.deviceCoord, np,
                                (int)gpuBase.deviceStride, *P_central,
-                               volt, omega, phase, c_mks, &milliseconds);
+                               volt, omega, phase, c_mks, referenceKick, &milliseconds);
   if (status != 0)
     gpuFatalStatus("RFCA thin kick kernel", status);
   gpuRecordHelperKernel(milliseconds);
@@ -15656,6 +15774,14 @@ double gpu_findFiducialTime(long np, double s0, double sOffset,
   float milliseconds = 0;
   int status = 0;
   int64_t startPID = -1, endPID = -1;
+
+  if (gpuRfcaReferenceMathEnabled() && findFiducialTime) {
+    /* Fiducialization only reads coordinates. A mutable synchronization clears
+     * elementOnGpu, causing subsequent beam sums to read pre-kick host data
+     * even though the cavity continues tracking on the device. */
+    double **coord = copyParticlesToCpuReadOnly("RF CPU-order reference preparation");
+    return findFiducialTime(coord, np, s0, sOffset, p0, mode);
+  }
 
   if (mode & FID_MODE_LIGHT)
     return (s0 + sOffset) / c_mks;

@@ -1,0 +1,146 @@
+{
+  "case": "trajCorrect2",
+  "scope": "Reviewed absolute ceilings for named floating fields only; all other checks retain existing tolerances. No ignored outputs.",
+  "defaults": {
+    "absolute": 1e-15,
+    "relative": 1e-12
+  },
+  "fields": {
+    "run.cen|column|Cx": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Near-zero corrected centroid after repeated trajectory correction/reference-momentum changes; absolute comparison is appropriate."
+    },
+    "run.cen|column|Cxp": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Near-zero corrected centroid after repeated trajectory correction/reference-momentum changes; absolute comparison is appropriate."
+    },
+    "run.cen|column|Cdelta": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Near-zero corrected centroid after repeated trajectory correction/reference-momentum changes; absolute comparison is appropriate."
+    },
+    "run.cor|column|Kick": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Correction obtained from finite perturbations; femtoradian-scale difference is physically negligible for this fixture."
+    },
+    "run.cor|column|ParameterValue": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Correction obtained from finite perturbations; femtoradian-scale difference is physically negligible for this fixture."
+    },
+    "run.fin|parameter|Sdelta": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Near-zero moment or transverse extremum; bound in native field units."
+    },
+    "run.fin|parameter|Cdelta": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Near-zero moment or transverse extremum; bound in native field units."
+    },
+    "run.fin|parameter|yMinimum": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Near-zero moment or transverse extremum; bound in native field units."
+    },
+    "run.fin|parameter|ypMinimum": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Near-zero moment or transverse extremum; bound in native field units."
+    },
+    "run.fin|parameter|yMaximum": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Near-zero moment or transverse extremum; bound in native field units."
+    },
+    "run.fin|parameter|ma3": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Near-zero moment or transverse extremum; bound in native field units."
+    },
+    "run.fin|parameter|ma4": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Near-zero moment or transverse extremum; bound in native field units."
+    },
+    "run.fin|parameter|Wy": {
+      "absolute_ceiling": 1e-14,
+      "reason": "Near-zero moment or transverse extremum; bound in native field units."
+    },
+    "run.fin|parameter|dsMinimum": {
+      "absolute_ceiling": 2e-13,
+      "reason": "Longitudinal extrema in metres; cancellation of accumulated path coordinates."
+    },
+    "run.fin|parameter|sMaximum": {
+      "absolute_ceiling": 2e-13,
+      "reason": "Longitudinal extrema in metres; cancellation of accumulated path coordinates."
+    },
+    "run.fin|parameter|ma5": {
+      "absolute_ceiling": 2e-13,
+      "reason": "Longitudinal extrema in metres; cancellation of accumulated path coordinates."
+    },
+    "run.fin|parameter|deltaMinimum": {
+      "absolute_ceiling": 1e-12,
+      "reason": "Fractional-momentum extrema/percentile widths after repeated reference changes; absolute bound below one part per trillion."
+    },
+    "run.fin|parameter|deltaMaximum": {
+      "absolute_ceiling": 1e-12,
+      "reason": "Fractional-momentum extrema/percentile widths after repeated reference changes; absolute bound below one part per trillion."
+    },
+    "run.fin|parameter|ma6": {
+      "absolute_ceiling": 1e-12,
+      "reason": "Fractional-momentum extrema/percentile widths after repeated reference changes; absolute bound below one part per trillion."
+    },
+    "run.fin|parameter|Ddelta": {
+      "absolute_ceiling": 1e-12,
+      "reason": "Fractional-momentum extrema/percentile widths after repeated reference changes; absolute bound below one part per trillion."
+    },
+    "run.fin|parameter|Ddelta50": {
+      "absolute_ceiling": 1e-12,
+      "reason": "Fractional-momentum extrema/percentile widths after repeated reference changes; absolute bound below one part per trillion."
+    },
+    "run.fin|parameter|Ddelta60": {
+      "absolute_ceiling": 1e-12,
+      "reason": "Fractional-momentum extrema/percentile widths after repeated reference changes; absolute bound below one part per trillion."
+    },
+    "run.fin|parameter|Ddelta70": {
+      "absolute_ceiling": 1e-12,
+      "reason": "Fractional-momentum extrema/percentile widths after repeated reference changes; absolute bound below one part per trillion."
+    },
+    "run.fin|parameter|Ddelta80": {
+      "absolute_ceiling": 1e-12,
+      "reason": "Fractional-momentum extrema/percentile widths after repeated reference changes; absolute bound below one part per trillion."
+    },
+    "run.fin|parameter|Ddelta90": {
+      "absolute_ceiling": 1e-12,
+      "reason": "Fractional-momentum extrema/percentile widths after repeated reference changes; absolute bound below one part per trillion."
+    },
+    "run.fin|parameter|Ddelta95": {
+      "absolute_ceiling": 1e-12,
+      "reason": "Fractional-momentum extrema/percentile widths after repeated reference changes; absolute bound below one part per trillion."
+    },
+    "run.fin|parameter|R15": {
+      "absolute_ceiling": 1e-13,
+      "reason": "Derived response-matrix entries; finite-difference and correction sensitivity. No schema or discrete exception."
+    },
+    "run.fin|parameter|R25": {
+      "absolute_ceiling": 1e-13,
+      "reason": "Derived response-matrix entries; finite-difference and correction sensitivity. No schema or discrete exception."
+    },
+    "run.fin|parameter|R35": {
+      "absolute_ceiling": 1e-13,
+      "reason": "Derived response-matrix entries; finite-difference and correction sensitivity. No schema or discrete exception."
+    },
+    "run.fin|parameter|R45": {
+      "absolute_ceiling": 1e-13,
+      "reason": "Derived response-matrix entries; finite-difference and correction sensitivity. No schema or discrete exception."
+    },
+    "run.fin|parameter|R51": {
+      "absolute_ceiling": 1e-13,
+      "reason": "Derived response-matrix entries; finite-difference and correction sensitivity. No schema or discrete exception."
+    },
+    "run.fin|parameter|R52": {
+      "absolute_ceiling": 1e-13,
+      "reason": "Derived response-matrix entries; finite-difference and correction sensitivity. No schema or discrete exception."
+    },
+    "run.fin|parameter|R61": {
+      "absolute_ceiling": 1e-13,
+      "reason": "Derived response-matrix entries; finite-difference and correction sensitivity. No schema or discrete exception."
+    },
+    "run.fin|parameter|R62": {
+      "absolute_ceiling": 1e-13,
+      "reason": "Derived response-matrix entries; finite-difference and correction sensitivity. No schema or discrete exception."
+    }
+  }
+}
