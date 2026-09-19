@@ -678,7 +678,7 @@ long track_through_lgbend(
   if (!getElementOnGpu() && !omp_in_parallel() &&
       gpuOmpTrackingRequested(n_part) && !accepted && !sigmaDelta2 &&
       !spinCoordOffset && globalLossCoordOffset <= 0 &&
-      !lgbend->synch_rad && !lgbend->isr) {
+      !lgbend->isr) {
 #  pragma omp parallel num_threads(gpuGetOmpTrackingThreads())
     {
 #  pragma omp single

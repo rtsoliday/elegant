@@ -20,6 +20,9 @@
 #  include "gpu_ccbend.h"
 #  include "gpu_funcs.h"
 #endif
+#ifdef _OPENMP
+#  include <omp.h>
+#endif
 
 static CCBEND ccbendCopy;
 static ELEMENT_LIST *eptrCopy = NULL;
@@ -70,7 +73,7 @@ void rotateSpinsAboutYAxis(double **particle, int64_t np, double angle) {
     performQuaternionRotation(particle[i] + spinCoordOffset, 0.0, angle, 0.0);
 }
 
-long track_through_ccbend(
+static long track_through_ccbend_impl(
                           double **particle, /* initial/final phase-space coordinates */
                           int64_t n_part,       /* number of particles */
                           ELEMENT_LIST *eptr,
@@ -753,6 +756,45 @@ long track_through_ccbend(
 
   log_exit("track_through_ccbend");
   return (i_top + 1);
+}
+
+long track_through_ccbend(
+                          double **particle,
+                          int64_t n_part,
+                          ELEMENT_LIST *eptr,
+                          CCBEND *ccbend,
+                          double Po,
+                          double **accepted,
+                          double z_start,
+                          double *sigmaDelta2,
+                          char *rootname,
+                          MAXAMP *maxamp,
+                          APCONTOUR *apContour,
+                          APERTURE_DATA *apFileData,
+                          int64_t iPart,
+                          long iFinalSlice) {
+#if defined(HAVE_GPU) && defined(_OPENMP)
+  long result = 0;
+
+  /* Keep one worker team alive for the complete CPU-fallback magnet.  The
+   * implementation submits only deterministic particle integration as
+   * taskloops and performs stable ordered loss compaction afterward. */
+  if (!getElementOnGpu() && !omp_in_parallel() &&
+      gpuOmpTrackingEnabled(n_part) && !accepted && !sigmaDelta2 &&
+      !spinCoordOffset && globalLossCoordOffset <= 0 && !ccbend->isr) {
+#  pragma omp parallel num_threads(gpuGetOmpTrackingThreads())
+    {
+#  pragma omp single
+      result = track_through_ccbend_impl(
+        particle, n_part, eptr, ccbend, Po, accepted, z_start, sigmaDelta2,
+        rootname, maxamp, apContour, apFileData, iPart, iFinalSlice);
+    }
+    return result;
+  }
+#endif
+  return track_through_ccbend_impl(
+    particle, n_part, eptr, ccbend, Po, accepted, z_start, sigmaDelta2,
+    rootname, maxamp, apContour, apFileData, iPart, iFinalSlice);
 }
 
 static long findMaximumStepOrder(const long order2, MULTIPOLE_DATA *multData) {

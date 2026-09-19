@@ -210,6 +210,8 @@ static long doMomentumApertureSearchIndependent(
   double *sStart, char **ElementName, char **ElementType,
   int32_t *ElementOccurence, short *direction) {
   const char *option = getenv("ELEGANT_GPU_ENABLE_NONFIDUCIAL_MOMENTUM_SEARCH");
+  const char *batchBoundaryOption = getenv("ELEGANT_GPU_BATCH_MOMENTUM_BOUNDARY_REPLAY");
+  const char *profileBoundaryOption = getenv("ELEGANT_GPU_PROFILE_MOMENTUM_BOUNDARY_REPLAY");
   const char *reason = NULL;
   MOMENTUM_REFERENCE entry, prepared;
   MOMENTUM_LANE *lane;
@@ -218,9 +220,15 @@ static long doMomentumApertureSearchIndependent(
   double *delta, *history, *historyCount;
   long *targetById, *laneById, *splitById;
   unsigned char *seen;
+  unsigned char *boundaryMismatch;
   long capacity, tasks, i, offset, count, active, left, ip, id, code;
   long suppressed, replays = 0, fallbacks = 0, gpuElements = 0, batches = 0;
   long scalarCommandFallback = 0;
+  long batchBoundaryReplay = !batchBoundaryOption ||
+    strtol(batchBoundaryOption, NULL, 10) != 0;
+  long profileBoundaryReplay = profileBoundaryOption &&
+    strtol(profileBoundaryOption, NULL, 10) != 0;
+  long savedShowElementTiming = run->showElementTiming;
   double pCentral;
 
   /* Default on for eligible searches; retain an explicit scalar-path override. */
@@ -327,6 +335,7 @@ static long doMomentumApertureSearchIndependent(
   laneById = tmalloc(capacity * sizeof(*laneById));
   splitById = tmalloc(capacity * sizeof(*splitById));
   seen = tmalloc(capacity * sizeof(*seen));
+  boundaryMismatch = tmalloc(tasks * sizeof(*boundaryMismatch));
   history = tmalloc((size_t)capacity * 5 * control->n_passes * sizeof(*history));
   historyCount = tmalloc(capacity * sizeof(*historyCount));
   fprintf(stderr, "elegant CUDA: independent momentum search: %ld lanes, capacity %ld, fiducialize=%ld.\n",
@@ -384,11 +393,26 @@ static long doMomentumApertureSearchIndependent(
       setTrackingOmniWedgeGpuFunction(momentumOffsetFunctionBatchedGpu);
       gpu_momentum_search_batch_scope(1);
       pCentral = run->p_central;
-      left = do_tracking(NULL, coord, count, NULL, beamline, &pCentral,
-                         NULL, NULL, NULL, NULL, run, control->i_step,
-                         FIRST_BEAM_IS_FIDUCIAL + FIDUCIAL_BEAM_SEEN + SILENT_RUNNING +
-                           INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
-                         control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+#if defined(_OPENMP)
+      if (gpuOmpTrackingRequested(count)) {
+        /* Keep one worker team alive across GPU tracking so that any
+         * loss-sensitive CPU fallback can reuse it. */
+#  pragma omp parallel num_threads(gpuGetOmpTrackingThreads())
+        {
+#  pragma omp single
+          left = do_tracking(NULL, coord, count, NULL, beamline, &pCentral,
+                             NULL, NULL, NULL, NULL, run, control->i_step,
+                             FIRST_BEAM_IS_FIDUCIAL + FIDUCIAL_BEAM_SEEN + SILENT_RUNNING +
+                               INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
+                             control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+        }
+      } else
+#endif
+        left = do_tracking(NULL, coord, count, NULL, beamline, &pCentral,
+                           NULL, NULL, NULL, NULL, run, control->i_step,
+                           FIRST_BEAM_IS_FIDUCIAL + FIDUCIAL_BEAM_SEEN + SILENT_RUNNING +
+                             INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
+                           control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
       gpuElements += getGpuBase()->gpuElementCount;
       batches++;
       fprintf(stderr, "elegant CUDA: independent momentum batch %ld completed: trials=%ld survivors=%ld gpuElements=%ld.\n",
@@ -401,7 +425,10 @@ static long doMomentumApertureSearchIndependent(
       for (ip = 0; ip < count; ip++) {
         id = (long)coord[ip][particleIDIndex] - 1;
         if (id < 0 || id >= count || seen[id])
-          bombElegant("invalid independent momentum lane ID", NULL);
+          bombElegantVA("invalid independent momentum lane ID: row=%ld id=%ld count=%ld seen=%ld raw=%.17g",
+                        ip, id, count,
+                        id >= 0 && id < count ? (long)seen[id] : -1L,
+                        coord[ip][particleIDIndex]);
         seen[id] = ip < left ? 2 : 1;
         memcpy(resultCoord[id], coord[ip], totalPropertiesPerParticle * sizeof(**coord));
       }
@@ -419,11 +446,138 @@ static long doMomentumApertureSearchIndependent(
   } while (active);
 
   gpuSetTrackingSuppressed(1);
+  memset(boundaryMismatch, 0, tasks * sizeof(*boundaryMismatch));
+  if (batchBoundaryReplay) {
+    count = 0;
+    for (i = 0; i < tasks; i++) {
+      MOMENTUM_LANE *item = lane + i;
+      if (item->actualSurvivor) {
+        if (count >= capacity) {
+          batchBoundaryReplay = 0;
+          break;
+        }
+        memset(coord[count], 0, totalPropertiesPerParticle * sizeof(**coord));
+        if (startingCoord)
+          memcpy(coord[count], startingCoord, 6 * sizeof(**coord));
+        coord[count][particleIDIndex] = count + 1;
+        targetById[count] = item->target;
+        delta[count] = item->survivedDelta;
+        laneById[count] = i;
+        splitById[count] = 0;
+        count++;
+      }
+      if (item->actualLoser) {
+        if (count >= capacity) {
+          batchBoundaryReplay = 0;
+          break;
+        }
+        memset(coord[count], 0, totalPropertiesPerParticle * sizeof(**coord));
+        if (startingCoord)
+          memcpy(coord[count], startingCoord, 6 * sizeof(**coord));
+        coord[count][particleIDIndex] = count + 1;
+        targetById[count] = item->target;
+        delta[count] = item->lostDelta;
+        laneById[count] = i;
+        splitById[count] = 1;
+        count++;
+      }
+    }
+    if (batchBoundaryReplay) {
+      fprintf(stderr, "elegant CUDA: confirming %ld momentum boundary points in one OpenMP CPU ensemble.\n", count);
+      memset(seen, 0, count * sizeof(*seen));
+      momentumReferenceRestore(&prepared, beamline);
+      batchedMomentumTargetElement = target;
+      batchedMomentumTargets = nElem;
+      batchedMomentumTargetById = targetById;
+      batchedMomentumDeltaById = delta;
+      batchedMomentumHistory = history;
+      batchedMomentumHistoryCount = historyCount;
+      batchedMomentumParticles = count;
+      batchedMomentumTurns = control->n_passes;
+      memset(historyCount, 0, count * sizeof(*historyCount));
+      setTrackingOmniWedgeFunction(momentumOffsetFunctionBatched);
+      gpu_momentum_search_batch_scope(1);
+      pCentral = run->p_central;
+      if (profileBoundaryReplay) {
+        resetElementTiming();
+        run->showElementTiming = 1;
+      }
+#if defined(_OPENMP)
+      if (gpuOmpTrackingRequested(count)) {
+        /* Keep one worker team alive across the complete CPU confirmation.
+         * CSBEND, CCBEND, LGBEND, exact drifts, and multipole taskloops then
+         * reuse this team instead of creating a team for every element. */
+#  pragma omp parallel num_threads(gpuGetOmpTrackingThreads())
+        {
+#  pragma omp single
+          left = do_tracking(NULL, coord, count, NULL, beamline, &pCentral,
+                             NULL, NULL, NULL, NULL, run, control->i_step,
+                             FIRST_BEAM_IS_FIDUCIAL + FIDUCIAL_BEAM_SEEN + SILENT_RUNNING +
+                               INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
+                             control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+        }
+      } else
+#endif
+        left = do_tracking(NULL, coord, count, NULL, beamline, &pCentral,
+                           NULL, NULL, NULL, NULL, run, control->i_step,
+                           FIRST_BEAM_IS_FIDUCIAL + FIDUCIAL_BEAM_SEEN + SILENT_RUNNING +
+                             INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
+                           control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+      if (profileBoundaryReplay) {
+        reportElementTiming();
+        run->showElementTiming = savedShowElementTiming;
+      }
+      gpu_momentum_search_batch_scope(0);
+      setTrackingOmniWedgeFunction(NULL);
+      clearBatchedMomentumCallbackState();
+      replays += count;
+      for (ip = 0; ip < count; ip++) {
+        id = (long)coord[ip][particleIDIndex] - 1;
+        if (id < 0 || id >= count || seen[id])
+          bombElegant("invalid boundary replay lane ID", NULL);
+        seen[id] = ip < left ? 2 : 1;
+        memcpy(resultCoord[id], coord[ip],
+               totalPropertiesPerParticle * sizeof(**coord));
+      }
+      for (id = 0; id < count; id++) {
+        MOMENTUM_LANE *item = lane + laneById[id];
+        if (!seen[id])
+          bombElegant("missing boundary replay lane ID", NULL);
+        if (splitById[id] == 0) {
+          double *turnCoord[5];
+          long ic;
+          if (seen[id] != 2)
+            boundaryMismatch[laneById[id]] = 1;
+          item->tune[0] = item->tune[1] = -1;
+          if (seen[id] == 2 && (long)historyCount[id] > 2) {
+            for (ic = 0; ic < 5; ic++)
+              turnCoord[ic] = history +
+                ((size_t)id * 5 + ic) * control->n_passes;
+            if (!determineTunesFromTrackingData(item->tune, turnCoord,
+                                                (long)historyCount[id], delta[id]))
+              boundaryMismatch[laneById[id]] = 1;
+          }
+        } else {
+          if (seen[id] == 2)
+            boundaryMismatch[laneById[id]] = 1;
+          else {
+            item->lostPass = (long)resultCoord[id][lossPassIndex];
+            item->xLost = resultCoord[id][0];
+            item->yLost = resultCoord[id][2];
+            item->sLost = resultCoord[id][4];
+            item->deltaLost = (resultCoord[id][5] - pCentral) / pCentral;
+          }
+        }
+      }
+    } else
+      fprintf(stderr, "elegant CUDA: boundary ensemble exceeds batch capacity; using scalar CPU confirmation.\n");
+  }
   for (i = 0; i < tasks; i++) {
     MOMENTUM_LANE *item = lane + i;
-    long mismatch = 0, row = output_mode ? i : i / 2;
+    long mismatch = batchBoundaryReplay ? boundaryMismatch[i] : 0;
+    long row = output_mode ? i : i / 2;
     long slot = output_mode ? 0 : item->side;
-    if (item->actualSurvivor) {
+    if (!batchBoundaryReplay && item->actualSurvivor) {
       code = momentumScalarTrial(run, control, beamline, startingCoord,
                                  target[item->target], item->survivedDelta,
                                  scalar, &pCentral, &prepared);
@@ -438,7 +592,7 @@ static long doMomentumApertureSearchIndependent(
         mismatch = 1;
       }
     }
-    if (item->actualLoser) {
+    if (!batchBoundaryReplay && item->actualLoser) {
       code = momentumScalarTrial(run, control, beamline, startingCoord,
                                  target[item->target], item->lostDelta,
                                  scalar, &pCentral, &prepared);
@@ -489,7 +643,7 @@ static long doMomentumApertureSearchIndependent(
   free_czarray_2d((void **)coord, capacity, totalPropertiesPerParticle);
   free_czarray_2d((void **)resultCoord, capacity, totalPropertiesPerParticle);
   free(lane); free(target); free(delta); free(targetById); free(laneById); free(splitById);
-  free(seen); free(history); free(historyCount);
+  free(seen); free(boundaryMismatch); free(history); free(historyCount);
   fprintf(stderr, "elegant CUDA: independent momentum summary: batches=%ld gpuElements=%ld cpuReplays=%ld scalarFallbacks=%ld.\n",
           batches, gpuElements, replays, fallbacks);
   return scalarCommandFallback ? -1 : (output_mode ? tasks : nElem) - 1;

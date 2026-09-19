@@ -93,11 +93,27 @@ to deterministic GPU-supported magnet lattices and enables
 returning to point-by-point tracking.  Only particles with a valid first tune
 enter the second interval, with results scattered back into stable grid order.
 For non-MPI `gpu-elegant`, `-ompThreads=N` explicitly enables experimental
-OpenMP particle tracking in the loss-sensitive batched CPU fallback.  The
-default is one tracking thread.  The OpenMP path keeps element setup and sticky
-aperture state serial, keeps one worker team alive for each tune interval,
-submits deterministic magnet integration as particle taskloops, and performs
-stable ordered loss compaction after each taskloop.  The regression harness
+OpenMP particle tracking in the loss-sensitive batched CPU fallback used by
+frequency-map and momentum-aperture searches.  The default is one tracking
+thread.  Batched momentum searches prefer the checked CUDA LGBEND path even
+though standalone LGBEND tracking remains opt-in; this keeps the search
+ensemble resident and avoids repeated CPU-island synchronization.  OpenMP is
+used only when an element or option still requires CPU tracking.  The OpenMP
+path keeps element setup and sticky aperture state serial,
+keeps one worker team alive across the complete batched tracking call, submits
+deterministic magnet integration and exact drifts as particle taskloops, and
+performs stable ordered loss compaction after each taskloop.  Compaction
+preserves the fixed host row addresses required by CUDA synchronization while
+moving complete particle records into stable survivor/loss order.  Stochastic
+ISR remains on the serial fallback.  Momentum-aperture boundary confirmation
+is also grouped into one CPU ensemble after the CUDA search, allowing the
+requested OpenMP threads to process CPU-only magnet formulas without
+restarting the tracker for every boundary point.  Numerically sensitive
+boundary mismatches still rerun the complete scalar lane.  Set
+`ELEGANT_GPU_BATCH_MOMENTUM_BOUNDARY_REPLAY=0` to restore point-by-point
+boundary confirmation for diagnosis.  Set
+`ELEGANT_GPU_PROFILE_MOMENTUM_BOUNDARY_REPLAY=1` to emit element timing for
+the grouped CPU boundary confirmation.  The regression harness
 accepts repeatable executable options such as
 `--elegant-argument=-ompThreads=4`.  Users must use OpenMP only on a GPU node
 whose requested CPU cores are not shared with other jobs.

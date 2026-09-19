@@ -15,7 +15,9 @@ typedef struct GPU_OMP_TRACKING_WORKSPACE {
   double *lossOffset;
   double *auxiliary;
   double **particleOrder;
+  double *particleData;
   long capacity;
+  long particleProperties;
 } GPU_OMP_TRACKING_WORKSPACE;
 
 #ifndef GPU_BUNCHED_WAKE_UNSUPPORTED

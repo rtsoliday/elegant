@@ -817,7 +817,7 @@ static GPU_BASE gpuBase;
 static long gpuTrackingSuppressed = 0;
 static long gpuMomentumBatchScope = 0;
 /* OpenMP tracking is deliberately opt-in and is active only while a
- * loss-sensitive batched frequency map is using the CPU fallback. */
+ * loss-sensitive batched search is using the CPU fallback. */
 static long gpuOmpTrackingThreads = 1;
 static long gpuOmpTrackingScope = 0;
 static GPU_OMP_TRACKING_WORKSPACE gpuOmpTrackingWorkspace;
@@ -2388,7 +2388,12 @@ static long gpuCcbendElementSupported(ELEMENT_LIST *eptr) {
 static long gpuLgbendCommonSupported(LGBEND *lgbend) {
   long i;
 
-  if (!lgbend || !gpuEnableLgbend || spinCoordOffset || gpuBase.backtrack)
+  /* Standalone LGBEND remains opt-in because its kernel did not show a useful
+   * crossover in general tracking.  Momentum-aperture batches are different:
+   * keeping the complete search ensemble resident avoids thousands of CPU
+   * island synchronizations, so prefer the checked CUDA path in that scope. */
+  if (!lgbend || (!gpuEnableLgbend && !gpuMomentumBatchScope) ||
+      spinCoordOffset || gpuBase.backtrack)
     return 0;
   if (gpuStringSet(lgbend->apertureDataFile) &&
       !lgbend->localApertureData) {
@@ -5317,41 +5322,57 @@ long gpuOmpTrackingRequested(long particles) {
 }
 
 long gpuOmpTrackingEnabled(long particles) {
-  return gpuOmpTrackingScope && gpuOmpTrackingRequested(particles);
+  return (gpuOmpTrackingScope || gpuMomentumBatchScope) &&
+         gpuOmpTrackingRequested(particles);
 }
 
 long gpuOmpTrackingScopeActive(void) {
-  return gpuOmpTrackingScope;
+  return gpuOmpTrackingScope || gpuMomentumBatchScope;
 }
 
 GPU_OMP_TRACKING_WORKSPACE *gpuGetOmpTrackingWorkspace(long particles) {
   void *memory;
+  long allocationParticles = particles;
 
-  if (particles <= gpuOmpTrackingWorkspace.capacity)
+  if (particles <= gpuOmpTrackingWorkspace.capacity &&
+      totalPropertiesPerParticle <= gpuOmpTrackingWorkspace.particleProperties)
     return &gpuOmpTrackingWorkspace;
+  if (allocationParticles < gpuOmpTrackingWorkspace.capacity)
+    allocationParticles = gpuOmpTrackingWorkspace.capacity;
   memory = realloc(gpuOmpTrackingWorkspace.survived,
-                   particles * sizeof(*gpuOmpTrackingWorkspace.survived));
+                   allocationParticles *
+                     sizeof(*gpuOmpTrackingWorkspace.survived));
   if (!memory)
     bombElegant("memory allocation failure for OpenMP survivor flags", NULL);
   gpuOmpTrackingWorkspace.survived = (unsigned char *)memory;
   memory = realloc(gpuOmpTrackingWorkspace.lossOffset,
-                   particles * sizeof(*gpuOmpTrackingWorkspace.lossOffset));
+                   allocationParticles *
+                     sizeof(*gpuOmpTrackingWorkspace.lossOffset));
   if (!memory)
     bombElegant("memory allocation failure for OpenMP loss offsets", NULL);
   gpuOmpTrackingWorkspace.lossOffset = (double *)memory;
   memory = realloc(gpuOmpTrackingWorkspace.auxiliary,
-                   particles * sizeof(*gpuOmpTrackingWorkspace.auxiliary));
+                   allocationParticles *
+                     sizeof(*gpuOmpTrackingWorkspace.auxiliary));
   if (!memory)
     bombElegant("memory allocation failure for OpenMP tracking workspace",
                 NULL);
   gpuOmpTrackingWorkspace.auxiliary = (double *)memory;
   memory = realloc(gpuOmpTrackingWorkspace.particleOrder,
-                   particles * sizeof(*gpuOmpTrackingWorkspace.particleOrder));
+                   allocationParticles *
+                     sizeof(*gpuOmpTrackingWorkspace.particleOrder));
   if (!memory)
     bombElegant("memory allocation failure for OpenMP particle ordering",
                 NULL);
   gpuOmpTrackingWorkspace.particleOrder = (double **)memory;
-  gpuOmpTrackingWorkspace.capacity = particles;
+  memory = realloc(gpuOmpTrackingWorkspace.particleData,
+                   allocationParticles * totalPropertiesPerParticle *
+                     sizeof(*gpuOmpTrackingWorkspace.particleData));
+  if (!memory)
+    bombElegant("memory allocation failure for OpenMP particle data", NULL);
+  gpuOmpTrackingWorkspace.particleData = (double *)memory;
+  gpuOmpTrackingWorkspace.capacity = allocationParticles;
+  gpuOmpTrackingWorkspace.particleProperties = totalPropertiesPerParticle;
   return &gpuOmpTrackingWorkspace;
 }
 
@@ -5367,11 +5388,23 @@ long gpuStableCompactParticles(double **particle, long particles,
     if (survived[i])
       workspace->particleOrder[output++] = particle[i];
   survivors = output;
+  if (!survivors || survivors == particles)
+    return survivors;
   for (i = 0; i < particles; i++)
     if (!survived[i])
       workspace->particleOrder[output++] = particle[i];
-  memcpy(particle, workspace->particleOrder,
-         particles * sizeof(*particle));
+  /* CUDA synchronization addresses particles by fixed row.  Reordering the
+   * row pointers makes a later device-to-host copy alias the wrong lanes and
+   * can duplicate particle IDs.  Preserve the pointer layout and stably move
+   * complete row contents instead, matching the serial swapParticles model. */
+  for (i = 0; i < particles; i++)
+    memcpy(workspace->particleData + i * totalPropertiesPerParticle,
+           workspace->particleOrder[i],
+           totalPropertiesPerParticle * sizeof(**particle));
+  for (i = 0; i < particles; i++)
+    memcpy(particle[i],
+           workspace->particleData + i * totalPropertiesPerParticle,
+           totalPropertiesPerParticle * sizeof(**particle));
   return survivors;
 }
 
@@ -5678,6 +5711,13 @@ void gpuBaseInit(double **coord, long nOriginal, double **accepted, double **los
     gpuCcbendMinParticles = gpuLgbendMinParticles = 32;
   }
 
+  /* Scalar reference and boundary-replay tracking deliberately suppresses
+   * CUDA.  Leave a valid host-only base for the generic tracking code, but
+   * do not rediscover/select a device for every one-particle replay. */
+  if (gpuTrackingSuppressed) {
+    gpuBase.initialized = 1;
+    return;
+  }
 
   if (strcmp(mode, "off") == 0) {
     gpuBase.initialized = 1;
@@ -7082,8 +7122,11 @@ static void gpuDisplaySyncTimings(void) {
 }
 
 static double **syncParticlesToCpu(const char *reason, long readOnly) {
-  long copied = gpuCopyDeviceToHost(gpuBase.nParticles);
+  long copied;
   long acceptedCopied = 0;
+  if (!gpuBase.initialized || gpuBase.activeDevice < 0)
+    return gpuBase.coord;
+  copied = gpuCopyDeviceToHost(gpuBase.nParticles);
   if (!readOnly)
     acceptedCopied = gpuCopyAcceptedDeviceToHost(gpuBase.nParticles, reason);
   gpuRecordSyncRequest(reason, copied || acceptedCopied, readOnly);
@@ -7118,6 +7161,8 @@ void startCpuTimer(void) {
 }
 
 void displayTimings(void) {
+  if (gpuBase.activeDevice < 0 && !gpuBase.gpuElementCount)
+    return;
   if (!gpuVerbose && !gpuBase.gpuElementCount)
     return;
   fprintf(stderr,

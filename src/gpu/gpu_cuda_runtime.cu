@@ -2972,7 +2972,6 @@ __device__ __forceinline__ int gpuLgbendBody(
   double coordLimit, double slopeLimit) {
   double driftFrac[8], kickFrac[8];
   double qx, qy, denominator, bodyPath = 0;
-  double xpow[3], ypow[3];
   double inputPath = *path;
   double beta0 = 1;
   double drift = segment.length / nSlices;
@@ -3021,14 +3020,34 @@ __device__ __forceinline__ int gpuLgbendBody(
       if (step == nSubsteps - 1)
         break;
 
-      gpuMultipoleFillPowerArray(*x, xpow, 2);
-      gpuMultipoleFillPowerArray(*y, ypow, 2);
+      /* LGBEND is limited to normal orders 0--2.  Expanding these kicks
+       * directly avoids the generic power arrays in the fused interpreter. */
       deltaQx = deltaQy = 0;
-      for (int order = 0; order < 3; order++) {
-        if (segment.KnL[order])
-          gpuMultipoleApplyKick(
-            &qx, &qy, &deltaQx, &deltaQy, xpow, ypow, order,
-            segment.KnL[order] / nSlices * kickFrac[step], 0);
+      if (segment.KnL[0]) {
+        double strength = segment.KnL[0] / nSlices * kickFrac[step];
+        qx -= strength;
+        deltaQx -= strength;
+      }
+      if (segment.KnL[1]) {
+        double strength = segment.KnL[1] / nSlices * kickFrac[step];
+        double sumFy = *x;
+        double sumFx = *y;
+        qx -= strength * sumFy;
+        qy += strength * sumFx;
+        deltaQx -= strength * sumFy;
+        deltaQy += strength * sumFx;
+      }
+      if (segment.KnL[2]) {
+        double strength = segment.KnL[2] / nSlices * kickFrac[step];
+        double x2 = *x * *x;
+        double y2 = *y * *y;
+        double sumFy = 0.5 * x2;
+        double sumFx = *x * *y;
+        sumFy += -0.5 * y2;
+        qx -= strength * sumFy;
+        qy += strength * sumFx;
+        deltaQx -= strength * sumFy;
+        deltaQy += strength * sumFx;
       }
       denominator =
         (1 + *dp) * (1 + *dp) - qx * qx - qy * qy;
