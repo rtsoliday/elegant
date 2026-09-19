@@ -73,7 +73,10 @@ Here is a summary of what's changed since release 2026.4.  Historical change log
 
 \subsection{New and Modified Commands}
 \begin{itemize}
-\item None.
+\item The \verb|closed_orbit|, \verb|correct|, and \verb|correction_matrix_output| support a new value for the \verb|fixed_length| and
+  \verb|fixed_length_matrix| parameters. In particular, when a value of \verb|2| is given, a six-dimensional closed orbit method is used.
+  Previously, a similar method was available using a value of \verb|1|, but this used a four-dimensional orbit method inside a loop that
+  determined the energy offset. The new method is faster.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -1755,9 +1758,24 @@ take in finding the closed orbit.
 is used each iteration.  For lattices that are very nonlinear or close
 to unstable, a number less than 1 can be helpful.  Otherwise, it only
 slows the simulation.
-\item \verb|fixed_length| --- A flag indicating whether to find a
-closed orbit with the same length as the design orbit by changing the
-momentum offset.
+\item \verb|fixed_length| --- Selects the closed-orbit mode:
+\begin{itemize}
+\item \verb|0| (default) --- 4-D transverse closed orbit at fixed momentum offset. The rf
+  frequency implicitly varies so that the beam energy is held fixed, even when steering elements
+  in dispersive regions are used.
+\item \verb|1| --- Fixed rf frequency, so the beam energy varies. The momentum offset is varied
+  using the 4-D orbit finder, iterating until the orbit length equals the design orbit length.
+  This mode is robust but can be slow and sometimes converges poorly.
+\item \verb|2| --- Full 6-D closed orbit found with a single coupled Newton iteration. It solves
+  the transverse orbit, the momentum offset $\delta$, and the rf timing/synchronous phase
+  simultaneously, subject to the path-length (fixed-length) constraint, tracking the probe with
+  rf time-dependence active. This is generally faster and more robust than \verb|fixed_length=1|.
+  It requires an rf cavity that provides longitudinal focusing (i.e. a non-singular $I-R$ in the
+  longitudinal plane); with no rf configured the computation is aborted. During this solve the
+  \verb|change_t| setting of each rf cavity is internally forced to zero (and restored afterward) so
+  that the path-length coordinate is tracked as the absolute orbit length; unlike \verb|fixed_length=1|,
+  a nonzero \verb|change_t| is therefore permitted.
+\end{itemize}
 \item \verb|start_from_recirc| --- A flag indicating whether to
 compute the closed orbit from the recirculation (\verb|recirc|)
 element in the beamline.  In general, if one has a recirculation
@@ -1907,10 +1925,11 @@ small apertures.  If you get an error message about ``tracking failed for test p
 \item \verb|bpm_noise_cutoff[2]| --- Cutoff values for the random distributions of BPM noise.
 \item \verb|bpm_noise_distribution[2]| --- May be either ``gaussian'', ``uniform'', or ``plus\_or\_minus''.
 \item \verb|verbose| --- If non-zero, information about the correction is printed during computations.
-\item \verb|fixed_length| --- Indicates that the closed orbit length should be kept the same as the design orbit
-length by changing the momentum offset of the beam.
+\item \verb|fixed_length| --- If non-zero, indicates that the closed orbit length should be kept the same as the design orbit
+  length by changing the momentum offset of the beam. A value of \verb|1| uses the original method, while \verb|2| uses
+  a faster 6D method. See \ref{subsec:closedorbit} for more details.
 \item \verb|fixed_length_matrix| --- Indicates that for fixed-length orbit correction, the fixed-length
-matrix should be computed and used.  This will improve convergence but isn't always needed.
+matrix should be computed and used, using either method 1 or 2.
 \item \verb|n_xy_cycles| --- Number of times to alternate between correcting the x and y planes.
 \item \verb|force_alternation| --- Forces alternation between x and y correction even if one plane appears to 
   have converged.
@@ -2015,8 +2034,9 @@ beam momentum.
 each simulation step.  By default, the data is output immediately for the defined lattice.
 \item \verb|output_before_tune_correction| --- Flag that, if non-zero, specifies that when 
 \verb|output_at_each_step| is set, that output shall occur prior to correcting the tunes.
-\item \verb|fixed_length| --- Flag that, if non-zero, specifies output of the fixed-path-length
-matrix.
+\item \verb|fixed_length| --- If non-zero, indicates that the closed orbit length should be kept the same as the design orbit
+  length by changing the momentum offset of the beam. A value of \verb|1| uses the original method, while \verb|2| uses
+  a faster 6D method. See \ref{subsec:closedorbit} for more details.
 \item \verb|coupled| --- If nonzero, the cross-plane response matrices are computed.
 \item \verb|use_response_from_computed_orbits| --- If nonzero, in-plane response matrices are computed
   using differences of closed orbits, which is slower but may be more accurate. For cross-plane matrices, this is always the case.
