@@ -19,6 +19,9 @@
 long findFixedLengthClosedOrbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req, long clorb_iter, LINE_LIST *beamline,
                                 VMATRIX *M, RUN *run, double dp, long start_from_recirc, double *starting_point,
                                 double change_fraction, double change_fraction_multiplier, long multiplier_interval, double *deviation, long n_turns);
+long findSixDimClosedOrbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req, long clorb_iter, LINE_LIST *beamline,
+                           VMATRIX *M, RUN *run, long start_from_recirc, double *starting_point,
+                           double change_fraction, double change_fraction_multiplier, long multiplier_interval, double *deviation, long n_turns);
 
 static long SDDS_clorb_initialized = 0;
 static SDDS_TABLE SDDS_clorb;
@@ -110,8 +113,10 @@ long setup_closed_orbit(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *beamline) {
                             SDDS_EOS_NEWFILE | SDDS_EOS_COMPLETE);
     SDDS_clorb_initialized = 1;
   }
-  if (fixed_length && checkChangeT(beamline))
-    bombElegant("change_t is nonzero on one or more RF cavities. This is incompatible with fixed-length orbit computations.", NULL);
+  if (fixed_length < 0 || fixed_length > 2)
+    bombElegant("fixed_length must be 0 (vary RF frequency), 1 (vary energy, momentum secant), or 2 (full 6-D closed orbit).", NULL);
+  if (fixed_length == 1 && checkChangeT(beamline))
+    bombElegant("change_t is nonzero on one or more RF cavities. This is incompatible with fixed_length=1 orbit computations.", NULL);
 
   log_exit("setup_closed_orbit");
   return 1 + immediate;
@@ -135,6 +140,56 @@ long checkChangeT(LINE_LIST *beamline) {
     eptr = eptr->succ;
   }
   return change_t;
+}
+
+/* Save and zero change_t on every rf cavity for the duration of the fixed_length=2 6-D solve. With
+ * change_t!=0 the cavity subtracts a whole number of rf fundamental periods from coord[4] each turn,
+ * so coord[4] is carried as a reduced-time deviation; forcing change_t=0 keeps coord[4] as the
+ * absolute path length (nominally the circumference), which is what the r[4]=(F[4]-X[4])-revolution
+ * length constraint requires. The rf energy kick still depends on arrival time, so longitudinal
+ * focusing (R[5][4]!=0) is preserved. Returns a malloc'd array of the saved values (caller passes it
+ * to restoreRfChangeT, which frees it) and the count via *n. */
+static long *saveAndZeroRfChangeT(LINE_LIST *beamline, long *n) {
+  ELEMENT_LIST *eptr;
+  long count = 0, *saved = NULL, i = 0;
+  eptr = beamline->elem;
+  while (eptr) {
+    if (eptr->type == T_RFCA || eptr->type == T_RFCW)
+      count++;
+    eptr = eptr->succ;
+  }
+  *n = count;
+  if (count == 0)
+    return NULL;
+  saved = tmalloc(sizeof(*saved) * count);
+  eptr = beamline->elem;
+  while (eptr) {
+    if (eptr->type == T_RFCA) {
+      saved[i++] = ((RFCA *)eptr->p_elem)->change_t;
+      ((RFCA *)eptr->p_elem)->change_t = 0;
+    } else if (eptr->type == T_RFCW) {
+      saved[i++] = ((RFCW *)eptr->p_elem)->change_t;
+      ((RFCW *)eptr->p_elem)->change_t = 0;
+    }
+    eptr = eptr->succ;
+  }
+  return saved;
+}
+
+static void restoreRfChangeT(LINE_LIST *beamline, long *saved, long n) {
+  ELEMENT_LIST *eptr;
+  long i = 0;
+  if (!saved)
+    return;
+  eptr = beamline->elem;
+  while (eptr && i < n) {
+    if (eptr->type == T_RFCA)
+      ((RFCA *)eptr->p_elem)->change_t = saved[i++];
+    else if (eptr->type == T_RFCW)
+      ((RFCW *)eptr->p_elem)->change_t = saved[i++];
+    eptr = eptr->succ;
+  }
+  free(saved);
 }
 
 long run_closed_orbit(RUN *run, LINE_LIST *beamline, double *starting_coord, BEAM *beam, unsigned long flags) {
@@ -326,10 +381,14 @@ long find_closed_orbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req
   
   log_entry("find_closed_orbit");
 
-  if (fixed_length)
+  if (fixed_length == 1)
     return findFixedLengthClosedOrbit(clorb, clorb_acc, clorb_acc_requirement, clorb_iter, beamline, M, run, dp,
                                       start_from_recirc, starting_point, change_fraction, fraction_multiplier,
                                       multiplier_interval, deviation, n_turns);
+  else if (fixed_length == 2)
+    return findSixDimClosedOrbit(clorb, clorb_acc, clorb_acc_requirement, clorb_iter, beamline, M, run,
+                                 start_from_recirc, starting_point, change_fraction, fraction_multiplier,
+                                 multiplier_interval, deviation, n_turns);
   
 #if SDDS_MPI_IO
   long distributedBeam_orig = distributedBeam; /* We need save the original value to switch it back */
@@ -783,6 +842,318 @@ long findFixedLengthClosedOrbit(TRAJECTORY *clorb, double clorb_acc, double clor
   printf("\n");
 
   return 0;
+}
+
+/* buildSixDimJacobian: form the 6x6 one-turn Jacobian R[i][k]=dF_i/dX_k by finite-differencing the
+ * RF-on tracked map about `point`, then set ImR=I-R and INV_ImR=(I-R)^-1.
+ *
+ * This is the fallback used when the analytic one-turn matrix M from full_matrix() lacks the rf
+ * phase-focusing term R[5][4] -- i.e. when the rf cavities are currently represented by drift
+ * matrices (matched-twiss default; see modify_rfca_matrices()/cavities_are_drifts_if_matched in
+ * twiss.cc), which makes I-R singular in the longitudinal block. It is also used for the
+ * update_matrix refresh, since it re-forms the Jacobian about the current trial point (and captures
+ * nonlinearities), which the fixed reference-point matrix M cannot.
+ * Returns 1 on success, 0 if the probe was lost, -1 if (I-R) cannot be inverted. */
+static long buildSixDimJacobian(double *point, LINE_LIST *beamline, RUN *run, unsigned long newtonPass,
+                                double **one_part, MATRIX *R, MATRIX *ImR, MATRIX *INV_ImR) {
+  double Fbase[6], p;
+  /* Per-coordinate step: larger for the path-length coordinate (index 4) whose absolute value is
+   * ~revolution_length, to limit cancellation in F4(x+h)-F4(x). */
+  static const double hstep[6] = {1e-6, 1e-6, 1e-6, 1e-6, 1e-5, 1e-6};
+  long i, k;
+
+  for (i = 0; i < 6; i++)
+    one_part[0][i] = point[i];
+  one_part[0][6] = 1;
+  p = run->p_central;
+  if (!do_tracking(NULL, one_part, 1, NULL, beamline, &p, (double **)NULL, (BEAM_SUMS **)NULL, (long *)NULL,
+                   (TRAJECTORY *)NULL, run, 0, newtonPass, 1, 0, NULL, NULL, NULL, NULL, NULL))
+    return 0;
+  for (i = 0; i < 6; i++)
+    Fbase[i] = one_part[0][i];
+  for (k = 0; k < 6; k++) {
+    for (i = 0; i < 6; i++)
+      one_part[0][i] = point[i];
+    one_part[0][k] += hstep[k];
+    one_part[0][6] = 1;
+    p = run->p_central;
+    if (!do_tracking(NULL, one_part, 1, NULL, beamline, &p, (double **)NULL, (BEAM_SUMS **)NULL, (long *)NULL,
+                     (TRAJECTORY *)NULL, run, 0, newtonPass, 1, 0, NULL, NULL, NULL, NULL, NULL))
+      return 0;
+    for (i = 0; i < 6; i++)
+      R->a[i][k] = (one_part[0][i] - Fbase[i]) / hstep[k];
+  }
+  for (i = 0; i < 6; i++)
+    for (k = 0; k < 6; k++)
+      ImR->a[i][k] = (i == k ? 1 : 0) - R->a[i][k];
+  if (!m_invert(INV_ImR, ImR))
+    return -1;
+  return 1;
+}
+
+/* jacobianFromMatrix: form the quasi-Newton Jacobian directly from the analytic one-turn matrix M,
+ * i.e. R=M->R, ImR=I-R, INV_ImR=(I-R)^-1. Used when M already carries the rf phase-focusing term
+ * (M->R[5][4]!=0), which is the usual case for the standalone &closed_orbit command: the real rf
+ * cavity matrices (rf_cavity_matrix() populates R[5][4]) are in place, so no tracking is needed to
+ * build the Jacobian. Returns 1 on success, -1 if (I-R) cannot be inverted. */
+static long jacobianFromMatrix(VMATRIX *M, MATRIX *R, MATRIX *ImR, MATRIX *INV_ImR) {
+  long i, k;
+  for (i = 0; i < 6; i++)
+    for (k = 0; k < 6; k++) {
+      R->a[i][k] = M->R[i][k];
+      ImR->a[i][k] = (i == k ? 1 : 0) - M->R[i][k];
+    }
+  if (!m_invert(INV_ImR, ImR))
+    return -1;
+  return 1;
+}
+
+/* findSixDimClosedOrbit: full 6-D closed-orbit solver for fixed_length=2.
+ *
+ * Unlike find_closed_orbit (4-D, RF time-dependence OFF) and findFixedLengthClosedOrbit
+ * (an outer secant on delta wrapping the 4-D finder), this solves the transverse orbit, the
+ * momentum offset delta, and the RF timing/synchronous phase together with a single quasi-Newton
+ * iteration over all six coordinates.
+ *
+ * The probe is tracked with RF time-dependence ON (TIME_DEPENDENCE_OFF is NOT set) so that the RF
+ * energy kick depends on arrival time (coordinate 4). change_t is forced to 0 on every rf cavity for
+ * the duration of the solve (saveAndZeroRfChangeT) so coord[4] is carried as the absolute path
+ * length (nominally the circumference) instead of being reduced by whole rf periods each turn. The
+ * residual at trial fixed point X is then
+ *     r[i] = F[i] - X[i]                       for i = 0,1,2,3,5   (transverse + delta closure)
+ *     r[4] = (F[4] - X[4]) - revolution_length (path-length / fixed-length constraint)
+ * where F is one-turn tracking. The -revolution_length constant drops under differentiation, so the
+ * Jacobian is the full 6x6 J = R - I, which is non-singular only because RF phase focusing makes
+ * R[5][4] != 0 (in the 4-D/no-RF case the longitudinal block of I-R is singular).
+ * Newton step: dX = (I-R)^-1 . r.
+ *
+ * A stable RF fiducial is established once before the Newton loop and held across all iterates
+ * (pattern mirrors momentumAperture.c): save beamline->fiducial_flag, zero it, delete phase
+ * references, do one FIRST_BEAM_IS_FIDUCIAL pass at the design reference, then run the Newton
+ * iterations with FIDUCIAL_BEAM_SEEN+FIRST_BEAM_IS_FIDUCIAL so they reuse (not re-establish) the
+ * fiducial, and restore beamline->fiducial_flag on exit.
+ */
+long findSixDimClosedOrbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc_req, long clorb_iter,
+                           LINE_LIST *beamline, VMATRIX *M, RUN *run, long start_from_recirc,
+                           double *starting_point, double change_fraction, double change_fraction_multiplier,
+                           long multiplier_interval, double *deviation, long n_turns) {
+  static MATRIX *R, *ImR, *INV_ImR, *X, *r, *change;
+  static double **one_part;
+  static long initialized = 0;
+  long i, n_iter, goodCount, jstat;
+  long n_part;
+  double p, error, last_error, reference_error;
+  double point[6];
+  unsigned long fiducial_flag_save;
+  unsigned long fidPass, newtonPass;
+  long *rfChangeTSave;
+  long nRfChangeT;
+  long useAnalyticM;
+#if SDDS_MPI_IO
+  long distributedBeam_orig = distributedBeam; /* run single-particle mode: all processors do the same */
+  distributedBeam = 0;
+#endif
+
+  log_entry("findSixDimClosedOrbit");
+  printWarning("Using findSixDimClosedOrbit", "findSixDimClosedOrbit is not fully tested.");
+  
+  if (!initialized) {
+    m_alloc(&R, 6, 6);
+    m_alloc(&ImR, 6, 6);
+    m_alloc(&INV_ImR, 6, 6);
+    m_alloc(&X, 6, 1);
+    m_alloc(&r, 6, 1);
+    m_alloc(&change, 6, 1);
+    one_part = (double **)czarray_2d(sizeof(**one_part), 1, totalPropertiesPerParticle);
+    initialized = 1;
+  }
+
+  /* Seed X from a caller-supplied starting point, else from zero (the ring closed orbit is near the
+   * reference; the Newton iteration refines it). */
+  for (i = 0; i < 6; i++)
+    X->a[i][0] = starting_point ? starting_point[i] : 0;
+
+  p = run->p_central;
+  if (deviation)
+    for (i = 0; i < 6; i++)
+      deviation[i] = 0;
+
+  /* Force change_t=0 on all rf cavities so coord[4] stays absolute path length (see helper); restored
+   * at every exit below. */
+  rfChangeTSave = saveAndZeroRfChangeT(beamline, &nRfChangeT);
+
+  /* --- Establish a stable RF fiducial and hold it across the Newton loop (see momentumAperture.c). --- */
+  fiducial_flag_save = beamline->fiducial_flag;
+  beamline->fiducial_flag = 0;
+  fidPass = CLOSED_ORBIT_TRACKING + FIRST_BEAM_IS_FIDUCIAL + SILENT_RUNNING + INHIBIT_FILE_OUTPUT +
+            (start_from_recirc ? BEGIN_AT_RECIRC : 0);
+  newtonPass = CLOSED_ORBIT_TRACKING + TEST_PARTICLES + FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL +
+               SILENT_RUNNING + INHIBIT_FILE_OUTPUT + (start_from_recirc ? BEGIN_AT_RECIRC : 0);
+
+  delete_phase_references();
+  reset_special_elements(beamline, RESET_INCLUDE_ALL & ~RESET_INCLUDE_RANDOM);
+  for (i = 0; i < 6; i++)
+    one_part[0][i] = 0;
+  one_part[0][6] = 1;
+  p = run->p_central;
+  if (!do_tracking(NULL, one_part, 1, NULL, beamline, &p, (double **)NULL, (BEAM_SUMS **)NULL, (long *)NULL,
+                   (TRAJECTORY *)NULL, run, 0, fidPass, 1, 0, NULL, NULL, NULL, NULL, NULL)) {
+    printWarning("closed_orbit: fiducial particle lost during fixed_length=2 6-D closed orbit setup", NULL);
+    restoreRfChangeT(beamline, rfChangeTSave, nRfChangeT);
+    beamline->fiducial_flag = fiducial_flag_save;
+#if SDDS_MPI_IO
+    distributedBeam = distributedBeam_orig;
+#endif
+    log_exit("findSixDimClosedOrbit");
+    return 0;
+  }
+
+  /* --- Build the quasi-Newton Jacobian. --- */
+  /* Prefer the analytic one-turn matrix M when it carries the rf phase-focusing term (M->R[5][4]!=0),
+   * which is the usual case here: full_matrix() sees the real rf cavity matrices (they are only
+   * swapped for drifts during matched-twiss computation, then restored -- modify_rfca_matrices/
+   * reset_rfca_matrices in twiss.cc). This matches the finite-differenced Jacobian to working
+   * precision while avoiding the extra one-turn tracks. When M lacks the term (cavities currently
+   * treated as drifts) recover the longitudinal coupling by differencing the RF-on tracked map. */
+  for (i = 0; i < 6; i++)
+    point[i] = X->a[i][0];
+  useAnalyticM = (M && M->R && (M->R[5][4] != 0.0));
+  if (useAnalyticM) {
+    jstat = jacobianFromMatrix(M, R, ImR, INV_ImR);
+    if (jstat == -1) {
+      /* analytic (I-R) singular despite nonzero R[5][4]; recover about the current point via tracking */
+      jstat = buildSixDimJacobian(point, beamline, run, newtonPass, one_part, R, ImR, INV_ImR);
+      useAnalyticM = 0;
+    }
+  } else
+    jstat = buildSixDimJacobian(point, beamline, run, newtonPass, one_part, R, ImR, INV_ImR);
+  if (jstat == 0) {
+    printWarning("closed_orbit: probe lost while forming the fixed_length=2 6-D Jacobian", NULL);
+    restoreRfChangeT(beamline, rfChangeTSave, nRfChangeT);
+    beamline->fiducial_flag = fiducial_flag_save;
+#if SDDS_MPI_IO
+    distributedBeam = distributedBeam_orig;
+#endif
+    log_exit("findSixDimClosedOrbit");
+    return 0;
+  }
+  if (jstat == -1) {
+    printf("error: unable to invert (I-R) for the 6-D closed orbit (fixed_length=2).\n");
+    printf("This mode requires an rf cavity that produces longitudinal focusing (R[5][4]!=0).\n");
+    printf("The numerically-differenced one-turn map R is:\n");
+    for (i = 0; i < 6; i++) {
+      long jj;
+      printf("R[%ld]: ", i + 1);
+      for (jj = 0; jj < 6; jj++)
+        printf("%14.6e ", R->a[i][jj]);
+      fputc('\n', stdout);
+    }
+    fflush(stdout);
+    restoreRfChangeT(beamline, rfChangeTSave, nRfChangeT);
+    beamline->fiducial_flag = fiducial_flag_save;
+#if SDDS_MPI_IO
+    distributedBeam = distributedBeam_orig;
+#endif
+    bombElegant("cannot invert (I-R) for fixed_length=2 6-D closed orbit; ensure an rf cavity providing longitudinal focusing is configured", NULL);
+  }
+
+  /* --- 6-D quasi-Newton iteration. --- */
+  n_iter = 0;
+  reference_error = error = DBL_MAX / 4;
+  goodCount = 0;
+  do {
+    n_part = 1;
+    for (i = 0; i < 6; i++)
+      one_part[0][i] = X->a[i][0];
+    one_part[0][6] = 1;
+    p = run->p_central;
+    if (!do_tracking(NULL, one_part, n_part, NULL, beamline, &p, (double **)NULL, (BEAM_SUMS **)NULL, (long *)NULL,
+                     clorb + 1, run, 0, newtonPass, 1, 0, NULL, NULL, NULL, NULL, NULL)) {
+      printWarning("closed_orbit: particle lost during fixed_length=2 6-D closed orbit iteration", NULL);
+      n_iter = clorb_iter;
+      break;
+    }
+    /* 6-D periodicity residual. Transverse and delta coordinates must repeat (r[i]=F[i]-X[i]); the
+     * timing coordinate (index 4) is the absolute path length (change_t forced to 0 above), so the
+     * fixed-length constraint is r[4]=(F[4]-X[4])-revolution_length, i.e. one turn's path equals the
+     * design circumference. The -revolution_length constant drops out of the Jacobian. */
+    for (i = 0; i < 6; i++)
+      r->a[i][0] = one_part[0][i] - X->a[i][0];
+    r->a[4][0] -= beamline->revolution_length;
+    if (deviation)
+      for (i = 0; i < 6; i++)
+        deviation[i] = r->a[i][0];
+    last_error = error;
+    error = 0;
+    for (i = 0; i < 6; i++)
+      error += sqr(r->a[i][0]);
+    error = sqrt(error);
+    if (error < reference_error)
+      reference_error = error;
+    if (error < clorb_acc)
+      break;
+    if (error > reference_error) {
+      if (error < clorb_acc_req)
+        /* Already below the accuracy requirement and no longer improving: the residual is
+         * fluctuating at the numerical floor (the r[4] path-length term cancels two
+         * ~circumference-scale quantities). Accept the orbit rather than backing off the step
+         * fraction into a spurious divergence report. */
+        break;
+      reference_error = error;
+      change_fraction = change_fraction / fraction_divisor;
+      goodCount = -10;
+      if (change_fraction < 0.01) {
+        char buffer[16384];
+        snprintf(buffer, 16384, "accuracy requirement: %e, previous error: %e, current error: %e",
+                 clorb_acc, last_error, error);
+        printWarning("closed_orbit: 6-D (fixed_length=2) closed orbit diverging, iteration stopped", buffer);
+        n_iter = clorb_iter;
+        break;
+      }
+    } else {
+      goodCount++;
+      if (goodCount > multiplier_interval) {
+        change_fraction *= change_fraction_multiplier;
+        if (change_fraction > 1)
+          change_fraction = 1;
+        goodCount = 0;
+      }
+    }
+    m_mult(change, INV_ImR, r);
+    if (change_fraction != 1)
+      m_scmul(change, change, change_fraction);
+    m_add(X, X, change);
+
+    if (update_matrix) {
+      /* Re-form the Jacobian (I-R) numerically at the current trial point. */
+      for (i = 0; i < 6; i++)
+        point[i] = X->a[i][0];
+      jstat = buildSixDimJacobian(point, beamline, run, newtonPass, one_part, R, ImR, INV_ImR);
+      if (jstat <= 0) {
+        printWarning("closed_orbit: failed to re-form the fixed_length=2 6-D Jacobian, iteration stopped", NULL);
+        n_iter = clorb_iter;
+        break;
+      }
+    }
+  } while (++n_iter < clorb_iter);
+
+  for (i = 0; i < 6; i++)
+    clorb[0].centroid[i] = X->a[i][0];
+
+  restoreRfChangeT(beamline, rfChangeTSave, nRfChangeT);
+  beamline->fiducial_flag = fiducial_flag_save;
+#if SDDS_MPI_IO
+  distributedBeam = distributedBeam_orig;
+#endif
+  log_exit("findSixDimClosedOrbit");
+
+  if (n_iter >= clorb_iter && error > clorb_acc_req) {
+    printf("error: 6-D closed orbit did not converge to better than %e after %ld iterations (requirement is %e)\n",
+           error, n_iter, clorb_acc_req);
+    fflush(stdout);
+    return 0;
+  }
+  return 1;
 }
 
 void zero_closed_orbit(TRAJECTORY *clorb, long n) {
