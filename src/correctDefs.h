@@ -37,7 +37,8 @@ typedef struct {
     double **kick, **posi;
     /* copies of input specifications for correction */
     double corr_fraction, corr_accuracy, corr_limit, bpm_noise, default_tweek, bpm_noise_cutoff;
-    long fixed_length, bpm_noise_distribution, default_threading_divisor, threading_correctors;
+    long bpm_noise_distribution, default_threading_divisor, threading_correctors;
+    long fixed_length, fixed_length_matrix, use_perturbed_matrix;
     long remove_smallest_SVs, keep_largest_SVs, auto_limit_SVs, remove_pegged, Tikhonov_n;
     double minimum_SV_ratio, Tikhonov_relative_alpha;
     long n_iterations;

@@ -61,10 +61,12 @@ void setup_correction_matrix_output(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *
     print_namelist(stdout, &correction_matrix_output);
   *do_response = output_at_each_step;
 
-  if (correct->CMFx->fixed_length != fixed_length)
-    bombElegant("Inconsistent values of fixed_length parameter in &correct and &response_matrix_output commands", NULL);
-  if (correct->CMFy->fixed_length != fixed_length)
-    bombElegant("Inconsistent values of fixed_length parameter in &correct and &response_matrix_output commands", NULL);
+  if (correct->CMFx->fixed_length_matrix != fixed_length)
+    bombElegantVA("Inconsistent values of parameters: &correct fixed_length_matrix=%ld and &response_matrix_output fixed_length=%ld",
+		  correct->CMFx->fixed_length_matrix,fixed_length);
+  if (correct->CMFy->fixed_length_matrix != fixed_length)
+    bombElegantVA("Inconsistent values of parameters: &correct fixed_length_matrix=%ld and &response_matrix_output fixed_length=%ld",
+		  correct->CMFy->fixed_length_matrix,fixed_length);
 
   unitsCode = KnL_units ? KNL_UNITS : (BnL_units ? BNL_UNITS : 0);
   if (unitsCode == BNL_UNITS && !BnLUnitsOK)
@@ -87,8 +89,9 @@ void setup_correction_matrix_output(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *
     CMyx.Cp = NULL;
     CMyx.bpmPlane = 1;
     CMyx.corrPlane = 0;
-    CMyx.fixed_length = fixed_length;
+    CMyx.fixed_length = CMyx.fixed_length_matrix = fixed_length;
     CMyx.weight = correct->CMFy->weight;
+    CMyx.use_perturbed_matrix = 0;
 
     /* CMxy is the horizontal response to vertical correctors */
     /* --- copy corrector information */
@@ -96,7 +99,6 @@ void setup_correction_matrix_output(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *
     CMxy.kick_coef = correct->CMFy->kick_coef;
     CMxy.sl_index = correct->CMFy->sl_index;
     CMxy.ucorr = correct->CMFy->ucorr;
-    CMxy.fixed_length = fixed_length;
 
     /* --- copy BPM information */
     CMxy.nmon = correct->CMFx->nmon;
@@ -106,8 +108,9 @@ void setup_correction_matrix_output(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *
     CMxy.Cp = NULL;
     CMxy.bpmPlane = 0;
     CMxy.corrPlane = 1;
-    CMxy.fixed_length = fixed_length;
+    CMxy.fixed_length = CMxy.fixed_length_matrix = fixed_length;
     CMxy.weight = correct->CMFx->weight;
+    CMxy.use_perturbed_matrix = 0;
   }
 
 #if USE_MPI
