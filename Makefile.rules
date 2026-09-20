@@ -191,6 +191,8 @@ ifneq ($(findstring swing,$(BASH_ENV)),)
   FFTW3_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/fftw-3.3.10-x5237xr/lib/libfftw3.so
   IOMP5_LIB_DIR = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/intel-oneapi-mkl-2024.2.2-ueuijm5/compiler/2024.2/lib
   IOMP5_LIB = -Wl,-rpath,$(IOMP5_LIB_DIR) $(IOMP5_LIB_DIR)/libiomp5.so
+  IOMP5_LIB_DIR =
+  IOMP5_LIB =
   MPI_BIN = /soft/openmpi/4.1.1/swing/bin
 endif
 
