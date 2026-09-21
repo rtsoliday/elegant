@@ -61,12 +61,18 @@ void setup_correction_matrix_output(NAMELIST_TEXT *nltext, RUN *run, LINE_LIST *
     print_namelist(stdout, &correction_matrix_output);
   *do_response = output_at_each_step;
 
-  if (correct->CMFx->fixed_length_matrix != fixed_length)
-    bombElegantVA("Inconsistent values of parameters: &correct fixed_length_matrix=%ld and &response_matrix_output fixed_length=%ld",
+  if (correct->CMFx->fixed_length_matrix != fixed_length) {
+    char buffer[1024];
+    snprintf(buffer, 1024, "&correct fixed_length_matrix=%ld and &response_matrix_output fixed_length=%ld",
 		  correct->CMFx->fixed_length_matrix,fixed_length);
-  if (correct->CMFy->fixed_length_matrix != fixed_length)
-    bombElegantVA("Inconsistent values of parameters: &correct fixed_length_matrix=%ld and &response_matrix_output fixed_length=%ld",
+    printWarning("Inconsistent values of fixed-length parameters", buffer);
+  }
+  if (correct->CMFy->fixed_length_matrix != fixed_length) {
+    char buffer[1024];
+    snprintf(buffer, 1024, "&correct fixed_length_matrix=%ld and &response_matrix_output fixed_length=%ld",
 		  correct->CMFy->fixed_length_matrix,fixed_length);
+    printWarning("Inconsistent values of fixed-length parameters", buffer);
+  }
 
   unitsCode = KnL_units ? KNL_UNITS : (BnL_units ? BNL_UNITS : 0);
   if (unitsCode == BNL_UNITS && !BnLUnitsOK)
