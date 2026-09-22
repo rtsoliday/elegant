@@ -192,6 +192,91 @@ static void restoreRfChangeT(LINE_LIST *beamline, long *saved, long n) {
   free(saved);
 }
 
+/* sixDimRfPathTarget: for fixed_length=2, compute the path length one turn must have so the beam
+ * synchronizes to the rf, i.e. one revolution equals an integer number (the harmonic h) of rf
+ * periods. This replaces the purely geometric revolution_length as the target in the r[4] residual,
+ * so that the closed orbit responds to the rf frequency (an off-design frequency shifts the orbit
+ * radially through a nonzero delta).
+ *
+ * elegant carries coord[4] = beta*c*t (simple_rfca.c), so the arrival time is t = coord[4]/(beta*c)
+ * and the rf phase repeats when f_rf * t = h. With coord[4] the per-turn path length this gives
+ *     target = h * beta0 * c / f_rf,
+ * where beta0 is the reference velocity (from p_central). h is the fixed integer harmonic, inferred
+ * once from the ACTUAL rf frequency and the design circumference:
+ *     h = round(f_rf * revolution_length / (beta0 * c)).
+ * At the matched frequency f0 = h*beta0*c/revolution_length this reduces to target=revolution_length,
+ * recovering the previous behavior exactly.
+ *
+ * The base frequency is the lowest positive rf frequency among RFCA/RFCW cavities that actually focus
+ * (freq>0 and volt!=0). Harmonic cavities are expected to be near-integer multiples of it; a warning
+ * is issued for any that are not (no single closed orbit can synchronize incommensurate cavities).
+ * If no qualifying cavity is found, revolution_length is returned and *hOut=0 (the caller's
+ * R[5][4]!=0 requirement then bombs with the "requires longitudinal focusing" message). Using beta0
+ * (not the solved beta(delta)) keeps target constant, so the Jacobian J=R-I stays exact; the error
+ * is O(1-beta0), negligible for relativistic rings. */
+static double sixDimRfPathTarget(LINE_LIST *beamline, double p_central, long *hOut) {
+  ELEMENT_LIST *eptr;
+  double fBase = 0, beta0, target, h;
+  double volt, freq;
+
+  /* lowest positive focusing frequency */
+  eptr = beamline->elem;
+  while (eptr) {
+    freq = volt = 0;
+    if (eptr->type == T_RFCA) {
+      freq = ((RFCA *)eptr->p_elem)->freq;
+      volt = ((RFCA *)eptr->p_elem)->volt;
+    } else if (eptr->type == T_RFCW) {
+      freq = ((RFCW *)eptr->p_elem)->freq;
+      volt = ((RFCW *)eptr->p_elem)->volt;
+    }
+    if (freq > 0 && volt != 0 && (fBase == 0 || freq < fBase))
+      fBase = freq;
+    eptr = eptr->succ;
+  }
+
+  if (fBase == 0) {
+    if (hOut)
+      *hOut = 0;
+    return beamline->revolution_length;
+  }
+
+  beta0 = beta_from_delta(p_central, 0.0);
+  h = round(fBase * beamline->revolution_length / (beta0 * c_mks));
+  if (h < 1)
+    h = 1;
+  target = h * beta0 * c_mks / fBase;
+
+  /* warn if other cavities are not near-integer harmonics of the base */
+  eptr = beamline->elem;
+  while (eptr) {
+    freq = volt = 0;
+    if (eptr->type == T_RFCA) {
+      freq = ((RFCA *)eptr->p_elem)->freq;
+      volt = ((RFCA *)eptr->p_elem)->volt;
+    } else if (eptr->type == T_RFCW) {
+      freq = ((RFCW *)eptr->p_elem)->freq;
+      volt = ((RFCW *)eptr->p_elem)->volt;
+    }
+    if (freq > 0 && volt != 0) {
+      double ratio = freq / fBase;
+      if (fabs(ratio - round(ratio)) > 1e-4) {
+        char buffer[512];
+        snprintf(buffer, sizeof(buffer),
+                 "cavity %s frequency %.6g is not a near-integer multiple of the base rf frequency "
+                 "%.6g (ratio %.6g); the fixed_length=2 closed orbit synchronizes only to the base.",
+                 eptr->name ? eptr->name : "?", freq, fBase, ratio);
+        printWarning("closed_orbit: incommensurate rf frequencies in fixed_length=2 6-D closed orbit", buffer);
+      }
+    }
+    eptr = eptr->succ;
+  }
+
+  if (hOut)
+    *hOut = (long)h;
+  return target;
+}
+
 long run_closed_orbit(RUN *run, LINE_LIST *beamline, double *starting_coord, BEAM *beam, unsigned long flags) {
   double dp, deviation[6];
   long i, bad_orbit;
@@ -920,9 +1005,12 @@ static long jacobianFromMatrix(VMATRIX *M, MATRIX *R, MATRIX *ImR, MATRIX *INV_I
  * the duration of the solve (saveAndZeroRfChangeT) so coord[4] is carried as the absolute path
  * length (nominally the circumference) instead of being reduced by whole rf periods each turn. The
  * residual at trial fixed point X is then
- *     r[i] = F[i] - X[i]                       for i = 0,1,2,3,5   (transverse + delta closure)
- *     r[4] = (F[4] - X[4]) - revolution_length (path-length / fixed-length constraint)
- * where F is one-turn tracking. The -revolution_length constant drops under differentiation, so the
+ *     r[i] = F[i] - X[i]                  for i = 0,1,2,3,5   (transverse + delta closure)
+ *     r[4] = (F[4] - X[4]) - pathTarget   (rf-synchronized path-length constraint)
+ * where F is one-turn tracking and pathTarget = h*beta0*c/f_rf is the path length for which one
+ * revolution equals h rf periods (sixDimRfPathTarget); at the matched frequency this is the design
+ * circumference. Because pathTarget responds to the rf frequency, an off-design frequency shifts the
+ * closed orbit radially through a nonzero delta. The constant drops under differentiation, so the
  * Jacobian is the full 6x6 J = R - I, which is non-singular only because RF phase focusing makes
  * R[5][4] != 0 (in the 4-D/no-RF case the longitudinal block of I-R is singular).
  * Newton step: dX = (I-R)^-1 . r.
@@ -949,6 +1037,8 @@ long findSixDimClosedOrbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc
   long *rfChangeTSave;
   long nRfChangeT;
   long useAnalyticM;
+  double pathTarget;
+  long rfHarmonic;
 #if SDDS_MPI_IO
   long distributedBeam_orig = distributedBeam; /* run single-particle mode: all processors do the same */
   distributedBeam = 0;
@@ -981,6 +1071,13 @@ long findSixDimClosedOrbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc
   /* Force change_t=0 on all rf cavities so coord[4] stays absolute path length (see helper); restored
    * at every exit below. */
   rfChangeTSave = saveAndZeroRfChangeT(beamline, &nRfChangeT);
+
+  /* Path length one turn must have to synchronize to the rf (h rf periods per revolution). Replaces
+   * the geometric revolution_length so the orbit tracks the rf frequency. See sixDimRfPathTarget. */
+  pathTarget = sixDimRfPathTarget(beamline, run->p_central, &rfHarmonic);
+  if (verbosity > 1)
+    printf("closed_orbit: fixed_length=2 rf harmonic h=%ld, target path length=%.15g m (design circumference=%.15g m)\n",
+           rfHarmonic, pathTarget, beamline->revolution_length);
 
   /* --- Establish a stable RF fiducial and hold it across the Newton loop (see momentumAperture.c). --- */
   fiducial_flag_save = beamline->fiducial_flag;
@@ -1075,11 +1172,13 @@ long findSixDimClosedOrbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc
     }
     /* 6-D periodicity residual. Transverse and delta coordinates must repeat (r[i]=F[i]-X[i]); the
      * timing coordinate (index 4) is the absolute path length (change_t forced to 0 above), so the
-     * fixed-length constraint is r[4]=(F[4]-X[4])-revolution_length, i.e. one turn's path equals the
-     * design circumference. The -revolution_length constant drops out of the Jacobian. */
+     * fixed-length constraint is r[4]=(F[4]-X[4])-pathTarget, where pathTarget = h*beta0*c/f_rf is the
+     * path length that synchronizes the beam to the rf (h rf periods per revolution, sixDimRfPathTarget).
+     * This makes the orbit respond to the rf frequency; at the matched frequency pathTarget equals the
+     * design circumference. The pathTarget constant drops out of the Jacobian. */
     for (i = 0; i < 6; i++)
       r->a[i][0] = one_part[0][i] - X->a[i][0];
-    r->a[4][0] -= beamline->revolution_length;
+    r->a[4][0] -= pathTarget;
     if (deviation)
       for (i = 0; i < 6; i++)
         deviation[i] = r->a[i][0];
