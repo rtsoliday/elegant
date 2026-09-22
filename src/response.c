@@ -411,7 +411,7 @@ void update_response(RUN *run, LINE_LIST *beamline, CORRECTION *correct) {
 }
 
 void run_response_output(RUN *run, LINE_LIST *beamline, CORRECTION *correct, long tune_corrected) {
-  long unitsCode;
+  long unitsCode, fixedLengthMatrix[2];
   MAT *Cx, *Cy, *Tx, *Ty;
   unsigned long flags[2];
   
@@ -426,11 +426,15 @@ void run_response_output(RUN *run, LINE_LIST *beamline, CORRECTION *correct, lon
 
   Cx = correct->CMFx->C;
   Tx = correct->CMFx->T;
+  fixedLengthMatrix[0] = correct->CMFx->fixed_length_matrix;
   correct->CMFx->C = correct->CMFx->T = NULL;
-
+  correct->CMFx->fixed_length_matrix = fixed_length;
+  
   Cy = correct->CMFy->C;
   Ty = correct->CMFy->T;
+  fixedLengthMatrix[1] = correct->CMFy->fixed_length_matrix;
   correct->CMFy->C = correct->CMFy->T = NULL;
+  correct->CMFy->fixed_length_matrix = fixed_length;
 
   if (correct->method == COUPLED_CORRECTION) {
     /* The correction matrix is coupled */
@@ -507,11 +511,13 @@ void run_response_output(RUN *run, LINE_LIST *beamline, CORRECTION *correct, lon
   matrix_free(correct->CMFx->T);
   correct->CMFx->C = Cx;
   correct->CMFx->T = Tx;
+  correct->CMFx->fixed_length_matrix = fixedLengthMatrix[0];
 
   matrix_free(correct->CMFy->C);
   matrix_free(correct->CMFy->T);
   correct->CMFy->C = Cy;
   correct->CMFy->T = Ty;
+  correct->CMFy->fixed_length_matrix = fixedLengthMatrix[1];
 }
 
 void do_response_output(RESPONSE_OUTPUT *respOutput, CORMON_DATA *CM, STEERING_LIST *SL, long corrPlane,
