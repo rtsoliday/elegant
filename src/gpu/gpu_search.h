@@ -17,6 +17,7 @@ void gpuSetTrackingSuppressed(long suppressed);
 long gpuGetTrackingSuppressed(void);
 long gpu_momentum_search_beamline_supported(void *beamline, const char **reason);
 unsigned long gpu_momentum_search_batch_capacity(long turns, long stride);
+unsigned long gpu_momentum_ensemble_batch_capacity(long stride);
 void gpu_momentum_search_batch_scope(long active);
 void gpu_configure_batched_momentum_search(const double *deltaById,
                                            const long *targetById,

@@ -5245,6 +5245,20 @@ twice as many simultaneous processors.
 If \verb|output_mode=2|, {\tt elegant} tracks many more probe particles simultaneously, which
 is better for massively parallel systems. The number of particles tracked is the number of
 elements selected times the number of probe points between  \verb|delta_negative_limit| and \verb|delta_positive_limit|.
+This mode is also available in non-MPI \verb|gpu-elegant|, which processes the
+probe particles in bounded batches and prefers CUDA tracking.  If CUDA is
+unavailable or an element uses the CPU implementation, the batch may use the
+loss-sensitive CPU path; \verb|-ompThreads=N| enables OpenMP parallelism for
+supported CPU element loops.  Setting the environment variable
+\verb|ELEGANT_GPU_MOMENTUM_BOUNDARY_VERIFY=1| enables an additional,
+potentially expensive correctness check: after CUDA tracking, the fixed-grid
+boundary points are confirmed with CPU/OpenMP arithmetic and any disagreeing
+direction is rescanned on the CPU.  This check is disabled by default.  A
+batch containing only one probe uses the CPU
+backend without changing from mode 2 to mode 1, since a CUDA launch cannot
+amortize its setup cost.  \verb|ELEGANT_GPU_MODE=required| disables this
+singleton fallback and continues to require CUDA execution for the primary
+ensemble.
 
 \item \verb|forbid_resonance_crossing| --- Normally, {\tt elegant} allows the momentum
 aperture search to cross integer and half-integer resonances if no unstable particles are

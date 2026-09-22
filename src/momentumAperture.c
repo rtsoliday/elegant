@@ -20,6 +20,7 @@
 #if defined(HAVE_GPU) && !USE_MPI
 #  include "gpu_base.h"
 #  include "gpu_search.h"
+#  include "gpu_tune.h"
 #endif
 
 static SDDS_DATASET SDDSma;
@@ -60,6 +61,15 @@ static double *batchedMomentumHistoryCount = NULL;
 static long batchedMomentumParticles = 0;
 static long batchedMomentumTurns = 0;
 
+static long momentumBoundaryVerificationRequested(void) {
+  const char *value = getenv("ELEGANT_GPU_MOMENTUM_BOUNDARY_VERIFY");
+
+  return value && (!strcmp(value, "1") || !strcmp(value, "yes") ||
+                   !strcmp(value, "true") || !strcmp(value, "on") ||
+                   !strcmp(value, "YES") || !strcmp(value, "TRUE") ||
+                   !strcmp(value, "ON"));
+}
+
 static long batchedMomentumTargetToken(ELEMENT_LIST *eptr) {
   long target;
   for (target = 0; target < batchedMomentumTargets; target++)
@@ -94,7 +104,8 @@ static void momentumOffsetFunctionBatched(
       mal.dp = batchedMomentumDeltaById[id];
       offset_beam(coord + ip, 1, &mal, *pCentral);
     }
-    if (turn >= 0 && turn < batchedMomentumTurns) {
+    if (batchedMomentumHistory && batchedMomentumHistoryCount &&
+        turn >= 0 && turn < batchedMomentumTurns) {
       double *history = batchedMomentumHistory +
                         (size_t)id * 5 * batchedMomentumTurns;
       history[0 * batchedMomentumTurns + turn] = coord[ip][0];
@@ -491,6 +502,529 @@ static long doMomentumApertureSearchBatched(
 
 #if defined(HAVE_GPU) && !USE_MPI
 #include "gpu/momentum_search.h"
+
+static int64_t trackMomentumGridCandidatesOnCpu(
+  RUN *run, VARY *control, LINE_LIST *beamline, double *startingCoord,
+  MOMENTUM_REFERENCE *prepared, double preparedCentral,
+  const double *candidateDelta, const long *candidateTarget,
+  long particles, unsigned char *survivedById) {
+  double **coord;
+  unsigned char *seen;
+  int64_t ip, nLeft;
+  long id;
+  double pCentral;
+
+  coord = (double **)czarray_2d(sizeof(**coord), particles,
+                                totalPropertiesPerParticle);
+  seen = calloc((size_t)particles, sizeof(*seen));
+  if (!coord || !seen)
+    bombElegant("memory allocation failure for output_mode=2 CPU verification",
+                NULL);
+  for (ip = 0; ip < particles; ip++) {
+    if (startingCoord)
+      memcpy(coord[ip], startingCoord, 6 * sizeof(**coord));
+    coord[ip][particleIDIndex] = ip + 1;
+  }
+  momentumReferenceRestore(prepared, beamline);
+  batchedMomentumTargetElement = elementArray;
+  batchedMomentumTargets = nElements;
+  batchedMomentumTargetById = candidateTarget;
+  batchedMomentumDeltaById = candidateDelta;
+  batchedMomentumParticles = particles;
+  batchedMomentumTurns = 0;
+  setTrackingOmniWedgeGpuFunction(NULL);
+  setTrackingOmniWedgeFunction(momentumOffsetFunctionBatched);
+  gpu_momentum_search_batch_scope(1);
+  gpu_batched_tune_tracking_set_cpu_only(1);
+  pCentral = preparedCentral;
+#if defined(_OPENMP)
+#  pragma omp parallel if(gpuOmpTrackingEnabled(particles)) num_threads(gpuGetOmpTrackingThreads())
+  {
+#  pragma omp single
+    {
+#endif
+  nLeft = do_tracking(NULL, coord, particles, NULL, beamline, &pCentral,
+                      NULL, NULL, NULL, NULL, run, control->i_step,
+                      FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL +
+                        SILENT_RUNNING + INHIBIT_FILE_OUTPUT +
+                        MOMENTUM_APERTURE_TRACKING_FLAGS,
+                      control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+#if defined(_OPENMP)
+    }
+  }
+#endif
+  gpu_batched_tune_tracking_set_cpu_only(0);
+  gpu_momentum_search_batch_scope(0);
+  setTrackingOmniWedgeFunction(NULL);
+  clearBatchedMomentumCallbackState();
+
+  memset(survivedById, 0, (size_t)particles * sizeof(*survivedById));
+  for (ip = 0; ip < particles; ip++) {
+    id = (long)coord[ip][particleIDIndex] - 1;
+    if (id < 0 || id >= particles || seen[id])
+      bombElegant("invalid or duplicate particle ID in output_mode=2 CPU verification",
+                  NULL);
+    seen[id] = 1;
+    survivedById[id] = ip < nLeft;
+  }
+  for (id = 0; id < particles; id++)
+    if (!seen[id])
+      bombElegant("missing particle ID in output_mode=2 CPU verification", NULL);
+  free(seen);
+  free_czarray_2d((void **)coord, particles, totalPropertiesPerParticle);
+  return nLeft;
+}
+
+static double prepareMomentumGridCpuReference(
+  RUN *run, VARY *control, LINE_LIST *beamline, double *startingCoord,
+  MOMENTUM_REFERENCE *entry, MOMENTUM_REFERENCE *prepared) {
+  double **coord;
+  double pCentral = run->p_central;
+  long code;
+
+  momentumReferenceRestore(entry, beamline);
+  delete_phase_references();
+  reset_special_elements(beamline, RESET_INCLUDE_ALL & ~RESET_INCLUDE_RANDOM);
+  coord = (double **)czarray_2d(sizeof(**coord), 1,
+                                totalPropertiesPerParticle);
+  if (startingCoord)
+    memcpy(coord[0], startingCoord, 6 * sizeof(**coord));
+  coord[0][particleIDIndex] = 1;
+  gpuSetTrackingSuppressed(1);
+  code = do_tracking(NULL, coord, 1, NULL, beamline, &pCentral,
+                     NULL, NULL, NULL, NULL, run, control->i_step,
+                     FIRST_BEAM_IS_FIDUCIAL + SILENT_RUNNING +
+                       INHIBIT_FILE_OUTPUT +
+                       MOMENTUM_APERTURE_TRACKING_FLAGS,
+                     1, 0, NULL, NULL, NULL, NULL, NULL);
+  gpuSetTrackingSuppressed(0);
+  free_czarray_2d((void **)coord, 1, totalPropertiesPerParticle);
+  if (!code)
+    bombElegant("CPU verification fiducial particle lost in output_mode=2",
+                NULL);
+  momentumReferenceFree(prepared);
+  momentumReferenceCapture(prepared, beamline);
+  return pCentral;
+}
+
+static long doMomentumApertureGridSearch(
+  RUN *run, VARY *control, LINE_LIST *beamline, double *startingCoord) {
+  MOMENTUM_REFERENCE entry, prepared;
+  GPU_BASE *gpu = getGpuBase();
+  double **coord = NULL;
+  double *candidateDelta = NULL;
+  double *sStart = NULL, *deltaPositive = NULL, *deltaNegative = NULL;
+  char **ElementName = NULL, **ElementType = NULL;
+  int32_t *ElementOccurence = NULL;
+  long *candidateTarget = NULL;
+  long *candidateSide = NULL;
+  unsigned char *seen = NULL, *candidateExpected = NULL;
+  unsigned char *candidateSurvived = NULL, *correctionNeeded = NULL;
+  unsigned long capacity, allocationCapacity;
+  long idelta, ie, ip, id, side, batches = 0, code;
+  long usedCuda = 0, usedCpuFallback = 0;
+  long usedSingleParticleCpuFallback = 0;
+  long verificationParticles = 0, correctedDirections = 0;
+  long fullyGpuEligible;
+  const char *gpuRestriction = NULL;
+  int64_t nTotal, first, count, nLeft;
+  double span, gridIntervals, roundedIntervals, roundingTolerance;
+  double deltaStep, pCentral, preparedCentral;
+  long nDelta, ideltaCutover;
+  unsigned long fiducialFlagSave;
+
+  span = (delta_positive_limit - delta_positive_start) +
+         (delta_negative_start - delta_negative_limit);
+  if (!isfinite(span) || span < 0 || delta_step_size <= 0)
+    bombElegant("invalid momentum grid for output_mode=2", NULL);
+  gridIntervals = span / delta_step_size;
+  if (!isfinite(gridIntervals) || gridIntervals > LONG_MAX - 1)
+    bombElegant("momentum grid is too large for output_mode=2", NULL);
+  /* Decimal inputs that mathematically divide the requested span can land
+   * just below an integer in binary floating point.  Snap only those
+   * roundoff-sized cases so the requested endpoint is not dropped; retain
+   * the historical truncation for genuinely fractional interval counts.
+   * This correction is intentionally limited to non-MPI gpu-elegant. */
+  roundedIntervals = floor(gridIntervals + 0.5);
+  roundingTolerance = 16 * DBL_EPSILON * MAX(1.0, fabs(gridIntervals));
+  if (fabs(gridIntervals - roundedIntervals) <= roundingTolerance)
+    gridIntervals = roundedIntervals;
+  nDelta = (long)gridIntervals + 1;
+  if (nDelta < 2)
+    bombElegant("output_mode=2 requires at least two momentum grid points", NULL);
+  deltaStep = span / (nDelta - 1);
+  if (!isfinite(deltaStep) || deltaStep <= 0)
+    bombElegant("momentum grid step does not advance for output_mode=2", NULL);
+  ideltaCutover = (long)((delta_negative_start - delta_negative_limit) /
+                         deltaStep + 0.5);
+  if (ideltaCutover < 0 || ideltaCutover > nDelta)
+    bombElegant("invalid momentum grid cutover for output_mode=2", NULL);
+  if (nElements > INT64_MAX / nDelta)
+    bombElegant("particle count overflow for output_mode=2", NULL);
+  nTotal = (int64_t)nElements * nDelta;
+  if ((uint64_t)nElements > SIZE_MAX / sizeof(*sStart) ||
+      (uint64_t)nElements > SIZE_MAX / sizeof(*deltaPositive) ||
+      (uint64_t)nElements > SIZE_MAX / sizeof(*deltaNegative) ||
+      (uint64_t)nElements > SIZE_MAX / sizeof(*ElementName) ||
+      (uint64_t)nElements > SIZE_MAX / sizeof(*ElementType) ||
+      (uint64_t)nElements > SIZE_MAX / sizeof(*ElementOccurence))
+    bombElegant("element metadata allocation overflow for output_mode=2", NULL);
+  capacity = gpu_momentum_ensemble_batch_capacity(totalPropertiesPerParticle);
+  if (!capacity)
+    bombElegant("invalid or unavailable batch capacity for output_mode=2", NULL);
+  allocationCapacity = SIZE_MAX / sizeof(*coord);
+  allocationCapacity = MIN(allocationCapacity,
+                           SIZE_MAX / sizeof(*candidateDelta));
+  allocationCapacity = MIN(allocationCapacity,
+                           SIZE_MAX / sizeof(*candidateTarget));
+  allocationCapacity = MIN(allocationCapacity, SIZE_MAX / sizeof(*seen));
+  allocationCapacity = MIN(
+    allocationCapacity,
+    SIZE_MAX / sizeof(**coord) / (unsigned long)totalPropertiesPerParticle);
+  if (capacity > allocationCapacity)
+    capacity = allocationCapacity;
+  if (!capacity)
+    bombElegant("batch allocation overflow for output_mode=2", NULL);
+  if ((uint64_t)capacity > (uint64_t)LONG_MAX)
+    capacity = LONG_MAX;
+  if ((int64_t)capacity > nTotal)
+    capacity = (unsigned long)nTotal;
+
+  sStart = tmalloc((size_t)nElements * sizeof(*sStart));
+  deltaPositive = tmalloc((size_t)nElements * sizeof(*deltaPositive));
+  deltaNegative = tmalloc((size_t)nElements * sizeof(*deltaNegative));
+  ElementName = tmalloc((size_t)nElements * sizeof(*ElementName));
+  ElementType = tmalloc((size_t)nElements * sizeof(*ElementType));
+  ElementOccurence = tmalloc((size_t)nElements * sizeof(*ElementOccurence));
+  for (ie = 0; ie < nElements; ie++) {
+    sStart[ie] = elementArray[ie]->end_pos;
+    ElementName[ie] = elementArray[ie]->name;
+    ElementType[ie] = entity_name[elementArray[ie]->type];
+    ElementOccurence[ie] = elementArray[ie]->occurence;
+    deltaNegative[ie] = -DBL_MAX;
+    deltaPositive[ie] = DBL_MAX;
+  }
+
+  fiducialFlagSave = beamline->fiducial_flag;
+  beamline->fiducial_flag = 0;
+  momentumReferenceCapture(&entry, beamline);
+  coord = (double **)czarray_2d(sizeof(**coord), 1,
+                                totalPropertiesPerParticle);
+  if (startingCoord)
+    memcpy(coord[0], startingCoord, 6 * sizeof(**coord));
+  coord[0][particleIDIndex] = 1;
+  delete_phase_references();
+  reset_special_elements(beamline, RESET_INCLUDE_ALL & ~RESET_INCLUDE_RANDOM);
+  pCentral = run->p_central;
+  code = do_tracking(NULL, coord, 1, NULL, beamline, &pCentral,
+                     NULL, NULL, NULL, NULL, run, control->i_step,
+                     FIRST_BEAM_IS_FIDUCIAL + SILENT_RUNNING +
+                       INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
+                     1, 0, NULL, NULL, NULL, NULL, NULL);
+  free_czarray_2d((void **)coord, 1, totalPropertiesPerParticle);
+  coord = NULL;
+  if (!code) {
+    momentumReferenceRestore(&entry, beamline);
+    momentumReferenceFree(&entry);
+    beamline->fiducial_flag = fiducialFlagSave;
+    bombElegant("fiducial particle lost in output_mode=2 search", NULL);
+  }
+  preparedCentral = pCentral;
+  momentumReferenceCapture(&prepared, beamline);
+  fireOnPass = control->n_passes == 1 ? 0 : 1;
+
+  fullyGpuEligible = gpu_momentum_search_beamline_supported(
+    beamline, &gpuRestriction);
+  if (verbosity > 0) {
+    printf("Batched output_mode=2 momentum aperture search: %ld locations, "
+           "%ld momentum points, capacity=%lu\n",
+           nElements, nDelta, capacity);
+    fflush(stdout);
+  }
+  for (first = 0; first < nTotal; first += count) {
+    long batchCpuOnly;
+
+    count = nTotal - first;
+    if (count > (int64_t)capacity)
+      count = capacity;
+    coord = (double **)czarray_2d(sizeof(**coord), (long)count,
+                                  totalPropertiesPerParticle);
+    candidateDelta = tmalloc((size_t)count * sizeof(*candidateDelta));
+    candidateTarget = tmalloc((size_t)count * sizeof(*candidateTarget));
+    seen = calloc((size_t)count, sizeof(*seen));
+    if (!coord || !candidateDelta || !candidateTarget || !seen)
+      bombElegant("memory allocation failure for output_mode=2 batch", NULL);
+    for (ip = 0; ip < count; ip++) {
+      int64_t logical = first + ip;
+      ie = (long)(logical / nDelta);
+      idelta = (long)(logical % nDelta);
+      if (startingCoord)
+        memcpy(coord[ip], startingCoord, 6 * sizeof(**coord));
+      coord[ip][particleIDIndex] = ip + 1;
+      candidateTarget[ip] = ie;
+      candidateDelta[ip] = idelta < ideltaCutover ?
+        delta_negative_limit + idelta * deltaStep :
+        delta_positive_start + (idelta - ideltaCutover) * deltaStep;
+    }
+
+    momentumReferenceRestore(&prepared, beamline);
+    batchedMomentumTargetElement = elementArray;
+    batchedMomentumTargets = nElements;
+    batchedMomentumTargetById = candidateTarget;
+    batchedMomentumDeltaById = candidateDelta;
+    batchedMomentumParticles = (long)count;
+    batchedMomentumTurns = 0;
+    gpu_configure_batched_momentum_search(candidateDelta, candidateTarget,
+                                           (long)count, 0, fireOnPass,
+                                           NULL, NULL);
+    setTrackingOmniWedgeFunction(momentumOffsetFunctionBatched);
+    setTrackingOmniWedgeGpuFunction(momentumOffsetFunctionBatchedGpu);
+    gpu_momentum_search_batch_scope(1);
+    /* A CUDA launch cannot amortize its setup and synchronization costs for
+     * one particle.  Preserve the fixed-grid mode-2 algorithm and merely use
+     * its CPU backend for a singleton batch.  Required mode is the exception:
+     * it must continue to prove that the primary ensemble used CUDA. */
+    batchCpuOnly = gpu->activeDevice < 0 ||
+                   (count == 1 && !gpu->requiredMode);
+    usedSingleParticleCpuFallback |= count == 1 && gpu->activeDevice >= 0 &&
+                                     !gpu->requiredMode;
+    gpu_batched_tune_tracking_set_cpu_only(batchCpuOnly);
+    pCentral = preparedCentral;
+#if defined(_OPENMP)
+#  pragma omp parallel if(gpuOmpTrackingEnabled((long)count)) num_threads(gpuGetOmpTrackingThreads())
+    {
+#  pragma omp single
+      {
+#endif
+    nLeft = do_tracking(NULL, coord, count, NULL, beamline, &pCentral,
+                        NULL, NULL, NULL, NULL, run, control->i_step,
+                        FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL +
+                          SILENT_RUNNING + INHIBIT_FILE_OUTPUT +
+                          MOMENTUM_APERTURE_TRACKING_FLAGS,
+                        control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+    usedCuda |= gpu->gpuElementCount > 0;
+    usedCpuFallback |= batchCpuOnly || !fullyGpuEligible ||
+                       gpu->gpuSyncCpuElementCount > 0;
+#if defined(_OPENMP)
+      }
+    }
+#endif
+    gpu_batched_tune_tracking_set_cpu_only(0);
+    gpu_momentum_search_batch_scope(0);
+    setTrackingOmniWedgeGpuFunction(NULL);
+    setTrackingOmniWedgeFunction(NULL);
+    gpu_clear_batched_momentum_search();
+    clearBatchedMomentumCallbackState();
+
+    for (ip = 0; ip < count; ip++) {
+      id = (long)coord[ip][particleIDIndex] - 1;
+      if (id < 0 || id >= count || seen[id])
+        bombElegant("invalid or duplicate particle ID in output_mode=2", NULL);
+      seen[id] = 1;
+      if (ip >= nLeft) {
+        int64_t logical = first + id;
+        ie = (long)(logical / nDelta);
+        if (candidateDelta[id] < 0) {
+          if (candidateDelta[id] > deltaNegative[ie])
+            deltaNegative[ie] = candidateDelta[id];
+        } else if (candidateDelta[id] < deltaPositive[ie])
+          deltaPositive[ie] = candidateDelta[id];
+      }
+    }
+    for (id = 0; id < count; id++)
+      if (!seen[id])
+        bombElegant("missing particle ID in output_mode=2", NULL);
+    free_czarray_2d((void **)coord, (long)count,
+                    totalPropertiesPerParticle);
+    free(candidateDelta);
+    free(candidateTarget);
+    free(seen);
+    coord = NULL;
+    candidateDelta = NULL;
+    candidateTarget = NULL;
+    seen = NULL;
+    batches++;
+  }
+
+  if (usedSingleParticleCpuFallback)
+    fprintf(stderr,
+            "elegant CUDA: output_mode=2 singleton batch tracked with the "
+            "CPU fallback (fixed-grid mode retained).\n");
+
+  /* The full CUDA ensemble can put a particle exactly on a sensitive loss
+   * boundary.  Confirm the survivor/loss pair that defines each result using
+   * authoritative CPU arithmetic, as the adaptive momentum search does. */
+  if (usedCuda && momentumBoundaryVerificationRequested()) {
+    long maximumVerificationParticles;
+    long verificationOffset, verificationCapacity = 256;
+
+    if (nElements > LONG_MAX / 4 ||
+        (uint64_t)nElements > SIZE_MAX / (4 * sizeof(*candidateDelta)) ||
+        (uint64_t)nElements > SIZE_MAX / (4 * sizeof(*candidateTarget)) ||
+        (uint64_t)nElements > SIZE_MAX / (4 * sizeof(*candidateSide)) ||
+        (uint64_t)nElements > SIZE_MAX / (4 * sizeof(*candidateExpected)) ||
+        (uint64_t)nElements > SIZE_MAX / (2 * sizeof(*correctionNeeded)))
+      bombElegant("CPU verification size overflow for output_mode=2", NULL);
+    maximumVerificationParticles = 4 * nElements;
+    candidateDelta = tmalloc((size_t)maximumVerificationParticles *
+                              sizeof(*candidateDelta));
+    candidateTarget = tmalloc((size_t)maximumVerificationParticles *
+                               sizeof(*candidateTarget));
+    candidateSide = tmalloc((size_t)maximumVerificationParticles *
+                             sizeof(*candidateSide));
+    candidateExpected = tmalloc((size_t)maximumVerificationParticles *
+                                 sizeof(*candidateExpected));
+    candidateSurvived = tmalloc((size_t)maximumVerificationParticles *
+                                 sizeof(*candidateSurvived));
+    correctionNeeded = calloc((size_t)(2 * nElements),
+                               sizeof(*correctionNeeded));
+    if (!candidateDelta || !candidateTarget || !candidateSide ||
+        !candidateExpected || !candidateSurvived || !correctionNeeded)
+      bombElegant("memory allocation failure for output_mode=2 boundary verification",
+                  NULL);
+    preparedCentral = prepareMomentumGridCpuReference(
+      run, control, beamline, startingCoord, &entry, &prepared);
+    for (ie = 0; ie < nElements; ie++) {
+      if (deltaNegative[ie] == -DBL_MAX) {
+        candidateDelta[verificationParticles] = delta_negative_limit;
+        candidateExpected[verificationParticles] = 1;
+        candidateTarget[verificationParticles] = ie;
+        candidateSide[verificationParticles++] = 0;
+      } else {
+        candidateDelta[verificationParticles] = deltaNegative[ie];
+        candidateExpected[verificationParticles] = 0;
+        candidateTarget[verificationParticles] = ie;
+        candidateSide[verificationParticles++] = 0;
+        candidateDelta[verificationParticles] = deltaNegative[ie] + deltaStep;
+        candidateExpected[verificationParticles] = 1;
+        candidateTarget[verificationParticles] = ie;
+        candidateSide[verificationParticles++] = 0;
+      }
+      if (deltaPositive[ie] == DBL_MAX) {
+        candidateDelta[verificationParticles] = delta_positive_limit;
+        candidateExpected[verificationParticles] = 1;
+        candidateTarget[verificationParticles] = ie;
+        candidateSide[verificationParticles++] = 1;
+      } else {
+        candidateDelta[verificationParticles] = deltaPositive[ie];
+        candidateExpected[verificationParticles] = 0;
+        candidateTarget[verificationParticles] = ie;
+        candidateSide[verificationParticles++] = 1;
+        candidateDelta[verificationParticles] = deltaPositive[ie] - deltaStep;
+        candidateExpected[verificationParticles] = 1;
+        candidateTarget[verificationParticles] = ie;
+        candidateSide[verificationParticles++] = 1;
+      }
+    }
+    for (verificationOffset = 0;
+         verificationOffset < verificationParticles;
+         verificationOffset += verificationCapacity) {
+      long verificationCount = MIN(
+        verificationCapacity, verificationParticles - verificationOffset);
+      trackMomentumGridCandidatesOnCpu(
+        run, control, beamline, startingCoord, &prepared, preparedCentral,
+        candidateDelta + verificationOffset,
+        candidateTarget + verificationOffset, verificationCount,
+        candidateSurvived + verificationOffset);
+    }
+    for (ip = 0; ip < verificationParticles; ip++)
+      if (candidateSurvived[ip] != candidateExpected[ip])
+        correctionNeeded[2 * candidateTarget[ip] + candidateSide[ip]] = 1;
+    for (ie = 0; ie < nElements; ie++)
+      for (side = 0; side < 2; side++)
+        correctedDirections += correctionNeeded[2 * ie + side] != 0;
+
+    if (correctedDirections) {
+      for (ie = 0; ie < nElements; ie++)
+        for (side = 0; side < 2; side++)
+          if (correctionNeeded[2 * ie + side]) {
+            if (side == 0)
+              deltaNegative[ie] = -DBL_MAX;
+            else
+              deltaPositive[ie] = DBL_MAX;
+            candidateTarget[0] = ie;
+            for (idelta = side ? ideltaCutover : 0;
+                 idelta < (side ? nDelta : ideltaCutover); idelta++) {
+              candidateDelta[0] = idelta < ideltaCutover ?
+                delta_negative_limit + idelta * deltaStep :
+                delta_positive_start + (idelta - ideltaCutover) * deltaStep;
+              trackMomentumGridCandidatesOnCpu(
+                run, control, beamline, startingCoord, &prepared,
+                preparedCentral, candidateDelta, candidateTarget, 1,
+                candidateSurvived);
+              if (candidateSurvived[0])
+                continue;
+              if (side == 0) {
+                if (candidateDelta[0] > deltaNegative[ie])
+                  deltaNegative[ie] = candidateDelta[0];
+              } else if (candidateDelta[0] < deltaPositive[ie])
+                deltaPositive[ie] = candidateDelta[0];
+            }
+          }
+    }
+    fprintf(stderr,
+            "elegant CUDA: output_mode=2 CPU boundary verification: "
+            "%ld probes, %ld corrected direction%s.\n",
+            verificationParticles, correctedDirections,
+            correctedDirections == 1 ? "" : "s");
+    free(candidateDelta);
+    free(candidateTarget);
+    free(candidateSide);
+    free(candidateExpected);
+    free(candidateSurvived);
+    free(correctionNeeded);
+    candidateDelta = NULL;
+    candidateTarget = NULL;
+  }
+
+  momentumReferenceRestore(&entry, beamline);
+  momentumReferenceFree(&entry);
+  momentumReferenceFree(&prepared);
+  beamline->fiducial_flag = fiducialFlagSave;
+  if (gpu->requiredMode && !usedCuda)
+    bombElegant("ELEGANT_GPU_MODE=required, but output_mode=2 did not execute any CUDA elements",
+                NULL);
+  for (ie = 0; ie < nElements; ie++) {
+    deltaNegative[ie] += deltaStep;
+    deltaPositive[ie] -= deltaStep;
+  }
+
+  if (!SDDS_StartPage(&SDDSma, nElements) ||
+      !SDDS_SetParameters(&SDDSma, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
+                          "Step", control->i_step, NULL) ||
+      !SDDS_SetColumn(&SDDSma, SDDS_SET_BY_NAME, ElementName, nElements,
+                      "ElementName") ||
+      !SDDS_SetColumn(&SDDSma, SDDS_SET_BY_NAME, sStart, nElements, "s") ||
+      !SDDS_SetColumn(&SDDSma, SDDS_SET_BY_NAME, ElementType, nElements,
+                      "ElementType") ||
+      !SDDS_SetColumn(&SDDSma, SDDS_SET_BY_NAME, ElementOccurence, nElements,
+                      "ElementOccurence") ||
+      !SDDS_SetColumn(&SDDSma, SDDS_SET_BY_NAME, deltaPositive, nElements,
+                      "deltaPositive") ||
+      !SDDS_SetColumn(&SDDSma, SDDS_SET_BY_NAME, deltaNegative, nElements,
+                      "deltaNegative") ||
+      !SDDS_WritePage(&SDDSma)) {
+    SDDS_SetError("Problem writing output_mode=2 momentum aperture data");
+    SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  }
+  if (!inhibitFileSync)
+    SDDS_DoFSync(&SDDSma);
+  fprintf(stderr, "elegant CUDA: output_mode=2 summary: batches=%ld, "
+          "execution=%s%s.\n", batches,
+          usedCuda ? "CUDA" : "CPU/OpenMP",
+          usedCuda && usedCpuFallback ?
+            "+CPU/OpenMP fallback" : "");
+  free(sStart);
+  free(deltaPositive);
+  free(deltaNegative);
+  free(ElementName);
+  free(ElementType);
+  free(ElementOccurence);
+  free(elementArray);
+  elementArray = NULL;
+  nElements = 0;
+  return 1;
+}
 #endif
 
 void setupMomentumApertureSearch(
@@ -595,14 +1129,16 @@ void setupMomentumApertureSearch(
     }
     break;
   case 2:
-#if USE_MPI
+#if USE_MPI || defined(HAVE_GPU)
     /*
     if (skip_elements>0)
       bombElegant("skip_elements can't be non-zero for output_mode=2.", NULL);
     if (s_start>0)
       bombElegant("s_start can't be non-zero for output_mode=2.", NULL);
  */
+#  if USE_MPI
     if (myid == 0) {
+#  endif
       if (SDDS_DefineColumn(&SDDSma, "ElementName", NULL, NULL, NULL, NULL, SDDS_STRING, 0) < 0 ||
           SDDS_DefineColumn(&SDDSma, "s", NULL, "m", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
           SDDS_DefineColumn(&SDDSma, "ElementType", NULL, NULL, NULL, NULL, SDDS_STRING, 0) < 0 ||
@@ -614,7 +1150,9 @@ void setupMomentumApertureSearch(
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
         exitElegant(1);
       }
+#  if USE_MPI
     }
+#  endif
 #else
     bombElegant("output_mode=2 not available in serial elegant.", NULL);
 #endif
@@ -767,7 +1305,11 @@ long doMomentumApertureSearch(
   if (output_mode == 2) {
     printf("Branching multiple particle mode\n");
     fflush(stdout);
+#if defined(HAVE_GPU) && !USE_MPI
+    doMomentumApertureGridSearch(run, control, beamline, startingCoord);
+#else
     multiparticleLocalMomentumAcceptance(run, control, errcon, beamline, startingCoord);
+#endif
     printf("Returning from LMA search main routine.\n");
     fflush(stdout);
     return 1;

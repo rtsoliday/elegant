@@ -3246,6 +3246,29 @@ unsigned long gpu_momentum_search_batch_capacity(long turns, long stride) {
   return (unsigned long)MIN(limit / perParticle, (unsigned long long)override);
 }
 
+unsigned long gpu_momentum_ensemble_batch_capacity(long stride) {
+  unsigned long long available = 0, limit = 512ULL * 1024 * 1024;
+  unsigned long long perParticle;
+  long override;
+
+  if (stride <= 0 ||
+      (unsigned long long)stride > (ULLONG_MAX - 16ULL) / 2ULL)
+    return 0;
+  override = gpuEnvLong("ELEGANT_GPU_MOMENTUM_BATCH_PARTICLES", 65536);
+  if (override < 1)
+    return 0;
+  /* Coordinates are present on the host and, when CUDA is available, on the
+   * device.  Leave ample room for loss-compaction and element scratch. */
+  perParticle = 8ULL * (2ULL * (unsigned long long)stride + 16ULL);
+  if (gpuBase.activeDevice >= 0 && gpuCudaMemoryAvailable(&available) == 0) {
+    if (available / 4 < limit)
+      limit = available / 4;
+    return (unsigned long)MIN(limit / perParticle,
+                              (unsigned long long)override);
+  }
+  return (unsigned long)override;
+}
+
 /* Deliberately separate from the dynamic-aperture/tune admission policies.
  * Classical radiation and high-order CSBEND maps are allowed here only with
  * CPU boundary certification. Stochastic and shared mutable state is not. */
@@ -6994,11 +7017,17 @@ void gpu_configure_batched_momentum_search(const double *deltaById,
   long ip;
 
   gpuReleaseBatchedSearchScratch();
-  if (!deltaById || !targetById || particles <= 0 || turns <= 0 ||
-      !history || !historyCount)
+  if (!deltaById || !targetById || particles <= 0 || turns < 0 ||
+      ((history == NULL) != (historyCount == NULL)) ||
+      (turns > 0 && (!history || !historyCount)) ||
+      (size_t)particles > SIZE_MAX / (2 * sizeof(*gpuBatchedSearchScratch.hostData)) ||
+      (turns > 0 &&
+       ((size_t)turns > SIZE_MAX / (5 * sizeof(*history)) ||
+        (size_t)particles > SIZE_MAX /
+          ((size_t)turns * 5 * sizeof(*history)))))
     return;
   gpuBatchedSearchScratch.hostData =
-    (double *)malloc((size_t)(2 * particles) *
+    (double *)malloc((size_t)particles * 2 *
                      sizeof(*gpuBatchedSearchScratch.hostData));
   if (!gpuBatchedSearchScratch.hostData)
     gpuRequiredFailure("unable to allocate batched search host data");
@@ -7006,9 +7035,11 @@ void gpu_configure_batched_momentum_search(const double *deltaById,
     gpuBatchedSearchScratch.hostData[2 * ip] = targetById[ip];
     gpuBatchedSearchScratch.hostData[2 * ip + 1] = deltaById[ip];
   }
-  memset(history, 0,
-         (size_t)particles * 5 * (size_t)turns * sizeof(*history));
-  memset(historyCount, 0, (size_t)particles * sizeof(*historyCount));
+  if (turns > 0) {
+    memset(history, 0,
+           (size_t)particles * 5 * (size_t)turns * sizeof(*history));
+    memset(historyCount, 0, (size_t)particles * sizeof(*historyCount));
+  }
   gpuBatchedSearchScratch.hostHistory = history;
   gpuBatchedSearchScratch.hostHistoryCount = historyCount;
   gpuBatchedSearchScratch.particles = particles;
@@ -7037,34 +7068,43 @@ long gpu_apply_batched_momentum_search(long particles, long pass,
       !gpuBase.initialized || gpuBase.activeDevice < 0 || particles <= 0)
     return 0;
   if (!gpuBatchedSearchScratch.uploaded) {
-    historyValues =
-      (unsigned long)gpuBatchedSearchScratch.particles * 5UL *
-      (unsigned long)gpuBatchedSearchScratch.turns;
+    if ((unsigned long)gpuBatchedSearchScratch.particles > ULONG_MAX / 2UL ||
+        (gpuBatchedSearchScratch.turns > 0 &&
+         ((unsigned long)gpuBatchedSearchScratch.turns > ULONG_MAX / 5UL ||
+          (unsigned long)gpuBatchedSearchScratch.particles >
+            ULONG_MAX / (5UL * (unsigned long)gpuBatchedSearchScratch.turns))))
+      gpuRequiredFailure("batched momentum-search allocation overflow");
+    historyValues = (unsigned long)gpuBatchedSearchScratch.particles * 5UL *
+                    (unsigned long)gpuBatchedSearchScratch.turns;
     status = gpuCudaMallocDouble((void **)&gpuBatchedSearchScratch.deviceData,
-                                 (unsigned long)(2 * gpuBatchedSearchScratch.particles));
+                                 2UL * (unsigned long)gpuBatchedSearchScratch.particles);
     if (status != 0)
       gpuFatalStatus("cudaMalloc(batched search data)", status);
-    status = gpuCudaMallocDouble((void **)&gpuBatchedSearchScratch.deviceHistory,
-                                 historyValues);
-    if (status != 0)
-      gpuFatalStatus("cudaMalloc(batched search history)", status);
-    status = gpuCudaMallocDouble((void **)&gpuBatchedSearchScratch.deviceHistoryCount,
-                                 (unsigned long)gpuBatchedSearchScratch.particles);
-    if (status != 0)
-      gpuFatalStatus("cudaMalloc(batched search turn counts)", status);
+    if (historyValues) {
+      status = gpuCudaMallocDouble((void **)&gpuBatchedSearchScratch.deviceHistory,
+                                   historyValues);
+      if (status != 0)
+        gpuFatalStatus("cudaMalloc(batched search history)", status);
+      status = gpuCudaMallocDouble((void **)&gpuBatchedSearchScratch.deviceHistoryCount,
+                                   (unsigned long)gpuBatchedSearchScratch.particles);
+      if (status != 0)
+        gpuFatalStatus("cudaMalloc(batched search turn counts)", status);
+    }
     status = gpuCudaCopyHostToDevice(
       gpuBatchedSearchScratch.deviceData,
       gpuBatchedSearchScratch.hostData,
-      (unsigned long)(2 * gpuBatchedSearchScratch.particles), &milliseconds);
+      2UL * (unsigned long)gpuBatchedSearchScratch.particles, &milliseconds);
     if (status != 0)
       gpuFatalStatus("cudaMemcpy(batched search data host to device)", status);
     gpuRecordMilliseconds(&gpuBase.gpuTransferToDeviceSeconds, milliseconds);
-    status = gpuCudaClearBatchedSearchHistory(
-      gpuBatchedSearchScratch.deviceHistory, historyValues,
-      gpuBatchedSearchScratch.deviceHistoryCount,
-      (unsigned long)gpuBatchedSearchScratch.particles);
-    if (status != 0)
-      gpuFatalStatus("cudaMemset(batched search history)", status);
+    if (historyValues) {
+      status = gpuCudaClearBatchedSearchHistory(
+        gpuBatchedSearchScratch.deviceHistory, historyValues,
+        gpuBatchedSearchScratch.deviceHistoryCount,
+        (unsigned long)gpuBatchedSearchScratch.particles);
+      if (status != 0)
+        gpuFatalStatus("cudaMemset(batched search history)", status);
+    }
     gpuBatchedSearchScratch.uploaded = 1;
   }
   gpuCopyHostToDevice(particles);

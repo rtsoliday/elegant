@@ -140,6 +140,22 @@ lattice locations through deterministic CSBEND and multipole cells. Trials
 share one tracking call per refinement level and receive their momentum offset
 at the requested lattice location using stable search IDs. The resulting loss
 coordinates and pass numbers are mapped back to the original search rows.
+`mode2.ele` is an explicit parity case for the fixed-grid mode-2 algorithm in non-MPI
+`gpu-elegant`. CUDA is preferred for eligible elements; `-ompThreads=N`
+supplies the accepted loss-sensitive CPU fallback. Set
+`ELEGANT_GPU_MOMENTUM_BATCH_PARTICLES` below the full grid size to test stable
+ID accounting across batch boundaries. It intentionally does not use the
+`run*.ele` naming convention because the suite's serial CPU baseline does not
+support mode 2; compare this case separately with CPU `Pelegant`. For example,
+use `ELEGANT_GPU_MODE=off ELEGANT_GPU_MOMENTUM_BATCH_PARTICLES=65 gpu-elegant
+-ompThreads=1 mode2.ele` and repeat with `-ompThreads=4`.
+Set `ELEGANT_GPU_MOMENTUM_BOUNDARY_VERIFY=1` to confirm each reported
+fixed-grid boundary with CPU/OpenMP arithmetic and rescan only directions whose
+boundary classifications disagree. This additional correctness check is
+disabled by default because it can substantially increase runtime.
+Setting `ELEGANT_GPU_MOMENTUM_BATCH_PARTICLES=1` exercises the singleton CPU
+fallback while retaining fixed-grid mode-2 semantics. In
+`ELEGANT_GPU_MODE=required`, singleton batches continue to use CUDA instead.
 Tune-history/resonance-crossing mode remains on the CPU and is covered by
 `run-resonance-fallback.ele`. Searches containing synchrotron-radiation
 damping or third- and higher-order CSBEND terms also retain point-by-point CPU

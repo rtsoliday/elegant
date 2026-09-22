@@ -42,7 +42,7 @@ CUDA_REQUESTED := $(filter 1 yes YES true TRUE on ON,$(HAVE_CUDA) $(HAVE_GPU))
 CUDA_DISABLED := $(filter 0 no NO false FALSE off OFF,$(HAVE_CUDA) $(HAVE_GPU) $(CUDA_AUTO))
 CUDA_NVCC_FROM_NVCC := $(if $(NVCC),$(shell command -v $(NVCC) 2>/dev/null))
 CUDA_NVCC_FROM_PATH := $(shell command -v nvcc 2>/dev/null)
-CUDA_NVCC_COMMON := /usr/local/cuda-12.4/bin/nvcc /usr/local/cuda/bin/nvcc
+CUDA_NVCC_COMMON := /usr/local/cuda-12.4/bin/nvcc /local/oagmgr-rhel8/cuda-13.4.1/bin/nvcc /usr/local/cuda/bin/nvcc
 CUDA_NVCC_VERSIONED := $(sort $(wildcard /usr/local/cuda-*/bin/nvcc))
 CUDA_NVCC_CANDIDATES := $(strip $(CUDA_NVCC_FROM_NVCC) $(NVCC) $(CUDA_NVCC_FROM_PATH) $(wildcard $(CUDA_NVCC_COMMON)) $(CUDA_NVCC_VERSIONED))
 ifeq ($(strip $(NVCC)),)

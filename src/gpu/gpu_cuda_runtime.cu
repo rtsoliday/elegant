@@ -3316,7 +3316,7 @@ __global__ void gpuBatchedMomentumSearchKernel(
     part[4] = t * beta * cMks;
   }
   turn = pass - firePass;
-  if (turn < 0 || turn >= turns)
+  if (!history || !historyCount || turn < 0 || turn >= turns)
     return;
   history[(id * 5 + 0) * turns + turn] = part[0];
   history[(id * 5 + 1) * turns + turn] = part[1];
