@@ -46,7 +46,7 @@ Output files are generated in SDDS format and can be post-processed with the SDD
 
 ## Regression baselines
 
-`scripts/elegant_test_regression.py` creates a durable set of outputs from the
+`src/gpu/scripts/elegant_test_regression.py` creates a durable set of outputs from the
 serial tests in an `elegantTestSet` SVN working copy. It exports each test to a
 disposable directory, so the SVN checkout and its `reference` directories are
 never modified. The working copy must be clean, and candidate comparisons must
@@ -55,7 +55,7 @@ use the same SVN URL and revision as the baseline.
 Create a baseline with a known-good build:
 
 ```bash
-python3 scripts/elegant_test_regression.py baseline \
+python3 src/gpu/scripts/elegant_test_regression.py baseline \
   --test-set /path/to/elegantTestSet \
   --elegant ./bin/Linux-x86_64/elegant \
   --output /path/to/elegant-baseline-2026.3.0 \
@@ -65,7 +65,7 @@ python3 scripts/elegant_test_regression.py baseline \
 Run the same tests with a future build and compare the results:
 
 ```bash
-python3 scripts/elegant_test_regression.py compare \
+python3 src/gpu/scripts/elegant_test_regression.py compare \
   --test-set /path/to/elegantTestSet \
   --baseline /path/to/elegant-baseline-2026.3.0 \
   --elegant /path/to/future/elegant \
@@ -76,8 +76,31 @@ python3 scripts/elegant_test_regression.py compare \
 For the graphical launcher, run:
 
 ```bash
-python3 scripts/elegant_test_regression.py gui
+python3 src/gpu/scripts/elegant_test_regression.py gui
 ```
+
+The GUI opens on **Benchmark cycle**, with the original launcher on the
+**Manual launcher** tab. Benchmark cycle uses `src/gpu/test-set` by default and
+runs selected cases against a built CPU executable and a built candidate GPU
+executable. A prior GPU executable or completed artifact is optional. Complete
+CPU artifacts can also be reused. Each cycle uses a new directory under
+`benchmark-results`; `workflow.json` records its inputs, commands, overrides,
+and stage status, while `workflow.log` saves console output. The **Stop safely**
+button stops the active test process and keeps completed artifacts and partial
+logs.
+
+**Quick Check** runs each case once without a warm-up and checks candidate GPU
+activity and output significance against CPU output and, when supplied, prior
+GPU output. Its times are informational. **Timed Guard** runs one warm-up and
+five measurements per case with serial jobs, including the suite's extra
+samples for noisy cases. A prior GPU run enables the existing 5% per-case and
+2% suite slowdown guards. Without a prior run, timing remains informational.
+Speedup targets are optional; select them explicitly to apply the suite's
+speedup requirement to those cases. Advanced controls can override those
+performance limits and the GPU significance screen for a cycle. The raw
+SDDS comparison remains exact, and the suite defaults are unchanged. Reused
+artifacts must match the suite and cases; timed reuse also requires matching
+sampling settings and hardware identity.
 
 The comparison exits with status 0 only when every test runs successfully and
 the output file sets and contents match. SDDS data and schema are compared
@@ -88,7 +111,7 @@ review. Use `--absolute-tolerance` or `--relative-tolerance` only when a
 numerical change has been explicitly accepted. Pass test directory names after
 the `baseline` options to make a smaller focused baseline first. The runner
 uses up to eight concurrent tests by default. Every individual test has a hard
-10-minute limit; timed-out processes are terminated and listed in
+15-minute limit; timed-out processes are terminated and listed in
 `timed_out_tests.txt`, the JSON manifest, and the individual test log.
 
 ## Contributing

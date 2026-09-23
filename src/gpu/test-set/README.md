@@ -8,6 +8,12 @@ on the repository's earlier CUDA
 benchmark fixtures, with larger workloads and without order-sensitive particle
 dumps that would force CPU fallback.
 
+The Tkinter benchmark launcher is available with
+`python3 src/gpu/scripts/elegant_test_regression.py gui`. Quick Check screens
+output and GPU activity with one run per case. Timed Guard retains the serial
+repeated-sample protocol below and can use a prior GPU artifact for slowdown
+guards. The manual commands remain available in the GUI's Manual launcher tab.
+
 Run CPU and GPU artifact sets serially so tests do not contend for cores or the
 GPU:
 

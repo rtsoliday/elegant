@@ -107,6 +107,122 @@ class RegressionError(RuntimeError):
     """An error that should be reported without a Python traceback."""
 
 
+class CancellationRequested(RuntimeError):
+    """The GUI asked the current benchmark stage to stop."""
+
+
+class CancellationController:
+    """Watch a request file and stop child processes owned by this stage."""
+
+    def __init__(self, request_file: Path):
+        self.request_file = request_file
+        self.requested = threading.Event()
+        self.finished = threading.Event()
+        self.lock = threading.Lock()
+        self.processes: dict[subprocess.Popen[Any], bool] = {}
+        self.watcher = threading.Thread(target=self._watch, daemon=True)
+
+    def __enter__(self) -> "CancellationController":
+        self.watcher.start()
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        self.finished.set()
+        self.watcher.join(timeout=1)
+
+    def check(self) -> None:
+        if self.requested.is_set() or self.request_file.exists():
+            self.requested.set()
+            raise CancellationRequested("benchmark stage stopped by request")
+
+    def register(self, process: subprocess.Popen[Any], process_group: bool) -> None:
+        with self.lock:
+            self.processes[process] = process_group
+        if self.requested.is_set():
+            self._stop_process(process, process_group)
+
+    def unregister(self, process: subprocess.Popen[Any]) -> None:
+        with self.lock:
+            self.processes.pop(process, None)
+
+    @staticmethod
+    def _stop_process(process: subprocess.Popen[Any], process_group: bool) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            if process_group and os.name != "nt":
+                os.killpg(process.pid, signal.SIGTERM)
+            else:
+                process.terminate()
+        except ProcessLookupError:
+            pass
+
+    def _watch(self) -> None:
+        while not self.finished.wait(0.1):
+            if not self.request_file.exists():
+                continue
+            self.requested.set()
+            with self.lock:
+                processes = list(self.processes.items())
+            for process, process_group in processes:
+                self._stop_process(process, process_group)
+            self.finished.wait(3)
+            with self.lock:
+                remaining = list(self.processes.items())
+            for process, process_group in remaining:
+                if process.poll() is None:
+                    try:
+                        if process_group and os.name != "nt":
+                            os.killpg(process.pid, signal.SIGKILL)
+                        else:
+                            process.kill()
+                    except ProcessLookupError:
+                        pass
+            return
+
+
+_cancellation: CancellationController | None = None
+
+
+def check_cancellation() -> None:
+    if _cancellation is not None:
+        _cancellation.check()
+
+
+def managed_popen(command: list[str], **kwargs: Any) -> subprocess.Popen[Any]:
+    check_cancellation()
+    process = subprocess.Popen(command, **kwargs)
+    if _cancellation is not None:
+        _cancellation.register(process, bool(kwargs.get("start_new_session")))
+    return process
+
+
+def managed_communicate(
+    process: subprocess.Popen[Any], *, timeout: float | None = None
+) -> tuple[Any, Any]:
+    try:
+        output = process.communicate(timeout=timeout)
+        check_cancellation()
+        return output
+    finally:
+        if _cancellation is not None and process.poll() is not None:
+            _cancellation.unregister(process)
+
+
+def managed_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+    timeout = kwargs.pop("timeout", None)
+    process = managed_popen(command, **kwargs)
+    try:
+        stdout, stderr = managed_communicate(process, timeout=timeout)
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        if _cancellation is not None:
+            _cancellation.unregister(process)
+
+
 def configure_temp_directory() -> Path:
     """Keep large disposable test trees off the root filesystem when possible."""
     repository = Path(__file__).resolve().parents[3]
@@ -153,13 +269,9 @@ def sha256_file(path: Path) -> str:
 
 def run_checked(command: list[str], *, cwd: Path | None = None) -> str:
     try:
-        completed = subprocess.run(
-            command,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
+        completed = managed_run(
+            command, cwd=cwd, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True,
         )
     except FileNotFoundError as exc:
         raise RegressionError(f"required command not found: {command[0]}") from exc
@@ -425,17 +537,14 @@ def hardware_metadata() -> dict[str, Any]:
     nvidia_smi = shutil.which("nvidia-smi")
     if nvidia_smi:
         try:
-            completed = subprocess.run(
+            completed = managed_run(
                 [
                     nvidia_smi,
                     "--query-gpu=name,uuid,driver_version",
                     "--format=csv,noheader,nounits",
                 ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=15,
-                check=False,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, timeout=15,
             )
             if completed.returncode == 0:
                 for line in completed.stdout.splitlines():
@@ -460,13 +569,9 @@ def hardware_metadata() -> dict[str, Any]:
 
 def executable_metadata(executable: Path) -> dict[str, Any]:
     try:
-        completed = subprocess.run(
-            [str(executable)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=15,
-            check=False,
+        completed = managed_run(
+            [str(executable)], stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, timeout=15,
         )
         version_output = completed.stdout[:20000]
     except subprocess.TimeoutExpired as exc:
@@ -609,25 +714,21 @@ def run_process(
     command: list[str], *, cwd: Path, env: dict[str, str], timeout: float
 ) -> tuple[int, bytes, bool]:
     try:
-        process = subprocess.Popen(
-            command,
-            cwd=cwd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            start_new_session=(os.name != "nt"),
+        process = managed_popen(
+            command, cwd=cwd, env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, start_new_session=(os.name != "nt"),
         )
     except OSError as exc:
         return 127, str(exc).encode(), False
     try:
-        output, _ = process.communicate(timeout=timeout)
+        output, _ = managed_communicate(process, timeout=timeout)
         return process.returncode, output, False
     except subprocess.TimeoutExpired:
         if os.name != "nt":
             os.killpg(process.pid, signal.SIGKILL)
         else:
             process.kill()
-        output, _ = process.communicate()
+        output, _ = managed_communicate(process)
         return process.returncode, output, True
 
 
@@ -813,12 +914,9 @@ def is_sdds(path: Path) -> bool:
     checker = shutil.which("sddscheck")
     if not checker:
         return False
-    completed = subprocess.run(
-        [checker, str(path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        check=False,
+    completed = managed_run(
+        [checker, str(path)], stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True,
     )
     return completed.stdout.strip() == "ok"
 
@@ -935,6 +1033,7 @@ def run_test(
     keep_work: bool,
     environment_overrides: dict[str, str],
 ) -> dict[str, Any]:
+    check_cancellation()
     started = time.monotonic()
     log_path = artifact_root / "logs" / f"{name}.log"
     output_root = artifact_root / "outputs" / name
@@ -1070,6 +1169,10 @@ def run_test(
             shutil.copy2(source, destination)
         if result["status"] == "passed" and not entries:
             result["warning"] = "test completed without comparable output files"
+    except CancellationRequested as exc:
+        result["status"] = "cancelled"
+        result["error"] = str(exc)
+        log_chunks.append(f"\n[harness stopped] {exc}\n".encode())
     except Exception as exc:  # Preserve other test results and the manifest.
         result["error"] = str(exc)
         log_chunks.append(f"\n[harness error] {exc}\n".encode())
@@ -1106,6 +1209,7 @@ def run_test_repeated(
     repetitions: int,
     extend_noisy_samples: bool,
 ) -> dict[str, Any]:
+    check_cancellation()
     run_roots: list[Path] = []
     warmup_results: list[tuple[Path, dict[str, Any]]] = []
     measured_results: list[tuple[Path, dict[str, Any]]] = []
@@ -1481,6 +1585,7 @@ def baseline_command(args: argparse.Namespace) -> int:
         repetitions=repetitions,
         extend_noisy_samples=extend_noisy_samples,
     )
+    check_cancellation()
     timed_out = write_timeout_report(output, results, args.timeout)
     failures = [result for result in results if result["status"] != "passed"]
     manifest = {
@@ -1549,6 +1654,7 @@ def load_baseline(path: Path) -> dict[str, Any]:
         raise RegressionError("baseline is incomplete or contains failed tests")
     for test in manifest.get("tests", []):
         for entry in test.get("outputs", []):
+            check_cancellation()
             output = path / "outputs" / test["name"] / entry["path"]
             if not output.is_file():
                 raise RegressionError(f"baseline output is missing: {output}")
@@ -1561,12 +1667,9 @@ def sdds_names(path: Path, option: str) -> list[str]:
     query = shutil.which("sddsquery")
     if not query:
         raise RegressionError("sddsquery is required to compare changed SDDS files")
-    completed = subprocess.run(
-        [query, str(path), option],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
+    completed = managed_run(
+        [query, str(path), option], stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True,
     )
     if completed.returncode:
         raise RegressionError(
@@ -1642,12 +1745,9 @@ def compare_sdds(
     # sdds2stream.  This also lets us reject integer, string, non-finite,
     # page-count, and array-shape changes consistently on every installation.
     command.append("-exact")
-    completed = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        check=False,
+    completed = managed_run(
+        command, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, text=True,
     )
     output = completed.stdout.strip()
     if len(output) > 50000:
@@ -1801,12 +1901,9 @@ def compare_sdds_field_values(
     try:
         for command, error_stream in zip(commands, error_streams):
             processes.append(
-                subprocess.Popen(
-                    command,
-                    stdout=subprocess.PIPE,
-                    stderr=error_stream,
-                    text=True,
-                    errors="replace",
+                managed_popen(
+                    command, stdout=subprocess.PIPE, stderr=error_stream,
+                    text=True, errors="replace",
                 )
             )
         assert processes[0].stdout is not None
@@ -1815,6 +1912,7 @@ def compare_sdds_field_values(
         for baseline_line, candidate_line in itertools.zip_longest(
             processes[0].stdout, processes[1].stdout
         ):
+            check_cancellation()
             if baseline_line is None or candidate_line is None:
                 result["stream_shape_changed"] = True
                 continue
@@ -1900,6 +1998,9 @@ def compare_sdds_field_values(
                     )
         for process, error_stream, command in zip(processes, error_streams, commands):
             returncode = process.wait()
+            if _cancellation is not None:
+                _cancellation.unregister(process)
+            check_cancellation()
             error_stream.seek(0)
             error = error_stream.read().strip()
             if returncode:
@@ -1912,6 +2013,8 @@ def compare_sdds_field_values(
             if process.poll() is None:
                 process.kill()
                 process.wait()
+            if _cancellation is not None:
+                _cancellation.unregister(process)
         raise
     finally:
         for error_stream in error_streams:
@@ -1977,6 +2080,7 @@ def assess_sdds_gpu_difference(
         discrete_changes: list[str] = []
         stream_shape_changes: list[str] = []
         for definition in baseline_definitions:
+            check_cancellation()
             field_class = definition["class"]
             if field_class not in SDDS_VALUE_OPTIONS:
                 return potentially_significant_assessment(
@@ -2060,6 +2164,7 @@ def compare_outputs(
     comparisons: list[dict[str, Any]] = []
     report: list[str] = []
     for name in sorted(old_tests):
+        check_cancellation()
         old = old_tests[name]
         new = new_tests[name]
         test_changes: list[dict[str, str]] = []
@@ -2089,6 +2194,7 @@ def compare_outputs(
             if not excluded_runtime_path(entry["path"])
         }
         for relative in sorted(set(old_outputs) | set(new_outputs)):
+            check_cancellation()
             if relative not in old_outputs:
                 test_changes.append(
                     {"path": relative, "status": "added", "detail": "new output file"}
@@ -2409,7 +2515,13 @@ def assess_runtime_performance(
         if preceding_gpu_manifest is not None
         else None
     )
-    targeted = set(baseline_tests) if not target_tests else set(target_tests)
+    targeted = set(baseline_tests) if target_tests is None else set(target_tests)
+    if targeted:
+        gate_mode = "targets"
+    elif preceding_tests is not None:
+        gate_mode = "guard_only"
+    else:
+        gate_mode = "informational"
     unknown_targets = targeted - set(baseline_tests)
     if unknown_targets:
         raise RegressionError(
@@ -2480,7 +2592,15 @@ def assess_runtime_performance(
                     (1 - candidate_seconds / baseline_seconds) * 100, 3
                 ),
                 "candidate_gpu_elements": gpu_elements,
-                "status": "meets_target" if not reasons else "needs_review",
+                "status": (
+                    "needs_review"
+                    if reasons
+                    else "meets_target"
+                    if name in targeted
+                    else "meets_guard"
+                    if preceding_tests is not None
+                    else "informational"
+                ),
                 "reasons": reasons,
             }
         )
@@ -2519,6 +2639,7 @@ def assess_runtime_performance(
 
     return {
         "version": PERFORMANCE_ASSESSMENT_VERSION,
+        "gate_mode": gate_mode,
         "metric": (
             next(iter(timing_metrics))
             if len(timing_metrics) == 1
@@ -2541,7 +2662,9 @@ def assess_runtime_performance(
         "summary": {
             "tests": len(rows),
             "targeted_tests": len(targeted),
-            "tests_passing_gates": len(rows) - len(needs_review),
+            "tests_passing_gates": sum(
+                row["status"] in {"meets_target", "meets_guard"} for row in rows
+            ),
             "tests_needing_review": len(needs_review),
             "baseline_total_seconds": round(baseline_total, 6),
             "pre_change_gpu_total_seconds": (
@@ -2573,6 +2696,10 @@ def runtime_performance_report(performance: dict[str, Any]) -> list[str]:
         (
             "CPU speedup is CPU baseline / candidate GPU time. Targeted tests "
             f"must reach {performance['minimum_speedup']:.3f}x."
+            if performance.get("gate_mode") == "targets"
+            else "No speedup target is applied; prior GPU times are slowdown guards."
+            if performance.get("gate_mode") == "guard_only"
+            else "No timing gate is applied; runtime values are informational."
         ),
         (
             f"Timing metric: {performance['metric']}; sample counts: "
@@ -2582,7 +2709,11 @@ def runtime_performance_report(performance: dict[str, Any]) -> list[str]:
         "",
         "Summary:",
         f"  tests measured: {summary['tests']}",
-        f"  tests passing performance gates: {summary['tests_passing_gates']}",
+        (
+            "  timing gates assessed: none"
+            if performance.get("gate_mode") == "informational"
+            else f"  tests passing performance gates: {summary['tests_passing_gates']}"
+        ),
         f"  tests needing review: {summary['tests_needing_review']}",
         f"  baseline total: {summary['baseline_total_seconds']:.6g}s",
         *(
@@ -2609,9 +2740,13 @@ def runtime_performance_report(performance: dict[str, Any]) -> list[str]:
             if row["pre_change_gpu_seconds"] is not None
             else ""
         )
+        role = (
+            "target" if row["targeted"] else
+            "informational" if performance.get("gate_mode") == "informational" else
+            "guard"
+        )
         lines.append(
-            f"  {row['status']}: {row['name']} "
-            f"({'target' if row['targeted'] else 'guard'}): "
+            f"  {row['status']}: {row['name']} ({role}): "
             f"baseline={row['baseline_seconds']:.6g}s, "
             f"candidate={row['candidate_seconds']:.6g}s, "
             f"CPU/candidate={row['speedup']:.3f}x{pre_change}, "
@@ -2774,6 +2909,8 @@ def compare_command(args: argparse.Namespace) -> int:
 
 
 def compare_existing_command(args: argparse.Namespace) -> int:
+    if args.guard_only and (args.target_test or args.minimum_speedup is not None):
+        raise RegressionError("--guard-only cannot be combined with speedup targets")
     require_commands(("sddsquery", "sddsdiff", "sdds2stream"))
     baseline_root = Path(args.baseline).expanduser().resolve()
     candidate_root = Path(args.candidate).expanduser().resolve()
@@ -2864,7 +3001,13 @@ def compare_existing_command(args: argparse.Namespace) -> int:
             minimum_speedup=minimum_speedup,
             require_gpu_activity=require_gpu_activity,
             preceding_gpu_manifest=pre_change,
-            target_tests=set(args.target_test) if args.target_test else None,
+            target_tests=(
+                set()
+                if args.guard_only
+                else set(args.target_test)
+                if args.target_test
+                else None
+            ),
             non_target_regression_limit=args.non_target_regression_limit,
             suite_regression_limit=args.suite_regression_limit,
         )
@@ -2948,12 +3091,18 @@ def compare_existing_command(args: argparse.Namespace) -> int:
         )
     if performance is not None:
         performance_summary = performance["summary"]
-        print(
-            f"Runtime: {performance_summary['tests_passing_gates']}/"
-            f"{performance_summary['tests']} test(s) met the "
-            "target/guard performance gates; "
-            f"total speedup {performance_summary['total_speedup']:.3f}x."
-        )
+        if performance.get("gate_mode") == "informational":
+            print(
+                "Runtime is informational; "
+                f"CPU/candidate total ratio {performance_summary['total_speedup']:.3f}x."
+            )
+        else:
+            print(
+                f"Runtime: {performance_summary['tests_passing_gates']}/"
+                f"{performance_summary['tests']} test(s) met the "
+                "target/guard performance gates; "
+                f"total speedup {performance_summary['total_speedup']:.3f}x."
+            )
     print(f"Comparison report written to {output}")
     performance_failed = performance is not None and not performance["complete"]
     return 1 if changed or performance_failed or missing_activity else 0
@@ -2977,15 +3126,15 @@ def test_timeout(value: str) -> float:
 
 def nonnegative_float(value: str) -> float:
     parsed = float(value)
-    if parsed < 0:
-        raise argparse.ArgumentTypeError("must be nonnegative")
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be finite and nonnegative")
     return parsed
 
 
 def fraction(value: str) -> float:
     parsed = float(value)
-    if not 0 <= parsed <= 1:
-        raise argparse.ArgumentTypeError("must be between 0 and 1")
+    if not math.isfinite(parsed) or not 0 <= parsed <= 1:
+        raise argparse.ArgumentTypeError("must be finite and between 0 and 1")
     return parsed
 
 
@@ -3004,6 +3153,9 @@ def repetition_count(value: str) -> int:
 
 
 def add_run_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--cancel-file", help="request file used to stop a GUI benchmark stage"
+    )
     parser.add_argument(
         "--correctness-only", action="store_true",
         help="one run per test, allow parallel tests, and exclude timing gates",
@@ -3201,11 +3353,20 @@ def gui_command(args: argparse.Namespace) -> int:
     local_executables = sorted((repository / "bin").glob("*/elegant"))
     default_executable = str(local_executables[0]) if local_executables else ""
 
-    root.title("elegant regression baseline comparison")
-    root.geometry("960x700")
-    root.minsize(800, 560)
-    root.columnconfigure(1, weight=1)
-    root.rowconfigure(11, weight=1)
+    from benchmark_gui import create_benchmark_tab
+
+    root.title("elegant benchmark and regression harness")
+    root.geometry("1280x880")
+    root.minsize(1000, 740)
+    notebook = ttk.Notebook(root)
+    notebook.pack(fill="both", expand=True)
+    benchmark_controller = create_benchmark_tab(
+        notebook, repository, Path(__file__).resolve()
+    )
+    manual = ttk.Frame(notebook)
+    notebook.add(manual, text="Manual launcher")
+    manual.columnconfigure(1, weight=1)
+    manual.rowconfigure(11, weight=1)
 
     mode = tk.StringVar(value="baseline")
     test_set = tk.StringVar(
@@ -3230,7 +3391,7 @@ def gui_command(args: argparse.Namespace) -> int:
     running_process: dict[str, subprocess.Popen[str] | None] = {"value": None}
 
     padding = {"padx": 8, "pady": 5}
-    mode_frame = ttk.LabelFrame(root, text="Operation")
+    mode_frame = ttk.LabelFrame(manual, text="Operation")
     mode_frame.grid(row=0, column=0, columnspan=3, sticky="ew", **padding)
     ttk.Radiobutton(
         mode_frame, text="Create baseline", variable=mode, value="baseline"
@@ -3251,10 +3412,10 @@ def gui_command(args: argparse.Namespace) -> int:
         variable: Any,
         browse: Any,
     ) -> tuple[Any, Any]:
-        ttk.Label(root, text=label).grid(row=row, column=0, sticky="w", **padding)
-        entry = ttk.Entry(root, textvariable=variable)
+        ttk.Label(manual, text=label).grid(row=row, column=0, sticky="w", **padding)
+        entry = ttk.Entry(manual, textvariable=variable)
         entry.grid(row=row, column=1, sticky="ew", **padding)
-        button = ttk.Button(root, text="Browse…", command=browse)
+        button = ttk.Button(manual, text="Browse…", command=browse)
         button.grid(row=row, column=2, sticky="ew", **padding)
         return entry, button
 
@@ -3348,14 +3509,14 @@ def gui_command(args: argparse.Namespace) -> int:
         6, "Pre-change GPU directory", pre_change_gpu, choose_pre_change_gpu
     )
 
-    tests_label = ttk.Label(root, text="Focused tests")
+    tests_label = ttk.Label(manual, text="Focused tests")
     tests_label.grid(row=7, column=0, sticky="w", **padding)
-    tests_entry = ttk.Entry(root, textvariable=tests)
+    tests_entry = ttk.Entry(manual, textvariable=tests)
     tests_entry.grid(row=7, column=1, sticky="ew", **padding)
-    tests_hint = ttk.Label(root, text="space-separated; blank runs all")
+    tests_hint = ttk.Label(manual, text="space-separated; blank runs all")
     tests_hint.grid(row=7, column=2, sticky="w", **padding)
 
-    options = ttk.Frame(root)
+    options = ttk.Frame(manual)
     options.grid(row=8, column=0, columnspan=3, sticky="ew", **padding)
     ttk.Label(options, text="Concurrent tests").pack(side="left")
     jobs_spinbox = ttk.Spinbox(
@@ -3399,13 +3560,13 @@ def gui_command(args: argparse.Namespace) -> int:
     include_excluded_check.pack(side="left", padx=(20, 0))
     ttk.Label(options, textvariable=operation_note).pack(side="right")
 
-    run_button = ttk.Button(root, text="Run")
+    run_button = ttk.Button(manual, text="Run")
     run_button.grid(row=9, column=0, sticky="w", **padding)
-    ttk.Label(root, textvariable=status).grid(
+    ttk.Label(manual, textvariable=status).grid(
         row=9, column=1, columnspan=2, sticky="w", **padding
     )
 
-    log_frame = ttk.LabelFrame(root, text="Run output")
+    log_frame = ttk.LabelFrame(manual, text="Run output")
     log_frame.grid(row=11, column=0, columnspan=3, sticky="nsew", **padding)
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
@@ -3591,6 +3752,11 @@ def gui_command(args: argparse.Namespace) -> int:
         root.after(100, drain_messages)
 
     def close_window() -> None:
+        if benchmark_controller.is_running:
+            messagebox.showwarning(
+                "Benchmark in progress", "Stop the benchmark before closing the window."
+            )
+            return
         if running_process["value"] is not None:
             messagebox.showwarning(
                 "Run in progress", "Wait for the current regression run to finish."
@@ -3668,6 +3834,13 @@ def build_parser() -> argparse.ArgumentParser:
     add_comparison_options(compare_existing)
     add_gpu_assessment_options(compare_existing)
     compare_existing.add_argument(
+        "--cancel-file", help="request file used to stop a GUI comparison"
+    )
+    compare_existing.add_argument(
+        "--guard-only", action="store_true",
+        help="apply prior-GPU slowdown guards without speedup targets",
+    )
+    compare_existing.add_argument(
         "--target-test",
         action="append",
         default=[],
@@ -3702,10 +3875,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _cancellation
     try:
         configure_temp_directory()
         args = build_parser().parse_args(argv)
+        request_file = getattr(args, "cancel_file", None)
+        if request_file:
+            with CancellationController(Path(request_file).expanduser().resolve()) as controller:
+                _cancellation = controller
+                try:
+                    return args.handler(args)
+                finally:
+                    _cancellation = None
         return args.handler(args)
+    except CancellationRequested as exc:
+        print(f"stopped: {exc}", file=sys.stderr)
+        return 130
     except RegressionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
