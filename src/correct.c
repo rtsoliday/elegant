@@ -521,6 +521,14 @@ void clean_up_CM(CORMON_DATA *CM, short full) {
   }
 }
 
+/* Count of &steering_element commands that were routed to the ordinary &correct
+   lists (i.e. did NOT set target="fofb"/"fast_orbit_feedback").  fast_orbit_feedback
+   reads this to warn when steering elements were defined but none target the feedback. */
+static long nNonFOFBSteeringElements = 0;
+long nNonFOFBSteeringElementsSeen(void) {
+  return nNonFOFBSteeringElements;
+}
+
 void add_steering_element(CORRECTION *correct, LINE_LIST *beamline, RUN *run, NAMELIST_TEXT *nltext) {
 #include "steer_elem.h"
 
@@ -584,6 +592,21 @@ void add_steering_element(CORRECTION *correct, LINE_LIST *beamline, RUN *run, NA
 
   if (limit && (limit < tweek || limit < 0))
     bombElegant("invalid limit specified for steering element", NULL);
+
+  if (target && (strcmp(target, "fast_orbit_feedback") == 0 || strcmp(target, "fofb") == 0)) {
+    /* FOFB-owned intake: route to the fast_orbit_feedback command's own steering
+       lists instead of the global &correct SLx/SLy.  fofbAddSteerElem partitions
+       by item (FREQ -> RF cavities, else -> plane correctors). */
+    long fplane = (plane[0] == 'v' || plane[0] == 'V') ? 2 : 0;
+    if (!fofbAddSteerElem(fplane, name, item, element_type, tweek, limit,
+                          start_occurence, end_occurence, occurence_step, s_start, s_end,
+                          beamline, run, verbose))
+      bombElegant("no match to given element name or type for fast_orbit_feedback steering_element", NULL);
+    return;
+  }
+
+  /* Reaching here means the command targets the ordinary &correct lists, not the feedback. */
+  nNonFOFBSteeringElements++;
 
   if (plane[0] == 'h' || plane[0] == 'H') {
     if (!add_steer_elem_to_lists(&correct->SLx, 0, name, item, element_type, tweek, limit,
