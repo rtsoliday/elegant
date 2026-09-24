@@ -1045,7 +1045,6 @@ long findSixDimClosedOrbit(TRAJECTORY *clorb, double clorb_acc, double clorb_acc
 #endif
 
   log_entry("findSixDimClosedOrbit");
-  printWarning("Using findSixDimClosedOrbit", "findSixDimClosedOrbit is not fully tested.");
   
   if (!initialized) {
     m_alloc(&R, 6, 6);
