@@ -3286,6 +3286,161 @@ The proper use of this command can be confusing.  A typical sequence will be as 
 
 %\begin{latexonly}
 \newpage
+\begin{center}{\Large\verb|fast_orbit_feedback|}\end{center}
+%\end{latexonly}
+\subsection{fast\_orbit\_feedback \label{subsec:fastorbitfeedback}}
+
+\begin{itemize}
+\item type: action command.
+\item function: simulate fast orbit feedback (FOFB) combined with realistic,
+  turn-by-turn beam dynamics.  Unlike \verb|correct|, which computes a static orbit
+  correction, this command runs a closed feedback loop: on each iteration it tracks the
+  beam for a number of turns, forms a filtered orbit readout at the beam-position
+  monitors, computes steering-actuator setpoint changes through an inverse response
+  matrix and a per-actuator-class PID controller, and lets the physically applied kicks
+  evolve turn-by-turn toward the new setpoints.
+\item sequence: must follow \verb|run_setup|; \verb|twiss_output| must precede it (the
+  internal response matrix uses the lattice functions, and the RF-frequency actuator uses
+  the dispersion and momentum compaction).  A tracking command (e.g. \verb|bunched_beam|)
+  provides the beam.
+\item can use parallel resources (\verb|Pelegant|); results are identical to the serial
+  run for a deterministic beam.
+\item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
+\end{itemize}
+
+The mapping to \verb|run_control| is: each FOFB iteration tracks the beam for
+\verb|n_passes| turns (the readout ``tick''), and the number of FOFB iterations is
+\verb|n_steps|.  Each turn, every monitor reading is pushed through a first-order digital
+IIR filter (see \verb|bpm_filter_file|) so that the tick averages the betatron
+oscillation down to the closed orbit.  At the end of each tick the filtered orbit is
+projected into actuator space through the internally-built inverse response matrix
+($T=-C^{-1}$) and applied through the per-class PID controller; between ticks the
+physically applied actuator values evolve turn-by-turn toward their new setpoints through
+a per-actuator step-response filter (see the \verb|*_filter_file| options).
+
+By default the actuators are the standard dedicated steering correctors (HKICK/VKICK and
+the like) auto-added for each plane.  To choose the actuators explicitly, declare them
+with the \verb|steering_element| command using \verb|target="fast_orbit_feedback"|; if any
+corrector is declared for a plane, exactly the declared correctors are used for that
+plane, otherwise the dedicated correctors are auto-added.
+
+\textbf{RF-frequency actuator.}  Setting \verb|include_rf_frequency=1| adds the RF
+frequency as a horizontal actuator (the machine ``radial loop'').  In a ring with
+horizontal dispersion, moving the horizontal correctors changes the path length, which
+shifts the equilibrium momentum offset $\delta$ and re-distorts the dispersive orbit
+$\eta_x\delta$ at the monitors; with the RF frequency held fixed the horizontal plane
+therefore shows a slow residual drift that pure steering cannot remove.  The RF frequency
+is the DC orbit/energy knob, $\delta=-(1/\alpha_c)(\Delta f/f_0)$, so an integral RF loop
+nails zero steady-state horizontal error.  All selected cavities form one joint actuator
+(a common fractional detuning) contributing a single column to the horizontal response
+matrix, the analytic dispersive column $\partial x_i/\partial f=-\eta_i/(\alpha_c f_0)$,
+solved together with the correctors and driven by its own PID class (\verb|rf_Kp/Ki/Kd|,
+all zero by default, so the RF loop is off until \verb|rf_Ki| is set; expect
+$\verb|rf_Ki|\ll\verb|steering_Ki|$).  Select which cavities are driven with
+\verb|steering_element|, \verb|target="fast_orbit_feedback"|, \verb|item="FREQ"| on the
+desired \verb|RFCA| elements; if none are declared, every \verb|RFCA| in the beamline is
+used.
+
+\begin{verbatim}
+&fast_orbit_feedback
+    STRING inverse[2] = {NULL, NULL};
+    STRING response[4] = {NULL, NULL, NULL, NULL};
+    long invert_response = 0;
+    long keep_largest_SVs = 0;
+    long remove_smallest_SVs = 0;
+    double minimum_SV_ratio = 0;
+    double Tikhonov_relative_alpha = 0;
+    long Tikhonov_n = -1;
+    double steering_Kp = 0;
+    double steering_Ki = 1;
+    double steering_Kd = 0;
+    double rf_Kp = 0;
+    double rf_Ki = 0;
+    double rf_Kd = 0;
+    double corrector_limit = 0;
+    double rf_frequency_limit = 0;
+    double rf_response_scale = 0;
+    long anti_windup = 1;
+    long reset_filters_each_step = 0;
+    double bpm_noise = 0;
+    double bpm_noise_cutoff = 0;
+    STRING bpm_noise_distribution = "gaussian";
+    long include_rf_frequency = 0;
+    STRING bpm_filter_file = NULL;
+    STRING steering_filter_file = NULL;
+    STRING rf_filter_file = NULL;
+    STRING output = NULL;
+    long output_interval = 1;
+    long center_on_orbit = 0;
+    long center_momentum_also = 1;
+    long offset_by_orbit = 0;
+    long offset_momentum_also = 1;
+    long verbosity = 1;
+&end
+\end{verbatim}
+
+\begin{itemize}
+\item \verb|inverse|, \verb|response|, \verb|invert_response| --- Optional files for a
+  precomputed inverse (response) matrix, and a flag to invert a supplied response matrix,
+  in place of the internally-built one.
+\item \verb|keep_largest_SVs|, \verb|remove_smallest_SVs|, \verb|minimum_SV_ratio|,
+  \verb|Tikhonov_relative_alpha|, \verb|Tikhonov_n| --- Singular-value-decomposition
+  controls for inverting the response matrix, with the same meaning as in \verb|correct|.
+\item \verb|steering_Kp|, \verb|steering_Ki|, \verb|steering_Kd| --- Proportional,
+  integral, and derivative gains of the PID controller for the steering-corrector
+  actuator class.  Pure integral action (\verb|steering_Ki| only) gives bounded
+  zero-steady-state-error orbit correction.
+\item \verb|rf_Kp|, \verb|rf_Ki|, \verb|rf_Kd| --- PID gains for the RF-frequency actuator
+  class (used only when \verb|include_rf_frequency=1|).  All default to zero, so the RF
+  loop is off until \verb|rf_Ki| is set.
+\item \verb|corrector_limit| --- Maximum allowed absolute value of a steering-corrector
+  setpoint (0 = no limit).
+\item \verb|rf_frequency_limit| --- Maximum allowed absolute RF-frequency excursion from
+  the nominal frequency, in Hz (0 = no limit).
+\item \verb|rf_response_scale| --- Internal conditioning scale for the RF column in the
+  joint SVD (0 = automatic; the RF column is scaled so it carries weight comparable to the
+  corrector columns).  This is a pure conditioning device and does not affect the applied
+  physics.
+\item \verb|anti_windup| --- If nonzero, integrator anti-windup back-calculation is
+  applied when an actuator saturates against its limit.
+\item \verb|reset_filters_each_step| --- If nonzero, the BPM and actuator filters are
+  reset at the start of each FOFB iteration.
+\item \verb|bpm_noise|, \verb|bpm_noise_cutoff|, \verb|bpm_noise_distribution| --- Optional
+  monitor-noise amplitude, cutoff, and distribution (``gaussian'' or ``uniform'').
+\item \verb|include_rf_frequency| --- If nonzero, enable the RF-frequency actuator (see
+  above).  Requires \verb|twiss_output| with dispersion and momentum compaction available.
+\item \verb|bpm_filter_file|, \verb|steering_filter_file|, \verb|rf_filter_file| ---
+  Optional SDDS files giving the digital-filter (z-transform) coefficients for the monitor
+  readout, the steering-corrector step response, and the RF-frequency step response,
+  respectively.
+\item \verb|output| --- Optional SDDS file recording per-iteration diagnostics (orbit rms
+  in each plane, maximum corrector values, pegged-actuator flags, and, when the RF
+  actuator is active, the applied RF-frequency detuning \verb|DeltaFrf|).  One SDDS page is
+  written and flushed to disk for each feedback iteration as the run proceeds, so the file
+  can be examined live while tracking is still in progress rather than only at the end.
+\item \verb|output_interval| --- Number of FOFB iterations between records written to
+  \verb|output|.
+\item \verb|center_on_orbit|, \verb|center_momentum_also| --- If \verb|center_on_orbit| is
+  nonzero, the beam is centered on the closed orbit before feedback tracking begins, so it
+  starts on the (uncorrected, distorted) orbit rather than on the design orbit; this avoids
+  a large betatron transient about the closed orbit at the start of the run.  When
+  \verb|center_momentum_also| is nonzero (the default) the longitudinal coordinates are
+  centered as well.  This works exactly as in the \verb|track| command, and, as there, it
+  takes effect \emph{only} when a \verb|closed_orbit| command precedes the
+  \verb|fast_orbit_feedback| command so that the closed orbit is actually computed;
+  \verb|fast_orbit_feedback| never computes the closed orbit on its own.  If requested
+  without a preceding \verb|closed_orbit| command, a warning is issued and the beam is not
+  centered.
+\item \verb|offset_by_orbit|, \verb|offset_momentum_also| --- Similar to
+  \verb|center_on_orbit|, but the closed-orbit coordinates are \emph{added} to each
+  particle's initial coordinates rather than used to shift the beam centroid onto the orbit.
+  \verb|offset_momentum_also| (default nonzero) includes the longitudinal coordinates.  The
+  same requirement of a preceding \verb|closed_orbit| command applies.
+\item \verb|verbosity| --- Larger values produce more diagnostic printout.
+\end{itemize}
+
+%\begin{latexonly}
+\newpage
 \begin{center}{\Large\verb|find_aperture|}\end{center}
 %\end{latexonly}
 \subsection{find\_aperture \label{subsec:findaperture}}
@@ -4862,10 +5017,22 @@ the values are \verb|-1| if the matrix is not determined by tracking.
 
 \begin{itemize}
 \item type: setup command.
-\item function: define parameters for time-dependent modulation of elements
+\item function: define parameters for time-dependent (turn-by-turn) modulation of elements.
+  In addition to a deterministic amplitude function $A(t)$ from an equation or a shared file column,
+  this command can apply an {\em independent per-element} sampled waveform (via
+  \verb|element_amplitude_column|) or draw {\em turn-by-turn random noise} from a built-in
+  distribution (via \verb|distribution|).  This makes it suitable for modeling mechanical vibration
+  (typically the \verb|DX|/\verb|DY| parameters) and strength noise (e.g. the \verb|FSE| parameter),
+  applied fresh on every pass during tracking.  Unlike \verb|error_element|, which perturbs the
+  lattice once per \verb|run_control| step, \verb|modulate_elements| updates the element on every
+  turn, so it can represent a waveform or noise sequence that changes turn-to-turn.
 \item sequence: must follow \verb|run_setup|.
 \item N.B.: if the ramped element is modeled with a matrix, a significant performance hit may be seen.
   It is best to use symplectic variants of the elements, since these don't invoke the matrix calculation.
+  In particular, on the symplectic kick elements (e.g. \verb|KQUAD|, \verb|KSEXT|, \verb|CSBEND|)
+  the \verb|DX|/\verb|DY| offsets and the \verb|FSE| fractional-strength error are read live during
+  tracking, so modulating them incurs no per-turn matrix rebuild; the matrix-based elements
+  (e.g. \verb|QUAD|, \verb|SBEN|) require a matrix rebuild on every turn.
 \item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
 \end{itemize}
 
@@ -4879,6 +5046,11 @@ the values are \verb|-1| if the matrix is not determined by tracking.
     STRING time_column = NULL;
     long convert_pass_to_time;
     STRING amplitude_column = NULL;
+    STRING element_amplitude_column = NULL;
+    STRING distribution = NULL;
+    double amplitude = 0;
+    double cutoff = 3;
+    long correlated = 1;
     long refresh_matrix = 0;
     long differential = 1;
     long multiplicative = 0;
@@ -4926,7 +5098,35 @@ is modulated.
   of the element within the lattice.
 \item \verb|amplitude_column| --- Name of column in \verb|filename| giving amplitude data
   for the modulation.  Together, \verb|time_column| and \verb|amplitude_column| define
-  a function $A(t)$.
+  a function $A(t)$.  This single column is shared by all elements matched by the command, so it
+  represents a {\em correlated} waveform (e.g. common ground motion moving a group of elements
+  coherently).  Use \verb|element_amplitude_column| instead for independent per-element waveforms.
+\item \verb|element_amplitude_column| --- Name of a per-element column {\em template} in
+  \verb|filename|, used in place of \verb|amplitude_column| when each matched element is to receive
+  its own {\em independent} sampled waveform.  The template is a string containing \verb|%s|, which is
+  replaced by the element name, and optionally \verb|%ld|, which is replaced by the occurrence number;
+  for example \verb|element_amplitude_column="dy_%s"| loads column \verb|dy_Q1| for element
+  \verb|Q1|, column \verb|dy_Q2| for element \verb|Q2|, and so on, while
+  \verb|element_amplitude_column="dy_%s_%ld"| would load \verb|dy_Q1_1|, \verb|dy_Q1_2|, etc.  All
+  columns share the single \verb|time_column|.  Give exactly one of \verb|amplitude_column| and
+  \verb|element_amplitude_column|.
+\item \verb|distribution|, \verb|amplitude|, \verb|cutoff|, \verb|correlated| --- Select a built-in
+  turn-by-turn random noise source instead of an equation or file.  \verb|distribution| may be
+  \verb|"uniform"|, \verb|"gaussian"|, or \verb|"plus_or_minus"| (the same choices, drawn the same
+  way, as \verb|error_element|).  \verb|amplitude| gives the RMS (\verb|gaussian|) or half-width
+  (\verb|uniform|/\verb|plus_or_minus|), and \verb|cutoff| gives the gaussian truncation in units of
+  \verb|amplitude|.  A fresh value is drawn every pass and then combined with the original parameter
+  value according to \verb|differential|/\verb|multiplicative|/\verb|factor| below.  If
+  \verb|correlated=1| (the default) a single value is drawn per turn and applied to all elements
+  matched by the command (they move coherently); if \verb|correlated=0| each matched element gets an
+  independent draw each turn.  \verb|correlated| likewise selects between the shared
+  (\verb|amplitude_column|) and independent (\verb|element_amplitude_column|) forms of the file source.
+  N.B.: the built-in noise is drawn from the same random-number stream that \verb|error_element| uses,
+  so it is deterministic and reproducible through \verb|&run_setup random_number_seed|; because the
+  two commands share one stream, combining them in the same run makes each dependent on the number of
+  draws made by the other.  The stream is seeded identically on all processors, so \verb|elegant| and
+  \verb|Pelegant| produce identical results.  Exactly one of \verb|expression|, \verb|filename|, and
+  \verb|distribution| may be given.
 \item \verb|refresh_matrix| --- Frequently there is a matrix associated with an element even
   if tracking through the element does not use the matrix.  In this case, {\tt elegant} doesn't
   normally update the matrix for the element as it modulates the element, since that may involve
@@ -7070,6 +7270,7 @@ A literal ``\%s'' must be entered as ``\%\%s''.
     double s_end = -1;
     STRING after = NULL;
     STRING before = NULL;
+    STRING target = "correct";
 &end
 \end{verbatim}
 
@@ -7091,7 +7292,14 @@ A literal ``\%s'' must be entered as ``\%\%s''.
 \item \verb|after| --- The name of an element.  If given, only elements
  that follow the named element in the beamline are included.  
 \item \verb|before| --- The name of an element. If given, only elements
- that precede the named element in the beamline are included.  
+ that precede the named element in the beamline are included.
+\item \verb|target| --- Which command consumes this declaration.  The default,
+ \verb|"correct"|, adds the element to the \verb|correct| command's steering lists (the
+ historical behavior).  Setting \verb|target="fast_orbit_feedback"| (or \verb|"fofb"|)
+ instead routes the declaration to the \verb|fast_orbit_feedback| command's own,
+ independent steering lists; see that command for details.  With this target, an
+ \verb|item="FREQ"| declaration on an \verb|RFCA| cavity selects that cavity for the
+ RF-frequency actuator rather than defining an orbit corrector.
 \end{itemize}
 
 %\begin{latexonly}
