@@ -14,6 +14,11 @@
     STRING time_column = NULL;
     long convert_pass_to_time = 0;
     STRING amplitude_column = NULL;
+    STRING element_amplitude_column = NULL;
+    STRING distribution = NULL;
+    double amplitude = 0;
+    double cutoff = 3;
+    long correlated = 1;
     long refresh_matrix = 0;
     long differential = 1;
     long multiplicative = 0;
