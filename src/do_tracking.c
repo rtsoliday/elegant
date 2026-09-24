@@ -647,6 +647,10 @@ long do_tracking(
         beamline->flags &= ~BEAMLINE_CONCAT_CURRENT;
         beamline->flags &= ~BEAMLINE_TWISS_CURRENT;
       }
+      if (fofbActive && fofbUpdateActuators(beamline, run, i_pass)) {
+        beamline->flags &= ~BEAMLINE_CONCAT_CURRENT;
+        beamline->flags &= ~BEAMLINE_TWISS_CURRENT;
+      }
 #ifdef DEBUG_CRASH
       printMessageAndTime(stdout, "do_tracking checkpoint 0.43\n");
 #endif
@@ -665,7 +669,8 @@ long do_tracking(
 #ifdef DEBUG_CRASH
       printMessageAndTime(stdout, "do_tracking checkpoint 0.44\n");
 #endif
-      if (beamline->flags & BEAMLINE_TWISS_WANTED && !(beamline->flags & BEAMLINE_TWISS_CURRENT) && !(flags & TEST_PARTICLES)) {
+      if (beamline->flags & BEAMLINE_TWISS_WANTED && !(beamline->flags & BEAMLINE_TWISS_CURRENT) && !(flags & TEST_PARTICLES) &&
+          !(flags & SUPPRESS_TWISS_UPDATE)) {
         update_twiss_parameters(run, beamline, NULL);
       }
 #ifdef DEBUG_CRASH
@@ -1344,15 +1349,15 @@ long do_tracking(
                 } else {
                   switch (eptr->type) {
                   case T_MONI:
-                    if (((MONI *)eptr->p_elem)->storeTurnByTurn)
+                    if (((MONI *)eptr->p_elem)->storeTurnByTurn || fofbActive)
                       storeBPMReading(eptr, coord, nToTrack, *P_central);
                     break;
                   case T_HMON:
-                    if (((HMON *)eptr->p_elem)->storeTurnByTurn)
+                    if (((HMON *)eptr->p_elem)->storeTurnByTurn || fofbActive)
                       storeBPMReading(eptr, coord, nToTrack, *P_central);
                     break;
                   case T_VMON:
-                    if (((VMON *)eptr->p_elem)->storeTurnByTurn)
+                    if (((VMON *)eptr->p_elem)->storeTurnByTurn || fofbActive)
                       storeBPMReading(eptr, coord, nToTrack, *P_central);
                     break;
                   default:
@@ -4434,6 +4439,22 @@ long do_tracking(
           rpn_store(computeMonitorReading(eptr, 2, sums->centroid, 0), NULL, vmon->tbtMemoryNumber[0]);
           rpn_store(n, NULL, vmon->tbtMemoryNumber[1]);
           break;
+        }
+        if (fofbActive) {
+          double xr = 0, yr = 0;
+          switch (eptr->type) {
+          case T_MONI:
+            xr = computeMonitorReading(eptr, 0, sums->centroid, 0);
+            yr = computeMonitorReading(eptr, 2, sums->centroid, 0);
+            break;
+          case T_HMON:
+            xr = computeMonitorReading(eptr, 0, sums->centroid, 0);
+            break;
+          case T_VMON:
+            yr = computeMonitorReading(eptr, 2, sums->centroid, 0);
+            break;
+          }
+          fofbStoreBpmTick(eptr, xr, yr);
         }
         freeBeamSums(sums, 1);
       }
