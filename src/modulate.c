@@ -17,12 +17,33 @@
 
 long loadModulationTable(double **t, double **value, char *file, char *timeColumn, char *amplitudeColumn);
 
+/* Distribution names/codes for the built-in per-turn RNG source.  The integer codes MUST
+ * match error.nl (UNIFORM_ERRORS=0, GAUSSIAN_ERRORS=1, PLUS_OR_MINUS_ERRORS=2) because they are
+ * passed straight to perturbation() (error.c). */
+#define N_MOD_DIST 3
+static char *modDistChoice[N_MOD_DIST] = {
+  "uniform", "gaussian", "plus_or_minus"};
+
+/* Build a per-element amplitude-column name from a template by substituting
+ * "%s" -> element name and "%ld" -> occurence.  Returns a newly allocated string. */
+static char *buildElementColumnName(char *templ, char *name, long occurence) {
+  char buffer1[1024], buffer2[1024], occStr[32];
+  char *result = NULL;
+  snprintf(buffer1, sizeof(buffer1), "%s", templ);
+  replace_string(buffer2, buffer1, "%s", name);
+  snprintf(occStr, sizeof(occStr), "%ld", occurence);
+  replace_string(buffer1, buffer2, "%ld", occStr);
+  cp_str(&result, buffer1);
+  return result;
+}
+
 void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE_LIST *beamline, RUN *run) {
   long n_items, n_added, firstIndexInGroup;
   ELEMENT_LIST *context;
   double sMin = -DBL_MAX, sMax = DBL_MAX;
   double *tData, *AData;
   long nData = 0;
+  long distCode = -1, nSources;
 
   modData->beamline = beamline;
 
@@ -36,17 +57,30 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
       bombElegant("element name missing in modulate_elements namelist", NULL);
     SDDS_CopyString(&name, "*");
   }
-  if (!expression && !(filename && time_column && amplitude_column))
-    bombElegant("either expression or filename, time_column, and amplitude_column must all be given", NULL);
-  if (expression && filename)
-    bombElegant("only one of expression and filename may be given", NULL);
+  /* Exactly one modulation source: expression, filename (time series), or distribution (built-in RNG). */
+  nSources = (expression ? 1 : 0) + (filename ? 1 : 0) + (distribution ? 1 : 0);
+  if (nSources != 1)
+    bombElegant("exactly one of expression, filename, or distribution must be given", NULL);
+  if (filename) {
+    if (!time_column)
+      bombElegant("time_column must be given with filename", NULL);
+    if (!amplitude_column && !element_amplitude_column)
+      bombElegant("amplitude_column or element_amplitude_column must be given with filename", NULL);
+    if (amplitude_column && element_amplitude_column)
+      bombElegant("give only one of amplitude_column and element_amplitude_column", NULL);
+  }
+  if (distribution) {
+    if ((distCode = match_string(distribution, modDistChoice, N_MOD_DIST, 0)) < 0)
+      bombElegant("unknown distribution given in modulate_elements (use uniform, gaussian, or plus_or_minus)", NULL);
+  }
   if (item == NULL)
     bombElegant("item name missing in modulate_elements namelist", NULL);
   if (echoNamelists)
     print_namelist(stdout, &modulate_elements);
 
-  if (filename) {
-    /* Read data file */
+  if (filename && amplitude_column) {
+    /* Read the single shared (correlated) data column once; per-element columns are loaded in the
+     * element loop below. */
     if ((nData = loadModulationTable(&tData, &AData, filename, time_column, amplitude_column)) <= 2)
       bombElegant("too few items in modulation table", NULL);
   } else
@@ -113,6 +147,11 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
 
     modData->element = SDDS_Realloc(modData->element, sizeof(*modData->element) * (n_items + 1));
     modData->expression = SDDS_Realloc(modData->expression, sizeof(*modData->expression) * (n_items + 1));
+    modData->sourceType = SDDS_Realloc(modData->sourceType, sizeof(*modData->sourceType) * (n_items + 1));
+    modData->distCode = SDDS_Realloc(modData->distCode, sizeof(*modData->distCode) * (n_items + 1));
+    modData->noiseAmplitude = SDDS_Realloc(modData->noiseAmplitude, sizeof(*modData->noiseAmplitude) * (n_items + 1));
+    modData->noiseCutoff = SDDS_Realloc(modData->noiseCutoff, sizeof(*modData->noiseCutoff) * (n_items + 1));
+    modData->sharedDraw = SDDS_Realloc(modData->sharedDraw, sizeof(*modData->sharedDraw) * (n_items + 1));
     modData->parameterNumber = SDDS_Realloc(modData->parameterNumber, sizeof(*modData->parameterNumber) * (n_items + 1));
     modData->flags = SDDS_Realloc(modData->flags, sizeof(*modData->flags) * (n_items + 1));
     modData->factor = SDDS_Realloc(modData->factor, sizeof(*modData->factor)*(n_items+1));
@@ -137,6 +176,11 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
     modData->verboseThreshold[n_items] = verbose_threshold;
     modData->timeData[n_items] = modData->modulationData[n_items] = NULL;
     modData->expression[n_items] = NULL;
+    modData->sourceType[n_items] = MOD_SOURCE_EXPRESSION;
+    modData->distCode[n_items] = distCode;
+    modData->noiseAmplitude[n_items] = amplitude;
+    modData->noiseCutoff[n_items] = cutoff;
+    modData->sharedDraw[n_items] = 0;
     modData->fpRecord[n_items] = NULL;
     modData->nData[n_items] = 0;
     modData->flushRecord[n_items] = flush_record;
@@ -149,14 +193,34 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
     if (pass_delay!=0 && !convert_pass_to_time) 
       bombElegant("If pass_delay is non-zero, must set convert_pass_to_time=1.", NULL);
 
-    if (filename) {
-      if ((modData->dataIndex[n_items] = firstIndexInGroup) == -1) {
-        modData->timeData[n_items] = tData;
-        modData->modulationData[n_items] = AData;
-        modData->nData[n_items] = nData;
+    if (distribution) {
+      /* Built-in per-turn RNG.  Correlated groups share one draw per pass via the group leader
+       * (dataIndex mechanism); independent items each draw their own (dataIndex=-1). */
+      modData->sourceType[n_items] = MOD_SOURCE_RNG;
+      modData->dataIndex[n_items] = correlated ? firstIndexInGroup : -1;
+    } else if (filename) {
+      modData->sourceType[n_items] = MOD_SOURCE_FILE;
+      if (element_amplitude_column) {
+        /* Independent per-element series: load this element's own column, sharing the time column. */
+        char *colName = buildElementColumnName(element_amplitude_column, context->name, context->occurence);
+        modData->dataIndex[n_items] = -1;
+        if ((modData->nData[n_items] = loadModulationTable(&modData->timeData[n_items],
+                                                           &modData->modulationData[n_items],
+                                                           filename, time_column, colName)) <= 2)
+          bombElegant("too few items in modulation table", NULL);
+        free(colName);
+      } else {
+        /* Shared/correlated single-column series (existing behavior). */
+        if ((modData->dataIndex[n_items] = firstIndexInGroup) == -1) {
+          modData->timeData[n_items] = tData;
+          modData->modulationData[n_items] = AData;
+          modData->nData[n_items] = nData;
+        }
       }
-    } else
+    } else {
+      modData->sourceType[n_items] = MOD_SOURCE_EXPRESSION;
       cp_str(&modData->expression[n_items], expression);
+    }
 
     if ((modData->parameterNumber[n_items] = confirm_parameter(item, context->type)) < 0) {
       printf("error: cannot modulate %s---no such parameter for %s (wildcard name: %s)\n", item, context->name, name);
@@ -306,7 +370,12 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
       s0 = modData->beamline->elem_recirc ? modData->beamline->elem_recirc->end_pos : 0;
       t = ((iPass - modData->passDelay[iMod]) * modData->beamline->revolution_length + (modData->element[iMod]->end_pos - s0)) / (beta * c_mks);
     } else
-      t = tBeam;
+      /* findFiducialTime returns the reduced beam-frame time; CHANGE_T (and step_frequency)
+         deliberately remove macro time from part[][4], so add trackingClockOffset() to recover
+         the true absolute elapsed time for the modulation-table lookup (mirrors kicker.c,
+         ramped_rfca.c, lrwake.c).  trackingClockOffset()==0 when no CHANGE_T/step_frequency is
+         active, so decks without those features are bit-identical. */
+      t = tBeam + trackingClockOffset();
     t -= modData->timeDelay[iMod];
 #ifdef DEBUG
     printf("applyElementModulations: t = %le\n", t);
@@ -341,7 +410,19 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
     printf("applyElementModulations: expression = %s\n", modData->expression[iMod]);
     fflush(stdout);
 #endif
-    if (!modData->expression[iMod]) {
+    if (modData->sourceType[iMod] == MOD_SOURCE_RNG) {
+      /* Built-in per-turn RNG.  random_1_elegant (used by perturbation) is seeded identically on
+       * all ranks and is not consumed per-particle during tracking, so every rank draws the same
+       * value here -> MPI-parity-safe for the shared element parameter. */
+      if (modData->dataIndex[iMod] != -1)
+        /* correlated follower: reuse the group leader's draw for this pass */
+        modulation = modData->sharedDraw[modData->dataIndex[iMod]];
+      else {
+        modulation = perturbation(modData->noiseAmplitude[iMod], modData->noiseCutoff[iMod],
+                                  modData->distCode[iMod], -1, NULL);
+        modData->sharedDraw[iMod] = modulation;
+      }
+    } else if (!modData->expression[iMod]) {
       jMod = iMod; /* jMod is the index of the modulation that stores the tabular data, which may be shared */
       if (modData->dataIndex[iMod] != -1)
         jMod = modData->dataIndex[iMod];
