@@ -1050,6 +1050,11 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
                            int64_t particles, long original_particles, double Po,
                            double revolutionLength, double z, double mp_charge) {
   long sample, watchStartPass = watch->start_pass;
+  /* Under fast_orbit_feedback the beam is tracked control->n_passes turns for each of
+     control->n_steps steps, and pass (==i_pass) is continuous across steps, so this
+     accumulating table spans n_passes*n_steps rows.  fofbTotalPasses carries that product
+     while FOFB runs (0 otherwise); use it to size the table and to detect the final pass. */
+  long totalPasses = (fofbActive && fofbTotalPasses > 0) ? fofbTotalPasses : n_passes;
   int64_t i;
   double tc, tc0, tc0Error, p_sum, gamma_sum, sum, error_sum, p = 0.0;
   double emit[2], emitc[2];
@@ -1148,7 +1153,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
 #endif
 
   if (isMaster)
-    if ((watchStartPass == pass) && !SDDS_StartTable(watch->SDDS_table, (n_passes - watchStartPass) / watch->interval + 1)) {
+    if ((watchStartPass == pass) && !SDDS_StartTable(watch->SDDS_table, (totalPasses - watchStartPass) / watch->interval + 1)) {
       SDDS_SetError("Problem starting SDDS table (dump_watch_parameters)");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
@@ -1408,7 +1413,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
 
-    if (sample == (n_passes - 1) / watch->interval) {
+    if (sample == (totalPasses - 1) / watch->interval) {
       if (watch->flushInterval > 0) {
         if (sample != watch->flushSample && !SDDS_UpdatePage(watch->SDDS_table, 0)) {
           SDDS_SetError("Problem writing data for SDDS table (dump_watch_parameters)");

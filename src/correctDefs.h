@@ -116,6 +116,7 @@ extern long do_correction(CORRECTION *correct, RUN *run, LINE_LIST *beamline, do
 #define FINAL_CORRECTION     0x0002UL
 #define NO_OUTPUT_CORRECTION 0x0004UL
 extern void add_steering_element(CORRECTION *correct, LINE_LIST *beamline, RUN *run, NAMELIST_TEXT *nltext);
+extern long nNonFOFBSteeringElementsSeen(void);
 void compute_amplification_factors(NAMELIST_TEXT *nltext, RUN *run, CORRECTION *correct,
     long closed_orbit, LINE_LIST *beamline);
 
