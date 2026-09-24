@@ -54,6 +54,7 @@ elegant_SRC = alpha_data.c \
 	exactCorrector.c \
 	extend_list.c \
 	Faddeeva.cc \
+	fast_orbit_feedback.c \
 	final_props.c \
 	find_elem.c \
 	floor.c \
@@ -269,10 +270,6 @@ ifneq ($(CUDA_REQUESTED),)
   endif
   CFLAGS += $(OG_OPT_FLAG) -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
   CCFLAGS += $(OG_OPT_FLAG) -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
-  ifeq ($(OS), Linux)
-    CFLAGS += -fopenmp
-    CCFLAGS += -fopenmp
-  endif
   NVCCFLAGS += $(NVCC_OPT) -g -arch=$(CUDA_ARCH) --fmad=false --prec-div=true --prec-sqrt=true -Xcompiler -fPIC -I$(SDDS_REPO)/include -I$(OBJ_DIR) -Igpu -I$(CUDA_HOME)/include -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -DHAVE_GPU=1
   NVCCDEPFLAGS ?= $(DEPFLAGS)
   LDFLAGS += -L$(CUDA_HOME)/lib64 -Wl,-rpath,$(CUDA_HOME)/lib64
@@ -287,8 +284,8 @@ ifeq ($(MDEBUG),1)
 endif
 
 ifeq ($(OS), Linux)
-  CFLAGS += -std=gnu11 $(MKL_CFLAG) $(MKL_INCLUDE) $(LAPACK_CFLAG) $(LAPACK_INCLUDE) $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
-  CCFLAGS += $(MKL_CFLAG) $(MKL_INCLUDE) $(LAPACK_CFLAG) $(LAPACK_INCLUDE) $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
+  CFLAGS += -std=gnu11 -fopenmp $(MKL_CFLAG) $(MKL_INCLUDE) $(LAPACK_CFLAG) $(LAPACK_INCLUDE) $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
+  CCFLAGS += -fopenmp $(MKL_CFLAG) $(MKL_INCLUDE) $(LAPACK_CFLAG) $(LAPACK_INCLUDE) $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -fopenmp $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(FFTW3_LIB)  $(MKL_LIB) $(LAPACK_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -loagphy
@@ -601,6 +598,11 @@ $(OBJ_DIR)/frequencyMap.$(OBJEXT): $(OBJ_DIR)/frequencyMap.h
 
 $(OBJ_DIR)/frequencyMap.h: frequencyMap.nl
 	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables frequencyMap.nl $(OBJ_DIR)/frequencyMap.h
+
+$(OBJ_DIR)/fast_orbit_feedback.$(OBJEXT): $(OBJ_DIR)/fast_orbit_feedback.h
+
+$(OBJ_DIR)/fast_orbit_feedback.h: fast_orbit_feedback.nl
+	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables fast_orbit_feedback.nl $(OBJ_DIR)/fast_orbit_feedback.h
 
 $(OBJ_DIR)/sliceAnalysis.$(OBJEXT): $(OBJ_DIR)/sliceAnalysis.h
 
