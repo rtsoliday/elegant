@@ -41,6 +41,7 @@
    "macro_output"
    "error_control"
    "error_element"
+   "fast_orbit_feedback"
    "fit_traces"
    "floor_coordinates"
    "frequency_map"
@@ -52,6 +53,7 @@
    "ion_effects"
    "link_control"
    "link_elements"
+   "load_knobs"
    "load_parameters"
    "matrix_output"
    "modulate_elements"
@@ -620,6 +622,7 @@
           "suppress_parameter_defaults"
           "rfc_reference_output"
           "combine_bunch_statistics"
+          "coupled_sigma"
           "wrap_around"
           "final_pass"
           "default_order"
@@ -715,6 +718,42 @@
           "sample_file"
           "sample_file_column"
           "sample_mode"
+          ))
+   (cons "fast_orbit_feedback"
+         (list
+          "inverse"
+          "response"
+          "invert_response"
+          "keep_largest_SVs"
+          "remove_smallest_SVs"
+          "minimum_SV_ratio"
+          "Tikhonov_relative_alpha"
+          "Tikhonov_n"
+          "steering_Kp"
+          "steering_Ki"
+          "steering_Kd"
+          "rf_Kp"
+          "rf_Ki"
+          "rf_Kd"
+          "corrector_limit"
+          "rf_frequency_limit"
+          "rf_response_scale"
+          "anti_windup"
+          "reset_filters_each_step"
+          "bpm_noise"
+          "bpm_noise_cutoff"
+          "bpm_noise_distribution"
+          "include_rf_frequency"
+          "bpm_filter_file"
+          "steering_filter_file"
+          "rf_filter_file"
+          "output"
+          "output_interval"
+          "center_on_orbit"
+          "center_momentum_also"
+          "offset_by_orbit"
+          "offset_momentum_also"
+          "verbosity"
           ))
    (cons "fit_traces"
          (list
@@ -948,6 +987,11 @@
           "maximum"
           "exclude_self"
           ))
+   (cons "load_knobs"
+         (list
+          "filename"
+          "verbose"
+          ))
    (cons "load_parameters"
          (list
           "filename"
@@ -1001,6 +1045,11 @@
           "time_column"
           "convert_pass_to_time"
           "amplitude_column"
+          "element_amplitude_column"
+          "distribution"
+          "amplitude"
+          "cutoff"
+          "correlated"
           "refresh_matrix"
           "differential"
           "multiplicative"
@@ -1056,6 +1105,8 @@
           "reference_element"
           "reference_element_occurrence"
           "reflect_reference_values"
+          "pressure_data"
+          "pressure_factor"
           ))
    (cons "momentum_aperture"
          (list
@@ -1279,6 +1330,7 @@
           "filename"
           "suppress_defaults"
           "output_seq"
+          "comment"
           ))
    (cons "sdds_beam"
          (list
@@ -1329,6 +1381,7 @@
           "s_end"
           "after"
           "before"
+          "target"
           "verbose"
           ))
    (cons "subprocess"
@@ -1527,6 +1580,8 @@
    (cons "rf_setup"
          (list
           "filename"
+          "bucket_filename"
+          "bucket_points"
           "name"
           "start_occurence"
           "end_occurence"
@@ -1575,6 +1630,7 @@
          (list
           "n_steps"
           "bunch_frequency"
+          "step_frequency"
           "n_indices"
           "n_passes"
           "n_passes_fiducial"
@@ -2133,6 +2189,7 @@
           (cons "suppress_parameter_defaults" "long")
           (cons "rfc_reference_output" "STRING")
           (cons "combine_bunch_statistics" "long")
+          (cons "coupled_sigma" "long")
           (cons "wrap_around" "long")
           (cons "final_pass" "long")
           (cons "default_order" "long")
@@ -2228,6 +2285,42 @@
           (cons "sample_file" "STRING")
           (cons "sample_file_column" "STRING")
           (cons "sample_mode" "STRING")
+          ))
+   (cons "fast_orbit_feedback"
+         (list
+          (cons "inverse" "STRING")
+          (cons "response" "STRING")
+          (cons "invert_response" "long")
+          (cons "keep_largest_SVs" "long")
+          (cons "remove_smallest_SVs" "long")
+          (cons "minimum_SV_ratio" "double")
+          (cons "Tikhonov_relative_alpha" "double")
+          (cons "Tikhonov_n" "long")
+          (cons "steering_Kp" "double")
+          (cons "steering_Ki" "double")
+          (cons "steering_Kd" "double")
+          (cons "rf_Kp" "double")
+          (cons "rf_Ki" "double")
+          (cons "rf_Kd" "double")
+          (cons "corrector_limit" "double")
+          (cons "rf_frequency_limit" "double")
+          (cons "rf_response_scale" "double")
+          (cons "anti_windup" "long")
+          (cons "reset_filters_each_step" "long")
+          (cons "bpm_noise" "double")
+          (cons "bpm_noise_cutoff" "double")
+          (cons "bpm_noise_distribution" "STRING")
+          (cons "include_rf_frequency" "long")
+          (cons "bpm_filter_file" "STRING")
+          (cons "steering_filter_file" "STRING")
+          (cons "rf_filter_file" "STRING")
+          (cons "output" "STRING")
+          (cons "output_interval" "long")
+          (cons "center_on_orbit" "long")
+          (cons "center_momentum_also" "long")
+          (cons "offset_by_orbit" "long")
+          (cons "offset_momentum_also" "long")
+          (cons "verbosity" "long")
           ))
    (cons "fit_traces"
          (list
@@ -2461,6 +2554,11 @@
           (cons "maximum" "double")
           (cons "exclude_self" "long")
           ))
+   (cons "load_knobs"
+         (list
+          (cons "filename" "STRING")
+          (cons "verbose" "long")
+          ))
    (cons "load_parameters"
          (list
           (cons "filename" "STRING")
@@ -2514,6 +2612,11 @@
           (cons "time_column" "STRING")
           (cons "convert_pass_to_time" "long")
           (cons "amplitude_column" "STRING")
+          (cons "element_amplitude_column" "STRING")
+          (cons "distribution" "STRING")
+          (cons "amplitude" "double")
+          (cons "cutoff" "double")
+          (cons "correlated" "long")
           (cons "refresh_matrix" "long")
           (cons "differential" "long")
           (cons "multiplicative" "long")
@@ -2569,6 +2672,8 @@
           (cons "reference_element" "STRING")
           (cons "reference_element_occurrence" "long")
           (cons "reflect_reference_values" "long")
+          (cons "pressure_data" "STRING")
+          (cons "pressure_factor" "double")
           ))
    (cons "momentum_aperture"
          (list
@@ -2792,6 +2897,7 @@
           (cons "filename" "STRING")
           (cons "suppress_defaults" "long")
           (cons "output_seq" "long")
+          (cons "comment" "STRING")
           ))
    (cons "sdds_beam"
          (list
@@ -2842,6 +2948,7 @@
           (cons "s_end" "double")
           (cons "after" "STRING")
           (cons "before" "STRING")
+          (cons "target" "STRING")
           (cons "verbose" "long")
           ))
    (cons "subprocess"
@@ -3040,6 +3147,8 @@
    (cons "rf_setup"
          (list
           (cons "filename" "STRING")
+          (cons "bucket_filename" "STRING")
+          (cons "bucket_points" "long")
           (cons "name" "STRING")
           (cons "start_occurence" "long")
           (cons "end_occurence" "long")
@@ -3088,6 +3197,7 @@
          (list
           (cons "n_steps" "long")
           (cons "bunch_frequency" "double")
+          (cons "step_frequency" "double")
           (cons "n_indices" "long")
           (cons "n_passes" "long")
           (cons "n_passes_fiducial" "long")
