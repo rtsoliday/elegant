@@ -656,7 +656,15 @@ typedef struct {
     double *lastVerboseValue;    /* last value for which a change was announced */
     double *unperturbedValue;    /* value without modulation */
     char **expression;           /* rpn expression for A(t) */
-    long *dataIndex;             /* used for sharing of data tables */
+    short *sourceType;           /* modulation source: 0=expression, 1=file table, 2=built-in RNG */
+#define MOD_SOURCE_EXPRESSION 0
+#define MOD_SOURCE_FILE       1
+#define MOD_SOURCE_RNG        2
+    long *distCode;              /* RNG distribution code (matches error.nl: 0=uniform,1=gaussian,2=plus_or_minus) */
+    double *noiseAmplitude;      /* RNG sigma/half-width */
+    double *noiseCutoff;         /* RNG gaussian cutoff */
+    double *sharedDraw;          /* per-pass RNG draw cache; leader (dataIndex==-1) stores, followers read */
+    long *dataIndex;             /* used for sharing of data tables (and correlated RNG draws) */
     long *nData;                 /* number of data elements */
     double **timeData;           /* time values */
     double *timeDelay;
@@ -1691,6 +1699,7 @@ typedef struct {
     short storeTurnByTurn;
     unsigned short initialized; /* 0x01: CO, 0x02: TBT */
     long coMemoryNumber[2], tbtMemoryNumber[2];
+    void *fofbData;  /* runtime-only: per-monitor fast_orbit_feedback IIR state (NULL unless FOFB active) */
     } HMON;
 typedef struct {
     double length, dx, dy, dz, weight, tilt, calibration, setpoint;
@@ -1700,6 +1709,7 @@ typedef struct {
     short storeTurnByTurn;
     unsigned short initialized; /* 0x01: CO, 0x02: TBT */
     long coMemoryNumber[2], tbtMemoryNumber[2];
+    void *fofbData;  /* runtime-only: per-monitor fast_orbit_feedback IIR state (NULL unless FOFB active) */
     } VMON;
 typedef struct {
     double length, dx, dy, dz, weight, tilt, xcalibration, ycalibration, xsetpoint, ysetpoint;
@@ -1709,6 +1719,7 @@ typedef struct {
     short storeTurnByTurn;
     unsigned short initialized; /* 0x01: CO, 0x02: TBT */
     long coMemoryNumber[4], tbtMemoryNumber[3];
+    void *fofbData;  /* runtime-only: per-monitor fast_orbit_feedback IIR state (NULL unless FOFB active) */
     } MONI;
 
 /* names and storage structure for rectangular collimator physical parameters */
@@ -4174,6 +4185,12 @@ long determine_bend_flags(ELEMENT_LIST *eptr, long edge1_effects, long edge2_eff
 #define OPTIMIZING               0x20000UL
 #define CENTROID_SUMS_ONLY       0x40000UL
 #define LOSS_COORDINATES_NEEDED  0x80000UL
+/* Internal flag: suppress the per-pass recomputation of twiss parameters inside
+   do_tracking (do_tracking.c).  Set automatically by fast_orbit_feedback, whose
+   actuators (thin steering kicks and rf-frequency detuning) perturb the closed
+   orbit every turn but not the linear optics, so re-deriving the twiss each pass
+   is wasted work and needless "Updating twiss parameters" output. */
+#define SUPPRESS_TWISS_UPDATE    0x100000UL
 /* return values for get_reference_phase and check_reference_phase */
 #define REF_PHASE_RETURNED 1
 #define REF_PHASE_NOT_SET  2
@@ -4440,6 +4457,28 @@ extern long do_tracking(BEAM *beam, double **coord, int64_t n_original, long *ef
 extern void recordLostParticles(BEAM *beam, double **coord, int64_t nLeft, int64_t nToTrack, long pass);
 extern void resetElementTiming();
 extern void reportElementTiming();
+
+/* fast_orbit_feedback.c */
+extern long fofbActive; /* nonzero while a fast_orbit_feedback command is running */
+extern long fofbTotalPasses; /* n_passes*n_steps while FOFB running; sizes accumulating WATCH tables (0 otherwise) */
+void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE_LIST *beamline);
+long doFastOrbitFeedback(RUN *run, VARY *control, LINE_LIST *beamline, BEAM *beam, OUTPUT_FILES *output);
+void finishFastOrbitFeedback(void);
+/* closed-orbit-start flags parsed from the fast_orbit_feedback namelist; read by elegant.c
+   to center/offset the beam on the computed closed orbit before tracking (mirrors &track) */
+long fofbCenterOnOrbit(void);
+long fofbCenterMomentumAlso(void);
+long fofbOffsetByOrbit(void);
+long fofbOffsetMomentumAlso(void);
+/* per-turn actuator z-transform hook (called inside do_tracking pass loop); returns nonzero if any element matrix changed */
+long fofbUpdateActuators(LINE_LIST *beamline, RUN *run, long i_pass);
+/* per-turn BPM readout hook (called from storeBPMReading); advances each monitor's IIR filter */
+void fofbStoreBpmTick(ELEMENT_LIST *eptr, double xReading, double yReading);
+/* FOFB-owned steering-element intake, routed here from add_steering_element when
+   a &steering_element command sets target="fast_orbit_feedback" */
+long fofbAddSteerElem(long plane, char *name, char *item, char *element_type, double tweek, double limit,
+                      long start_occurence, long end_occurence, long occurence_step,
+                      double s_start, double s_end, LINE_LIST *beamline, RUN *run, long verbose);
 
 extern void setTrackingContext(char *name, long occurence, long type, char *rootname, ELEMENT_LIST *eptr, long iPass);
 extern void getTrackingContext(TRACKING_CONTEXT *trackingContext);
