@@ -16,15 +16,22 @@ CUDA_NVCC_IS_SUPPORTED = $(shell major=`$(1) --version 2>/dev/null | sed -n 's/.
 CUDA_SUPPORTED_NVCCS = $(strip $(foreach nvcc,$(1),$(if $(call CUDA_NVCC_IS_SUPPORTED,$(nvcc)),$(nvcc))))
 
 # SDDS libraries may contain OpenMP code. Apple Clang does not provide the
-# OpenMP runtime itself, so locate the MacPorts or Homebrew libomp installation
-# and add it to every Darwin executable link.
+# OpenMP headers or runtime itself, so locate the MacPorts or Homebrew libomp
+# installation and add it to every Darwin compile and executable link.
+DARWIN_OPENMP_INCLUDE := $(firstword $(wildcard \
+                          /opt/local/include/libomp \
+                          /opt/homebrew/opt/libomp/include \
+                          /usr/local/opt/libomp/include))
 DARWIN_OPENMP_LIBRARY := $(firstword $(wildcard \
                           /opt/local/lib/libomp/libomp.dylib \
                           /opt/homebrew/opt/libomp/lib/libomp.dylib \
                           /usr/local/opt/libomp/lib/libomp.dylib))
+ifneq ($(strip $(DARWIN_OPENMP_INCLUDE)),)
 ifneq ($(strip $(DARWIN_OPENMP_LIBRARY)),)
   DARWIN_OPENMP_LIBDIR := $(patsubst %/,%,$(dir $(DARWIN_OPENMP_LIBRARY)))
+  DARWIN_OPENMP_CFLAGS := -Xpreprocessor -fopenmp -I$(DARWIN_OPENMP_INCLUDE)
   DARWIN_OPENMP_LDFLAGS := -L$(DARWIN_OPENMP_LIBDIR) -Wl,-rpath,$(DARWIN_OPENMP_LIBDIR) -lomp
+endif
 endif
 
 EPICS_HOST := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -163,7 +170,6 @@ ICONV_LIB = $(firstword $(wildcard \
           $(addsuffix /libiconv.so, $(LIB_DIRS)) \
           $(addsuffix /libiconv.a, $(LIB_DIRS))))
 
-IOMP5_LIB = -liomp5
 ifneq ($(findstring improv,$(BASH_ENV)),)
   IMPROV_BUILD=1
   LZMA_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/xz-5.4.6-3zhah5p/lib/liblzma.so
@@ -174,8 +180,6 @@ ifneq ($(findstring improv,$(BASH_ENV)),)
   GD_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libgd-2.3.3-enxppnl/lib/libgd.so
   JPEG_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libjpeg-turbo-3.0.0-v7a5c5g/lib64/libjpeg.so
   FFTW3_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/fftw-3.3.10-x5237xr/lib/libfftw3.so
-  IOMP5_LIB_DIR = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/intel-oneapi-mkl-2024.2.2-ueuijm5/compiler/2024.2/lib
-  IOMP5_LIB = -Wl,-rpath,$(IOMP5_LIB_DIR) $(IOMP5_LIB_DIR)/libiomp5.so
   MPI_BIN = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/aocc-4.1.0/openmpi-5.0.1-jk5bu46/bin
 endif
 ifneq ($(findstring swing,$(BASH_ENV)),)
@@ -189,10 +193,6 @@ ifneq ($(findstring swing,$(BASH_ENV)),)
   JPEG_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libjpeg-turbo-3.0.0-v7a5c5g/lib64/libjpeg.so
   PNG_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-12.3.0/libpng-1.6.39-hsjzalf/lib64/libpng.so
   FFTW3_LIB = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/fftw-3.3.10-x5237xr/lib/libfftw3.so
-  IOMP5_LIB_DIR = /gpfs/fs1/soft/improv/software/spack-built/linux-rhel8-zen3/gcc-13.2.0/intel-oneapi-mkl-2024.2.2-ueuijm5/compiler/2024.2/lib
-  IOMP5_LIB = -Wl,-rpath,$(IOMP5_LIB_DIR) $(IOMP5_LIB_DIR)/libiomp5.so
-  IOMP5_LIB_DIR =
-  IOMP5_LIB =
   MPI_BIN = /soft/openmpi/4.1.1/swing/bin
 endif
 
@@ -220,7 +220,7 @@ else
            -Wl,-rpath,$(MKLROOT)/lib/intel64/../../../../compiler/latest/linux/compiler/lib/intel64_lin \
            -L$(MKLROOT)/lib/intel64/../../../compiler/lib/intel64 \
            -L$(MKLROOT)/lib/intel64/../../../../compiler/latest/linux/compiler/lib/intel64_lin \
-           $(IOMP5_LIB) -ldl
+           -lgomp -ldl
 endif
 else
  LAPACK_CFLAG = -DLAPACK
@@ -339,10 +339,6 @@ ifeq ($(OS), Linux)
   LDFLAGS += -rdynamic -m64
   LIBRARY_SYS_LIBS = -lpthread -lm -lrt -ldl -lgcc
   PROD_SYS_LIBS = -lpthread -lm -lrt -ldl -lgcc
-  ifeq ($(IMPROV_BUILD),1)
-    LIBRARY_SYS_LIBS += $(IOMP5_LIB)
-    PROD_SYS_LIBS += $(IOMP5_LIB)
-  endif
   OBJEXT = o
   LIBEXT = a
   LIBPRE = lib
@@ -382,8 +378,8 @@ ifeq ($(OS), Darwin)
   AR = libtool -static -o
   RANLIB = ranlib
   #MAC_VERSION = -mmacosx-version-min=10.13
-  CFLAGS = -Wno-deprecated-non-prototype -m64 -O3 -g -Wall -fPIC -fno-common $(MAC_VERSION) $(EXTRA_INC_DIRS)
-  CCFLAGS = -Wno-deprecated-non-prototype -m64 -O3 -g -Wall -fPIC -fno-common -std=c++11 $(MAC_VERSION) $(EXTRA_INC_DIRS)
+  CFLAGS = -Wno-deprecated-non-prototype -m64 -O3 -g -Wall -fPIC -fno-common $(DARWIN_OPENMP_CFLAGS) $(MAC_VERSION) $(EXTRA_INC_DIRS)
+  CCFLAGS = -Wno-deprecated-non-prototype -m64 -O3 -g -Wall -fPIC -fno-common -std=c++11 $(DARWIN_OPENMP_CFLAGS) $(MAC_VERSION) $(EXTRA_INC_DIRS)
   LDFLAGS = $(MAC_VERSION) -std=c++11
   LIBRARY_SYS_LIBS = $(DARWIN_OPENMP_LDFLAGS) -lm
   PROD_SYS_LIBS = $(DARWIN_OPENMP_LDFLAGS) -lm
