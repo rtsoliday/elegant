@@ -20,6 +20,12 @@
 #include "match_string.h"
 #include <signal.h>
 #include <time.h>
+#if defined(_OPENMP)
+#  include <omp.h>
+#endif
+#if defined(MKL)
+#  include <mkl.h>
+#endif
 #if defined(__linux__) || defined(_WIN32)
 #  include <malloc.h>
 #endif
@@ -61,6 +67,26 @@ void process_change_start(NAMELIST_TEXT *nltext, CHANGE_START_SPEC *css);
 void process_change_end(NAMELIST_TEXT *nltext, CHANGE_END_SPEC *ces);
 void freeInputObjects();
 void runFiducialParticle(RUN *run, VARY *control, double *startCoord, LINE_LIST *beamline, short final, short mustSurvive);
+
+static void initializeThreadingDefaults(void) {
+#if defined(_OPENMP) || defined(MKL)
+  const char *ompThreads = getenv("OMP_NUM_THREADS");
+#endif
+
+#if defined(_OPENMP)
+  if (!ompThreads || !*ompThreads)
+    omp_set_num_threads(1);
+#endif
+#if defined(MKL)
+  /* MKL_NUM_THREADS takes precedence over OMP_NUM_THREADS.  If neither was
+   * supplied, keep MKL consistent with elegant's one-thread OpenMP default. */
+  {
+    const char *mklThreads = getenv("MKL_NUM_THREADS");
+    if ((!mklThreads || !*mklThreads) && (!ompThreads || !*ompThreads))
+      mkl_set_num_threads(1);
+  }
+#endif
+}
 
 #define DESCRIBE_INPUT 0
 #define DEFINE_MACRO 1
@@ -222,7 +248,8 @@ void showUsageOrGreeting(unsigned long mode) {
 #define LOAD_LATTICE_RESPONSE_MATRIX 82
 #define UNDULATOR_BRIGHTNESS 83
 #define LOAD_KNOBS 84
-#define N_COMMANDS 85
+#define FAST_ORBIT_FEEDBACK 85
+#define N_COMMANDS 86
 
 char *command[N_COMMANDS] = {
   "run_setup",
@@ -310,6 +337,7 @@ char *command[N_COMMANDS] = {
   "load_lattice_response_matrix",
   "undulator_brightness",
   "load_knobs",
+  "fast_orbit_feedback",
 };
 
 char *description[N_COMMANDS] = {
@@ -397,7 +425,8 @@ char *description[N_COMMANDS] = {
   "compute_lattice_response_matrix compute and save the response matrix for lattice correction",
   "load_lattice_response_matrix    load a previously-saved lattice-correction response matrix",
   "undulator_brightness            compute Lindberg undulator brightness as an RPN scalar (one per invocation)",
-  "load_knobs                      load knob definitions from SDDS; each knob is a scalar usable as a vary/optimization/error target"};
+  "load_knobs                      load knob definitions from SDDS; each knob is a scalar usable as a vary/optimization/error target",
+  "fast_orbit_feedback             simulate fast orbit feedback with turn-by-turn tracking, IIR BPM/actuator filters, and per-class PID control"};
 
 #define NAMELIST_BUFLEN 65536
 
@@ -526,6 +555,8 @@ int main(int argc, char **argv)
   unsigned long pipeFlags = 0;
   double apertureReturn;
   char *rpnDefns = NULL, *configurationFile = NULL;
+
+  initializeThreadingDefaults();
 #if USE_MPI
 #  ifdef MPI_DEBUG
   FILE *fpError;
@@ -1823,6 +1854,41 @@ int main(int argc, char **argv)
           break;
         case LOAD_KNOBS:
           setup_load_knobs(&namelist_text, &run_conditions, beamline);
+          break;
+        case FAST_ORBIT_FEEDBACK:
+          if (!run_setuped || !run_controled || beam_type == -1)
+            bombElegant("run_setup, run_control, and beam definition must precede fast_orbit_feedback namelist", NULL);
+          beamline->flags |= BEAMLINE_MATRICES_NEEDED;
+          setupFastOrbitFeedback(&namelist_text, &run_conditions, &run_control, beamline);
+          if (vary_beamline(&run_control, &error_control, &run_conditions, beamline)) {
+            long fofbBeamOK = 1;
+            if (beam_type == SET_SDDS_BEAM) {
+              if (new_sdds_beam(&beam, &run_conditions, &run_control, output_data, 0) < 0)
+                fofbBeamOK = 0;
+            } else
+              new_bunched_beam(&beam, &run_conditions, &run_control, output_data, 0);
+            if (fofbBeamOK) {
+              /* Optionally start the beam on the closed orbit, mirroring the &track command.
+                 Only act when the user both requested it and supplied a &closed_orbit command
+                 (do_closed_orbit); never compute the closed orbit automatically here. */
+              if (fofbCenterOnOrbit() || fofbOffsetByOrbit()) {
+                if (do_closed_orbit) {
+                  fill_double_array(starting_coord, 6, 0.0);
+                  if (!run_closed_orbit(&run_conditions, beamline, starting_coord, NULL, 1))
+                    printWarning("fast_orbit_feedback: closed orbit not found; beam not centered on orbit.", NULL);
+                  else if (fofbCenterOnOrbit())
+                    center_beam_on_coords(beam.particle, beam.n_to_track, starting_coord, fofbCenterMomentumAlso());
+                  else
+                    offset_beam_by_coords(beam.particle, beam.n_to_track, starting_coord, fofbOffsetMomentumAlso());
+                } else
+                  printWarning("fast_orbit_feedback: center_on_orbit/offset_by_orbit requested but no &closed_orbit command was given; beam not centered.",
+                               "Add a &closed_orbit command before &fast_orbit_feedback to compute the orbit.");
+              }
+              doFastOrbitFeedback(&run_conditions, &run_control, beamline, &beam, output_data);
+            }
+          }
+          finishFastOrbitFeedback();
+          free_beamdata(&beam);
           break;
         case PROGRAM_TRACE:
           process_trace_request(&namelist_text);
