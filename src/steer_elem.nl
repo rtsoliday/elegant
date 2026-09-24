@@ -19,6 +19,7 @@
     double s_end = -1;
     STRING after = NULL;
     STRING before = NULL;
+    STRING target = "correct";
     long verbose = 0;
 #end
 
