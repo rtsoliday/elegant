@@ -282,7 +282,7 @@ long loadModulationTable(double **t, double **value, char *file, char *timeColum
 
 long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, double pCentral,
                              double **coord, int64_t np, RUN *run, long iPass) {
-  long iMod, code, matricesUpdated, jMod;
+  long iMod, code, matricesUpdated, jMod, needBeamTime = 0;
   /* short modulationValid = 0; */
   double modulation, value, t, tBeam, lastValue, beta;
   long type, param;
@@ -315,18 +315,31 @@ long applyElementModulations(MODULATION_DATA *modData, LINE_LIST *beamline, doub
 
   beta = pCentral / sqrt(pCentral * pCentral + 1);
 
+  /* Pass-derived modulation does not use the beam time.  In GPU tracking the
+     fiducial-time query launches a reduction and synchronizes every pass. */
+  for (iMod = 0; iMod < modData->nItems; iMod++) {
+    if (iPass >= modData->startPass[iMod] && iPass <= modData->endPass[iMod] &&
+        !modData->convertPassToTime[iMod]) {
+      needBeamTime = 1;
+      break;
+    }
+  }
+
+  tBeam = 0;
+  if (needBeamTime) {
 #ifdef HAVE_GPU
-  if (getGpuBase()->elementOnGpu) {
+    if (getGpuBase()->elementOnGpu) {
 #  if USE_MPI
-    if (distributedBeam) {
-      coord = forceParticlesToCpu("findFiducialTime MPI fallback");
-      tBeam = findFiducialTime(coord, np, 0, 0, pCentral, FID_MODE_TMEAN | FID_MODE_FULLBEAM);
-    } else
+      if (distributedBeam) {
+        coord = forceParticlesToCpu("findFiducialTime MPI fallback");
+        tBeam = findFiducialTime(coord, np, 0, 0, pCentral, FID_MODE_TMEAN | FID_MODE_FULLBEAM);
+      } else
 #  endif
-    tBeam = gpu_findFiducialTime(np, 0.0, 0.0, pCentral, FID_MODE_TMEAN | FID_MODE_FULLBEAM);
-  } else
+        tBeam = gpu_findFiducialTime(np, 0.0, 0.0, pCentral, FID_MODE_TMEAN | FID_MODE_FULLBEAM);
+    } else
 #endif
-    tBeam = findFiducialTime(coord, np, 0, 0, pCentral, FID_MODE_TMEAN | FID_MODE_FULLBEAM);
+      tBeam = findFiducialTime(coord, np, 0, 0, pCentral, FID_MODE_TMEAN | FID_MODE_FULLBEAM);
+  }
 #ifdef DEBUG
   printf("applyElementModulations: tBeam = %le\n", tBeam);
   fflush(stdout);

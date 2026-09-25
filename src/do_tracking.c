@@ -4384,20 +4384,31 @@ long do_tracking(
       }
 
       void storeBPMReading(ELEMENT_LIST *eptr, double **coord, int64_t np, double Po) {
-        BEAM_SUMS *sums;
+        BEAM_SUMS *sums = NULL;
+        double *centroid;
         char s[1000];
         MONI *moni;
         HMON *hmon;
         VMON *vmon;
         long n;
-        /*
-          int64_t npTotal;
-        */
+#if defined(HAVE_GPU) && !defined(GPU_VERIFY)
+        double gpuCentroid[6];
 
-        sums = allocateBeamSums(0, 1);
-        zero_beam_sums(sums, 1);
-        accumulate_beam_sums(sums, coord, np, Po, 0.0, NULL, 0.0, 0.0, -1, -1, 0);
-        n = sums->n_part;
+        /* FOFB needs only x/y and their slopes.  Avoid the full beam-sums
+           reduction (including time and longitudinal moments) on the GPU. */
+        if (fofbActive && getElementOnGpu() && gpu_reductions_enabled(np)) {
+          gpu_collect_trajectory_data(gpuCentroid, np);
+          centroid = gpuCentroid;
+          n = np;
+        } else
+#endif
+        {
+          sums = allocateBeamSums(0, 1);
+          zero_beam_sums(sums, 1);
+          accumulate_beam_sums(sums, coord, np, Po, 0.0, NULL, 0.0, 0.0, -1, -1, 0);
+          centroid = sums->centroid;
+          n = sums->n_part;
+        }
 
         switch (eptr->type) {
         case T_MONI:
@@ -4411,8 +4422,8 @@ long do_tracking(
             moni->tbtMemoryNumber[2] = rpn_create_mem(s, 0);
             moni->initialized |= 2;
           }
-          rpn_store(computeMonitorReading(eptr, 0, sums->centroid, 0), NULL, moni->tbtMemoryNumber[0]);
-          rpn_store(computeMonitorReading(eptr, 2, sums->centroid, 0), NULL, moni->tbtMemoryNumber[1]);
+          rpn_store(computeMonitorReading(eptr, 0, centroid, 0), NULL, moni->tbtMemoryNumber[0]);
+          rpn_store(computeMonitorReading(eptr, 2, centroid, 0), NULL, moni->tbtMemoryNumber[1]);
           rpn_store(n, NULL, moni->tbtMemoryNumber[2]);
           break;
         case T_HMON:
@@ -4424,7 +4435,7 @@ long do_tracking(
             hmon->tbtMemoryNumber[1] = rpn_create_mem(s, 0);
             hmon->initialized |= 2;
           }
-          rpn_store(computeMonitorReading(eptr, 0, sums->centroid, 0), NULL, hmon->tbtMemoryNumber[0]);
+          rpn_store(computeMonitorReading(eptr, 0, centroid, 0), NULL, hmon->tbtMemoryNumber[0]);
           rpn_store(n, NULL, hmon->tbtMemoryNumber[1]);
           break;
         case T_VMON:
@@ -4436,7 +4447,7 @@ long do_tracking(
             vmon->tbtMemoryNumber[1] = rpn_create_mem(s, 0);
             vmon->initialized |= 2;
           }
-          rpn_store(computeMonitorReading(eptr, 2, sums->centroid, 0), NULL, vmon->tbtMemoryNumber[0]);
+          rpn_store(computeMonitorReading(eptr, 2, centroid, 0), NULL, vmon->tbtMemoryNumber[0]);
           rpn_store(n, NULL, vmon->tbtMemoryNumber[1]);
           break;
         }
@@ -4444,19 +4455,20 @@ long do_tracking(
           double xr = 0, yr = 0;
           switch (eptr->type) {
           case T_MONI:
-            xr = computeMonitorReading(eptr, 0, sums->centroid, 0);
-            yr = computeMonitorReading(eptr, 2, sums->centroid, 0);
+            xr = computeMonitorReading(eptr, 0, centroid, 0);
+            yr = computeMonitorReading(eptr, 2, centroid, 0);
             break;
           case T_HMON:
-            xr = computeMonitorReading(eptr, 0, sums->centroid, 0);
+            xr = computeMonitorReading(eptr, 0, centroid, 0);
             break;
           case T_VMON:
-            yr = computeMonitorReading(eptr, 2, sums->centroid, 0);
+            yr = computeMonitorReading(eptr, 2, centroid, 0);
             break;
           }
           fofbStoreBpmTick(eptr, xr, yr);
         }
-        freeBeamSums(sums, 1);
+        if (sums)
+          freeBeamSums(sums, 1);
       }
 
       ELEMENT_LIST *findBeamlineMatrixElement(ELEMENT_LIST *eptr) {
