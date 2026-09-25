@@ -460,6 +460,8 @@ endif
 # MSVC deprecates /Og, and the Windows -Ox setting already includes it.
 ifeq ($(OS), Windows)
   OG_OPT_FLAG =
+else ifneq ($(filter-out 0,$(strip $(MDEBUG))),)
+  OG_OPT_FLAG = -O0
 else
   OG_OPT_FLAG = -Og
 endif
