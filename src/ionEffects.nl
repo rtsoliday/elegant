@@ -51,5 +51,6 @@
    double gaussian_ion_range = 5;
    long verbosity = 0; 
    long use_local_pressure = 0;
+   long include_ion_self_fields = 0;
 #end
 
