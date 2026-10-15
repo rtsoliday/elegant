@@ -1902,7 +1902,7 @@ VMATRIX *compute_matrix(
     break;
   case T_RFCA:
     rfca = (RFCA *)elem->p_elem;
-    elem->matrix = rf_cavity_matrix(rfca->length, rfca->volt, rfca->freq, rfca->phase,
+    elem->matrix = rf_cavity_matrix(rfca->length, rfca->volt, rfca->freq, rfca->phase + rfca->dphase,
                                     &elem->Pref_output, run->default_order ? run->default_order : 1,
                                     rfca->end1Focus, rfca->end2Focus,
                                     rfca->bodyFocusModel, rfca->standingWave,

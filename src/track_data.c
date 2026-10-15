@@ -598,6 +598,7 @@ PARAMETER rfca_param[N_RFCA_PARAMS] = {
   {"L", "M", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&rfca_example.length), NULL, 0.0, 0, "length"},
   {"VOLT", "V", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&rfca_example.volt), NULL, 0.0, 0, "peak voltage"},
   {"PHASE", "DEG", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&rfca_example.phase), NULL, 0.0, 0, "phase"},
+  {"DELTA_PHASE", "DEG", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&rfca_example.dphase), NULL, 0.0, 0, "additive phase offset (added to PHASE); usable for injected phase errors or as a feedback correction channel"},
   {"FREQ", "Hz", IS_DOUBLE, PARAM_CHANGES_MATRIX, (long)((char *)&rfca_example.freq), NULL, 500.0e6, 0, "frequency"},
   {"Q", "", IS_DOUBLE, 0, (long)((char *)&rfca_example.Q), NULL, 0.0, 0, "cavity Q (for cavity that charges up to given voltage from 0)"},
   {"PHASE_REFERENCE", "", IS_LONG, 0, (long)((char *)&rfca_example.phase_reference), NULL, 0.0, 0, "phase reference number (to link with other time-dependent elements)"},

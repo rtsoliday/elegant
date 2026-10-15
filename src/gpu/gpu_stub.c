@@ -15248,7 +15248,7 @@ static long gpuRfcaSetupPhaseOnDeviceWithOffset(RFCA *rfca, long np,
     rfca->t_fiducial = -rfca->phase_fiducial / (PIx2 * rfca->freq);
   else
     rfca->t_fiducial = 0;
-  *phaseOut = phase + rfca->phase * PI / 180.0;
+  *phaseOut = phase + (rfca->phase + rfca->dphase) * PI / 180.0; /* DELTA_PHASE: additive offset (CPU parity simple_rfca.c) */
   return 1;
 }
 
@@ -16065,7 +16065,7 @@ static long gpuRfcwSetupPhaseOnDeviceWithOffset(RFCW *rfcw, long np,
     rfca->t_fiducial = -rfca->phase_fiducial / (PIx2 * rfca->freq);
   else
     rfca->t_fiducial = 0;
-  *phaseOut = phase + rfca->phase * PI / 180.0;
+  *phaseOut = phase + (rfca->phase + rfca->dphase) * PI / 180.0; /* DELTA_PHASE: additive offset (CPU parity simple_rfca.c) */
   rfcw->initialized = 1;
   return 1;
 }

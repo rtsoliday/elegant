@@ -564,7 +564,7 @@ long trackRfCavityWithWakes(
           beta = beta_from_delta(P, 0.0);
           for (ik0 = 0; ik0 < nKicks; ik0++) {
             t0 -= fabs(length / 2) / (beta * c_mks);
-            P += volt * sin(rfca->phase * PI / 180);
+            P += volt * sin((rfca->phase + rfca->dphase) * PI / 180); /* DELTA_PHASE: additive offset */
             beta = beta_from_delta(P, 0.0);
             if (ik0 != (nKicks - 1))
               t0 -= fabs(length / 2) / (beta * c_mks);
@@ -599,6 +599,7 @@ long trackRfCavityWithWakes(
   } else
     t0 = To = 0;
   phase += rfca->phase * PI / 180.0;
+  phase += rfca->dphase * PI / 180.0; /* DELTA_PHASE: additive post-fiducial phase offset */
 
   same_dgamma = 0;
   if (omega == 0 && tau == 0) {
@@ -681,7 +682,7 @@ long trackRfCavityWithWakes(
       tAve /= np;
 #endif
     if (lockPhase) {
-      phase = PI / 180 * rfca->phase;
+      phase = PI / 180 * (rfca->phase + rfca->dphase); /* DELTA_PHASE: additive offset */
       dgammaAve = volt * sin(phase);
     } else
       dgammaAve = volt * sin(omega * (tAve - timeOffset) + phase);
