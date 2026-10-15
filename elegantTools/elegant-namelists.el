@@ -721,9 +721,17 @@
           ))
    (cons "fast_orbit_feedback"
          (list
-          "inverse"
           "response"
-          "invert_response"
+          "response_output"
+          "fixed_length_matrix"
+          "use_response_from_computed_orbits"
+          "closed_orbit_accuracy"
+          "closed_orbit_accuracy_requirement"
+          "closed_orbit_iterations"
+          "closed_orbit_iteration_fraction"
+          "closed_orbit_fraction_multiplier"
+          "closed_orbit_multiplier_interval"
+          "closed_orbit_tracking_turns"
           "keep_largest_SVs"
           "remove_smallest_SVs"
           "minimum_SV_ratio"
@@ -744,9 +752,20 @@
           "bpm_noise_cutoff"
           "bpm_noise_distribution"
           "include_rf_frequency"
+          "include_rf_phase"
+          "energy_Kp"
+          "energy_Ki"
+          "energy_Kd"
+          "rf_phase_limit"
+          "energy_response_scale"
+          "passes_between_updates"
+          "rf_update_multiplier"
+          "subtract_dispersion"
           "bpm_filter_file"
           "steering_filter_file"
-          "rf_filter_file"
+          "rf_phase_filter_file"
+          "rf_frequency_filter_file"
+          "rf_bpm_filter_file"
           "output"
           "output_interval"
           "center_on_orbit"
@@ -965,6 +984,7 @@
           "gaussian_ion_range"
           "verbosity"
           "use_local_pressure"
+          "include_ion_self_fields"
           ))
    (cons "link_control"
          (list
@@ -2288,9 +2308,17 @@
           ))
    (cons "fast_orbit_feedback"
          (list
-          (cons "inverse" "STRING")
           (cons "response" "STRING")
-          (cons "invert_response" "long")
+          (cons "response_output" "STRING")
+          (cons "fixed_length_matrix" "long")
+          (cons "use_response_from_computed_orbits" "long")
+          (cons "closed_orbit_accuracy" "double")
+          (cons "closed_orbit_accuracy_requirement" "double")
+          (cons "closed_orbit_iterations" "long")
+          (cons "closed_orbit_iteration_fraction" "double")
+          (cons "closed_orbit_fraction_multiplier" "double")
+          (cons "closed_orbit_multiplier_interval" "double")
+          (cons "closed_orbit_tracking_turns" "long")
           (cons "keep_largest_SVs" "long")
           (cons "remove_smallest_SVs" "long")
           (cons "minimum_SV_ratio" "double")
@@ -2311,9 +2339,20 @@
           (cons "bpm_noise_cutoff" "double")
           (cons "bpm_noise_distribution" "STRING")
           (cons "include_rf_frequency" "long")
+          (cons "include_rf_phase" "long")
+          (cons "energy_Kp" "double")
+          (cons "energy_Ki" "double")
+          (cons "energy_Kd" "double")
+          (cons "rf_phase_limit" "double")
+          (cons "energy_response_scale" "double")
+          (cons "passes_between_updates" "long")
+          (cons "rf_update_multiplier" "long")
+          (cons "subtract_dispersion" "long")
           (cons "bpm_filter_file" "STRING")
           (cons "steering_filter_file" "STRING")
-          (cons "rf_filter_file" "STRING")
+          (cons "rf_phase_filter_file" "STRING")
+          (cons "rf_frequency_filter_file" "STRING")
+          (cons "rf_bpm_filter_file" "STRING")
           (cons "output" "STRING")
           (cons "output_interval" "long")
           (cons "center_on_orbit" "long")
@@ -2532,6 +2571,7 @@
           (cons "gaussian_ion_range" "double")
           (cons "verbosity" "long")
           (cons "use_local_pressure" "long")
+          (cons "include_ion_self_fields" "long")
           ))
    (cons "link_control"
          (list
