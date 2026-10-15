@@ -2,22 +2,35 @@
  * purpose: namelist definition for fast orbit feedback (FOFB) simulation
  *
  * The command models fast orbit feedback combined with realistic beam
- * dynamics.  Each FOFB iteration tracks the beam for run_control->n_passes
+ * dynamics.  Each FOFB iteration tracks the beam for passes_between_updates
  * turns (accumulating each BPM's turn-by-turn position through a digital IIR
  * filter to form a "tick" readout), computes steering-corrector setpoint
  * changes from a response (inverse) matrix through a per-actuator-class PID
  * controller, and lets the physically applied kick evolve turn-by-turn toward
- * the new setpoint through a per-actuator z-transform step response.  The
- * number of FOFB iterations is run_control->n_steps.
+ * the new setpoint through a per-actuator z-transform step response.
+ * run_control->n_passes is NO LONGER used by FOFB: the fast update cadence is
+ * passes_between_updates (required), and the slow RF-frequency loop updates
+ * every rf_update_multiplier fast iterations.  The number of FOFB iterations is
+ * run_control->n_steps.
+ *
+ * The forward steering response matrix is built analytically by default (or by
+ * tweaking correctors against computed closed orbits when
+ * use_response_from_computed_orbits is set).  It may instead be LOADED from an
+ * SDDS file with response[0] (horizontal) and/or response[1] (vertical), in the
+ * layout &correction_matrix_output writes (a BPMName string column plus one
+ * double column per corrector, matched BY NAME; see fofbLoadResponseMatrix).  A
+ * loaded matrix is inverted internally, so no inverse-matrix loading is
+ * provided.  response_output[0]/[1] write the forward matrix FOFB computes (same
+ * layout) so it can be inspected or reloaded.  Loading applies to the steering
+ * correctors only; the RF-frequency and RF-phase actuators remain analytic.
  *
  * See fast_orbit_feedback.c for the implementation.
  */
 #include "namelist.h"
 
 #namelist fast_orbit_feedback static
-    STRING inverse[2] = {NULL, NULL};
     STRING response[4] = {NULL, NULL, NULL, NULL};
-    long invert_response = 0;
+    STRING response_output[4] = {NULL, NULL, NULL, NULL};
     long fixed_length_matrix = 0;
     long use_response_from_computed_orbits = 0;
     double closed_orbit_accuracy = 1e-12;
@@ -53,13 +66,16 @@
     double energy_Kd = 0;
     double rf_phase_limit = 0;
     double energy_response_scale = 0;
+    long passes_between_updates = 0;
+    long rf_update_multiplier = 1;
     long subtract_dispersion = 0;
     STRING bpm_filter_file = NULL;
     STRING steering_filter_file = NULL;
-    STRING rf_filter_file = NULL;
+    STRING rf_phase_filter_file = NULL;
+    STRING rf_frequency_filter_file = NULL;
     STRING rf_bpm_filter_file = NULL;
     STRING output = NULL;
-    long output_interval = 1;
+    long flush_interval = 100;
     long center_on_orbit = 0;
     long center_momentum_also = 1;
     long offset_by_orbit = 0;
