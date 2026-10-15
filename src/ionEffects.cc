@@ -111,7 +111,7 @@ void generateIons(IONEFFECTS *ionEffects, long iPass, long iBunch, long nBunches
 void applyIonKicksToElectronBunch(IONEFFECTS *ionEffects, double **part, int64_t np, double Po, long iBunch, long iPass, double qBunch,
                                   double bunchCentroid[4], double bunchSigma[4],
                                   double qIon, long nIonsTotal, double ionCentroid[2], double ionSigma[2],
-                                  double dpSum[3]);
+                                  double dpSum[3], double dTime);
 void doIonEffectsIonHistogramOutput(IONEFFECTS *ionEffects, long iBunch, long iPass, double tNow, long nBunches);
 void flushIonEffectsSummaryOutput(IONEFFECTS *ionEffects);
 
@@ -681,7 +681,7 @@ void completeIonEffectsSetup(RUN *run, LINE_LIST *beamline) {
       if (ionEffects->n2dGridIon[0] > 0 && ionEffects->n2dGridIon[1] > 0) {
         if (ionEffects->n2dGridIon[0] < 10 || ionEffects->n2dGridIon[1] < 10)
           bombElegant("Poisson grid size must be 10 or greater in x and y", NULL);
-        printWarningForTracking((char *)"Poisson solver for IONEFFECTS is not fully implemented", (char *)"It is presently being tested and debugged");
+        //printWarningForTracking((char *)"Poisson solver for IONEFFECTS is not fully implemented", (char *)"It is presently being tested and debugged");
 
         // Ensures 64 byte alignment for vectorization
         // For MKL, "Memory allocation function fftw_malloc returns memory aligned at a 16-byte boundary"
@@ -736,6 +736,7 @@ void trackWithIonEffects(
   double ionCentroid[2], ionSigma[2], qIon;
   long nIonsTotal;
   double dpSum[3];
+  double dTime;
 #if USE_MPI
   MPI_Status mpiStatus;
 #endif
@@ -864,7 +865,9 @@ void trackWithIonEffects(
 
     setIonEffectsElectronBunchOutput(ionEffects, tNow, iPass, iBunch, qBunch, npTotal, bunchSigma, bunchCentroid);
 
+    dTime = ionEffects->t;
     advanceIonPositions(ionEffects, iPass, tNow);
+    dTime = tNow - dTime;
 
     eliminateIonsOutsideSpan(ionEffects);
 
@@ -880,7 +883,7 @@ void trackWithIonEffects(
 
     if (npTotal && nIonsTotal)
       applyIonKicksToElectronBunch(ionEffects, part, np, Po, iBunch, iPass, qBunch, bunchCentroid, bunchSigma,
-                                   qIon, nIonsTotal, ionCentroid, ionSigma, dpSum);
+                                   qIon, nIonsTotal, ionCentroid, ionSigma, dpSum, dTime);
 
     if (isSlave || !distributedBeam) {
       if (nBunches != 1) {
@@ -2947,7 +2950,8 @@ void applyIonKicksToElectronBunch(
                                   long nIonsTotal,
                                   double ionCentroid[2],
                                   double ionSigma[2],
-                                  double dpSum[3] // sum of momentum change applied to ions
+                                  double dpSum[3], // sum of momentum change applied to ions
+				  double dTime //time since last bunch
                                   ) {
   double kick[2], dpSumBunch[2];
   int64_t ip;
@@ -3069,6 +3073,29 @@ void applyIonKicksToElectronBunch(
           }
         */
       }
+    }
+
+    /* Apply kicks from ions to ions */
+    if (include_ion_self_fields) {
+      long iSpecies, iIon;
+      
+      for (iSpecies = 0; iSpecies < ionProperties.nSpecies; iSpecies++) {
+	C2 = e_mks * ionProperties.chargeState[iSpecies] * dTime  /
+	  (1.672621898e-27 * ionProperties.mass[iSpecies] * 8.85e-12 * (ionEffects->sEnd - ionEffects->sStart));
+
+	for (iIon = 0; iIon < ionEffects->nIons[iSpecies]; iIon++) {
+
+	  if ((abs(ionEffects->coordinate[iSpecies][iIon][0]) < ionEffects->poisson_span[0]) && (abs(ionEffects->coordinate[iSpecies][iIon][2]) < ionEffects->poisson_span[1])) {
+	    
+	    iBin[0] = floor((ionEffects->coordinate[iSpecies][iIon][0] + ionEffects->poisson_span[0]) / delta[0]);
+	    iBin[1] = floor((ionEffects->coordinate[iSpecies][iIon][2] + ionEffects->poisson_span[1]) / delta[1]);
+	    ionEffects->coordinate[iSpecies][iIon][1] += C2 * ionEffects->xKickPoisson[iBin[0]][iBin[1]];
+	    ionEffects->coordinate[iSpecies][iIon][3] += C2 * ionEffects->yKickPoisson[iBin[0]][iBin[1]];
+	  }
+
+	}
+      }
+
     }
 
   } else {
