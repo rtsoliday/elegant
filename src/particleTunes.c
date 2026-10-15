@@ -266,7 +266,7 @@ void accumulateParticleTuneData
         }
       }
       if (spinCoordOffset && ptunes->include[ic]) {
-	/* store x and y components */
+	/* store x and z components */
         ptunes->data[2*ic+0][pIndex][turnIndex] = coord[ip][spinCoordOffset+0]; 
         ptunes->data[2*ic+1][pIndex][turnIndex] = coord[ip][spinCoordOffset+2];
       }
@@ -371,7 +371,10 @@ void outputParticleTunes(PARTICLE_TUNES *ptunes, long pass)
 		      ptunes->turnIndexLimit[ip], NAFF_MAX_FREQUENCIES | NAFF_FREQ_CYCLE_LIMIT | NAFF_FREQ_ACCURACY_LIMIT,
 		      0.0, 1, 200, 1e-12, 0, 0);
 	}
-        tuneData[ip] = adjustTuneHalfPlane(frequency[0], phase[0], phase[1]);
+	if (ic!=3)
+	  tuneData[ip] = adjustTuneHalfPlane(frequency[0], phase[0], phase[1]);
+	else
+	  tuneData[ip] = adjustTuneHalfPlane(frequency[0], phase[1], phase[0]);
         J[ip] = computeInvariant(ptunes->data[2*ic+0][ip], ptunes->data[2*ic+1][ip], ptunes->turnIndexLimit[ip],
                                  tuneData[ip]);
       }
