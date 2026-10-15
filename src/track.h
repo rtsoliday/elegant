@@ -1235,7 +1235,7 @@ extern char *entity_text[N_TYPES];
 #define N_SOLE_PARAMS 7
 #define N_HCOR_PARAMS 11
 #define N_VCOR_PARAMS 11
-#define N_RFCA_PARAMS 19
+#define N_RFCA_PARAMS 20
 #define N_ELSE_PARAMS 0
 #define N_HMON_PARAMS 12
 #define N_VMON_PARAMS 12
@@ -1650,7 +1650,7 @@ typedef struct {
 extern PARAMETER rfca_param[N_RFCA_PARAMS] ;
    
 typedef struct {
-    double length, volt, phase, freq, Q;
+    double length, volt, phase, dphase, freq, Q;
     long phase_reference;
     short change_p0, change_t;
     char *fiducial;
@@ -2868,10 +2868,14 @@ typedef struct {
   double *an, *bn;  /* filter coefficients */
   double *xn, *yn;  /* input, output buffers, treated as circular buffers */
   long iBuffer;     /* index of start location in buffer (1 delay value) */
+  double gain;      /* optional per-stage output gain (from an SDDS "gain" parameter);
+                       the stage output is multiplied by this before being passed on.
+                       Defaults to 1.0 when the file has no "gain" parameter. */
 } IIRFILTER;
 
 int readIIRFilter(IIRFILTER *filterBank, long maxFilters, char *inputFile);
-double applyIIRFilter(IIRFILTER *filterBank, long nFilters, double x);
+double applyIIRFilter(IIRFILTER *filterBank, long nFilters, double x);       /* parallel bank: H=Sum H_i */
+double applyIIRFilterCascade(IIRFILTER *filterBank, long nFilters, double x);/* series cascade: H=Prod H_i */
 void freeIIRFilterMemory(IIRFILTER *filterBank, long nFilters);
 
 typedef struct {
@@ -4191,6 +4195,14 @@ long determine_bend_flags(ELEMENT_LIST *eptr, long edge1_effects, long edge2_eff
    orbit every turn but not the linear optics, so re-deriving the twiss each pass
    is wasted work and needless "Updating twiss parameters" output. */
 #define SUPPRESS_TWISS_UPDATE    0x100000UL
+/* Skip do_tracking's end-of-call WATCH-element page flush.  do_tracking flushes every
+   WATCH page at the end of each call; fast_orbit_feedback calls do_tracking once per step,
+   so that flush fires every passes_between_updates passes -- a buffer flush + seeks for
+   every WATCH, on top of each WATCH's own FLUSH_INTERVAL flushing in dump_watch_parameters.
+   Under many concurrent jobs sharing a filesystem this per-step I/O stalls the CPU.  FOFB
+   sets this flag to leave WATCH flushing to each WATCH's FLUSH_INTERVAL (user-controlled)
+   and flushes the WATCH pages once at teardown (flushFofbWatchPages). */
+#define SUPPRESS_WATCH_FLUSH     0x200000UL
 /* return values for get_reference_phase and check_reference_phase */
 #define REF_PHASE_RETURNED 1
 #define REF_PHASE_NOT_SET  2
