@@ -44,6 +44,14 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
   double *tData, *AData;
   long nData = 0;
   long distCode = -1, nSources;
+  /* For element_amplitude_column the file holds one column per element; it is opened and
+   * its (single) page read ONCE here, and each element's column is extracted from that
+   * in-memory page in the loop below.  (Previously the whole multi-column file was
+   * re-parsed once per matched element -> O(N^2) setup for N elements.) */
+  SDDS_TABLE elemAmpSDDS;
+  double *elemTimeData = NULL;
+  long elemAmpRows = 0, ic;
+  short elemAmpOpen = 0;
 
   modData->beamline = beamline;
 
@@ -85,6 +93,26 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
       bombElegant("too few items in modulation table", NULL);
   } else
     nData = 0;
+
+  if (filename && element_amplitude_column) {
+    /* Open the per-element file and read its single page ONCE.  The time column (shared by all
+     * elements) is extracted here; each element's own column is pulled from this same in-memory
+     * page in the loop below via SDDS_GetColumnInDoubles. */
+    if (!SDDS_InitializeInputFromSearchPath(&elemAmpSDDS, filename) ||
+        SDDS_ReadTable(&elemAmpSDDS) != 1 ||
+        !(elemAmpRows = SDDS_CountRowsOfInterest(&elemAmpSDDS)) ||
+        !(elemTimeData = SDDS_GetColumnInDoubles(&elemAmpSDDS, time_column))) {
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+      bombElegant("Unable to read required data from modulation file.", NULL);
+    }
+    elemAmpOpen = 1;
+    if (elemAmpRows <= 2)
+      bombElegant("too few items in modulation table", NULL);
+    /* time monotonicity is a property of the shared time column, so check it once */
+    for (ic = 1; ic < elemAmpRows; ic++)
+      if (elemTimeData[ic - 1] >= elemTimeData[ic])
+        bombElegant("time values not monotonically increasing for modulation data", NULL);
+  }
 
   n_added = 0;
   n_items = modData->nItems;
@@ -201,13 +229,19 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
     } else if (filename) {
       modData->sourceType[n_items] = MOD_SOURCE_FILE;
       if (element_amplitude_column) {
-        /* Independent per-element series: load this element's own column, sharing the time column. */
+        /* Independent per-element series: pull this element's own column from the single page
+         * already read above, and give it its own copy of the shared time column. */
         char *colName = buildElementColumnName(element_amplitude_column, context->name, context->occurence);
         modData->dataIndex[n_items] = -1;
-        if ((modData->nData[n_items] = loadModulationTable(&modData->timeData[n_items],
-                                                           &modData->modulationData[n_items],
-                                                           filename, time_column, colName)) <= 2)
-          bombElegant("too few items in modulation table", NULL);
+        if (!(modData->modulationData[n_items] = SDDS_GetColumnInDoubles(&elemAmpSDDS, colName))) {
+          SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+          printf("error: cannot read modulation column %s from %s\n", colName, filename);
+          bombElegant("Unable to read required data from modulation file.", NULL);
+        }
+        modData->timeData[n_items] = tmalloc(sizeof(*modData->timeData[n_items]) * elemAmpRows);
+        for (ic = 0; ic < elemAmpRows; ic++)
+          modData->timeData[n_items][ic] = elemTimeData[ic];
+        modData->nData[n_items] = elemAmpRows;
         free(colName);
       } else {
         /* Shared/correlated single-column series (existing behavior). */
@@ -249,6 +283,14 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
     n_added++;
     if (firstIndexInGroup == -1)
       firstIndexInGroup = n_items - 1;
+  }
+
+  if (elemAmpOpen) {
+    free(elemTimeData);
+    if (!SDDS_Terminate(&elemAmpSDDS)) {
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+      bombElegant("Unable to close modulation file.", NULL);
+    }
   }
 
   if (!n_added) {
