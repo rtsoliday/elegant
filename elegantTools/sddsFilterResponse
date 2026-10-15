@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Compute the frequency response of digital filters stored in SDDS files.
+
+Each page of the input file is one filter stage: a numerator column, a
+denominator column, and an optional scalar ``gain`` parameter.  Stages are
+combined into a single response according to ``--mode``:
+
+cascaded
+    H(z) = prod_i gain_i * H_i(z)
+additive
+    H(z) = sum_i gain_i * H_i(z)
+"""
+
+import argparse
+import sys
+
+import numpy as np
+from scipy.signal import freqz
+import sdds
+
+
+def coefficients(dataset, name, page):
+    """Read one SDDS column for a page, trimming zero padding at the end."""
+    if name not in dataset.columnName:
+        raise ValueError(f"Missing SDDS column: {name}")
+    index = dataset.columnName.index(name)
+    values = np.asarray(dataset.columnData[index][page], dtype=float)
+    if values.ndim != 1 or not np.all(np.isfinite(values)):
+        raise ValueError(f"Invalid values in column {name}, page {page + 1}")
+    nonzero = np.flatnonzero(values)
+    if nonzero.size == 0:
+        return np.array([0.0])
+    return values[:nonzero[-1] + 1]
+
+
+def stage_gain(dataset, page):
+    """Return the ``gain`` parameter for a page, or 1.0 if it is absent."""
+    if "gain" not in dataset.parameterName:
+        return 1.0
+    index = dataset.parameterName.index("gain")
+    value = float(dataset.parameterData[index][page])
+    if not np.isfinite(value):
+        raise ValueError(f"Page {page + 1}: gain must be finite")
+    return value
+
+
+def main():
+    examples = """\
+examples:
+  # Cascaded biquad lowpass, 1 kHz sampling, 1024 frequency points (default)
+  sddsFilterResponse bpmLowpass.sdds bpmLowpass.resp 1000 --mode cascaded
+
+  # Additive combination with a denser frequency grid
+  sddsFilterResponse filters.sdds filters.resp 2048 --mode additive -n 4096
+
+  # Single-stage filter (gain parameter optional; defaults to 1.0)
+  sddsFilterResponse onestage.sdds onestage.resp 500 --mode cascaded
+"""
+    parser = argparse.ArgumentParser(
+        description="Compute SDDS digital-filter magnitude and phase response.",
+        epilog=examples,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("input", help="Input SDDS file (numerator, denominator columns; optional gain parameter)")
+    parser.add_argument("output", help="Output SDDS file (f, Gain, Phase columns)")
+    parser.add_argument("fs", type=float, help="Sampling frequency in Hz")
+    parser.add_argument("--mode", required=True, choices=("cascaded", "additive"),
+                        help="How to combine stages: cascaded multiplies gain*H per stage, additive sums them")
+    parser.add_argument("-n", "--points", type=int, default=1024,
+                        help="Number of frequency samples (default: 1024)")
+    args = parser.parse_args()
+
+    if not np.isfinite(args.fs) or args.fs <= 0:
+        parser.error("sampling frequency must be positive and finite")
+    if args.points < 2:
+        parser.error("--points must be at least 2")
+    if args.input == args.output:
+        parser.error("input and output filenames must differ")
+
+    source = sdds.load(args.input)
+    if source.loaded_pages < 1:
+        raise ValueError("Input SDDS file contains no data pages")
+
+    f = np.linspace(0.0, args.fs / 2.0, args.points)
+    if args.mode == "cascaded":
+        combined = np.ones_like(f, dtype=complex)
+    else:
+        combined = np.zeros_like(f, dtype=complex)
+
+    for page in range(source.loaded_pages):
+        b = coefficients(source, "numerator", page)
+        a = coefficients(source, "denominator", page)
+        if a[0] == 0:
+            raise ValueError(f"Page {page + 1}: denominator a[0] must be nonzero")
+        gain = stage_gain(source, page)
+        _, response = freqz(b, a, worN=f, fs=args.fs)
+        if args.mode == "cascaded":
+            combined *= gain * response
+        else:
+            combined += gain * response
+
+    magnitude = np.abs(combined)
+    phase = np.unwrap(np.angle(combined))
+    group_delay = -np.gradient(phase, f) / (2.0 * np.pi)
+
+    destination = sdds.SDDS()
+    destination.mode = sdds.SDDS_BINARY
+    destination.setDescription(
+        f"Digital filter frequency response ({args.mode})",
+        "f in Hz, Gain is linear magnitude, Phase is unwrapped radians, GroupDelay is in seconds"
+    )
+    destination.defineSimpleColumn("f", sdds.SDDS_DOUBLE)
+    destination.defineSimpleColumn("Gain", sdds.SDDS_DOUBLE)
+    destination.defineSimpleColumn("Phase", sdds.SDDS_DOUBLE)
+    destination.defineSimpleColumn("GroupDelay", sdds.SDDS_DOUBLE)
+
+    destination.setColumnValueList("f", f.tolist(), page=1)
+    destination.setColumnValueList("Gain", magnitude.tolist(), page=1)
+    destination.setColumnValueList("Phase", phase.tolist(), page=1)
+    destination.setColumnValueList("GroupDelay", group_delay.tolist(), page=1)
+
+    destination.save(args.output)
+    print(f"Combined {source.loaded_pages} stage(s) ({args.mode}) into {args.output}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
