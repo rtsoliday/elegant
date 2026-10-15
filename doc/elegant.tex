@@ -73,10 +73,19 @@ Here is a summary of what's changed since release 2026.4.  Historical change log
 
 \subsection{New and Modified Commands}
 \begin{itemize}
-\item The \verb|closed_orbit|, \verb|correct|, and \verb|correction_matrix_output| support a new value for the \verb|fixed_length| and
-  \verb|fixed_length_matrix| parameters. In particular, when a value of \verb|2| is given, a six-dimensional closed orbit method is used.
-  Previously, a similar method was available using a value of \verb|1|, but this used a four-dimensional orbit method inside a loop that
-  determined the energy offset. The new method is faster.
+\item The \verb|fast_orbit_feedback| command was added, offering simulation of fast orbit feedback using
+  turn-by-turn beam position data from tracking.
+\item The \verb|steering_element| command was augmented to support targetting steering elements to the
+  orbit correction command or the fast orbit feedback command.
+\item The \verb|ion_effects| commmand now supports neutralization, i.e., ion fields affect ion motion and
+  electron fields affect electron motion.
+\item The \verb|closed_orbit|, \verb|correct|, and \verb|correction_matrix_output| support a new value for the
+  \verb|fixed_length| and \verb|fixed_length_matrix| parameters. In particular, when a value of \verb|2| is given, a
+  six-dimensional closed orbit method is used.  Previously, a similar method was available using a value of \verb|1|,
+  but this used a four-dimensional orbit method inside a loop that determined the energy offset. The new method is
+  faster.
+\item The \verb|modulate_elements| command now has the ability to draw data for each affected element from
+  a different column of the data file, using a template to perform the mapping.
 \end{itemize}
 
 \subsection{Changes to Examples}
@@ -182,7 +191,9 @@ by a suite of post-processing programs that serve both {\tt elegant}
 and other physics programs.  These programs, collectively known as the
 SDDS Toolkit\cite{SDDS1,SDDS2}, provide sophisticated data analysis
 and display capabilities.  They also serve to prepare input for {\tt
-elegant}, supporting multi-stage simulation.
+  elegant}, supporting multi-stage simulation.
+An alternative approach is to write scripts in python, MATLAB, Tcl/Tk, or
+other languages to perform the same function.
 
 Setting up for an {\tt elegant} run thus involves more than creating
 input files for {\tt elegant} per se.  A complicated run will
@@ -720,6 +731,7 @@ Command name & Type & Description \\\hline
 \hyperref[subsec:elasticscattering]{\tt elastic\_scattering} & major action & Use tracking to determine local scattering aperture and loss locations due to elastic gas scattering.\\ \hline
 \hyperref[subsec:errorelement]{\tt error\_element} & setup & Define errors for a set of elements. \\ \hline
 \hyperref[subsec:errorcontrol]{\tt error\_control} & setup & Set up and control error generation process. \\ \hline
+\hyperref[subsec:fastorbitfeedback]{\tt fast\_orbit\_feedback} & major action & Simulate fast-orbit feedback using turn-by-turn tracking. \\ \hline
 \hyperref[subsec:findaperture]{\tt find\_aperture} & setup/major action & Determine the transverse (e.g., dynamic) aperture. \\ \hline
 \hyperref[subsec:floorcoordinates]{\tt floor\_coordinates} & action & Compute and output floor coordinates. \\ \hline
 \hyperref[subsec:frequencymap]{\tt frequency\_map} & major action & Compute and output frequency map. \\ \hline
@@ -729,6 +741,7 @@ Command name & Type & Description \\\hline
 \hyperref[subsec:inelasticscattering]{\tt inelastic\_scattering} & major action & Use tracking to determine local scattering aperture and loss locations due to inelastic gas scattering.\\ \hline
 \hyperref[subsec:insertelements]{\tt insert\_elements} & action & Insert elements into the lattice at many places. \\ \hline
 \hyperref[subsec:insertsceffects]{\tt insert\_sceffects} & action & Insert space charge kick elements. \\ \hline
+\hyperref[subsec:ioneffects]{\tt ion\_effects} & setup & Set up for modeling of beam interaction with residual gas ions. \\ \hline
 \hyperref[subsec:linearchromatictrackingsetup]{\tt linear\_chromatic\_tracking\_setup} & setup & Set up for fast tracking with chromatic effects. \\ \hline
 \hyperref[subsec:linkcontrol]{\tt link\_control} & setup & Control linking of element parameters. \\ \hline
 \hyperref[subsec:linkelements]{\tt link\_elements} & setup & Define link between parameters of two elements. \\ \hline
@@ -3309,15 +3322,29 @@ The proper use of this command can be confusing.  A typical sequence will be as 
 \item Command syntax, including use of equations and subcommands, is discussed in \ref{sect:generalCommandSyntax}.
 \end{itemize}
 
-The mapping to \verb|run_control| is: each FOFB iteration tracks the beam for
-\verb|n_passes| turns (the readout ``tick''), and the number of FOFB iterations is
-\verb|n_steps|.  Each turn, every monitor reading is pushed through a first-order digital
-IIR filter (see \verb|bpm_filter_file|) so that the tick averages the betatron
-oscillation down to the closed orbit.  At the end of each tick the filtered orbit is
-projected into actuator space through the internally-built inverse response matrix
-($T=-C^{-1}$) and applied through the per-class PID controller; between ticks the
-physically applied actuator values evolve turn-by-turn toward their new setpoints through
-a per-actuator step-response filter (see the \verb|*_filter_file| options).
+The cadence is set by \verb|passes_between_updates| (required): each fast FOFB iteration
+tracks the beam for \verb|passes_between_updates| turns (the readout ``tick'').  The
+\verb|n_passes| field of \verb|run_control| is \emph{not} used by this command.  The number
+of fast iterations is \verb|n_steps|.  The slow RF-frequency loop (below) updates once every
+\verb|rf_update_multiplier| fast iterations, so its interval is
+$\verb|rf_update_multiplier|\times\verb|passes_between_updates|$ turns.  Each turn, every
+monitor reading is pushed through a first-order digital IIR filter (see
+\verb|bpm_filter_file|) so that the tick averages the betatron oscillation down to the closed
+orbit.  At the end of each tick the filtered orbit is projected into actuator space through
+the internally-built inverse response matrix ($T=-C^{-1}$) and applied through the per-class
+PID controller; between ticks the physically applied actuator values evolve turn-by-turn
+toward their new setpoints through a per-actuator step-response filter (see the
+\verb|*_filter_file| options).
+
+The command is organized by timescale.  The \emph{fast} response matrix contains the steering
+correctors and---when \verb|include_rf_phase| is set---an RF-\emph{phase} column; it is
+updated every fast iteration.  The RF-\emph{frequency} actuator is a \emph{separate},
+single-column (dispersion-shaped) matrix with its own pseudo-inverse and scalar PID state,
+updated at the slow cadence.  This matches the physics: a held RF frequency offset produces a
+\emph{static} dispersive orbit (a slow, DC channel), whereas a held RF phase offset produces
+only a \emph{transient} energy response that decays as the beam re-phases over a synchrotron
+period (a fast channel whose orbit-response derivative is meaningful only over a
+sub-synchrotron-period step).
 
 By default the actuators are the standard dedicated steering correctors (HKICK/VKICK and
 the like) auto-added for each plane.  To choose the actuators explicitly, declare them
@@ -3325,58 +3352,72 @@ with the \verb|steering_element| command using \verb|target="fast_orbit_feedback
 corrector is declared for a plane, exactly the declared correctors are used for that
 plane, otherwise the dedicated correctors are auto-added.
 
-\textbf{RF-frequency actuator.}  Setting \verb|include_rf_frequency=1| adds the RF
-frequency as a horizontal actuator (the machine ``radial loop'').  In a ring with
+\textbf{RF-frequency actuator (slow radial loop).}  Setting \verb|include_rf_frequency=1|
+adds the RF frequency as a horizontal actuator (the machine ``radial loop'').  In a ring with
 horizontal dispersion, moving the horizontal correctors changes the path length, which
 shifts the equilibrium momentum offset $\delta$ and re-distorts the dispersive orbit
 $\eta_x\delta$ at the monitors; with the RF frequency held fixed the horizontal plane
 therefore shows a slow residual drift that pure steering cannot remove.  The RF frequency
 is the DC orbit/energy knob, $\delta=-(1/\alpha_c)(\Delta f/f_0)$, so an integral RF loop
 nails zero steady-state horizontal error.  All selected cavities form one joint actuator
-(a common fractional detuning) contributing a single column to the horizontal response
-matrix, the analytic dispersive column $\partial x_i/\partial f=-\eta_i/(\alpha_c f_0)$,
-solved together with the correctors and driven by its own PID class (\verb|rf_Kp/Ki/Kd|,
-all zero by default, so the RF loop is off until \verb|rf_Ki| is set; expect
-$\verb|rf_Ki|\ll\verb|steering_Ki|$).  Select which cavities are driven with
-\verb|steering_element|, \verb|target="fast_orbit_feedback"|, \verb|item="FREQ"| on the
-desired \verb|RFCA| elements; if none are declared, every \verb|RFCA| in the beamline is
-used.
+(a common fractional detuning).  This knob is \emph{not} folded into the fast corrector
+matrix; it has its own single-column matrix with the analytic dispersive response
+$\partial x_i/\partial f=-\eta_i/(\alpha_c f_0)$, its own pseudo-inverse, and its own scalar
+PID class (\verb|rf_Kp/Ki/Kd|, all zero by default, so the RF loop is off until \verb|rf_Ki|
+is set; expect $\verb|rf_Ki|\ll\verb|steering_Ki|$).  It acts at the slow cadence
+(\verb|rf_update_multiplier|) on a dedicated, optionally longer-filtered orbit readout (see
+\verb|rf_bpm_filter_file|), which lets it reject the synchrotron line that would otherwise
+destabilize its integrator while the fast steering loop keeps a short filter for bandwidth.
+When the RF-frequency loop is active and no RF-phase column is present, the fast corrector
+solve is automatically made \emph{dispersion-blind}: the $\eta$-shaped mode is projected out
+of the corrector control vector so the fast correctors do not fight the slow frequency
+integrator over the dispersive channel (classic radial-loop spatial decoupling; this is done
+internally and is what the deprecated \verb|subtract_dispersion| once did by hand).  Select
+which cavities are driven with \verb|steering_element|, \verb|target="fast_orbit_feedback"|,
+\verb|item="FREQ"| on the desired \verb|RFCA| elements; if none are declared, every
+\verb|RFCA| in the beamline is used.  A finite-bandwidth frequency actuator (a power supply
+or synthesizer that cannot step its output instantly) is modeled with
+\verb|rf_frequency_filter_file|, which lags the applied common detuning turn-by-turn toward
+each commanded setpoint; with a unit-DC-gain low-pass the held steady state is unchanged and
+only the transient is slowed.  The file is read only when \verb|include_rf_frequency| is set;
+setting it otherwise is ignored with a warning.
 
-\textbf{RF-phase energy actuator.}  Setting \verb|include_rf_phase=1| adds a second,
-independent longitudinal channel: a fast damper of the common (mode-0) energy error, acting
-on the main-RF \emph{phase} rather than its frequency.  The frequency actuator above is the
-slow DC/radial loop; the phase actuator is the fast AC loop.  Each iteration the command
-deduces the common momentum offset from the horizontal monitors by dispersion projection,
-$\delta_{\mathrm{est}}=\sum_i x_i\eta_i/\sum_i\eta_i^2$ (reusing the same monitor tick
-readings as the orbit loop, so no extra tracking or communication is needed), runs a
-\emph{scalar} PID on $\delta_{\mathrm{est}}$ (\verb|energy_Kp/Ki/Kd|, all zero by default),
-and converts the result to a common phase offset applied to the selected cavities as
-$\mathrm{phase}=\mathrm{phase}_{\mathrm{base}}+\verb|phaseCmd|$.  Because the RF phase sets
-the energy kick directly ($\Delta\gamma=V\sin\phi$), the loop commands the energy correction
-itself and is first-order and unconditionally stable for a loop gain in $(0,2)$, whereas the
-frequency actuator reaches the same energy kick only through an extra integrator pole and so
-has a narrow stable gain window.  This matches real machines, where fast longitudinal
-damping of the rigid common energy---which low-power bunch-by-bunch feedback cannot move---is
-done by phase modulation of the main RF.  Unlike the frequency actuator, the phase actuator
-is \emph{not} a column of the orbit response matrix (a phase step produces no DC orbit
-shift---the beam re-phases---so it would be misused by the deadbeat orbit solve); it is a
-standalone scalar loop.  Select the cavities with \verb|steering_element|,
-\verb|item="PHASE"|; if none are declared, every \verb|RFCA| is used.  The energy response
-scale (degrees of phase per unit $\delta$) is taken from \verb|energy_response_scale| when
-nonzero (authoritative, and its sign matters---the wrong sign anti-damps); otherwise an
-analytic estimate is used and a warning is printed.  The companion
-\verb|subtract_dispersion=1| removes $\eta_i\delta_{\mathrm{est}}$ from the horizontal
-readings fed to the \emph{steering} solve (while still reporting the true orbit), so the
-horizontal steering loop sees a pure betatron residual and no longer needs a long
-synchrotron-period boxcar filter to reject the dispersive energy signal---the two energy
-channels are complementary, so \verb|subtract_dispersion| and \verb|include_rf_frequency| are
-mutually exclusive (declaring both stops the run).
+\textbf{RF-phase energy actuator (fast matrix column).}  Setting \verb|include_rf_phase=1|
+adds a fast damper of the common (mode-0) energy error, acting on the main-RF \emph{phase}
+rather than its frequency.  Over a sub-synchrotron-period step a phase offset does produce a
+measurable dispersive orbit shift (linearized about the synchronous phase $\phi_s$), so the
+phase knob is added as an extra \emph{column} of the fast horizontal response matrix,
+$\partial x_i/\partial\phi=\eta_i/\verb|phaseScale|$, inverted together with the correctors.
+The deadbeat solve then assigns the $\eta$-shaped (energy) part of the orbit to the phase
+knob and the betatron residual to the correctors automatically---the partitioning the
+deprecated \verb|subtract_dispersion| once did by hand.  The phase column is driven by its own
+PID class (\verb|energy_Kp/Ki/Kd|, all zero by default; clamp \verb|rf_phase_limit|).  Because
+the RF phase sets the energy kick directly ($\Delta\gamma=V\sin\phi$), this channel is a fast,
+first-order damper---it damps the synchrotron transient quickly and, run proportionally
+(\verb|energy_Ki=0|), leaves no DC energy change, so it does not fight the slow frequency
+loop.  This matches real machines, where fast longitudinal damping of the rigid common
+energy---which low-power bunch-by-bunch feedback cannot move---is done by phase modulation of
+the main RF.  Select the cavities with \verb|steering_element|, \verb|item="PHASE"|; if none
+are declared, every \verb|RFCA| is used.  The response scale (degrees of phase per unit
+$\delta$) is taken from \verb|energy_response_scale| when nonzero (authoritative, and its sign
+matters---the wrong sign anti-damps); otherwise an analytic estimate using
+\verb|passes_between_updates| is used and a warning is printed.  The frequency and phase
+channels are complementary (slow DC radial loop plus fast AC energy damper) and may be
+enabled together.  A finite-bandwidth phase shifter is modeled with
+\verb|rf_phase_filter_file|, which lags the applied cavity phase toward each commanded
+setpoint exactly as \verb|rf_frequency_filter_file| does for the detuning (unit-DC-gain
+low-pass leaves the steady state unchanged).  The file is read only when
+\verb|include_rf_phase| is set; setting it otherwise is ignored with a warning.
+
+The former \verb|subtract_dispersion| option is \textbf{deprecated} and is now a no-op that
+prints a warning: the dispersive orbit is partitioned automatically---the RF-phase column owns
+it when \verb|include_rf_phase| is set, and otherwise the correctors are made dispersion-blind
+whenever the RF-frequency loop is active (see above).
 
 \begin{verbatim}
 &fast_orbit_feedback
-    STRING inverse[2] = {NULL, NULL};
     STRING response[4] = {NULL, NULL, NULL, NULL};
-    long invert_response = 0;
+    STRING response_output[4] = {NULL, NULL, NULL, NULL};
     long fixed_length_matrix = 0;
     long use_response_from_computed_orbits = 0;
     double closed_orbit_accuracy = 1e-12;
@@ -3412,10 +3453,13 @@ mutually exclusive (declaring both stops the run).
     double energy_Kd = 0;
     double rf_phase_limit = 0;
     double energy_response_scale = 0;
+    long passes_between_updates = 0;
+    long rf_update_multiplier = 1;
     long subtract_dispersion = 0;
     STRING bpm_filter_file = NULL;
     STRING steering_filter_file = NULL;
-    STRING rf_filter_file = NULL;
+    STRING rf_phase_filter_file = NULL;
+    STRING rf_frequency_filter_file = NULL;
     STRING rf_bpm_filter_file = NULL;
     STRING output = NULL;
     long output_interval = 1;
@@ -3428,9 +3472,25 @@ mutually exclusive (declaring both stops the run).
 \end{verbatim}
 
 \begin{itemize}
-\item \verb|inverse|, \verb|response|, \verb|invert_response| --- Optional files for a
-  precomputed inverse (response) matrix, and a flag to invert a supplied response matrix,
-  in place of the internally-built one.
+\item \verb|response| --- Optional files for loading the \emph{forward} steering response
+  matrices in place of the internally-built ones: \verb|response[0]| for the horizontal plane
+  and \verb|response[1]| for the vertical.  Each file must be in the layout
+  \verb|correction_matrix_output| writes---a \verb|BPMName| string column, an \verb|s| column,
+  and one double column per corrector named by its unique element name (giving
+  $\partial x_i/\partial K_j$ in m/kick-radian).  Rows are matched to this plane's monitors by
+  \verb|BPMName| and columns to its correctors by element name, so the file's ordering need not
+  match the internal ordering; it is an error if a monitor or corrector is missing, if the row
+  count disagrees, or if a corrector column is missing or non-numeric.  A loaded matrix is
+  inverted internally with the same inversion \verb|elegant| applies to the analytic matrix, so
+  no inverse-matrix loading is provided.  Loading applies to the steering correctors only; the
+  RF-frequency and RF-phase actuators remain analytic.  Only \verb|response[0]| and
+  \verb|response[1]| are used (the cross-plane entries \verb|[2]|/\verb|[3]| are rejected), and
+  loading is mutually exclusive with \verb|use_response_from_computed_orbits|.
+\item \verb|response_output| --- Optional files to which the forward steering response matrices
+  that \verb|elegant| computes are written (\verb|response_output[0]| horizontal,
+  \verb|response_output[1]| vertical), in the same \verb|correction_matrix_output| layout.  This
+  lets the matrix be inspected or reloaded through \verb|response| in a later run; writing it
+  does not change how the matrix is built or inverted.
 \item \verb|fixed_length_matrix| --- Selects the orbit model used when the internal
   steering response matrix is computed, with the same meaning as in \verb|correct|.  A value
   of \verb|0| (the default) computes a variable-length orbit response by varying the RF
@@ -3504,23 +3564,48 @@ mutually exclusive (declaring both stops the run).
   degrees of RF phase per unit momentum offset $\delta$.  When nonzero it is authoritative
   and used verbatim; \emph{its sign matters}---the wrong sign anti-damps the energy
   oscillation.  When zero, an analytic estimate
-  $-(180/\pi)\,\gamma_0/(\verb|n_passes|\cdot \hat{V}\cos\phi_s)$, with $\hat{V}$ the
-  per-turn RF voltage scaled to energy-kick units and $\phi_s$ the synchronous phase, is used
-  and a warning is printed noting that the estimate's sign is heuristic and should be
-  calibrated.  A warning is also printed if \verb|n_passes| is large compared with the
-  synchrotron period, since a held phase offset then loses damping efficacy as the beam
-  re-phases (use a faster loop, i.e. a smaller \verb|n_passes|).
-\item \verb|subtract_dispersion| --- If nonzero (and \verb|include_rf_phase=1|), the
-  horizontal readings used to build the \emph{steering} control vector have their dispersive
-  energy content $\eta_i\delta_{\mathrm{est}}$ subtracted, so the horizontal steering loop
-  sees a pure betatron residual and can run with a short BPM filter instead of a
-  synchrotron-period boxcar.  The true (unsubtracted) orbit is still reported in the output
-  rms.  Mutually exclusive with \verb|include_rf_frequency| (which needs exactly the
-  $\eta\delta$ signal this removes); declaring both stops the run with an error.
-\item \verb|bpm_filter_file|, \verb|steering_filter_file|, \verb|rf_filter_file| ---
-  Optional SDDS files giving the digital-filter (z-transform) coefficients for the monitor
-  readout, the steering-corrector step response, and the RF-frequency step response,
-  respectively.
+  $-(180/\pi)\,\gamma_0/(\verb|passes_between_updates|\cdot \hat{V}\cos\phi_s)$, with $\hat{V}$
+  the per-turn RF voltage scaled to energy-kick units and $\phi_s$ the synchronous phase, is
+  used and a warning is printed noting that the estimate's sign is heuristic and should be
+  calibrated.  A warning is also printed if \verb|passes_between_updates| is large compared with
+  the synchrotron period, since a held phase offset then loses damping efficacy as the beam
+  re-phases (use a faster loop, i.e. a smaller \verb|passes_between_updates|).
+\item \verb|passes_between_updates| --- \textbf{Required.}  Number of turns the beam is tracked
+  per fast FOFB iteration (the readout ``tick'' length), and the interval between fast
+  steering/phase updates.  This replaces the use of \verb|run_control|'s \verb|n_passes|, which
+  this command ignores; the run stops with an error if \verb|passes_between_updates| is not set
+  to a positive value.
+\item \verb|rf_update_multiplier| --- Integer $\ge 1$ (default 1): the slow RF-frequency loop is
+  updated once every \verb|rf_update_multiplier| fast iterations, so its interval is
+  $\verb|rf_update_multiplier|\times\verb|passes_between_updates|$ turns.  Use a value $>1$ to
+  run the fast steering loop at a short step while giving the RF-frequency loop a slow interval
+  long enough for its synchrotron-period filter (see \verb|rf_bpm_filter_file|).  Has no effect
+  unless \verb|include_rf_frequency| is set.
+\item \verb|subtract_dispersion| --- \textbf{Deprecated} no-op (kept for backward
+  compatibility); setting it prints a warning.  The dispersive orbit is now partitioned
+  automatically: the RF-phase column owns it when \verb|include_rf_phase| is set, and otherwise
+  the correctors are made dispersion-blind whenever the RF-frequency loop is active.
+\item \verb|bpm_filter_file|, \verb|steering_filter_file|, \verb|rf_phase_filter_file|,
+  \verb|rf_frequency_filter_file| --- Optional SDDS files giving the digital-filter
+  (z-transform) coefficients for, respectively, the monitor readout and the step response of
+  each of the three actuators: the steering correctors, the RF-phase knob, and the RF-frequency
+  knob.  Each actuator filter is a separate file with its own filter state, modelling a
+  finite-bandwidth actuator that cannot slew to a commanded setpoint instantly; a unit-DC-gain
+  low-pass leaves the steady state unchanged and lags only the transient.  \verb|steering_filter_file|
+  applies one filter per steering corrector; \verb|rf_phase_filter_file| filters the RF-phase
+  actuator (meaningful only when \verb|include_rf_phase| is nonzero); and
+  \verb|rf_frequency_filter_file| filters the RF-frequency actuator (meaningful only when
+  \verb|include_rf_frequency| is nonzero).  A filter file set without its actuator's enabling
+  flag is ignored, with a warning.
+
+  Each filter file (including \verb|rf_bpm_filter_file| below) may contain \emph{several SDDS
+  pages}, in which case the pages form a \emph{cascade}: each page is one filter stage, the
+  output of one stage is the input to the next, and the value returned is the last stage's
+  output.  The net transfer function is the product $H(z)=\prod_k H_k(z)$ of the per-page
+  stages, so, for example, two cascaded unit-DC-gain one-pole low-passes give a steeper
+  two-pole roll-off while still leaving the steady state unchanged.  The number of
+  coefficients (rows) may differ from one stage to the next.  A file with a single page is a
+  single filter and behaves exactly as before.
 \item \verb|rf_bpm_filter_file| --- Optional SDDS file giving a \emph{separate} monitor-readout
   filter used \emph{only} by the RF-frequency actuator (horizontal plane); it is meaningful only
   when \verb|include_rf_frequency| is nonzero, and setting it otherwise stops the run with an
@@ -3534,9 +3619,10 @@ mutually exclusive (declaring both stops the run).
   gain} --- lowering \verb|rf_Ki| only slows the runaway, it does not stop it, so a shared filter
   cannot stabilize the combined loop.  Giving the frequency loop its own filter that averages over
   a synchrotron period (a one-synchrotron-period boxcar FIR nulls the $f_s$ line) lets it run
-  stably while steering keeps its short filter.  Internally the RF-frequency row's PID error is
-  taken from a second deadbeat solve (same response/inverse matrix) on the separately-filtered
-  horizontal BPM vector; the steering rows keep using the \verb|bpm_filter_file| vector.
+  stably while steering keeps its short filter.  Internally the RF-frequency loop has its own
+  single-column (dispersion-shaped) matrix and pseudo-inverse; its scalar PID error is taken
+  from a solve on this separately-filtered horizontal BPM vector, while the fast steering matrix
+  keeps using the \verb|bpm_filter_file| vector.
 \item \verb|output| --- Optional SDDS file recording per-iteration diagnostics (orbit rms
   in each plane, maximum corrector values, pegged-actuator flags, when the RF-frequency
   actuator is active the applied RF-frequency detuning \verb|DeltaFrf|, and when the RF-phase
@@ -4328,7 +4414,7 @@ at  $1.01 \sigma_x$ and $0.99\sigma_x$, and average the total effects.
 
 \begin{itemize}
 \item type: setup command.
-\item function: set up for modeling of residual gas ions.
+\item function: set up for modeling of beam interaction with residual gas ions.
 \item sequence: must follow \verb|run_setup|.
 \item Notes:
   \begin{enumerate}
@@ -4381,6 +4467,7 @@ at  $1.01 \sigma_x$ and $0.99\sigma_x$, and average the total effects.
           long ion_histogram_min_output_bins = 200;
           long ion_poisson_bins[2] = {0, 0};
           double ion_poisson_span[2] = {0, 0};
+          long include_ion_self_fields = 0;
           long disable_until_pass = 0;
           long freeze_ions_until_pass = 0;
           long freeze_electrons_until_pass = 0;
@@ -4507,11 +4594,12 @@ at  $1.01 \sigma_x$ and $0.99\sigma_x$, and average the total effects.
       \verb|IONEFFECTS| element. \verb|ion_histogram_output_interval| gives the interval in bunches between output.
     \item \verb|verbosity| --- Larger values result in more output during running. Used for debugging only.
     \item \verb|ion_poisson_bins| --- For the Poisson solver option, the number of bins in x and y.  For optimal speed, these should by the multiple of small primes.
-      \item \verb|ion_poisson_span| --- If nonzero, the Poisson equation is solved over this range (rather than the full \verb|ion_span|). 
+    \item \verb|ion_poisson_span| --- If nonzero, the Poisson equation is solved over this range (rather than the full \verb|ion_span|).
+\item \verb|include_ion_self_fields| --- If set to 1, ions are also kicked by their own fields (calculated by the Poisson solver). 
       
 \end{itemize}
 
-The user is strongly advised to study the ion histograms by using the \verb|ion_histogram_output| parameter to request
+For the histogram fitting methods, the user is strongly advised to study the ion histograms by using the \verb|ion_histogram_output| parameter to request
 this data.
 The histograms should not be excessively noisy.
 The data also includes the fits, which should be close to the data.
