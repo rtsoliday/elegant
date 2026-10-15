@@ -1413,28 +1413,44 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
 
+    /* didFlush tracks whether this call actually wrote data to the file.  The data is
+       only written to the file at the flush-interval cadence (or at the final sample);
+       on the other passes SDDS_SetRowValues merely updates the in-memory table.  fsync is
+       therefore only meaningful right after a flush -- fsyncing on every pass (the former
+       behavior) just re-synced unchanged file data, which under fast_orbit_feedback (one
+       dump per turn across many turns) dominated the run time. */
+    short didFlush = 0;
     if (sample == (totalPasses - 1) / watch->interval) {
       if (watch->flushInterval > 0) {
-        if (sample != watch->flushSample && !SDDS_UpdatePage(watch->SDDS_table, 0)) {
+        if (sample != watch->flushSample) {
+          if (!SDDS_UpdatePage(watch->SDDS_table, 0)) {
+            SDDS_SetError("Problem writing data for SDDS table (dump_watch_parameters)");
+            SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+          }
+          didFlush = 1;
+        }
+      } else {
+        if (!SDDS_WriteTable(watch->SDDS_table)) {
           SDDS_SetError("Problem writing data for SDDS table (dump_watch_parameters)");
           SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
         }
-      } else if (!SDDS_WriteTable(watch->SDDS_table)) {
-        SDDS_SetError("Problem writing data for SDDS table (dump_watch_parameters)");
-        SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+        didFlush = 1;
       }
     } else {
-      if (watch->flushInterval > 0 && sample % watch->flushInterval == 0 &&
-          !SDDS_UpdatePage(watch->SDDS_table, 0)) {
-        SDDS_SetError("Problem flushing data for SDDS table (dump_watch_parameters)");
-        SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+      if (watch->flushInterval > 0 && sample % watch->flushInterval == 0) {
+        if (!SDDS_UpdatePage(watch->SDDS_table, 0)) {
+          SDDS_SetError("Problem flushing data for SDDS table (dump_watch_parameters)");
+          SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+        }
+        didFlush = 1;
       }
       watch->flushSample = sample;
     }
 #ifdef USE_MPE
     MPE_Log_event(event1a, 0, "start watch"); /* record time spent on I/O operations */
 #endif
-    if (!inhibitFileSync)
+    /* fsync only when data was actually flushed this call (see didFlush above) */
+    if (didFlush && !inhibitFileSync)
       SDDS_DoFSync(watch->SDDS_table);
 #ifdef USE_MPE
     MPE_Log_event(event1b, 0, "end watch");

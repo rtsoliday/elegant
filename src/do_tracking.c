@@ -3559,7 +3559,7 @@ long do_tracking(
         fflush(stdout);
 #endif
 
-        if (!(flags & TEST_PARTICLES) && !(flags & INHIBIT_FILE_OUTPUT)) {
+        if (!(flags & TEST_PARTICLES) && !(flags & INHIBIT_FILE_OUTPUT) && !(flags & SUPPRESS_WATCH_FLUSH)) {
           eptr = beamline->elem;
           while (eptr) {
             if (eptr->type == T_WATCH) {
