@@ -45,6 +45,7 @@ SCRIPTS = analyzeMagnets \
 	radiationEnvelope \
 	removeBackDrifts \
 	reorganizeMmap \
+	sddsFilterResponse \
 	scaleRingErrors \
 	shower2elegant \
 	smoothDist6s \
