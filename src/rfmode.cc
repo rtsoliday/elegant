@@ -69,6 +69,7 @@ void track_through_rfmode(
   double VPrevious, tPrevious, phasePrevious;
   double clockNow = 0, clockOffsetPrevious = 0;
   double clockPhaseNow = 0, clockPhasePrevious = 0;
+  double clockPhaseGenNow = 0, genClockCorr = 0, clockPhaseResNow = 0;
   double V_sum, Vr_sum, Vi_sum, Vg_sum, Vgr_sum, Vgi_sum, Vci_sum, Vcr_sum, Vc_sum;
   double Q_sum;
   long n_summed, max_hist=0, n_occupied;
@@ -389,19 +390,38 @@ void track_through_rfmode(
       last_tmax = tmax;
 
       if (rfmode->driveFrequency > 0) {
-        /* handle generator voltage, cavity feedback */
+        /* handle generator voltage, cavity feedback. CHANGE_T-transparency: the beam times (tmean, t,
+           last_t) are CHANGE_T-reduced, but the generator tick clock (fbLastTickTime/fbNextTickTime)
+           advances by fixed updateInterval/driveFrequency steps and would be absolute.  Keep it REDUCED
+           by subtracting the across-call tracking-clock increment each call, so it wraps with the beam:
+           then the scheduling and intervals are reduced-vs-reduced and the carrier dt stays bounded, with
+           genClockCorr (reduce-then-scale) supplying the accumulated-wrap phase.  offsetNow/clockPhase*Now
+           are constant within a step. */
+        double offsetNow = trackingClockOffset();
+        clockPhaseGenNow = trackingClockPhase(PIx2 * rfmode->driveFrequency);
+        clockPhaseResNow = trackingClockPhase(PIx2 * rfmode->freq); /* omegaRes clock phase: beam-induced-at-tick + snapshots */
         if (!rfmode->fbRunning) {
           /* This next statement phases the generator to the first bunch at the desired phase */
           rfmode->tGenerator = rfmode->fbLastTickTime = tmean - (rfmode->readOffset + 0.5) / rfmode->driveFrequency;
           rfmode->fbNextTickTime = rfmode->fbLastTickTime + rfmode->updateInterval / rfmode->driveFrequency;
           rfmode->fbNextTickTimeError = 0;
           rfmode->fbRunning = 1;
+          rfmode->clockPhaseGenerator = clockPhaseGenNow; /* anchor: correction zero here */
+          rfmode->fbClockOffsetPrev = offsetNow;          /* anchor: no reduction on the init call */
+        } else {
+          /* reduce the tick clock by the time CHANGE_T removed since the previous call, so it stays
+             bounded and wraps in lockstep with the reduced beam time */
+          double dClk = offsetNow - rfmode->fbClockOffsetPrev;
+          rfmode->fbLastTickTime -= dClk;
+          rfmode->fbNextTickTime -= dClk;
+          rfmode->fbClockOffsetPrev = offsetNow;
         }
+        genClockCorr = clockPhaseGenNow - rfmode->clockPhaseGenerator;
         while (tmean > rfmode->fbNextTickTime) {
           /* Need to advance the generator phasors to the next sample time before handling this bunch */
           double Vrl, Vil, omegaDrive, omegaRes, dt, Vgr, Vgi, Vbr, Vbi;
           double IgAmp, IgPhase;
-          double VI, VQ;
+          double VI, VQ, genPhase;
 
 #ifdef DEBUG
           printf("Advancing feedback ticks\n");
@@ -422,10 +442,12 @@ void track_through_rfmode(
           omegaDrive = PIx2 * rfmode->driveFrequency;
           Q = rfmode->Q / (1 + rfmode->beta);
           tau = 2 * Q / omegaRes;
-          /* - Calculate beam-induced voltage components (real, imag). */
+          /* - Calculate beam-induced voltage components (real, imag). CHANGE_T: fbLastTickTime and last_t
+             are both reduced, so dt is a bounded in-frame interval; add the removed time for the true
+             elapsed (damping) and the omegaRes clock-phase delta for the true phase (reduce-then-scale). */
           dt = rfmode->fbLastTickTime - rfmode->last_t;
-          phase = rfmode->last_phase + omegaRes * dt;
-          damping_factor = exp(-dt / tau);
+          phase = rfmode->last_phase + omegaRes * dt + (clockPhaseResNow - rfmode->last_clockPhaseRes);
+          damping_factor = exp(-(dt + (offsetNow - rfmode->last_clockOffset)) / tau);
 #ifdef DEBUG
           printf("Advancing beamloading from %21.15le to %21.15le, tau = %le, DF=%le\n", rfmode->last_t, rfmode->fbLastTickTime, tau, damping_factor);
           printf("Before: Vb=%le\n", rfmode->V);
@@ -434,47 +456,48 @@ void track_through_rfmode(
           Vil = (Vbi = damping_factor * rfmode->V * sin(phase));
           /* - Add generator voltage components (real, imag) */
           dt = rfmode->fbLastTickTime - rfmode->tGenerator;
-          Vrl += (Vgr = rfmode->Viq->a[0][0] * cos(omegaDrive * dt) - rfmode->Viq->a[1][0] * sin(omegaDrive * dt));
-          Vil += (Vgi = rfmode->Viq->a[0][0] * sin(omegaDrive * dt) + rfmode->Viq->a[1][0] * cos(omegaDrive * dt));
+          genPhase = omegaDrive * dt + genClockCorr; /* CHANGE_T-transparent generator carrier phase */
+          Vrl += (Vgr = rfmode->Viq->a[0][0] * cos(genPhase) - rfmode->Viq->a[1][0] * sin(genPhase));
+          Vil += (Vgi = rfmode->Viq->a[0][0] * sin(genPhase) + rfmode->Viq->a[1][0] * cos(genPhase));
 
           /* - Compute total voltage amplitude and phase */
           V = sqrt(Vrl * Vrl + Vil * Vil);
           rfmode->fbVCavity = V;
           phase = atan2(Vil, Vrl);
-          VI = cos(omegaDrive * dt) * Vrl + sin(omegaDrive * dt) * Vil;
-          VQ = -sin(omegaDrive * dt) * Vrl + cos(omegaDrive * dt) * Vil;
+          VI = cos(genPhase) * Vrl + sin(genPhase) * Vil;
+          VQ = -sin(genPhase) * Vrl + cos(genPhase) * Vil;
 
           /* parametric receiver noise */
           if (rfmode->nNoise[I_NOISE_ALPHA_V] || rfmode->nNoise[I_NOISE_PHI_V]) {
             if (rfmode->nNoise[I_NOISE_ALPHA_V]) {
               /* amplitude */
-              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_ALPHA_V], rfmode->nNoise[I_NOISE_ALPHA_V], rfmode->fbLastTickTime);
-              V *= 1 + linear_interpolation(rfmode->fNoise[I_NOISE_ALPHA_V], rfmode->tNoise[I_NOISE_ALPHA_V], rfmode->nNoise[I_NOISE_ALPHA_V], rfmode->fbLastTickTime, ib);
+              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_ALPHA_V], rfmode->nNoise[I_NOISE_ALPHA_V], (rfmode->fbLastTickTime + offsetNow));
+              V *= 1 + linear_interpolation(rfmode->fNoise[I_NOISE_ALPHA_V], rfmode->tNoise[I_NOISE_ALPHA_V], rfmode->nNoise[I_NOISE_ALPHA_V], (rfmode->fbLastTickTime + offsetNow), ib);
             }
             if (rfmode->nNoise[I_NOISE_PHI_V]) {
               /* phase */
-              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_PHI_V], rfmode->nNoise[I_NOISE_PHI_V], rfmode->fbLastTickTime);
-              phase += linear_interpolation(rfmode->fNoise[I_NOISE_PHI_V], rfmode->tNoise[I_NOISE_PHI_V], rfmode->nNoise[I_NOISE_PHI_V], rfmode->fbLastTickTime, ib);
+              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_PHI_V], rfmode->nNoise[I_NOISE_PHI_V], (rfmode->fbLastTickTime + offsetNow));
+              phase += linear_interpolation(rfmode->fNoise[I_NOISE_PHI_V], rfmode->tNoise[I_NOISE_PHI_V], rfmode->nNoise[I_NOISE_PHI_V], (rfmode->fbLastTickTime + offsetNow), ib);
             }
             Vrl = V * cos(phase);
             Vil = V * sin(phase);
-            VI = cos(omegaDrive * dt) * Vrl + sin(omegaDrive * dt) * Vil;
-            VQ = -sin(omegaDrive * dt) * Vrl + cos(omegaDrive * dt) * Vil;
+            VI = cos(genPhase) * Vrl + sin(genPhase) * Vil;
+            VQ = -sin(genPhase) * Vrl + cos(genPhase) * Vil;
           }
           /* additive receiver noise */
           if (rfmode->nNoise[I_NOISE_I_V] || rfmode->nNoise[I_NOISE_Q_V]) {
             if (rfmode->nNoise[I_NOISE_I_V]) {
               /* In-phase */
-              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_I_V], rfmode->nNoise[I_NOISE_I_V], rfmode->fbLastTickTime);
-              VI += linear_interpolation(rfmode->fNoise[I_NOISE_I_V], rfmode->tNoise[I_NOISE_I_V], rfmode->nNoise[I_NOISE_I_V], rfmode->fbLastTickTime, ib);
+              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_I_V], rfmode->nNoise[I_NOISE_I_V], (rfmode->fbLastTickTime + offsetNow));
+              VI += linear_interpolation(rfmode->fNoise[I_NOISE_I_V], rfmode->tNoise[I_NOISE_I_V], rfmode->nNoise[I_NOISE_I_V], (rfmode->fbLastTickTime + offsetNow), ib);
             }
             if (rfmode->nNoise[I_NOISE_Q_V]) {
               /* Quadrature */
-              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_Q_V], rfmode->nNoise[I_NOISE_Q_V], rfmode->fbLastTickTime);
-              VQ += linear_interpolation(rfmode->fNoise[I_NOISE_Q_V], rfmode->tNoise[I_NOISE_Q_V], rfmode->nNoise[I_NOISE_Q_V], rfmode->fbLastTickTime, ib);
+              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_Q_V], rfmode->nNoise[I_NOISE_Q_V], (rfmode->fbLastTickTime + offsetNow));
+              VQ += linear_interpolation(rfmode->fNoise[I_NOISE_Q_V], rfmode->tNoise[I_NOISE_Q_V], rfmode->nNoise[I_NOISE_Q_V], (rfmode->fbLastTickTime + offsetNow), ib);
             }
-            Vrl = VI * cos(omegaDrive * dt) - VQ * sin(omegaDrive * dt);
-            Vil = VI * sin(omegaDrive * dt) + VQ * cos(omegaDrive * dt);
+            Vrl = VI * cos(genPhase) - VQ * sin(genPhase);
+            Vil = VI * sin(genPhase) + VQ * cos(genPhase);
             V = sqrt(Vrl * Vrl + Vil * Vil);
             phase = atan2(Vil, Vrl);
           }
@@ -540,13 +563,13 @@ void track_through_rfmode(
           if (rfmode->nNoise[I_NOISE_ALPHA_GEN] || rfmode->nNoise[I_NOISE_PHI_GEN]) {
             if (rfmode->nNoise[I_NOISE_ALPHA_GEN]) {
               /* amplitude */
-              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_ALPHA_GEN], rfmode->nNoise[I_NOISE_ALPHA_GEN], rfmode->fbLastTickTime);
-              IgAmp *= 1 + linear_interpolation(rfmode->fNoise[I_NOISE_ALPHA_GEN], rfmode->tNoise[I_NOISE_ALPHA_GEN], rfmode->nNoise[I_NOISE_ALPHA_GEN], rfmode->fbLastTickTime, ib);
+              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_ALPHA_GEN], rfmode->nNoise[I_NOISE_ALPHA_GEN], (rfmode->fbLastTickTime + offsetNow));
+              IgAmp *= 1 + linear_interpolation(rfmode->fNoise[I_NOISE_ALPHA_GEN], rfmode->tNoise[I_NOISE_ALPHA_GEN], rfmode->nNoise[I_NOISE_ALPHA_GEN], (rfmode->fbLastTickTime + offsetNow), ib);
             }
             if (rfmode->nNoise[I_NOISE_PHI_GEN]) {
               /* phase */
-              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_PHI_GEN], rfmode->nNoise[I_NOISE_PHI_GEN], rfmode->fbLastTickTime);
-              IgPhase += linear_interpolation(rfmode->fNoise[I_NOISE_PHI_GEN], rfmode->tNoise[I_NOISE_PHI_GEN], rfmode->nNoise[I_NOISE_PHI_GEN], rfmode->fbLastTickTime, ib);
+              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_PHI_GEN], rfmode->nNoise[I_NOISE_PHI_GEN], (rfmode->fbLastTickTime + offsetNow));
+              IgPhase += linear_interpolation(rfmode->fNoise[I_NOISE_PHI_GEN], rfmode->tNoise[I_NOISE_PHI_GEN], rfmode->nNoise[I_NOISE_PHI_GEN], (rfmode->fbLastTickTime + offsetNow), ib);
             }
             /* Calculate updated I/Q components for generator current */
             rfmode->Iiq->a[0][0] = IgAmp * cos(IgPhase);
@@ -556,13 +579,13 @@ void track_through_rfmode(
             /* Additive generator noise */
             if (rfmode->nNoise[I_NOISE_I_GEN]) {
               /* In-phase */
-              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_I_GEN], rfmode->nNoise[I_NOISE_I_GEN], rfmode->fbLastTickTime);
-              rfmode->Iiq->a[0][0] += linear_interpolation(rfmode->fNoise[I_NOISE_I_GEN], rfmode->tNoise[I_NOISE_I_GEN], rfmode->nNoise[I_NOISE_I_GEN], rfmode->fbLastTickTime, ib);
+              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_I_GEN], rfmode->nNoise[I_NOISE_I_GEN], (rfmode->fbLastTickTime + offsetNow));
+              rfmode->Iiq->a[0][0] += linear_interpolation(rfmode->fNoise[I_NOISE_I_GEN], rfmode->tNoise[I_NOISE_I_GEN], rfmode->nNoise[I_NOISE_I_GEN], (rfmode->fbLastTickTime + offsetNow), ib);
             }
             if (rfmode->nNoise[I_NOISE_Q_GEN]) {
               /* Quadrature */
-              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_Q_GEN], rfmode->nNoise[I_NOISE_Q_GEN], rfmode->fbLastTickTime);
-              rfmode->Iiq->a[1][0] += linear_interpolation(rfmode->fNoise[I_NOISE_Q_GEN], rfmode->tNoise[I_NOISE_Q_GEN], rfmode->nNoise[I_NOISE_Q_GEN], rfmode->fbLastTickTime, ib);
+              ib = find_nearby_array_entry(rfmode->tNoise[I_NOISE_Q_GEN], rfmode->nNoise[I_NOISE_Q_GEN], (rfmode->fbLastTickTime + offsetNow));
+              rfmode->Iiq->a[1][0] += linear_interpolation(rfmode->fNoise[I_NOISE_Q_GEN], rfmode->tNoise[I_NOISE_Q_GEN], rfmode->nNoise[I_NOISE_Q_GEN], (rfmode->fbLastTickTime + offsetNow), ib);
             }
             IgAmp = sqrt(sqr(rfmode->Iiq->a[0][0]) + sqr(rfmode->Iiq->a[1][0]));
             IgPhase = atan2(rfmode->Iiq->a[1][0], rfmode->Iiq->a[0][0]);
@@ -580,7 +603,7 @@ void track_through_rfmode(
               }
               if (!SDDS_SetRowValues(rfmode->SDDSfbrec, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                                      rfmode->fbSample,
-                                     (char *)"Pass", pass, (char *)"t", rfmode->fbLastTickTime,
+                                     (char *)"Pass", pass, (char *)"t", rfmode->fbLastTickTime + offsetNow,
                                      (char *)"fResonance", rfmode->freq,
                                      (char *)"fDrive", rfmode->driveFrequency,
                                      (char *)"VbReal", Vbr, (char *)"VbImag", Vbi,
@@ -678,19 +701,25 @@ void track_through_rfmode(
         V_sum = Vr_sum = Vi_sum = Q_sum = Vg_sum = Vgr_sum = Vgi_sum = Vci_sum = Vcr_sum = Vc_sum = 0;
         n_summed = max_hist = n_occupied = 0;
 
-        /* find frequency and Q at this time */
+        /* find frequency and Q at this time.  The waveform tables are keyed in true
+           laboratory time, but tmean is CHANGE_T-reduced, so the tracking-clock offset
+           must be added back; without it the ramps freeze near t=0 under CHANGE_T.  A
+           single shared lookup time keeps the frequency and Q tables from drifting
+           apart.  The offset is 0 (hence bit-identical) when neither CHANGE_T nor
+           step_frequency is in use, and is identical on every MPI rank. */
+        double tLookup = tmean + trackingClockOffset();
         omega = PIx2 * rfmode->freq;
         if (rfmode->nFreq) {
           double omegaFactor;
-          ib = find_nearby_array_entry(rfmode->tFreq, rfmode->nFreq, tmean);
-          omega *= (omegaFactor = linear_interpolation(rfmode->fFreq, rfmode->tFreq, rfmode->nFreq, tmean, ib));
+          ib = find_nearby_array_entry(rfmode->tFreq, rfmode->nFreq, tLookup);
+          omega *= (omegaFactor = linear_interpolation(rfmode->fFreq, rfmode->tFreq, rfmode->nFreq, tLookup, ib));
           /* keeps stored energy constant for constant R/Q */
           rfmode->V *= sqrt(omegaFactor);
         }
         Q = rfmode->Q / (1 + rfmode->beta);
         if (rfmode->nQ) {
-          ib = find_nearby_array_entry(rfmode->tQ, rfmode->nQ, tmean);
-          Q *= linear_interpolation(rfmode->fQ, rfmode->tQ, rfmode->nQ, tmean, ib);
+          ib = find_nearby_array_entry(rfmode->tQ, rfmode->nQ, tLookup);
+          Q *= linear_interpolation(rfmode->fQ, rfmode->tQ, rfmode->nQ, tLookup, ib);
         }
       }
 #if (!USE_MPI)
@@ -737,6 +766,7 @@ void track_through_rfmode(
         rfmode->last_t = tmin + 0.5 * dt;
         rfmode->last_clockOffset = clockNow;
         rfmode->last_clockPhase = clockPhaseNow;
+        rfmode->last_clockPhaseRes = clockPhaseResNow;
       }
     }
 
@@ -889,6 +919,7 @@ void track_through_rfmode(
         rfmode->last_t = t;
         rfmode->last_clockOffset = clockNow;
         rfmode->last_clockPhase = clockPhaseNow;
+        rfmode->last_clockPhaseRes = clockPhaseResNow;
         rfmode->last_phase = phase;
         rfmode->V = V = rfmode->V * damping_factor;
         rfmode->Vr = V * cos(phase);
@@ -907,11 +938,12 @@ void track_through_rfmode(
 
         if (rfmode->driveFrequency > 0) {
           /* add generator-induced voltage */
-          double Vr, Vi, dt;
+          double Vr, Vi, dt, genPhase;
           dt = t - rfmode->tGenerator;
+          genPhase = PIx2 * rfmode->driveFrequency * dt + genClockCorr; /* CHANGE_T-transparent carrier */
           Vg_sum += Ihist[ib] * sqrt(sqr(rfmode->Mt3->a[0][0]) + sqr(rfmode->Mt3->a[1][0]));
-          Vr = rfmode->Mt3->a[0][0] * cos(PIx2 * rfmode->driveFrequency * dt) - rfmode->Mt3->a[1][0] * sin(PIx2 * rfmode->driveFrequency * dt);
-          Vi = rfmode->Mt3->a[0][0] * sin(PIx2 * rfmode->driveFrequency * dt) + rfmode->Mt3->a[1][0] * cos(PIx2 * rfmode->driveFrequency * dt);
+          Vr = rfmode->Mt3->a[0][0] * cos(genPhase) - rfmode->Mt3->a[1][0] * sin(genPhase);
+          Vi = rfmode->Mt3->a[0][0] * sin(genPhase) + rfmode->Mt3->a[1][0] * cos(genPhase);
           Vbin[ib] += Vr;
           Vgi_sum += Ihist[ib] * Vi;
           Vgr_sum += Ihist[ib] * Vr;
@@ -1093,7 +1125,7 @@ void track_through_rfmode(
                                (char *)"FractionBinned", np_total ? (1.0 * n_binned) / np_total : 0.0,
                                (char *)"VPostBeam", rfmode->V,
                                (char *)"PhasePostBeam", rfmode->last_phase,
-                               (char *)"tPostBeam", rfmode->last_t,
+                               (char *)"tPostBeam", rfmode->last_t + trackingClockOffset(),
                                (char *)"V", n_summed ? V_sum / n_summed : 0.0,
                                (char *)"VReal", n_summed ? Vr_sum / n_summed : 0.0,
                                (char *)"Phase", n_summed ? atan2(Vi_sum / n_summed, Vr_sum / n_summed) : 0.0,
@@ -1210,6 +1242,8 @@ void set_up_rfmode(RFMODE *rfmode, char *element_name, double element_z, long n_
   rfmode->V = rfmode->Vr = rfmode->Vi = rfmode->last_t = rfmode->last_phase = rfmode->last_omega = rfmode->last_Q = 0;
   rfmode->last_clockOffset = 0;
   rfmode->last_clockPhase = 0;
+  rfmode->last_clockPhaseRes = 0;
+  rfmode->clockPhaseGenerator = 0; /* re-anchored when the generator first runs */
 
   rfmode->initialized = 1;
   if (rfmode->pass_interval <= 0)
@@ -1275,7 +1309,7 @@ void set_up_rfmode(RFMODE *rfmode, char *element_name, double element_z, long n_
             SDDS_DefineColumn(rfmode->SDDSrec, (char *)"Phase", NULL, (char *)"rad", (char *)"Phase of beam-induced voltage", NULL, SDDS_DOUBLE, 0) < 0 ||
             SDDS_DefineColumn(rfmode->SDDSrec, (char *)"VPostBeam", NULL, (char *)"V", (char *)"Beam-induced voltage after bunch passage", NULL, SDDS_DOUBLE, 0) < 0 ||
             SDDS_DefineColumn(rfmode->SDDSrec, (char *)"PhasePostBeam", NULL, (char *)"rad", (char *)"Phase of beam-induced voltage after bunch passage", NULL, SDDS_DOUBLE, 0) < 0 ||
-            SDDS_DefineColumn(rfmode->SDDSrec, (char *)"tPostBeam", NULL, (char *)"s", (char *)"Time at which VPostBeam and PhasePostBeam hold", NULL, SDDS_DOUBLE, 0) < 0 ||
+            SDDS_DefineColumn(rfmode->SDDSrec, (char *)"tPostBeam", NULL, (char *)"s", (char *)"Time at which VPostBeam and PhasePostBeam hold (laboratory time, including any time removed by CHANGE_T)", NULL, SDDS_DOUBLE, 0) < 0 ||
             SDDS_DefineColumn(rfmode->SDDSrec, (char *)"Charge", NULL, (char *)"C", (char *)"Bunch charge", NULL, SDDS_DOUBLE, 0) < 0 ||
             (rfmode->driveFrequency > 0 &&
              (SDDS_DefineColumn(rfmode->SDDSrec, (char *)"VGenerator", NULL, (char *)"V", (char *)"Generator voltage", NULL, SDDS_DOUBLE, 0) < 0 ||
@@ -1373,6 +1407,8 @@ void set_up_rfmode(RFMODE *rfmode, char *element_name, double element_z, long n_
      record the matching clock offset so the first advance sees no macro gap. */
   rfmode->last_clockOffset = trackingClockOffset();
   rfmode->last_clockPhase = 0; /* omega not known here; first advance sees V=0 so any residual is harmless, then it is snapshotted with the real omega */
+  rfmode->last_clockPhaseRes = 0;
+  rfmode->clockPhaseGenerator = 0; /* re-anchored when the generator first runs */
   rfmode->tFreq = rfmode->fFreq = NULL;
   rfmode->nFreq = 0;
   if (rfmode->fwaveform) {
@@ -1467,6 +1503,7 @@ void set_up_rfmode(RFMODE *rfmode, char *element_name, double element_z, long n_
     rfmode->fbRunning = 0;
     rfmode->fbNextTickTime = 0;
     rfmode->fbLastTickTime = 0;
+    rfmode->fbClockOffsetPrev = 0;
 
     /* Read FB filters */
     rfmode->nAmplitudeFilters = rfmode->nPhaseFilters = rfmode->nIFilters = rfmode->nQFilters = 0;
@@ -1585,19 +1622,25 @@ void runBinlessRfMode(
   V_sum = Vr_sum = phase_sum = Vc = Vcr = Q_sum = Vb_sum = 0;
   n_summed = max_hist = n_occupied = 0;
 
-  /* find frequency and Q at this time */
+  /* find frequency and Q at this time.  The waveform tables are keyed in true
+     laboratory time, but tmean is CHANGE_T-reduced, so the tracking-clock offset
+     must be added back; without it the ramps freeze near t=0 under CHANGE_T.  A
+     single shared lookup time keeps the frequency and Q tables from drifting
+     apart.  The offset is 0 (hence bit-identical) when neither CHANGE_T nor
+     step_frequency is in use, and is identical on every MPI rank. */
+  double tLookup = tmean + trackingClockOffset();
   omega = PIx2 * rfmode->freq;
   if (rfmode->nFreq) {
     double omegaFactor;
-    ib = find_nearby_array_entry(rfmode->tFreq, rfmode->nFreq, tmean);
-    omega *= (omegaFactor = linear_interpolation(rfmode->fFreq, rfmode->tFreq, rfmode->nFreq, tmean, ib));
+    ib = find_nearby_array_entry(rfmode->tFreq, rfmode->nFreq, tLookup);
+    omega *= (omegaFactor = linear_interpolation(rfmode->fFreq, rfmode->tFreq, rfmode->nFreq, tLookup, ib));
     /* keeps stored energy constant for constant R/Q */
     rfmode->V *= sqrt(omegaFactor);
   }
   Q = rfmode->Q / (1 + rfmode->beta);
   if (rfmode->nQ) {
-    ib = find_nearby_array_entry(rfmode->tQ, rfmode->nQ, tmean);
-    Q *= linear_interpolation(rfmode->fQ, rfmode->tQ, rfmode->nQ, tmean, ib);
+    ib = find_nearby_array_entry(rfmode->tQ, rfmode->nQ, tLookup);
+    Q *= linear_interpolation(rfmode->fQ, rfmode->tQ, rfmode->nQ, tLookup, ib);
   }
   if (Q < 0.5) {
     printf((char *)"The effective Q<=0.5 for RFMODE.  Use the ZLONGIT element.\n");
@@ -1678,7 +1721,7 @@ void runBinlessRfMode(
                              (char *)"Pass", pass, (char *)"NumberOccupied", n_occupied,
                              (char *)"FractionBinned", 1.0,
                              (char *)"VPostBeam", rfmode->V, (char *)"PhasePostBeam", rfmode->last_phase,
-                             (char *)"tPostBeam", rfmode->last_t,
+                             (char *)"tPostBeam", rfmode->last_t + trackingClockOffset(),
                              (char *)"V", n_summed ? V_sum / n_summed : 0.0,
                              (char *)"VReal", n_summed ? Vr_sum / n_summed : 0.0,
                              (char *)"Phase", n_summed ? phase_sum / n_summed : 0.0,
