@@ -2943,6 +2943,9 @@ typedef struct {
     double last_Q;             /* loaded Q at t=last_t */
     double last_clockOffset;   /* trackingClockOffset() at t=last_t; damping uses true elapsed time = (t-last_t)+(clockNow-last_clockOffset) */
     double last_clockPhase;    /* trackingClockPhase(omega) at t=last_t; phase advance adds (clockPhaseNow-last_clockPhase) for a non-harmonic mode */
+    double last_clockPhaseRes; /* trackingClockPhase(2*pi*freq) at t=last_t; the feedback-tick beam-induced
+                                  reconstruction advances at omegaRes (un-Q-shifted), so it adds its own
+                                  (clockPhaseResNow-last_clockPhaseRes) rather than reusing last_clockPhase */
     /* generator- and feedback-related data, see T. Berenc RF-TN-2015-001 */
     double setpointAdjustment, fbVCavity;
     double lambdaA;          /* 2/((Ra/Q)*Qloaded) */
@@ -2963,6 +2966,12 @@ typedef struct {
     double fbNextTickTime;   /* time at which next FB tick will occur */
     double fbNextTickTimeError; /* Used with Kahan sum rule to reduce error */
     double tGenerator;       /* reference time for the generator voltage */
+    double clockPhaseGenerator; /* trackingClockPhase(2*pi*driveFrequency) anchored when tGenerator was
+                                   set; the generator carrier adds (current - this) so CHANGE_T's
+                                   whole-period removal is transparent to the applied carrier phase */
+    double fbClockOffsetPrev; /* trackingClockOffset() as of the previous RFMODE call; fbLastTickTime and
+                                 fbNextTickTime are reduced by the across-call increment each call so they
+                                 wrap with the beam under CHANGE_T (reduced-vs-reduced tick scheduling) */
     short fbRunning;         /* if non-zero, fbFirstTickTime has been set */
     /* frequency table */
     double *tFreq, *fFreq;
