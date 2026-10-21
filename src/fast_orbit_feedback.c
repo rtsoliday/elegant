@@ -110,10 +110,11 @@ long fofbOffsetMomentumAlso(void) { return fofbOffsetMomentumAlsoFlag; }
 /* ------------------------------------------------------------------ */
 /* FOFB-owned steering-element intake: routed here from add_steering_element when a
    &steering_element command sets target="fast_orbit_feedback".  item=FREQ selects
-   RF cavities for the joint RF-frequency knob; item=PHASE (or DELTA_PHASE) selects RF
-   cavities for the RF-phase energy actuator (a separate scalar loop) -- which always drives
-   the cavity's additive DELTA_PHASE channel, leaving PHASE free for injected phase errors;
-   anything else is a plane corrector. */
+   RF cavities for the joint RF-frequency knob; item=PHASE/DELTA_PHASE/PHASE_SETPOINT selects
+   RF cavities for the RF-phase energy actuator (a separate scalar loop).  PHASE and DELTA_PHASE
+   drive an RFCA's additive DELTA_PHASE channel (leaving PHASE free for injected phase errors);
+   PHASE_SETPOINT drives an RFMODE's generator/feedback phase setpoint directly.  Anything else
+   is a plane corrector. */
 
 long fofbAddSteerElem(long plane, char *name, char *item, char *element_type, double tweek, double limit,
                       long start_occurence, long end_occurence, long occurence_step,
@@ -125,16 +126,17 @@ long fofbAddSteerElem(long plane, char *name, char *item, char *element_type, do
                                     beamline, run, 0, verbose);
     if (found)
       fofbRFDeclared = 1;
-  } else if (item && (strcmp(item, "PHASE") == 0 || strcmp(item, "DELTA_PHASE") == 0)) {
-    /* "PHASE"/"DELTA_PHASE" both select the RF-phase energy actuator, which drives the cavity's
-       additive DELTA_PHASE (not PHASE).  Pass a mutable copy -- add_steer_elem_to_lists
-       uppercases its item argument in place. */
-    char *dphaseItem;
-    cp_str(&dphaseItem, "DELTA_PHASE");
-    found = add_steer_elem_to_lists(&fofbRFPhasesl, plane, name, dphaseItem, element_type, tweek, limit,
+  } else if (item && (strcmp(item, "PHASE") == 0 || strcmp(item, "DELTA_PHASE") == 0 ||
+                      strcmp(item, "PHASE_SETPOINT") == 0)) {
+    /* All three select the RF-phase energy actuator.  "PHASE"/"DELTA_PHASE" drive an RFCA's additive
+       DELTA_PHASE (not PHASE); "PHASE_SETPOINT" drives an RFMODE's phase setpoint literally.  Pass a
+       mutable copy -- add_steer_elem_to_lists uppercases its item argument in place. */
+    char *phaseItem;
+    cp_str(&phaseItem, strcmp(item, "PHASE_SETPOINT") == 0 ? "PHASE_SETPOINT" : "DELTA_PHASE");
+    found = add_steer_elem_to_lists(&fofbRFPhasesl, plane, name, phaseItem, element_type, tweek, limit,
                                     start_occurence, end_occurence, occurence_step, s_start, s_end,
                                     beamline, run, 0, verbose);
-    free(dphaseItem);
+    free(phaseItem);
     if (found)
       fofbRFPhaseDeclared = 1;
   } else {
@@ -427,6 +429,36 @@ static void buildRFMatrix(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Return an RF-phase actuator element's drive voltage (V), synchronous phase (deg), and RF
+   frequency (Hz), reading the fields appropriate to its type.  RFCA drives its additive
+   DELTA_PHASE about PHASE (volt/phase/freq); an RFMODE drives PHASE_SETPOINT, the target of
+   its internal generator/direct-RF-feedback loop, whose realized total cavity voltage/phase at
+   FOFB (sub-feedback-bandwidth) timescales track voltageSetpoint/phaseSetpoint, with the RF
+   frequency given by driveFrequency.  PHASE_SETPOINT shares RFCA PHASE's V*sin(phi) convention
+   (rfmode.cc converts sin->cos internally at set-up), so the same V*cos(phi) energy-response form
+   applies.  Bombs on any other element type. */
+
+static void fofbCavityDrive(ELEMENT_LIST *e, double *volt, double *phaseDeg, double *freq) {
+  if (e->type == T_RFCA) {
+    RFCA *r = (RFCA *)e->p_elem;
+    *volt = r->volt;
+    *phaseDeg = r->phase;
+    *freq = r->freq;
+  } else if (e->type == T_RFMODE) {
+    RFMODE *r = (RFMODE *)e->p_elem;
+    /* One RFMODE occurrence can represent N_CAVITIES identical cavities: the energy kick is
+       n_cavities*V (rfmode.cc), so the per-degree energy authority -- and hence the voltage that
+       enters sum(V*cos(phi_s)) -- is n_cavities*V_SETPOINT, not the per-cavity V_SETPOINT. */
+    *volt = r->voltageSetpoint * (r->n_cavities > 0 ? r->n_cavities : 1);
+    *phaseDeg = r->phaseSetpoint;
+    *freq = r->driveFrequency;
+  } else
+    bombElegantVA("fast_orbit_feedback: element %s is not a supported RF-phase actuator "
+                  "(only RFCA with DELTA_PHASE or RFMODE with PHASE_SETPOINT).\n",
+                  e->name ? e->name : "?");
+}
+
+/* ------------------------------------------------------------------ */
 /* Append the RF-phase energy actuator as the last column of the fast response matrix
    CM->C.  Over a sub-synchrotron-period step a held phase offset gives a meaningful
    energy/orbit response linearized about the synchronous phase: a command Delta-phi (deg)
@@ -440,8 +472,7 @@ static void appendPhaseActuator(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline
   CORMON_DATA *CM = &plane->CM;
   long nSteer = CM->ncor, nmon = CM->nmon, i, j, k;
   double *phasecol, sC = 0, sP = 0, rmsC, rmsP, s_phase;
-  double sumVcosV, sumVabsV, voltScaledSum, cosEff;
-  RFCA *rfca0;
+  double sumVcosV, sumVabsV, voltScaledSum, cosEff, rf0freq = 0;
   MAT *Caug;
 
   /* resolve the cavity list: declared entries, else auto-add every RFCA (mutable
@@ -472,6 +503,42 @@ static void appendPhaseActuator(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline
     plane->rfBasePhase[k] = *((double *)(fofbRFPhasesl.elem[k]->p_elem + fofbRFPhasesl.param_offset[k]));
   }
 
+  /* Validate the actuator element types.  RFCA (DELTA_PHASE) and RFMODE (PHASE_SETPOINT) are
+     supported; any other type would misread fields below and write a meaningless parameter.  An
+     RFMODE only honors PHASE_SETPOINT when its generator/feedback path is active (DRIVE_FREQUENCY>0),
+     so reject an inert one explicitly rather than let the loop silently lose authority. */
+  for (k = 0; k < plane->nRFPhase; k++) {
+    ELEMENT_LIST *e = plane->rfPhaseElem[k];
+    if (e->type != T_RFCA && e->type != T_RFMODE)
+      bombElegantVA("fast_orbit_feedback: element %s is not a supported RF-phase actuator "
+                    "(only RFCA with DELTA_PHASE or RFMODE with PHASE_SETPOINT).\n",
+                    e->name ? e->name : "?");
+    if (e->type == T_RFMODE) {
+      RFMODE *rf = (RFMODE *)e->p_elem;
+      /* PHASE_SETPOINT is only consumed during tracking by RFMODE's generator/feedback path, and
+         then only when phase feedback is actually running: it is re-read in the amplitude/phase
+         branch (needs a PHASE_FILTER on top of an AMPLITUDE_FILTER) and in the I/Q branch (needs an
+         IN_PHASE_FILTER or QUADRATURE_FILTER).  With the generator off (DRIVE_FREQUENCY<=0) or no
+         phase feedback configured, the per-turn PHASE_SETPOINT write is silently ignored and the
+         loop would run with phantom authority -- so reject/flag that up front. */
+      long haveAmp = rf->amplitudeFilterFile && rf->amplitudeFilterFile[0];
+      long havePhase = rf->phaseFilterFile && rf->phaseFilterFile[0];
+      long haveIQ = (rf->IFilterFile && rf->IFilterFile[0]) || (rf->QFilterFile && rf->QFilterFile[0]);
+      long phaseFB = haveAmp ? havePhase : haveIQ;
+      if (rf->driveFrequency <= 0)
+        bombElegantVA("fast_orbit_feedback: RFMODE %s is used as an RF-phase actuator but has "
+                      "DRIVE_FREQUENCY<=0, so PHASE_SETPOINT has no effect (the generator path is "
+                      "inactive).  Set DRIVE_FREQUENCY>0.\n",
+                      e->name ? e->name : "?");
+      if (!phaseFB)
+        printWarning("fast_orbit_feedback: RFMODE RF-phase actuator has no phase feedback configured; "
+                     "PHASE_SETPOINT may have no tracking effect.",
+                     "PHASE_SETPOINT is actuated only by RFMODE's generator feedback -- give it a "
+                     "PHASE_FILTER (with AMPLITUDE_FILTER) or an IN_PHASE_FILTER/QUADRATURE_FILTER, "
+                     "or the feedback command is ignored and the loop runs with phantom authority.");
+    }
+  }
+
   plane->energyKp = energy_Kp;
   plane->energyKi = energy_Ki;
   plane->energyKd = energy_Kd;
@@ -480,10 +547,12 @@ static void appendPhaseActuator(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline
   /* phaseScale: deg of RF phase per unit energy offset delta.  energy_response_scale,
      if given, is authoritative (signed, user-calibrated).  Otherwise form the analytic
      estimate (180/pi)*pCentral/(passes_between_updates*SUM_k[voltScaled_k*cos phi_s,k]).  The
-     actuator drives the SAME DELTA_PHASE on EVERY included cavity, so the energy authority per
-     degree is the SUM of V*cos(phi_s) over all of them -- not one cavity's.  voltScaled matches
-     the dgamma=volt*sin(phase) convention of simple_rfca.c (volt in gamma units) and pCentral
-     is gamma0.  Each rfca->phase is the fiducialized synchronous phase phi_s (set by &rf_setup),
+     actuator drives the SAME phase offset on EVERY included cavity (RFCA DELTA_PHASE, or RFMODE
+     PHASE_SETPOINT -- see fofbCavityDrive), so the energy authority per degree is the SUM of
+     V*cos(phi_s) over all of them -- not one cavity's.  voltScaled matches the dgamma=volt*sin(phase)
+     convention of simple_rfca.c (volt in gamma units) and pCentral is gamma0.  Each (V,phi) is the
+     cavity's drive voltage and fiducialized synchronous phase phi_s (set by &rf_setup; for RFMODE,
+     the V_SETPOINT/PHASE_SETPOINT targets its internal feedback drives the cavity to),
      so the summed cos carries the transition state and the sign is self-correcting for BOTH
      regimes (above transition phi_s in (90,180) deg so cos<0; below transition the reverse).
      Because phaseScale ~ 1/sum(V cos phi_s), the closed-loop damping rate works out to
@@ -494,12 +563,14 @@ static void appendPhaseActuator(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline
      Failure modes: (a) operating AT transition, net cos->0, phaseScale->inf and the phase knob
      has no energy authority (nu_s->0); (b) a deck whose phases are not the true stable phases
      (PHASE set by hand, or no &rf_setup) -- then set energy_response_scale explicitly. */
-  rfca0 = (RFCA *)(plane->rfPhaseElem[0]->p_elem);
   sumVcosV = sumVabsV = 0;
   for (k = 0; k < plane->nRFPhase; k++) {
-    RFCA *rk = (RFCA *)(plane->rfPhaseElem[k]->p_elem);
-    sumVcosV += rk->volt * cos(rk->phase * PI / 180.0);
-    sumVabsV += fabs(rk->volt);
+    double vk = 0, phik = 0, fk = 0;
+    fofbCavityDrive(plane->rfPhaseElem[k], &vk, &phik, &fk);
+    sumVcosV += vk * cos(phik * PI / 180.0);
+    sumVabsV += fabs(vk);
+    if (k == 0)
+      rf0freq = fk; /* common RF frequency, used for the synchrotron-period efficacy estimate */
   }
   voltScaledSum = sumVcosV / (1e6 * particleMassMV * particleRelSign);
   cosEff = (sumVabsV != 0) ? sumVcosV / sumVabsV : 0;
@@ -549,7 +620,7 @@ static void appendPhaseActuator(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline
      sane positive number). */
   {
     double h, Eev, nus2, Tsynch;
-    h = rfca0->freq * beamline->revolution_length / c_mks; /* beta ~ 1; common RF frequency */
+    h = rf0freq * beamline->revolution_length / c_mks; /* beta ~ 1; common RF frequency */
     Eev = run->p_central * particleMassMV * 1e6;
     /* nu_s^2 ~ alpha_c*h*|sum_k V_k cos phi_s,k|/(2 pi E): the restoring force is the SUM over
        all included cavities, matching the phaseScale sum above (sumVcosV is in raw volts). */
@@ -1666,13 +1737,21 @@ static void fofbBombIfModulated(MODULATION_DATA *mod, ELEMENT_LIST *elem, long o
   for (j = 0; j < mod->nItems; j++) {
     if (mod->element[j] != elem)
       continue;
-    if (entity_description[mod->element[j]->type].parameter[mod->parameterNumber[j]].offset == offset)
+    if (entity_description[mod->element[j]->type].parameter[mod->parameterNumber[j]].offset == offset) {
+      /* advice depends on where the free phase-error channel is for this actuator type */
+      const char *advice =
+        (elem->type == T_RFMODE)
+          ? "To inject RF phase errors on this cavity, use RFMODE's own generator-noise "
+            "channels (e.g. NOISE_PHASE_GEN) rather than modulating PHASE_SETPOINT."
+          : "To inject RF phase errors, modulate PHASE instead (the feedback actuates the "
+            "additive DELTA_PHASE).";
       bombElegantVA("fast_orbit_feedback: element %s parameter %s is modulated by &modulate_elements "
                     "but is also a fast_orbit_feedback actuator; both reference the parameter's initial "
-                    "value and would overwrite each other every turn.  To inject RF phase errors, "
-                    "modulate PHASE instead (the feedback actuates the additive DELTA_PHASE).\n",
+                    "value and would overwrite each other every turn.  %s\n",
                     mod->element[j]->name,
-                    entity_description[mod->element[j]->type].parameter[mod->parameterNumber[j]].name);
+                    entity_description[mod->element[j]->type].parameter[mod->parameterNumber[j]].name,
+                    advice);
+    }
   }
 }
 
@@ -1769,9 +1848,15 @@ long doFastOrbitFeedback(RUN *run, VARY *control, LINE_LIST *beamline, BEAM *bea
       }
     }
 
-    flags = baseFlags |
+    /* FOFB tracks ONE continuous beam across all steps, so the energy profile vs s must be
+       fiducialized once (on step 0) and then held -- exactly &track's single-do_tracking behavior.
+       Force FIRST_BEAM_IS_FIDUCIAL regardless of run_control's first_is_fiducial, and set
+       FIDUCIAL_BEAM_SEEN after step 0 (below); otherwise do_tracking re-establishes the energy
+       profile -- printing "This step establishes energy profile vs s (fiducial beam)." -- at the
+       start of every step and resets the reference momentum profile from the mid-flight beam. */
+    flags = baseFlags | FIRST_BEAM_IS_FIDUCIAL |
             (control->fiducial_flag &
-             (FIRST_BEAM_IS_FIDUCIAL + FIDUCIAL_BEAM_SEEN + RESTRICT_FIDUCIALIZATION +
+             (FIDUCIAL_BEAM_SEEN + RESTRICT_FIDUCIALIZATION +
               LINEAR_CHROMATIC_MATRIX + LONGITUDINAL_RING_ONLY));
 
     /* FOFB tracks one persistent beam across n_steps do_tracking calls, but each
@@ -1815,11 +1900,13 @@ long doFastOrbitFeedback(RUN *run, VARY *control, LINE_LIST *beamline, BEAM *bea
       }
     }
 
-    /* hold the RF fiducial across the remaining iterations */
-    if (control->fiducial_flag & FIRST_BEAM_IS_FIDUCIAL) {
-      control->fiducial_flag |= FIDUCIAL_BEAM_SEEN;
-      beamline->fiducial_flag |= FIDUCIAL_BEAM_SEEN;
-    }
+    /* After step 0 establishes the energy profile on the continuous beam, mark the fiducial beam
+       seen (unconditionally -- FIRST_BEAM_IS_FIDUCIAL is forced above) so do_tracking holds it for
+       every remaining step: no re-fiducialization, no repeated message.  beamline->fiducial_flag is
+       restored on exit; the control bit is harmless afterward (FIRST_BEAM_IS_FIDUCIAL is not set
+       there, so a later &track still fiducializes normally). */
+    control->fiducial_flag |= FIDUCIAL_BEAM_SEEN;
+    beamline->fiducial_flag |= FIDUCIAL_BEAM_SEEN;
     /* After step 0 has established the RF fiducial on the continuous beam, stop
        do_tracking from deleting phase references / re-fiducializing the RF at each
        subsequent step boundary (see the header comment above). */
