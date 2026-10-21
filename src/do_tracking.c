@@ -6332,13 +6332,33 @@ long do_tracking(
       }
 
       void checkRFCAChangeTConflicts(LINE_LIST *beamline) {
+        /* Elements with absolute-time dependence fall into two groups with respect to
+           CHANGE_T=1, which removes close to a revolution period from each particle's time
+           coordinate every turn and banks it in the tracking-clock register:
+
+             - Clock-aware: the tracker adds trackingClockOffset() back (or uses the
+               reduce-then-scale trackingClockPhase()) to recover true laboratory time, so
+               CHANGE_T is transparent.  These must NOT be flagged.  Flagging them fires the
+               warning on decks that are provably correct -- the changeTclock* regression suite
+               among them -- which only teaches users to ignore it, and then they miss the cases
+               below that really are wrong.
+             - Not clock-aware: the tracker uses the reduced coordinate directly, so its phase
+               is off by omega*trackingClockOffset() unless its frequency happens to be an exact
+               harmonic of the CHANGE_T reference.  These are what the warning is for.
+
+           Both groups are listed explicitly rather than letting one fall through to a default,
+           so that adding a time-dependent element forces a deliberate choice, and so that making
+           one clock-aware is a one-line move between the groups. */
         ELEMENT_LIST *eptr;
         short hasChangeT = 0;
-        long hasTimeDependence = 0;
+        long nAffected = 0, nTypes = 0, i;
+        char *typeName[32];
+        long hasRfmodeWaveform = 0;
 
         eptr = beamline->elem;
 
         while (eptr) {
+          short affected = 0;
           switch (eptr->type) {
           case T_RFCA:
             if (((RFCA *)(eptr->p_elem))->change_t)
@@ -6348,39 +6368,77 @@ long do_tracking(
             if (((RFCW *)(eptr->p_elem))->change_t)
               hasChangeT = 1;
             break;
-          case T_CPICKUP:
-          case T_CKICKER:
-          case T_FRFMODE:
-          case T_FTRFMODE:
-          case T_IONEFFECTS:
-          case T_KICKER:
-          case T_LRWAKE:
-          case T_MKICKER:
-          case T_MRFDF:
-          case T_RAMPP:
-          case T_RAMPRF:
-          case T_RFDF:
+
+          /* --- clock-aware: transparent under CHANGE_T, deliberately not flagged --- */
+          case T_FRFMODE:    /* frfmode.c       */
+          case T_FTRFMODE:   /* ftrfmode.c      */
+          case T_IONEFFECTS: /* ionEffects.cc   */
+          case T_KICKER:     /* kicker.c        */
+          case T_MKICKER:    /* kicker.c        */
+          case T_LRWAKE:     /* lrwake.c        */
+          case T_RAMPP:      /* ramp_momentum.c */
+          case T_RAMPRF:     /* ramped_rfca.c   */
+          case T_TRFMODE:    /* trfmode.c       */
+            break;
           case T_RFMODE:
-          case T_RFTM110:
+            /* rfmode.cc is clock-aware, so no generic flag.  One residual gap: a frequency or Q
+               waveform makes the mode's angular frequency vary turn to turn, and the phase
+               credited to the removed time telescopes two absolute reduce-then-scale clock
+               phases, which is exact only at constant omega.  Warned specifically below. */
+            if (((RFMODE *)(eptr->p_elem))->fwaveform || ((RFMODE *)(eptr->p_elem))->Qwaveform)
+              hasRfmodeWaveform += 1;
+            break;
+
+          /* --- no clock handling: phase is wrong under CHANGE_T unless harmonic --- */
+          case T_CPICKUP:   /* cooler.c     */
+          case T_CKICKER:   /* cooler.c     */
+          case T_MRFDF:     /* multipole deflector */
+          case T_RFDF:      /* track_rf.c   */
+          case T_RFTM110:   /* track_rf.c   */
           case T_RFTMEZ0:
-          case T_RMDF:
+          case T_RMDF:      /* track_ramp.c */
           case T_SHRFDF:
-          case T_TFBDRIVER:
-          case T_TFBPICKUP:
-          case T_TRFMODE:
+          case T_TFBDRIVER: /* tfeedback.cc */
+          case T_TFBPICKUP: /* tfeedback.cc */
           case T_TMCF:
           case T_TWLA:
           case T_TWMTA:
           case T_TWPL:
-            hasTimeDependence += 1;
+            affected = 1;
             break;
+          }
+          if (affected) {
+            nAffected += 1;
+            /* record each distinct type once, so the message can name what is at fault */
+            for (i = 0; i < nTypes; i++)
+              if (strcmp(typeName[i], entity_name[eptr->type]) == 0)
+                break;
+            if (i == nTypes && nTypes < 32)
+              typeName[nTypes++] = entity_name[eptr->type];
           }
           eptr = eptr->succ;
         }
-        if (hasChangeT && hasTimeDependence) {
+        if (hasChangeT && nAffected) {
           char buffer[16834];
-          snprintf(buffer, 16384, "RFCA or RFCW elements with CHANGE_T=1 may give wrong results because of %ld time-dependent elements",
-                   hasTimeDependence);
+          long used;
+          used = snprintf(buffer, 16384, "%ld element%s (", nAffected, nAffected == 1 ? "" : "s");
+          for (i = 0; i < nTypes && used < 15000; i++)
+            used += snprintf(buffer + used, 16384 - used, "%s%s", i ? ", " : "", typeName[i]);
+          snprintf(buffer + used, 16384 - used,
+                   ") depend on absolute time but do not account for the time removed by CHANGE_T=1, "
+                   "so their phase is wrong unless their frequency is an exact harmonic of the "
+                   "CHANGE_T reference frequency.");
           printWarning("CHANGE_T=1 conflicts, potentially severely, with other time-dependent elements", buffer);
+        }
+        if (hasChangeT && hasRfmodeWaveform) {
+          char buffer[16834];
+          snprintf(buffer, 16384,
+                   "%ld RFMODE element%s use%s FREQ_WAVEFORM or Q_WAVEFORM.  The waveforms themselves are "
+                   "read at the correct laboratory time, but the phase credited to the time CHANGE_T removes "
+                   "each turn assumes the mode frequency is constant, so the beam-induced voltage is in error "
+                   "roughly in proportion to the fractional change in frequency per turn.  Drop CHANGE_T=1, or "
+                   "the waveform, if the ramp is appreciable.",
+                   hasRfmodeWaveform, hasRfmodeWaveform == 1 ? "" : "s", hasRfmodeWaveform == 1 ? "s" : "");
+          printWarning("CHANGE_T=1 is not transparent for RFMODE frequency or Q waveforms", buffer);
         }
       }
