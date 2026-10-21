@@ -171,7 +171,7 @@ void prepareScriptCommand(SCRIPT *script, long iPass, char *rootname, char *inpu
   /* substitute numerical parameters */
   for (i = 0; i < 10; i++) {
     long count = 0;
-    char tag[10], value[25], *ptr;
+    char tag[100], value[25], *ptr;
     sprintf(tag, "%%np%ld", i);
     ptr = cmdBuffer1;
     while ((ptr = strstr(ptr, tag))) {
@@ -190,7 +190,7 @@ void prepareScriptCommand(SCRIPT *script, long iPass, char *rootname, char *inpu
   /* substitute string parameters */
   for (i = 0; i < 10; i++) {
     long count = 0;
-    char tag[10], *ptr;
+    char tag[100], *ptr;
     if (!script->SP[i] || strlen(script->SP[i]) == 0)
       continue;
     sprintf(tag, "%%sp%ld", i);

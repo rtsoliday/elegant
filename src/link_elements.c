@@ -665,7 +665,7 @@ long assert_element_links(ELEMENT_LINKS *links, RUN *run, LINE_LIST *beamline, l
         }
       }
     }
-    if (verbosity > 0) {
+    if (verbosity > 0 && numberChanged!=0) {
       printf("%ld element links updated on iteration %ld\n", numberChanged, iteration++);
       fflush(stdout);
     }
