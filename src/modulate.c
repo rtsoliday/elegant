@@ -100,10 +100,14 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
      * page in the loop below via SDDS_GetColumnInDoubles. */
     if (!SDDS_InitializeInputFromSearchPath(&elemAmpSDDS, filename) ||
         SDDS_ReadTable(&elemAmpSDDS) != 1 ||
-        !(elemAmpRows = SDDS_CountRowsOfInterest(&elemAmpSDDS)) ||
-        !(elemTimeData = SDDS_GetColumnInDoubles(&elemAmpSDDS, time_column))) {
+        !(elemAmpRows = SDDS_CountRowsOfInterest(&elemAmpSDDS))) {
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
-      bombElegant("Unable to read required data from modulation file.", NULL);
+      bombElegantVA((char *)"Unable to read page 1 of modulation file %s.\n", filename);
+    }
+    if (!(elemTimeData = SDDS_GetColumnInDoubles(&elemAmpSDDS, time_column))) {
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
+      bombElegantVA((char *)"Unable to read time_column \"%s\" from modulation file %s.\n",
+                    time_column, filename);
     }
     elemAmpOpen = 1;
     if (elemAmpRows <= 2)
@@ -235,8 +239,12 @@ void addModulationElements(MODULATION_DATA *modData, NAMELIST_TEXT *nltext, LINE
         modData->dataIndex[n_items] = -1;
         if (!(modData->modulationData[n_items] = SDDS_GetColumnInDoubles(&elemAmpSDDS, colName))) {
           SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors);
-          printf("error: cannot read modulation column %s from %s\n", colName, filename);
-          bombElegant("Unable to read required data from modulation file.", NULL);
+          /* Name the missing column, plus the template and element that generated it: the
+           * name is built from a template rather than typed by the user, so the actionable
+           * information is which element produced it and from what template. */
+          bombElegantVA((char *)"Unable to read modulation column \"%s\" from file %s, required by "
+                        "element_amplitude_column template \"%s\" for element %s#%ld.\n",
+                        colName, filename, element_amplitude_column, context->name, context->occurence);
         }
         modData->timeData[n_items] = tmalloc(sizeof(*modData->timeData[n_items]) * elemAmpRows);
         for (ic = 0; ic < elemAmpRows; ic++)
