@@ -211,9 +211,16 @@ static void restoreRfChangeT(LINE_LIST *beamline, long *saved, long n) {
  * (freq>0 and volt!=0). Harmonic cavities are expected to be near-integer multiples of it; a warning
  * is issued for any that are not (no single closed orbit can synchronize incommensurate cavities).
  * If no qualifying cavity is found, revolution_length is returned and *hOut=0 (the caller's
- * R[5][4]!=0 requirement then bombs with the "requires longitudinal focusing" message). Using beta0
- * (not the solved beta(delta)) keeps target constant, so the Jacobian J=R-I stays exact; the error
- * is O(1-beta0), negligible for relativistic rings. */
+ * R[5][4]!=0 requirement then bombs with the "requires longitudinal focusing" message).
+ *
+ * Using beta0 (not the solved beta(delta)) keeps target constant, so the Jacobian J=R-I stays
+ * exact. The relative error that introduces in the target is (beta(delta)-beta0)/beta0 =
+ * delta/gamma^2 to first order -- NOT O(1-beta0) as an earlier version of this comment claimed.
+ * The distinction is not pedantic: a relative error eps in the target shifts the solved delta by
+ * eps/alphac, and a low-alpha lattice amplifies hard (alphac ~ 3.9e-5 for APS-U, i.e. ~2.6e4).
+ * O(1-beta0) = 1/(2*gamma^2) ~ 3.6e-9 at 6 GeV would therefore have meant a delta error ~1e-4,
+ * which is NOT negligible there; the true error delta/gamma^2 is smaller by a further factor of
+ * 2*delta (~4e-12 for delta=5e-4), and is negligible. */
 static double sixDimRfPathTarget(LINE_LIST *beamline, double p_central, long *hOut) {
   ELEMENT_LIST *eptr;
   double fBase = 0, beta0, target, h;
@@ -314,6 +321,9 @@ long run_closed_orbit(RUN *run, LINE_LIST *beamline, double *starting_coord, BEA
   if (!clorb)
     bombElegant("TRAJECTORY array for closed orbit not allocated (run_closed_orbit)", NULL);
   beamline->closed_orbit = clorb;
+  /* clorb[0] is the ring start and clorb[n_elems] the ring end (do_tracking is handed clorb+1).
+     Mark the convention so consumers can form the one-turn increment. */
+  beamline->flags |= BEAMLINE_CLOSED_ORBIT_HAS_START;
 
   if (beamline->elem_recirc)
     M = full_matrix(beamline->elem_recirc, run, 1);

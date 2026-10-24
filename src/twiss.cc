@@ -5655,15 +5655,29 @@ void run_rf_setup(RUN *run, LINE_LIST *beamline, long writeToFile) {
   pCentral = run->p_central;
   dPOverP = 0;
   if (beamline->closed_orbit) {
-    /*
-      printf("Using closed orbit to compute orbit length: centroid[4] = %21.15e, centroid[5] = %21.15e\n",
-      beamline->closed_orbit[beamline->n_elems-1].centroid[4],
-      beamline->closed_orbit[beamline->n_elems-1].centroid[5]);
-    */
-    dPOverP = beamline->closed_orbit[beamline->n_elems - 1].centroid[5];
+    /* The revolution period is the ONE-TURN INCREMENT of coord[4], not its absolute value at the ring
+       end.  &closed_orbit fixed_length=2 solves coord[4] as a sixth unknown (it fixes the arrival
+       phase at the cavity), so that orbit starts at a nonzero coord[4]; using the absolute value made
+       the frequency derived here differ from the one the orbit was solved for, and since the next
+       solve consumes this frequency the pair walked instead of sitting still.  On the fixed_length=0/1
+       paths the start is explicitly zero, so subtracting it changes nothing there.
+
+       The two writers of beamline->closed_orbit index differently (see BEAMLINE_CLOSED_ORBIT_HAS_START
+       in track.h): closed_orbit.c supplies a ring-start point at index 0 and ends at n_elems, while
+       correct.c has no start point and ends at n_elems-1. */
+    long iEnd;
+    double s4Start;
+    if (beamline->flags & BEAMLINE_CLOSED_ORBIT_HAS_START) {
+      iEnd = beamline->n_elems;
+      s4Start = beamline->closed_orbit[0].centroid[4];
+    } else {
+      iEnd = beamline->n_elems - 1;
+      s4Start = 0;
+    }
+    dPOverP = beamline->closed_orbit[iEnd].centroid[5];
     pCentral = run->p_central * (1 + dPOverP);
     beta = pCentral / (gamma = sqrt(sqr(pCentral) + 1));
-    T0 = beamline->closed_orbit[beamline->n_elems - 1].centroid[4] / (beta * c_mks);
+    T0 = (beamline->closed_orbit[iEnd].centroid[4] - s4Start) / (beta * c_mks);
   } else {
     beta = run->p_central / (gamma = sqrt(sqr(run->p_central) + 1));
     T0 = beamline->revolution_length / (beta * c_mks);

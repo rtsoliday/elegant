@@ -636,6 +636,14 @@ typedef struct line_list {
 #define BEAMLINE_RADINT_DONE      0x00000080UL
 #define BEAMLINE_BACKTRACKING     0x00000100UL
 #define BEAMLINE_MATRICES_NEEDED  0x00000200UL
+/* The two writers of beamline->closed_orbit use different array conventions, because do_tracking
+ * fills a TRAJECTORY array from index 0 with the FIRST ELEMENT's exit:
+ *   closed_orbit.c passes clorb+1 and fills clorb[0] itself, so index 0 is the ring START and
+ *     the ring end is index n_elems           -> flag SET
+ *   correct.c passes traj directly, so index 0 is the first element's exit and the ring end is
+ *     index n_elems-1, with no start point    -> flag CLEAR
+ * Consumers that need the one-turn increment (run_rf_setup) must know which they have. */
+#define BEAMLINE_CLOSED_ORBIT_HAS_START 0x00000400UL
     unsigned long fiducial_flag;  /* same bits as used by VARY, but only used to keep track of status */
     } LINE_LIST;
 

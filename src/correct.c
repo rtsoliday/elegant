@@ -1427,6 +1427,9 @@ long do_correction(CORRECTION *correct, RUN *run, LINE_LIST *beamline, double *s
   }
 
   beamline->closed_orbit = correct->traj[final_traj];
+  /* do_tracking filled this from index 0 with the first element's exit, so there is no ring-start
+     point and the ring end is index n_elems-1 (see track.h). */
+  beamline->flags &= ~BEAMLINE_CLOSED_ORBIT_HAS_START;
 
 #if USE_MPI
   distributedBeam = distributedBeam_orig;
