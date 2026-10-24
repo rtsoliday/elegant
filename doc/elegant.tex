@@ -1467,21 +1467,24 @@ particles.
 \end{itemize}
 
 \begin{verbatim}
-&change_start
+&change_end
           STRING element_name = NULL;
-          long element_occurence = -1;
+          long element_occurence = 1;
           long delta_position = 0;
 &end
 \end{verbatim}
 
 \begin{itemize}
-\item \verb|element_name| --- Name of the element where the lattice will end,  which implies removing all 
+\item \verb|element_name| --- Name of the element where the lattice will end, which implies removing all 
   elements downstream of the named element. If the element occurs more than once, the first instance is used, unless
   \verb|element_occurence| is given. The named element will be the last element in the lattice.
-\item \verb|element_occurence| --- Occurrence number of the element to use. By default, uses the last occurrence.
+\item \verb|element_occurence| --- Occurrence number of the element to use. The default, 1, selects the first
+  occurrence. A value of zero or less selects the \emph{last} occurrence.
 \item \verb|delta_position| --- The number of elements before (if negative) or after (if positive) by which to
   offset the end position.
 \end{itemize}
+
+Note that, unlike \verb|change_start|, this command has no \verb|ring_mode| parameter.
 
 %\begin{latexonly}
 \newpage
@@ -1544,7 +1547,7 @@ particles.
 \item \verb|ring_mode| --- If nonzero, the ring structure of the lattice is preserved by moving the elements 
   upstream of the named element to the end of the lattice.
 \item \verb|delta_position| --- The number of elements before (if negative) or after (if positive) by which to
-  offset the end position.
+  offset the start position.
 \end{itemize}
 
 %\begin{latexonly}
@@ -3398,16 +3401,48 @@ first-order damper---it damps the synchrotron transient quickly and, run proport
 loop.  This matches real machines, where fast longitudinal damping of the rigid common
 energy---which low-power bunch-by-bunch feedback cannot move---is done by phase modulation of
 the main RF.  Select the cavities with \verb|steering_element|, \verb|item="PHASE"|; if none
-are declared, every \verb|RFCA| is used.  The response scale (degrees of phase per unit
+are declared, every \verb|RFCA| is used.  The actuator drives each selected cavity's additive
+\verb|DELTA_PHASE| parameter (effective phase $=$ \verb|PHASE|$+$\verb|DELTA_PHASE|), not
+\verb|PHASE| itself; this leaves \verb|PHASE| free as the clean synchronous setpoint, so an RF
+\emph{phase error} can be injected on the same cavity with \verb|modulate_elements| on
+\verb|PHASE| and the two compose additively (the feedback senses the resulting orbit and
+cancels it through \verb|DELTA_PHASE|).  Because both the proportional feedback and a modulation
+reference the parameter's initial value, applying \verb|modulate_elements| to a parameter the
+feedback itself actuates (a corrector kick, the RF \verb|FREQ|, or the RF \verb|DELTA_PHASE|) is
+a fatal error---they would overwrite each other every turn; inject RF phase errors on
+\verb|PHASE| instead.  The response scale (degrees of phase per unit
 $\delta$) is taken from \verb|energy_response_scale| when nonzero (authoritative, and its sign
 matters---the wrong sign anti-damps); otherwise an analytic estimate using
-\verb|passes_between_updates| is used and a warning is printed.  The frequency and phase
+\verb|passes_between_updates| is used and a warning is printed.  When more than one cavity is
+selected the actuator drives the same \verb|DELTA_PHASE| on all of them, so the analytic estimate
+sums $V\cos\phi_s$ over every selected cavity (the per-degree energy authority is the sum).  The
+frequency and phase
 channels are complementary (slow DC radial loop plus fast AC energy damper) and may be
 enabled together.  A finite-bandwidth phase shifter is modeled with
 \verb|rf_phase_filter_file|, which lags the applied cavity phase toward each commanded
 setpoint exactly as \verb|rf_frequency_filter_file| does for the detuning (unit-DC-gain
 low-pass leaves the steady state unchanged).  The file is read only when
 \verb|include_rf_phase| is set; setting it otherwise is ignored with a warning.
+
+\textbf{Driving an \texttt{RFMODE} cavity instead.}  The RF-phase actuator can alternatively
+command an \verb|RFMODE| element's \verb|PHASE_SETPOINT|---the phase target of the cavity's
+internal generator/direct-RF-feedback loop---rather than an idealized additive \verb|RFCA|
+\verb|DELTA_PHASE|.  This models a realistic beam-loaded cavity whose low-level RF controller the
+fast loop commands.  Select it explicitly with \verb|steering_element|, \verb|target="fast_orbit_feedback"|,
+\verb|item="PHASE_SETPOINT"| (there is no auto-discovery of \verb|RFMODE| actuators, since
+\verb|RFMODE| elements commonly model passive higher-order modes); a mix of \verb|RFCA| and
+\verb|RFMODE| actuators is allowed and the analytic response sums $V\cos\phi_s$ over all of them,
+reading \verb|V_SETPOINT|/\verb|PHASE_SETPOINT| for each \verb|RFMODE| and \verb|VOLT|/\verb|PHASE|
+for each \verb|RFCA|.  Two requirements apply, both checked at setup: the \verb|RFMODE| must have
+\verb|DRIVE_FREQUENCY>0| (else the generator path---and \verb|PHASE_SETPOINT|---is inactive, a
+fatal error), and it must have phase feedback configured (a \verb|PHASE_FILTER| alongside an
+\verb|AMPLITUDE_FILTER|, or an \verb|IN_PHASE_FILTER|/\verb|QUADRATURE_FILTER|); without phase
+feedback the per-turn \verb|PHASE_SETPOINT| command is silently ignored and a warning is printed.
+Note that the realized cavity phase follows the commanded setpoint through the \verb|RFMODE|
+feedback loop's own bandwidth, so the effective actuator has additional lag relative to \verb|RFCA|
+\verb|DELTA_PHASE|; verify \verb|energy_response_scale| and the loop gains accordingly.  To inject
+an RF phase \emph{error} on such a cavity, use \verb|RFMODE|'s own generator-noise waveforms rather
+than modulating \verb|PHASE_SETPOINT| (there is no separate additive channel as with \verb|RFCA|).
 
 The former \verb|subtract_dispersion| option is \textbf{deprecated} and is now a no-op that
 prints a warning: the dispersive orbit is partitioned automatically---the RF-phase column owns
@@ -3462,7 +3497,7 @@ whenever the RF-frequency loop is active (see above).
     STRING rf_frequency_filter_file = NULL;
     STRING rf_bpm_filter_file = NULL;
     STRING output = NULL;
-    long output_interval = 1;
+    long flush_interval = 100;
     long center_on_orbit = 0;
     long center_momentum_also = 1;
     long offset_by_orbit = 0;
@@ -3627,11 +3662,19 @@ whenever the RF-frequency loop is active (see above).
   in each plane, maximum corrector values, pegged-actuator flags, when the RF-frequency
   actuator is active the applied RF-frequency detuning \verb|DeltaFrf|, and when the RF-phase
   actuator is active the applied phase command \verb|DeltaPhase| (deg) and the projected
-  energy offset \verb|deltaEnergyEst|).  One SDDS page is
-  written and flushed to disk for each feedback iteration as the run proceeds, so the file
-  can be examined live while tracking is still in progress rather than only at the end.
-\item \verb|output_interval| --- Number of FOFB iterations between records written to
-  \verb|output|.
+  energy offset \verb|deltaEnergyEst|).  The whole run is written as a \emph{single} SDDS page
+  with one row per feedback iteration; the page is updated in place on disk periodically as the
+  run proceeds (like the \verb|WATCH| element), so the file can be examined live while tracking
+  is still in progress rather than only at the end.  The file also records every
+  \verb|fast_orbit_feedback| namelist setting as an SDDS parameter (each named after the
+  corresponding namelist variable; the \verb|response| and \verb|response_output| arrays are
+  stored as \verb|response0|...\verb|response3| and \verb|response_output0|...\verb|response_output3|),
+  so the run is self-documenting and reproducible.
+\item \verb|flush_interval| --- Number of feedback iterations between in-place flushes of the
+  single-page \verb|output| file to disk during tracking.  Larger values reduce file I/O (the
+  previous behavior wrote and synced a page every iteration, which can be slow); the complete
+  data is always written when the command finishes regardless of this setting.  A value less
+  than 1 disables periodic flushing, so the file is populated only at the end of the run.
 \item \verb|center_on_orbit|, \verb|center_momentum_also| --- If \verb|center_on_orbit| is
   nonzero, the beam is centered on the closed orbit before feedback tracking begins, so it
   starts on the (uncorrected, distorted) orbit rather than on the design orbit; this avoids
@@ -6614,6 +6657,7 @@ Note that $i=0$ on the first pass.
     double s_end = -1;
     long set_for_each_step = 0;
     double near_frequency = 0; 
+    double fractional_frequency_change = 0;
     long harmonic = -1;
     double bucket_half_height = 0;
     double over_voltage = 0;
@@ -6621,6 +6665,7 @@ Note that $i=0$ on the first pass.
     long disable = 0;
     long output_only = 0;
     long track_for_frequency = 0;
+    double phase_offset = 0;
 &end
 \end{verbatim}
 
@@ -6695,6 +6740,12 @@ in a sequence like the following
   In this case, one must also give \verb|output_at_each_step=1| for \verb|twiss_output|.
 \item \verb|near_frequency| -- If nonzero, then the rf frequency is chosen to be the closest harmonic
   to the given frequency.
+\item \verb|fractional_frequency_change| --- If nonzero, the rf frequency that would otherwise be
+  used is multiplied by (1+\verb|fractional_frequency_change|).  This provides a convenient way to
+  detune the rf from the synchronous frequency, which shifts the beam in momentum and hence radially:
+  the resulting momentum offset is $\delta = -(\Delta f/f)/\eta$, where $\eta$ is the slip factor.
+  Note that in a low-momentum-compaction lattice $1/\eta$ is large, so even a very small value here
+  produces a substantial momentum offset.
 \item \verb|harmonic| --- If nonzero, then the rf frequency is set to the given harmonic of the revolution
   frequency.
 \item \verb|bucket_half_height| --- If nonzero, the voltage is computed so as to give the specified bucket
@@ -6716,6 +6767,9 @@ energy loss per turn.
 \item \verb|output_only| --- If nonzero, command generates output file but does not change rf cavity settings.
 \item \verb|track_for_frequency| --- If nonzero, particle tracking is used to determine the rf frequency. If zero,
   the ideal length of the lattice is used.
+\item \verb|phase_offset| --- Offset in degrees added to the synchronous phase computed by this
+  command before it is applied to the selected cavities.  Has no effect unless a nonzero voltage is
+  being set.
 \end{itemize}
 
 %\begin{latexonly}

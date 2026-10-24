@@ -28,8 +28,15 @@ The filter files must each contain two columns:
 \item \verb|denominator| --- The $a_i$ filter coefficients. These should generally sum to zero or nearly zero.
 \item \verb|numerator| --- The $b_i$ filter coefficients. These are generally very small.
 \end{itemize}
-Each file can consist of up to four pages, with each page representing one filter in a parallel filter bank 
+Each file can consist of up to four pages, with each page representing one filter in a parallel filter bank
 formed from all pages. The output of the four stages is added to obtain the control signal.
+
+Optionally, each page may define a floating-point parameter named \verb|gain|. When present, the output of that
+page's filter stage is multiplied by its \verb|gain| value before being passed on---i.e. before being summed into
+the parallel bank (or, where the filter is applied as a series cascade, before being fed to the next stage). The
+unscaled output is retained internally as the stage's feedback history, so the stage's own transfer function
+$H(z)$ is unchanged and only the signal passed on is scaled. When the \verb|gain| parameter is absent it defaults
+to unity, so filter files that do not define it behave exactly as before.
 The number of rows in the page is given by the larger of r or m; in the case of multiple pages,
 the number of rows in each page is given by the largest r or m from the highest order filter amongst the pages, by
 simply stuffing the rows of the other pages with zeros, i.e., rows representing orders of $z$ down to $z^{-l}$ where $l$ is
@@ -76,6 +83,20 @@ may be unstable.
 Normally, the field dumped in the cavity by one particle affects trailing particles in the same turn.
 However, if one is also using a \verb|WAKE| or \verb|ZLONGIT| element to simulate the short-range wake of the cavity, this would be double-counting.
 In that case, one can use \verb|LONG_RANGE_ONLY=1| to suppress the same-turn effects of the \verb|RFMODE| element.
+
+The \verb|FREQ_WAVEFORM| and \verb|Q_WAVEFORM| parameters scale the mode's resonant frequency and quality
+factor as functions of time. The time column of each file is interpreted as laboratory time, i.e., the full
+elapsed time since the start of tracking, including any time removed by an \verb|RFCA| or \verb|RFCW|
+element with \verb|CHANGE_T|=1.
+
+Users should be aware of a limitation when either waveform is combined with \verb|CHANGE_T|=1. Reduced-time
+tracking removes close to a revolution period from each particle's time coordinate every turn, and the phasor
+rotation must credit the removed time with the phase it would have accumulated. That correction is exact only
+while the mode's angular frequency is constant, which a frequency waveform (and, far more weakly, a $Q$
+waveform) violates. The resulting error in the beam-induced voltage grows roughly in proportion to the
+fractional change in frequency per turn, so it is negligible for a slow ramp and significant for a fast one.
+{\tt elegant} issues a warning when it detects this combination. If the ramp is appreciable, either omit
+\verb|CHANGE_T|=1 or drop the waveform.
 
 Two output files are available: the \verb|RECORD| file includes bunch-by-bunch data on the beam-induced fields and the total cavity fields.
 The \verb|FEEDBACK_RECORD| file includes tick-by-tick data from the feedback system simulation; {\em writing this file this can significantly degrade performance.}
