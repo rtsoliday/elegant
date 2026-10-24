@@ -1115,6 +1115,16 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
   if (fixed_length_matrix && include_rf_frequency)
     printWarning("fast_orbit_feedback: fixed_length_matrix is set together with include_rf_frequency.",
                  "The RF-frequency actuator moves the orbit by varying the RF frequency, which is inconsistent with a fixed-length response matrix. Use fixed_length_matrix=0 (variable-length, vary-RF-frequency model) or disable include_rf_frequency.");
+  /* Gated on include_rf_frequency so this does not contradict the warning just above: when the
+     RF-frequency actuator is active the loop really does vary the rf frequency, and a
+     variable-length matrix is then the right model. */
+  if (fixed_length_matrix == 0 && !include_rf_frequency)
+    printWarning((char *)"fast_orbit_feedback: fixed_length_matrix=0 is unphysical for orbit feedback.",
+                 (char *)"A fixed_length_matrix=0 response matrix lets the orbit length vary, which "
+                 "corresponds to the rf frequency changing in response to each corrector.  The feedback "
+                 "does not do that, so the predicted corrector-to-orbit response does not match the "
+                 "machine and the loop may converge poorly or go unstable.  Use fixed_length_matrix=2 "
+                 "(or 1).");
   /* subtract_dispersion is deprecated: the dispersive/betatron partition is now automatic.
      With an RF-phase column the deadbeat solve assigns the eta-shaped energy orbit to the
      phase knob; without one but with the RF-frequency loop active, the corrector solve is
