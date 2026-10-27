@@ -3394,10 +3394,10 @@ $\partial x_i/\partial\phi=\eta_i/\verb|phaseScale|$, inverted together with the
 The deadbeat solve then assigns the $\eta$-shaped (energy) part of the orbit to the phase
 knob and the betatron residual to the correctors automatically---the partitioning the
 deprecated \verb|subtract_dispersion| once did by hand.  The phase column is driven by its own
-PID class (\verb|energy_Kp/Ki/Kd|, all zero by default; clamp \verb|rf_phase_limit|).  Because
+PID class (\verb|rf_phase_Kp/Ki/Kd|, all zero by default; clamp \verb|rf_phase_limit|).  Because
 the RF phase sets the energy kick directly ($\Delta\gamma=V\sin\phi$), this channel is a fast,
 first-order damper---it damps the synchrotron transient quickly and, run proportionally
-(\verb|energy_Ki=0|), leaves no DC energy change, so it does not fight the slow frequency
+(\verb|rf_phase_Ki=0|), leaves no DC energy change, so it does not fight the slow frequency
 loop.  This matches real machines, where fast longitudinal damping of the rigid common
 energy---which low-power bunch-by-bunch feedback cannot move---is done by phase modulation of
 the main RF.  Select the cavities with \verb|steering_element|, \verb|item="PHASE"|; if none
@@ -3411,7 +3411,7 @@ reference the parameter's initial value, applying \verb|modulate_elements| to a 
 feedback itself actuates (a corrector kick, the RF \verb|FREQ|, or the RF \verb|DELTA_PHASE|) is
 a fatal error---they would overwrite each other every turn; inject RF phase errors on
 \verb|PHASE| instead.  The response scale (degrees of phase per unit
-$\delta$) is taken from \verb|energy_response_scale| when nonzero (authoritative, and its sign
+$\delta$) is taken from \verb|rf_phase_response_scale| when nonzero (authoritative, and its sign
 matters---the wrong sign anti-damps); otherwise an analytic estimate using
 \verb|passes_between_updates| is used and a warning is printed.  When more than one cavity is
 selected the actuator drives the same \verb|DELTA_PHASE| on all of them, so the analytic estimate
@@ -3440,7 +3440,7 @@ fatal error), and it must have phase feedback configured (a \verb|PHASE_FILTER| 
 feedback the per-turn \verb|PHASE_SETPOINT| command is silently ignored and a warning is printed.
 Note that the realized cavity phase follows the commanded setpoint through the \verb|RFMODE|
 feedback loop's own bandwidth, so the effective actuator has additional lag relative to \verb|RFCA|
-\verb|DELTA_PHASE|; verify \verb|energy_response_scale| and the loop gains accordingly.  To inject
+\verb|DELTA_PHASE|; verify \verb|rf_phase_response_scale| and the loop gains accordingly.  To inject
 an RF phase \emph{error} on such a cavity, use \verb|RFMODE|'s own generator-noise waveforms rather
 than modulating \verb|PHASE_SETPOINT| (there is no separate additive channel as with \verb|RFCA|).
 
@@ -3483,11 +3483,11 @@ whenever the RF-frequency loop is active (see above).
     STRING bpm_noise_distribution = "gaussian";
     long include_rf_frequency = 0;
     long include_rf_phase = 0;
-    double energy_Kp = 0;
-    double energy_Ki = 0;
-    double energy_Kd = 0;
+    double rf_phase_Kp = 0;
+    double rf_phase_Ki = 0;
+    double rf_phase_Kd = 0;
     double rf_phase_limit = 0;
-    double energy_response_scale = 0;
+    double rf_phase_response_scale = 0;
     long passes_between_updates = 0;
     long rf_update_multiplier = 1;
     long subtract_dispersion = 0;
@@ -3585,17 +3585,17 @@ whenever the RF-frequency loop is active (see above).
   \verb|steering_element|, \verb|item="PHASE"|; if none are declared, every \verb|RFCA| in the
   beamline is used.  Independent of, and usable together with, the steering correctors; it is
   the longitudinal analog of the correctors, not a response-matrix column.
-\item \verb|energy_Kp|, \verb|energy_Ki|, \verb|energy_Kd| --- Proportional, integral, and
+\item \verb|rf_phase_Kp|, \verb|rf_phase_Ki|, \verb|rf_phase_Kd| --- Proportional, integral, and
   derivative gains of the scalar PID controlling the RF-phase energy actuator (used only when
-  \verb|include_rf_phase=1|).  All default to zero.  \verb|energy_Kp| is the primary gain (a
-  proportional phase loop is a first-order energy damper); \verb|energy_Ki| is normally left
+  \verb|include_rf_phase=1|).  All default to zero.  \verb|rf_phase_Kp| is the primary gain (a
+  proportional phase loop is a first-order energy damper); \verb|rf_phase_Ki| is normally left
   zero, since a held DC phase makes no steady energy change (the beam re-phases) and an
   integral term would wind up---the steady-state DC energy error is the RF-frequency loop's
   job.
 \item \verb|rf_phase_limit| --- Maximum allowed absolute RF-phase command, in degrees
   (0 = no limit).  When the command saturates against this limit, integrator anti-windup
   back-calculation holds the accumulator (see \verb|anti_windup|).
-\item \verb|energy_response_scale| --- Energy response scale for the phase actuator, in
+\item \verb|rf_phase_response_scale| --- Energy response scale for the phase actuator, in
   degrees of RF phase per unit momentum offset $\delta$.  When nonzero it is authoritative
   and used verbatim; \emph{its sign matters}---the wrong sign anti-damps the energy
   oscillation.  When zero, an analytic estimate

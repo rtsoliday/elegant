@@ -29,7 +29,7 @@
  * loop updates every rf_update_multiplier fast iterations.
  *
  * FAST loop (CM->C/T matrices): updates every iteration. The steering correctors plus an
- * optional RF-PHASE column (include_rf_phase, energy_Kp/Ki/Kd).  A held RF phase
+ * optional RF-PHASE column (include_rf_phase, rf_phase_Kp/Ki/Kd).  A held RF phase
  * offset produces, over a sub-synchrotron-period step, a meaningful energy/orbit
  * response linearized about the synchronous phase: dx_i/dphi = eta_i/phaseScale.
  * Appended as the last column (phaseIndex), it lets the deadbeat solve assign the
@@ -226,7 +226,7 @@ typedef struct {
   long nRF;            /* number of selected RF cavities */
   /* RF-PHASE energy actuator (x/dispersive plane only): now a COLUMN of the fast matrix
      CM->C at index phaseIndex (sl_index==-2 sentinel), driven by the deadbeat solve with
-     its own PID class (energy_Kp/Ki/Kd, clamp rf_phase_limit).  The phase offset is
+     its own PID class (rf_phase_Kp/Ki/Kd, clamp rf_phase_limit).  The phase offset is
      u[phaseIndex]-base[phaseIndex] (deg), written to the cavity PHASE without touching
      phase_fiducial.  phaseScale (deg per unit delta) sets the column dx_i/dphi=eta_i/phaseScale. */
   long phaseIndex;            /* CM->ncor index of the RF-phase column, or -1 if inactive */
@@ -236,7 +236,7 @@ typedef struct {
   double *rfBasePhase;        /* each cavity's base PHASE (deg) */
   long *rfPhaseOffset;        /* offset of PHASE within each cavity's p_elem */
   long nRFPhase;              /* number of selected cavities */
-  double energyKp, energyKi, energyKd; /* RF-phase-class PID gains */
+  double rfPhaseKp, rfPhaseKi, rfPhaseKd; /* RF-phase-class PID gains */
   double phaseScale;          /* deg of RF phase per unit delta (signed); builds the column */
   double deltaEst;            /* last dispersion-projected energy offset (diagnostic only) */
 } FOFB_PLANE;
@@ -539,12 +539,12 @@ static void appendPhaseActuator(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline
     }
   }
 
-  plane->energyKp = energy_Kp;
-  plane->energyKi = energy_Ki;
-  plane->energyKd = energy_Kd;
+  plane->rfPhaseKp = rf_phase_Kp;
+  plane->rfPhaseKi = rf_phase_Ki;
+  plane->rfPhaseKd = rf_phase_Kd;
   plane->deltaEst = 0;
 
-  /* phaseScale: deg of RF phase per unit energy offset delta.  energy_response_scale,
+  /* phaseScale: deg of RF phase per unit energy offset delta.  rf_phase_response_scale,
      if given, is authoritative (signed, user-calibrated).  Otherwise form the analytic
      estimate (180/pi)*pCentral/(passes_between_updates*SUM_k[voltScaled_k*cos phi_s,k]).  The
      actuator drives the SAME phase offset on EVERY included cavity (RFCA DELTA_PHASE, or RFMODE
@@ -556,13 +556,13 @@ static void appendPhaseActuator(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline
      so the summed cos carries the transition state and the sign is self-correcting for BOTH
      regimes (above transition phi_s in (90,180) deg so cos<0; below transition the reverse).
      Because phaseScale ~ 1/sum(V cos phi_s), the closed-loop damping rate works out to
-     g = energy_Kp/passes_between_updates (voltScaled, gamma, slip factor and the cos all cancel),
+     g = rf_phase_Kp/passes_between_updates (voltScaled, gamma, slip factor and the cos all cancel),
      i.e. damping in either regime with no transition branch needed.  sumVcosV is the sum in raw
      volts (signed); voltScaledSum is it in gamma units; cosEff is the net cos(phi_s) normalized
      by the total voltage (reduces exactly to one cavity's cos(phi_s) in the single-cavity case).
      Failure modes: (a) operating AT transition, net cos->0, phaseScale->inf and the phase knob
      has no energy authority (nu_s->0); (b) a deck whose phases are not the true stable phases
-     (PHASE set by hand, or no &rf_setup) -- then set energy_response_scale explicitly. */
+     (PHASE set by hand, or no &rf_setup) -- then set rf_phase_response_scale explicitly. */
   sumVcosV = sumVabsV = 0;
   for (k = 0; k < plane->nRFPhase; k++) {
     double vk = 0, phik = 0, fk = 0;
@@ -574,8 +574,8 @@ static void appendPhaseActuator(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline
   }
   voltScaledSum = sumVcosV / (1e6 * particleMassMV * particleRelSign);
   cosEff = (sumVabsV != 0) ? sumVcosV / sumVabsV : 0;
-  if (energy_response_scale != 0) {
-    plane->phaseScale = energy_response_scale;
+  if (rf_phase_response_scale != 0) {
+    plane->phaseScale = rf_phase_response_scale;
   } else {
     double etaSlip;
     if (voltScaledSum != 0 && passes_between_updates > 0)
@@ -596,21 +596,21 @@ static void appendPhaseActuator(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline
       printWarning("fast_orbit_feedback: the analytic RF-phase actuator sign looks wrong for "
                    "this lattice (it will anti-damp).",
                    "eta_slip*cos(phi_s) >= 0, so the cavity phase(s) are not the stable "
-                   "synchronous phase -- set with &rf_setup, or give energy_response_scale "
+                   "synchronous phase -- set with &rf_setup, or give rf_phase_response_scale "
                    "explicitly (deg per unit delta).");
     else if (fabs(cosEff) < 0.02)
       printWarning("fast_orbit_feedback: the synchronous phase is near 90 deg (cos(phi_s) ~ 0).",
                    "The RF-phase knob has little energy authority there (phaseScale is very "
-                   "large); prefer the RF-frequency loop, or set energy_response_scale from a "
+                   "large); prefer the RF-frequency loop, or set rf_phase_response_scale from a "
                    "calibration run.");
     else if (verbosity)
       printf("fast_orbit_feedback: RF-phase sign resolved from slip factor (eta_slip=%.4e, "
              "cos(phi_s)=%.4f over %ld cavity(ies), %s transition); analytic phaseScale is a "
-             "damping gain.  Set energy_response_scale to refine the magnitude.\n",
+             "damping gain.  Set rf_phase_response_scale to refine the magnitude.\n",
              etaSlip, cosEff, plane->nRFPhase, etaSlip > 0 ? "above" : "below");
   }
   if (plane->phaseScale == 0)
-    bombElegant("fast_orbit_feedback: RF-phase response scale is zero; set energy_response_scale "
+    bombElegant("fast_orbit_feedback: RF-phase response scale is zero; set rf_phase_response_scale "
                 "(deg per unit delta) or check the cavity VOLT/PHASE and passes_between_updates.", NULL);
 
   /* efficacy warning: a phase offset held across a step loses its energy-damping action
@@ -683,7 +683,7 @@ static void appendPhaseActuator(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline
     printf("fast_orbit_feedback: RF-phase energy actuator active over %ld cavity(ies), "
            "phaseScale=%.6e deg/delta%s, s_phase=%.3e (fast-matrix column)\n",
            plane->nRFPhase, plane->phaseScale,
-           energy_response_scale != 0 ? " (user)" : " (analytic)", s_phase);
+           rf_phase_response_scale != 0 ? " (user)" : " (analytic)", s_phase);
   fflush(stdout);
 }
 
@@ -1292,11 +1292,11 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "rf_frequency_limit", "Hz", SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "rf_response_scale", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "include_rf_phase", NULL, SDDS_LONG) ||
-        !SDDS_DefineSimpleParameter(&SDDS_fofb, "energy_Kp", NULL, SDDS_DOUBLE) ||
-        !SDDS_DefineSimpleParameter(&SDDS_fofb, "energy_Ki", NULL, SDDS_DOUBLE) ||
-        !SDDS_DefineSimpleParameter(&SDDS_fofb, "energy_Kd", NULL, SDDS_DOUBLE) ||
+        !SDDS_DefineSimpleParameter(&SDDS_fofb, "rf_phase_Kp", NULL, SDDS_DOUBLE) ||
+        !SDDS_DefineSimpleParameter(&SDDS_fofb, "rf_phase_Ki", NULL, SDDS_DOUBLE) ||
+        !SDDS_DefineSimpleParameter(&SDDS_fofb, "rf_phase_Kd", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "rf_phase_limit", "deg", SDDS_DOUBLE) ||
-        !SDDS_DefineSimpleParameter(&SDDS_fofb, "energy_response_scale", NULL, SDDS_DOUBLE) ||
+        !SDDS_DefineSimpleParameter(&SDDS_fofb, "rf_phase_response_scale", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "subtract_dispersion", NULL, SDDS_LONG) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "anti_windup", NULL, SDDS_LONG) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "reset_filters_each_step", NULL, SDDS_LONG) ||
@@ -1392,9 +1392,9 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
             "rf_frequency_limit", rf_frequency_limit,
             "rf_response_scale", rf_response_scale,
             "include_rf_phase", (int32_t)include_rf_phase,
-            "energy_Kp", energy_Kp, "energy_Ki", energy_Ki, "energy_Kd", energy_Kd,
+            "rf_phase_Kp", rf_phase_Kp, "rf_phase_Ki", rf_phase_Ki, "rf_phase_Kd", rf_phase_Kd,
             "rf_phase_limit", rf_phase_limit,
-            "energy_response_scale", energy_response_scale,
+            "rf_phase_response_scale", rf_phase_response_scale,
             "subtract_dispersion", (int32_t)subtract_dispersion, NULL) ||
         !SDDS_SetParameters(&SDDS_fofb, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
             "anti_windup", (int32_t)anti_windup,
@@ -1615,9 +1615,9 @@ static void updateSetpoints(FOFB_PLANE *plane, double *rmsOrbit, double *maxCorr
     if (isPhase) {
       /* RF-phase class: gains energy_*, and the limit is a phase excursion about the base
          phase (|phi-phi0| <= rf_phase_limit). */
-      Kp = plane->energyKp;
-      Ki = plane->energyKi;
-      Kd = plane->energyKd;
+      Kp = plane->rfPhaseKp;
+      Ki = plane->rfPhaseKi;
+      Kd = plane->rfPhaseKd;
       limitVal = rf_phase_limit;
       limitRef = plane->base[i];
     } else {

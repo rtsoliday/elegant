@@ -61,11 +61,11 @@
     STRING bpm_noise_distribution = "gaussian";
     long include_rf_frequency = 0;
     long include_rf_phase = 0;
-    double energy_Kp = 0;
-    double energy_Ki = 0;
-    double energy_Kd = 0;
+    double rf_phase_Kp = 0;
+    double rf_phase_Ki = 0;
+    double rf_phase_Kd = 0;
     double rf_phase_limit = 0;
-    double energy_response_scale = 0;
+    double rf_phase_response_scale = 0;
     long passes_between_updates = 0;
     long rf_update_multiplier = 1;
     long subtract_dispersion = 0;
