@@ -1,10 +1,13 @@
+.DEFAULT_GOAL := all
 SDDS_REPO = $(firstword $(wildcard ../../SDDS ../../../../../epics/extensions/src/SDDS))
 ifeq ($(SDDS_REPO),)
   $(error SDDS source code not found. Run 'git clone https://github.com/rtsoliday/SDDS.git' next to the SDDS-Python-module repository)
 endif
 
+ENABLE_OPENMP ?= 1
+BUNDLE_OPENMP ?= 1
 include ../Makefile.rules
-
+include $(RULES_DIR)Makefile.elegant
 EIGEN3_DIR = $(firstword $(wildcard /opt/local/include/eigen3 /opt/homebrew/include/eigen3 /usr/local/include/eigen3 /usr/include/eigen3))
 EIGEN3_INC = $(if $(EIGEN3_DIR),-isystem $(EIGEN3_DIR),)
 
@@ -100,7 +103,7 @@ else
 endif
 
 CFLAGS +=  -I../physics -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" 
-CCFLAGS +=  -I../physics -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -I.
+CXXFLAGS +=  -I../physics -I$(SDDS_REPO)/include -I$(SDDS_REPO)/meschach -I$(OBJ_DIR) -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -I.
 
 ifneq ($(OS), Linux)
   PROD += sddsupsample
@@ -111,7 +114,7 @@ ifeq ($(OS), Linux)
     PROD += sddsupsample
   endif
   CFLAGS += -fopenmp $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
-	CCFLAGS += -fopenmp $(EIGEN3_INC) $(GSL_INC_LOCAL)
+	CXXFLAGS += -fopenmp $(EIGEN3_INC) $(GSL_INC_LOCAL)
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -fopenmp $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -loagphy
@@ -119,7 +122,7 @@ ifeq ($(OS), Linux)
 endif
 
 ifeq ($(OS), Darwin)
-	CCFLAGS += $(EIGEN3_INC)
+	CXXFLAGS += $(EIGEN3_INC)
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -loagphy
@@ -129,15 +132,16 @@ endif
 ifeq ($(OS), Windows)
 	PROD := $(filter-out sddsupsample,$(PROD))
   CFLAGS += -I$(SDDS_REPO)/lzma -I../../gsl -wd4244
-  CCFLAGS += -I$(SDDS_REPO)/lzma -I../../gsl -wd4244
+  CXXFLAGS += -I$(SDDS_REPO)/lzma -I../../gsl -wd4244
   PROD_LIBS = oagphy.lib
   PROD_SYS_LIBS += gsl.lib gslcblas.lib
   PROD_LIBS_SDDS = mdbcommon.lib matlib.lib fftpack.lib SDDS1.lib namelist.lib rpnlib.lib mdbmth.lib mdblib.lib lzma.lib z.lib meschach.lib
   LIB_LINK_DIRS += -LIBPATH:$(SDDS_REPO)/lib/$(OS)-$(ARCH) -LIBPATH:../lib/$(OS)-$(ARCH)
 endif
 
+BUILD_GENERATED += $(patsubst %.nl,$(OBJ_DIR)/%.h,$(wildcard *.nl))
 include ../Makefile.build
-
+$(BUILD_GENERATED): | $(OBJ_DIR)
 $(OBJ_DIR)/sddsrandmult.$(OBJEXT): $(OBJ_DIR)/sddsrandmult.h
 
 $(OBJ_DIR)/sddsrandmult.h: sddsrandmult.nl

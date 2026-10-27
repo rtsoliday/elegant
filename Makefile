@@ -1,3 +1,4 @@
+.DEFAULT_GOAL := all
 # Detect OS and Architecture
 OS := $(shell uname -s)
 ifeq ($(findstring CYGWIN, $(OS)),CYGWIN)
@@ -22,8 +23,10 @@ ifeq ($(OS), Linux)
   GSL_LOCAL = $(wildcard $(SDDS_REPO)/gsl)
 endif
 
+ENABLE_OPENMP ?= 1
+BUNDLE_OPENMP ?= 1
 include Makefile.rules
-
+include $(RULES_DIR)Makefile.elegant
 ifeq ($(MDEBUG),1)
   DEBUGOPTIONS = MDEBUG=1
 endif
@@ -32,7 +35,7 @@ MPI_AVAILABLE =
 ifneq ($(WIN_MPI),)
   MPI_AVAILABLE = 1
 else ifneq ($(MPI_CC),)
-  ifneq ($(MPI_CCC),)
+  ifneq ($(MPI_CXX),)
     MPI_AVAILABLE = 1
   endif
 endif
@@ -138,12 +141,12 @@ xraylib: physics
 src: xraylib
 	$(MAKE) $(DEBUGOPTIONS) -C $@ HAVE_CUDA= HAVE_GPU=
 ifneq ($(CUDA_AVAILABLE),)
-	$(MAKE) $(DEBUGOPTIONS) -C $@ HAVE_CUDA=1
+	$(MAKE) $(DEBUGOPTIONS) -C $@ HAVE_CUDA=1 NVCC="$(CUDA_AUTO_NVCC)"
 endif
 ifneq ($(MPI_AVAILABLE),)
 	$(MAKE) $(DEBUGOPTIONS) -C $@ -f Makefile.mpi HAVE_CUDA= HAVE_GPU=
 ifneq ($(CUDA_AVAILABLE),)
-	$(MAKE) $(DEBUGOPTIONS) -C $@ -f Makefile.mpi HAVE_CUDA=1
+	$(MAKE) $(DEBUGOPTIONS) -C $@ -f Makefile.mpi HAVE_CUDA=1 NVCC="$(CUDA_AUTO_NVCC)"
 endif
 endif
 elegantTools: src

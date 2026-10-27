@@ -1,203 +1,350 @@
-define make_prod_objs
-$(1)_OBJS = $(patsubst %.cu, $(OBJ_DIR)/%.$(OBJEXT), $(patsubst %.cpp, $(OBJ_DIR)/%.$(OBJEXT), $(patsubst %.cc, $(OBJ_DIR)/%.$(OBJEXT), $(patsubst %.c, $(OBJ_DIR)/%.$(OBJEXT), $($(1)_SRC)))))
+#==============================================================================
+# Shared build recipes. Keep identical in all six repositories.
+# Include after final component settings and product declarations.
+#
+# PROD: program names; <name>_SRC, <name>_OBJS, <name>_LIBS and <name>_DEPS
+#       optionally override sources, objects, ordered libraries and dependencies.
+# INSTALL_PROGRAMS: optional subset of output paths to install.
+# CUSTOM_LINK_PRODUCTS: programs whose recipes are supplied by the component.
+# CUSTOM_COMPILE_RULES / CUSTOM_CLEAN: retain component recipes when set to 1.
+# BUILD_OBJECTS / BUILD_GENERATED / BUILD_CONFIG_VARIABLES: extend rebuild
+#       tracking explicitly, including test objects and generated Qt sources.
+# LIBRARY/LIBRARY_SRC, PYTHON_SHARED_LIBRARY, INC and SCRIPTS retain their API.
+#==============================================================================
+ifeq ($(.DEFAULT_GOAL),)
+.DEFAULT_GOAL := all
+endif
+
+# Final compiler options and Qt validation.
+# Apply developer options after the component has selected its final compiler.
+ifeq ($(DEV_BUILD),1)
+override CFLAGS := $(call dev_flags,$(CFLAGS))
+override CXXFLAGS := $(call dev_flags,$(CXXFLAGS))
+ifeq ($(OS),Windows)
+override LINKEXE := $(filter-out -LTCG -opt:ref -release,$(LINKEXE)) /debug
+override LINKDLL := $(filter-out -LTCG -opt:ref -release,$(LINKDLL)) /debug
+override LDFLAGS += /debug
+endif
+endif
+ifeq ($(and $(filter 1,$(USE_CCACHE)),$(filter 1,$(CCACHE_AVAILABLE))),1)
+override CC := $(CCACHE) $(CC)
+override CXX := $(CCACHE) $(CXX)
+endif
+PROD_SYS_LIBS += $(LDLIBS)
+
+ifeq ($(OS),Windows)
+DEPFLAGS =
+else
+DEPFLAGS = -MMD -MP -MF $(@:.$(OBJEXT)=.d)
+endif
+
+ifneq ($(and $(QT_BUILD_GOALS),$(and $(filter 1,$(QT_REQUIRED)),$(PROD))),)
+  BUILD_MOC_MAJOR := $(shell $(MOC) -v 2>&1 | sed -n 's/.* \([56]\)\..*/\1/p')
+  ifneq ($(BUILD_MOC_MAJOR),$(QT_VERSION))
+    $(error MOC=$(MOC) must be from Qt $(QT_VERSION))
+  endif
+  ifneq ($(OS),Windows)
+    ifneq ($(QT_USE_QMAKE),1)
+      BUILD_QT_PREFIXES := $(sort $(foreach pkg,$(QT_PACKAGES),$(shell $(PKG_CONFIG) --variable=prefix $(pkg) 2>/dev/null)))
+      ifneq ($(words $(BUILD_QT_PREFIXES)),1)
+        $(error Qt modules come from different installations: $(BUILD_QT_PREFIXES). Fix PKG_CONFIG_PATH or set PKG_CONFIG)
+      endif
+    endif
+  endif
+endif
+
+# Product paths and source/object lists.
+source_objects = $(addprefix $(OBJ_DIR)/,$(addsuffix .$(OBJEXT),$(basename $(1))))
+define product_defaults
+$(1)_SRC ?= $(firstword $(wildcard $(1).c $(1).cc $(1).cpp))
+$(1)_OBJS ?= $$(call source_objects,$$($(1)_SRC)) $$($(1)_EXTRA_OBJS)
+$(1)_LIBS ?= $$(PROD_LIBS) $$(PROD_LIBS_SDDS) $$(GSL_LIBS) $$(PROD_SYS_LIBS)
 endef
+$(foreach product,$(PROD),$(eval $(call product_defaults,$(product))))
+FULLPROD = $(addprefix $(OBJ_DIR)/,$(addsuffix $(EXEEXT),$(PROD)))
+PROD_OBJECTS = $(foreach product,$(PROD),$($(product)_OBJS))
+.SECONDARY: $(PROD_OBJECTS)
+ifneq ($(LIBRARY),)
+  ifeq ($(OS), Windows)
+    DLL := $(LIBRARY).dll
+    EXP := $(LIBRARY).exp
+    LIBRARY := $(LIBRARY:=.lib)
+    DLL := $(patsubst %,$(OBJ_DIR)/%, $(DLL))
+    EXP := $(patsubst %,$(OBJ_DIR)/%, $(EXP))
+  else
+    LIBRARY := lib$(LIBRARY:=.a)
+  endif
+  LIBRARY := $(patsubst %,$(OBJ_DIR)/%, $(LIBRARY))
+endif
+
+ifneq ($(PYTHON_SHARED_LIBRARY),)
+  ifeq ($(OS), Windows)
+    DLL = $(PYTHON_SHARED_LIBRARY:.lib=.dll)
+    EXP = $(PYTHON_SHARED_LIBRARY:.lib=.exp)
+    PYTHON_SHARED_LIBRARY := $(PYTHON_SHARED_LIBRARY:=.lib)
+    DLL := $(patsubst %,$(OBJ_DIR)/%, $(DLL))
+    EXP := $(patsubst %,$(OBJ_DIR)/%, $(EXP))
+  else
+    PYTHON_SHARED_LIBRARY_a = lib$(PYTHON_SHARED_LIBRARY:=.a)
+    PYTHON_SHARED_LIBRARY := lib$(PYTHON_SHARED_LIBRARY:=.so)
+  endif
+  PYTHON_SHARED_LIBRARY := $(patsubst %,$(OBJ_DIR)/%, $(PYTHON_SHARED_LIBRARY))
+endif
+
+ifneq ($(LIBRARY)$(PYTHON_SHARED_LIBRARY),)
+  LIBRARY_OBJS := $(call source_objects,$(LIBRARY_SRC))
+endif
 
 ifneq ($(SCRIPTS),)
- SCRIPTS := $(patsubst %,$(BIN_DIR)/%, $(SCRIPTS))
+  SCRIPTS := $(patsubst %,$(BIN_DIR)/%, $(SCRIPTS))
 endif
 
 ifneq ($(EPICS_INC_DIR),)
 ifneq ($(INC),)
- INC := $(patsubst %,$(EPICS_INC_DIR)/%, $(INC))
+  INC := $(patsubst %,$(EPICS_INC_DIR)/%, $(INC))
 endif
 endif
 
-ifneq ($(LIBRARY),)
- ifeq ($(OS), Windows)
-  DLL = $(LIBRARY:.lib=.dll)
-  EXP = $(LIBRARY:.lib=.exp)
-  LIBRARY := $(LIBRARY:=.lib)
-  DLL := $(patsubst %,$(OBJ_DIR)/%, $(DLL))
-  EXP := $(patsubst %,$(OBJ_DIR)/%, $(EXP))
- else
-  LIBRARY := lib$(LIBRARY:=.a)
- endif
- LIBRARY := $(patsubst %,$(OBJ_DIR)/%, $(LIBRARY))
-
- LIBRARY_OBJS = $(LIBRARY_SRC:.c=.$(OBJEXT))
- LIBRARY_OBJS := $(LIBRARY_OBJS:.cc=.$(OBJEXT))
- LIBRARY_OBJS := $(LIBRARY_OBJS:.cpp=.$(OBJEXT))
- LIBRARY_OBJS := $(LIBRARY_OBJS:.cu=.$(OBJEXT))
- LIBRARY_OBJS := $(patsubst %,$(OBJ_DIR)/%, $(LIBRARY_OBJS))
-endif
-
-ifneq ($(PYTHON_SHARED_LIBRARY),)
- ifeq ($(OS), Windows)
-  DLL = $(PYTHON_SHARED_LIBRARY:.lib=.dll)
-  EXP = $(PYTHON_SHARED_LIBRARY:.lib=.exp)
-  PYTHON_SHARED_LIBRARY := $(PYTHON_SHARED_LIBRARY:=.lib)
-  DLL := $(patsubst %,$(OBJ_DIR)/%, $(DLL))
-  EXP := $(patsubst %,$(OBJ_DIR)/%, $(EXP))
- else
-  PYTHON_SHARED_LIBRARY_a = lib$(PYTHON_SHARED_LIBRARY:=.a)
-  PYTHON_SHARED_LIBRARY := lib$(PYTHON_SHARED_LIBRARY:=.so)
- endif
- PYTHON_SHARED_LIBRARY := $(patsubst %,$(OBJ_DIR)/%, $(PYTHON_SHARED_LIBRARY))
-
- LIBRARY_OBJS = $(LIBRARY_SRC:.c=.$(OBJEXT))
- LIBRARY_OBJS := $(LIBRARY_OBJS:.cc=.$(OBJEXT))
- LIBRARY_OBJS := $(LIBRARY_OBJS:.cpp=.$(OBJEXT))
- LIBRARY_OBJS := $(LIBRARY_OBJS:.cu=.$(OBJEXT))
- LIBRARY_OBJS := $(patsubst %,$(OBJ_DIR)/%, $(LIBRARY_OBJS))
-endif
-
-ifneq ($(PROD),)
- $(foreach prod, $(PROD), $(eval $(call make_prod_objs,$(prod))))
- FULLPROD = $(patsubst %,$(OBJ_DIR)/%$(EXEEXT), $(PROD))
- PROD_OBJECTS = $(patsubst %$(EXEEXT),%.$(OBJEXT),$(FULLPROD))
- .SECONDARY: $(PROD_OBJECTS)
-endif
-
+# Library dependencies and configuration tracking.
+BUILD_CONFIG = $(OBJ_DIR)/.build-config-$(notdir $(firstword $(MAKEFILE_LIST)))
+BUILD_FILES += $(BUILD_CONFIG)
+# Relink when a library from this repository, SDDS or the system changes.
 ifeq ($(OS), Windows)
- ifneq ($(PROD_LIBS),)
-  PROD_DEPS = $(addprefix $(LIB_DIR)/,$(filter-out gsl.lib gslcblas.lib, $(PROD_LIBS)))
- endif
- ifneq ($(PROD_LIBS_SDDS),)
-  PROD_DEPS = $(addprefix $(SDDS_REPO)/lib/$(OS)-$(ARCH)/,$(PROD_LIBS_SDDS))
- endif
- ifneq ($(LIBRARY_LIBS),)
-  LIBRARY_DEPS = $(addprefix $(LIB_DIR)/, $(filter-out gsl.lib gslcblas.lib, $(LIBRARY_LIBS)))
- endif
- ifneq ($(LIBRARY_LIBS_SDDS),)
-  LIBRARY_DEPS = $(addprefix $(SDDS_REPO)/lib/$(OS)-$(ARCH)/,$(LIBRARY_LIBS_SDDS))
- endif
+  ifneq ($(PROD_LIBS),)
+    PROD_DEPS = $(addprefix $(LIB_DIR)/,$(filter-out gsl.lib gslcblas.lib, $(PROD_LIBS)))
+  endif
+  ifneq ($(PROD_LIBS_SDDS),)
+    PROD_DEPS += $(addprefix $(SDDS_REPO)/lib/$(OS)-$(ARCH)/,$(PROD_LIBS_SDDS))
+  endif
+  ifneq ($(PROD_SYS_DEPS),)
+    PROD_DEPS += $(PROD_SYS_DEPS)
+  endif
+  ifneq ($(LIBRARY_LIBS),)
+    LIBRARY_DEPS = $(addprefix $(LIB_DIR)/, $(filter-out gsl.lib gslcblas.lib, $(LIBRARY_LIBS)))
+  endif
+  ifneq ($(LIBRARY_LIBS_SDDS),)
+    LIBRARY_DEPS += $(addprefix $(SDDS_REPO)/lib/$(OS)-$(ARCH)/,$(LIBRARY_LIBS_SDDS))
+  endif
+  ifneq ($(LIBRARY_SYS_DEPS),)
+    LIBRARY_DEPS += $(LIBRARY_SYS_DEPS)
+  endif
 else
- ifneq ($(PROD_LIBS),)
-  PROD_DEPS = $(addsuffix .a,$(patsubst -l%,$(LIB_DIR)/lib%,$(PROD_LIBS)))
- endif
- ifneq ($(PROD_LIBS_SDDS),)
-  PROD_DEPS += $(addsuffix .a,$(patsubst -l%,$(SDDS_REPO)/lib/$(OS)-$(ARCH)/lib%,$(PROD_LIBS_SDDS)))
- endif
+  ifneq ($(PROD_LIBS),)
+    PROD_DEPS = $(addsuffix .a,$(patsubst -l%,$(LIB_DIR)/lib%,$(PROD_LIBS)))
+  endif
+  ifneq ($(PROD_LIBS_SDDS),)
+    PROD_DEPS += $(addsuffix .a,$(patsubst -l%,$(SDDS_REPO)/lib/$(OS)-$(ARCH)/lib%,$(PROD_LIBS_SDDS)))
+  endif
 endif
 
-all: $(OBJ_DIR) $(BIN_DIR) $(LIB_DIR) $(EPICS_BIN_DIR) $(EPICS_LIB_DIR) $(EPICS_INC_DIR) $(LIBRARY) $(PYTHON_SHARED_LIBRARY) $(FULLPROD) $(SCRIPTS) $(INC)
+# Custom link recipes must also relink when their library files change.
+PROD_DEPS += $(wildcard $(filter-out -%,$(PROD_SYS_LIBS) $(PROD_SYS_DEPS)))
+LIBRARY_DEPS += $(wildcard $(filter-out -%,$(LIBRARY_SYS_LIBS) $(LIBRARY_SYS_DEPS)))
 
-$(EPICS_BIN_DIR):
-	mkdir -p $(EPICS_BIN_DIR)
+# Dependency edges are shared even when a product uses a custom link recipe.
+define product_dependencies
+$(OBJ_DIR)/$(1)$(EXEEXT): $$($(1)_OBJS) $$(PROD_DEPS) $$($(1)_DEPS) $$(wildcard $$(filter-out -%,$$($(1)_LIBS))) | $(OBJ_DIR)
+endef
+$(foreach product,$(PROD),$(eval $(call product_dependencies,$(product))))
 
-$(EPICS_LIB_DIR):
-	mkdir -p $(EPICS_LIB_DIR)
+# Programs listed in GSL_PROD also link GSL.
+ifneq ($(GSL_PROD),)
+  GSL_FULLPROD = $(patsubst %,$(OBJ_DIR)/%$(EXEEXT), $(GSL_PROD))
+  $(GSL_FULLPROD): GSL_LIBS = $(GSL_LINK_LIBS)
+endif
 
-$(EPICS_INC_DIR):
-	mkdir -p $(EPICS_INC_DIR)
+$(PROD_DEPS):
+$(LIBRARY_DEPS):
 
-$(BIN_DIR):
-	mkdir -p $(BIN_DIR)
+# Track only declared artifacts; components register their generated/test files.
+build_quote = '$(subst ','"'"',$(1))'
+BUILD_CONFIG_VARIABLES += CC CXX MPI_CC MPI_CXX MPICH_CC MPICH_CXX AR RANLIB LINKEXE LINKDLL LINKLIB \
+  CPPFLAGS CFLAGS CXXFLAGS EXTRA_CFLAGS EXTRA_CXXFLAGS LIBRARY_CFLAGS LIBRARY_CXXFLAGS \
+  LDFLAGS LDLIBS LIBS LIB_LINK_DIRS PROD_LIBS PROD_LIBS_SDDS PROD_SYS_LIBS \
+  LIBRARY_LIBS LIBRARY_LIBS_SDDS LIBRARY_SYS_LIBS GSL_LINK_LIBS \
+  OPENSSL_LINK_LIBS OPENSSL_CRYPTO_LINK_LIBS \
+  EPICS_BASE EPICS_HOST_ARCH EPICS_REQUIRED_LIBS EPICS_OPTIONAL_LIBS QT_VERSION QT_DIR QT_CFLAGS QT_LIBS \
+  QT_TEST_CFLAGS MOC RCC HAVE_PVA DEV_BUILD USE_CCACHE \
+  $(foreach product,$(PROD),$(product)_OBJS $(product)_LIBS $(product)_DEPS)
+BUILD_CONFIG_VALUES := $(foreach variable,$(sort $(BUILD_CONFIG_VARIABLES)),$(call build_quote,$(variable)=$($(variable))))
+BUILD_OBJECTS += $(PROD_OBJECTS) $(LIBRARY_OBJS)
+BUILD_CONFIG_OBJECTS := $(sort $(BUILD_OBJECTS))
+BUILD_CONFIG_GENERATED := $(sort $(BUILD_GENERATED))
+# Compare with the recorded configuration while parsing, so dry runs and
+# question mode treat an unchanged configuration as current.
+ifeq ($(OS),Windows)
+BUILD_CONFIG_RECORDED := $(strip $(if $(wildcard $(BUILD_CONFIG)),$(file <$(BUILD_CONFIG))))
+BUILD_CONFIG_CURRENT := $(strip $(BUILD_CONFIG_VALUES))
+else
+BUILD_CONFIG_RECORDED := $(strip $(if $(wildcard $(BUILD_CONFIG)),$(shell cat $(BUILD_CONFIG))))
+BUILD_CONFIG_CURRENT := $(strip $(foreach variable,$(sort $(BUILD_CONFIG_VARIABLES)),$(variable)=$($(variable))))
+endif
+.PHONY: force-build-config
+ifneq ($(BUILD_CONFIG_RECORDED),$(BUILD_CONFIG_CURRENT))
+$(BUILD_CONFIG): force-build-config
+endif
+$(BUILD_CONFIG): | $(OBJ_DIR)
+ifeq ($(OS),Windows)
+# Write directly from make to avoid Windows shell command limits. Recipe
+# functions also expand during dry runs, when OBJ_DIR may not exist.
+	$(if $(findstring n,$(firstword -$(MAKEFLAGS))),,$(file >$@.new,$(BUILD_CONFIG_VALUES)))
+else
+	@printf '%s\n' $(BUILD_CONFIG_VALUES) > $@.new
+endif
+	@if cmp -s $@.new $@; then rm -f $@.new; else mv -f $@.new $@; fi
+# Shared prerequisites cover custom recipes as well as pattern rules.
+$(BUILD_CONFIG_OBJECTS) $(BUILD_CONFIG_GENERATED): $(BUILD_FILES)
 
-$(LIB_DIR):
-	mkdir -p $(LIB_DIR)
+# Output directories and aggregate targets.
+all: $(OBJ_DIR) $(BIN_DIR) $(LIB_DIR) $(EPICS_BIN_DIR) $(EPICS_LIB_DIR) $(EPICS_INC_DIR) $(BUNDLED_RUNTIME_FILES) $(LIBRARY) $(PYTHON_SHARED_LIBRARY) $(FULLPROD) $(SCRIPTS) $(INC) install-programs install-libraries
+$(sort $(OBJ_DIR) $(BIN_DIR) $(LIB_DIR) $(EPICS_BIN_DIR) $(EPICS_LIB_DIR) $(EPICS_INC_DIR)):
+	mkdir -p $@
+$(PROD_OBJECTS) $(LIBRARY_OBJS) $(FULLPROD) $(LIBRARY) $(PYTHON_SHARED_LIBRARY): | $(OBJ_DIR)
+$(SCRIPTS): | $(BIN_DIR) $(EPICS_BIN_DIR)
+$(INC): | $(EPICS_INC_DIR)
+.PHONY: prepare-output
+prepare-output: $(OBJ_DIR) $(BIN_DIR)
 
-$(OBJ_DIR):
-	mkdir -p $(OBJ_DIR)
+# Compilation, archive and link recipes.
+ifneq ($(CUSTOM_COMPILE_RULES),1)
+# Sources in LIBRARY_SRC also get LIBRARY_CFLAGS or LIBRARY_CXXFLAGS.
+$(OBJ_DIR)/%.$(OBJEXT): %.c | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(EXTRA_CFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CFLAGS)) -c $< $(OUTPUT)
+$(OBJ_DIR)/%.$(OBJEXT): %.cc $(EXTRA_CXX_OBJ_DEPS) | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(EXTRA_CXXFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CXXFLAGS)) -c $< $(OUTPUT)
+$(OBJ_DIR)/%.$(OBJEXT): %.cpp $(EXTRA_CXX_OBJ_DEPS) | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(EXTRA_CXXFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CXXFLAGS)) -c $< $(OUTPUT)
+endif
 
-ifeq ($(OS), Windows)
-
- %$(EXEEXT): %.$(OBJEXT) $(PROD_DEPS)
-	$(LINKEXE) -out:$@ $(@:.exe=.obj) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
-	cp -f $@ $(BIN_DIR)/
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
-	
- ifeq ($(NO_DLL), 1)
-  $(LIBRARY): $(LIBRARY_OBJS) $(LIBRARY_DEPS)
+ifeq ($(OS),Windows)
+# NO_DLL=1 builds a static library instead of a DLL and import library.
+ifeq ($(NO_DLL), 1)
+$(LIBRARY): $(LIBRARY_OBJS) $(LIBRARY_DEPS)
 	$(LINKLIB) -out:$(LIBRARY) $(LIB_LINK_DIRS) $(LIBRARY_OBJS) $(LIBRARY_LIBS) $(LIBRARY_LIBS_SDDS) $(LIBRARY_SYS_LIBS)
-	cp -f $@ $(LIB_DIR)/
-	@if [ -n "$(EPICS_LIB_DIR)" ]; then echo cp -f $@ $(EPICS_LIB_DIR)/; fi
-	@if [ -n "$(EPICS_LIB_DIR)" ]; then cp -f $@ $(EPICS_LIB_DIR)/; fi
- else
-  $(LIBRARY): $(LIBRARY_OBJS) $(LIBRARY_DEPS)
-	$(LINKDLL) -out:$(DLL) -implib:$(LIBRARY) $(LIB_LINK_DIRS) $(LIBRARY_OBJS) $(LIBRARY_LIBS) $(LIBRARY_LIBS_SDDS) $(LIBRARY_SYS_LIBS)
-	cp -f $(DLL) $(BIN_DIR)/
-	cp -f $@ $(LIB_DIR)/
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $(DLL) $(EPICS_BIN_DIR)/; fi
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $(DLL) $(EPICS_BIN_DIR)/; fi
-	@if [ -n "$(EPICS_LIB_DIR)" ]; then echo cp -f $@ $(EPICS_LIB_DIR)/; fi
-	@if [ -n "$(EPICS_LIB_DIR)" ]; then cp -f $@ $(EPICS_LIB_DIR)/; fi
- endif
- $(PYTHON_SHARED_LIBRARY): $(LIBRARY_OBJS) $(LIBRARY_DEPS)
-	$(LINKDLL) -out:$(DLL) -implib:$(PYTHON_SHARED_LIBRARY) $(LIB_LINK_DIRS) $(LIBRARY_OBJS) $(LIBRARY_LIBS) $(LIBRARY_LIBS_SDDS) $(LIBRARY_SYS_LIBS)
-	cp -f $(DLL) $(BIN_DIR)/
-	cp -f $@ $(LIB_DIR)/
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $(DLL) $(EPICS_BIN_DIR)/; fi
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $(DLL) $(EPICS_BIN_DIR)/; fi
-	@if [ -n "$(EPICS_LIB_DIR)" ]; then echo cp -f $@ $(EPICS_LIB_DIR)/; fi
-	@if [ -n "$(EPICS_LIB_DIR)" ]; then cp -f $@ $(EPICS_LIB_DIR)/; fi
-
-DEPFLAGS =
-
 else
- %$(EXEEXT): %.$(OBJEXT) $(PROD_DEPS)
-	$(CCC) -o $@ $@.o $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
-	cp -f $@ $(BIN_DIR)/
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
+$(LIBRARY): $(LIBRARY_OBJS) $(LIBRARY_DEPS)
+	$(LINKDLL) -out:$(DLL) -implib:$(LIBRARY) $(LIB_LINK_DIRS) $(LIBRARY_OBJS) $(LIBRARY_LIBS) $(LIBRARY_LIBS_SDDS) $(LIBRARY_SYS_LIBS) $(LDLIBS)
+endif
 
- $(LIBRARY): $(LIBRARY_OBJS)
+$(PYTHON_SHARED_LIBRARY): $(LIBRARY_OBJS) $(LIBRARY_DEPS)
+	$(LINKDLL) -out:$(DLL) -implib:$(PYTHON_SHARED_LIBRARY) $(LIB_LINK_DIRS) $(LIBRARY_OBJS) $(LIBRARY_LIBS) $(LIBRARY_LIBS_SDDS) $(LIBRARY_SYS_LIBS) $(LDLIBS)
+else
+$(LIBRARY): $(LIBRARY_OBJS)
 	$(AR) $(LIBRARY) $(LIBRARY_OBJS)
 	$(RANLIB) $(LIBRARY)
-	cp -f $@ $(LIB_DIR)/
-	@if [ -n "$(EPICS_LIB_DIR)" ]; then echo cp -f $@ $(EPICS_LIB_DIR)/; fi
-	@if [ -n "$(EPICS_LIB_DIR)" ]; then cp -f $@ $(EPICS_LIB_DIR)/; fi
-	
+
 ifeq ($(OS), Linux)
- $(PYTHON_SHARED_LIBRARY): $(LIBRARY_OBJS)
-	$(CCC) -o $@ -shared -fPIC -Wl,-h$@ $(LDFLAGS) $(LIBRARY_OBJS) $(LIBRARY_LIBS) $(LIBRARY_SYS_LIBS)
-	cp -f $@ $(LIB_DIR)/
-	@if [ -n "$(EPICS_LIB_DIR)" ]; then echo cp -f $@ $(EPICS_LIB_DIR)/; fi
-	@if [ -n "$(EPICS_LIB_DIR)" ]; then cp -f $@ $(EPICS_LIB_DIR)/; fi
+$(PYTHON_SHARED_LIBRARY): $(LIBRARY_OBJS)
+	$(CXX) -o $@ -shared -fPIC -Wl,-h$@ $(LDFLAGS) $(LIBRARY_OBJS) $(LIBRARY_LIBS) $(LIBRARY_SYS_LIBS) $(LDLIBS)
 endif
 ifeq ($(OS), Darwin)
- $(PYTHON_SHARED_LIBRARY): $(LIBRARY_OBJS)
-	$(CCC) -fPIC -dynamiclib -flat_namespace -o $@ $(LDFLAGS) $(LIBRARY_OBJS) $(LIBRARY_LIBS) $(LIBRARY_SYS_LIBS)
-	cp -f $@ $(LIB_DIR)/
-	@if [ -n "$(EPICS_LIB_DIR)" ]; echo cp -f $@ $(EPICS_LIB_DIR)/; fi
-	@if [ -n "$(EPICS_LIB_DIR)" ]; cp -f $@ $(EPICS_LIB_DIR)/; fi
+$(PYTHON_SHARED_LIBRARY): $(LIBRARY_OBJS)
+	$(CXX) -fPIC -dynamiclib -flat_namespace -o $@ $(LDFLAGS) $(LIBRARY_OBJS) $(LIBRARY_LIBS) $(LIBRARY_SYS_LIBS) $(LDLIBS)
+endif
 endif
 
-DEPFLAGS = -MMD -MP -MF $(@:.$(OBJEXT)=.d)
+# Default links support both single-source utilities and multi-object programs.
+link_product = $(LINKEXE) $(OUTPUTEXE) $($(1)_OBJS) $(LDFLAGS) $(LIB_LINK_DIRS) $($(1)_LIBS)
+define product_recipe
+$(OBJ_DIR)/$(1)$(EXEEXT):
+	$$(call link_product,$(1))
+endef
+$(foreach product,$(filter-out $(CUSTOM_LINK_PRODUCTS),$(PROD)),$(eval $(call product_recipe,$(product))))
 
+# Runtime bundling.
+# Runtime libraries selected by the component for bundling into LIB_DIR.
+ifneq ($(BUNDLED_RUNTIME_LIBS),)
+  $(FULLPROD): $(BUNDLED_RUNTIME_LIBS)
+  $(PYTHON_SHARED_LIBRARY): $(BUNDLED_RUNTIME_LIBS)
+endif
+ifneq ($(DARWIN_OPENMP_BUNDLE),)
+$(DARWIN_OPENMP_BUNDLE): $(DARWIN_OPENMP_LIBRARY) | $(LIB_DIR)
+	cp -f $< $@
+	install_name_tool -id @rpath/libomp.dylib $@
+	codesign --force --sign - $@
+endif
+ifneq ($(DARWIN_OPENMP_BUNDLE_LICENSE),)
+$(DARWIN_OPENMP_BUNDLE_LICENSE): $(DARWIN_OPENMP_LICENSE) | $(LIB_DIR)
+	cp -f $< $@
 endif
 
+# Installation.
+INSTALL_PROGRAM = $(if $(filter Darwin,$(OS)),install -m 755,cp -f)
+# A fresh inode avoids stale Darwin code-signature caches after rebuilding.
+install_program = $(if $(filter Darwin,$(OS)),$(INSTALL_PROGRAM) $(1) $(2).new && mv -f $(2).new $(2),$(INSTALL_PROGRAM) $(1) $(2))
+copy_if_changed = if ! cmp -s $(1) $(2); then cp -f $(1) $(2); fi
 
-$(OBJ_DIR)/%.$(OBJEXT): %.c
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CFLAGS)) -c $< $(OUTPUT)
-$(OBJ_DIR)/%.$(OBJEXT): %.cc
-	@mkdir -p $(dir $@)
-	$(CCC) $(CCFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CCFLAGS)) -c $< $(OUTPUT)
-$(OBJ_DIR)/%.$(OBJEXT): %.cpp
-	@mkdir -p $(dir $@)
-	$(CCC) $(CCFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CCFLAGS)) -c $< $(OUTPUT)
-$(OBJ_DIR)/%.$(OBJEXT): %.cu
-	@mkdir -p $(dir $@)
-	$(NVCC) $(NVCCFLAGS) $(NVCCDEPFLAGS) -c $< $(OUTPUT)
+# Keep each program in its own shell command, below Windows command limits.
+define install_program_if_changed
+@if ! cmp -s $(1) $(2); then $(call install_program,$(1),$(2)); fi
+
+endef
+
 $(BIN_DIR)/%: %
 	cp -f $< $@
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
-	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
+	$(if $(EPICS_BIN_DIR),cp -f $@ $(EPICS_BIN_DIR)/)
 ifneq ($(EPICS_INC_DIR),)
 $(EPICS_INC_DIR)/%: %
 	cp -f $< $@
-
 endif
 
+# Installation has one owner and also restores deleted installed outputs.
+.PHONY: all install install-program install-programs install-libraries clean distclean
+install: all
+install-program: install-programs
+INSTALL_PROGRAMS ?= $(FULLPROD)
+install-programs: $(INSTALL_PROGRAMS) $(BUNDLED_RUNTIME_FILES) | $(BIN_DIR) $(EPICS_BIN_DIR)
+	$(foreach program,$(INSTALL_PROGRAMS),$(call install_program_if_changed,$(program),$(BIN_DIR)/$(notdir $(program))))
+	$(if $(EPICS_BIN_DIR),$(foreach program,$(INSTALL_PROGRAMS),$(call install_program_if_changed,$(program),$(EPICS_BIN_DIR)/$(notdir $(program)))))
+# Installed archives are real targets so dependent programs wait for the copy.
+INSTALLED_LIBRARIES = $(addprefix $(LIB_DIR)/,$(notdir $(LIBRARY) $(PYTHON_SHARED_LIBRARY)))
+install-libraries: $(INSTALLED_LIBRARIES) $(BUNDLED_RUNTIME_FILES)
+.PHONY: force-install-libraries
+# Copies are compared while parsing.  One that differs from its source, for
+# example after switching object trees, is replaced even when it is newer;
+# matching copies stay current for dry runs and question mode.
+build_copy_differs = $(shell cmp -s $(1) $(2) || echo 1)
+build_force_changed_copies = $(foreach copy,$(2),$(if $(call build_copy_differs,$(filter %/$(notdir $(copy)),$(1)),$(copy)),$(eval $(copy): force-install-libraries)))
+# Bundled runtimes and their licenses follow libraries into extensions installs,
+# including components that build only programs.
+ifneq ($(and $(EPICS_LIB_DIR),$(BUNDLED_RUNTIME_FILES)),)
+EPICS_BUNDLED_RUNTIME_FILES = $(addprefix $(EPICS_LIB_DIR)/,$(notdir $(BUNDLED_RUNTIME_FILES)))
+install-programs install-libraries: $(EPICS_BUNDLED_RUNTIME_FILES)
+$(EPICS_BUNDLED_RUNTIME_FILES): $(BUNDLED_RUNTIME_FILES) | $(EPICS_LIB_DIR)
+	@$(call copy_if_changed,$(filter %/$(@F),$(BUNDLED_RUNTIME_FILES)),$@)
+$(call build_force_changed_copies,$(BUNDLED_RUNTIME_FILES),$(EPICS_BUNDLED_RUNTIME_FILES))
+endif
+ifneq ($(strip $(LIBRARY) $(PYTHON_SHARED_LIBRARY)),)
+$(INSTALLED_LIBRARIES): $(LIBRARY) $(PYTHON_SHARED_LIBRARY) | $(LIB_DIR)
+	@$(call copy_if_changed,$(filter %/$(@F),$(LIBRARY) $(PYTHON_SHARED_LIBRARY)),$@)
+$(call build_force_changed_copies,$(LIBRARY) $(PYTHON_SHARED_LIBRARY),$(INSTALLED_LIBRARIES))
+ifneq ($(EPICS_LIB_DIR),)
+EPICS_INSTALLED_LIBRARIES = $(addprefix $(EPICS_LIB_DIR)/,$(notdir $(LIBRARY) $(PYTHON_SHARED_LIBRARY)))
+install-libraries: $(EPICS_INSTALLED_LIBRARIES)
+$(EPICS_INSTALLED_LIBRARIES): $(LIBRARY) $(PYTHON_SHARED_LIBRARY) | $(EPICS_LIB_DIR)
+	@$(call copy_if_changed,$(filter %/$(@F),$(LIBRARY) $(PYTHON_SHARED_LIBRARY)),$@)
+$(call build_force_changed_copies,$(LIBRARY) $(PYTHON_SHARED_LIBRARY),$(EPICS_INSTALLED_LIBRARIES))
+endif
+ifeq ($(OS),Windows)
+ifneq ($(NO_DLL),1)
+install-libraries: | $(BIN_DIR) $(EPICS_BIN_DIR)
+	$(if $(DLL),cp -f $(DLL) $(BIN_DIR)/)
+	$(if $(and $(DLL),$(EPICS_BIN_DIR)),cp -f $(DLL) $(EPICS_BIN_DIR)/)
+endif
+endif
+endif
+
+# Cleaning.
+CLEAN_DIRS ?= $(OBJ_DIR)
+ifneq ($(CUSTOM_CLEAN),1)
 clean:
-	rm -rf $(OBJ_DIR)
+	rm -rf $(CLEAN_DIRS)
+distclean: clean
+	$(if $(FULLPROD),rm -f $(addprefix $(BIN_DIR)/,$(notdir $(FULLPROD))))
+endif
 
-$(PROD_DEPS):
-
-$(LIBRARY_DEPS):
-
--include $(wildcard $(OBJ_DIR)/*.d)
-
-.PHONY: all clean
+# Generated dependency files.
+-include $(patsubst %.$(OBJEXT),%.d,$(filter %.$(OBJEXT),$(BUILD_CONFIG_OBJECTS)))

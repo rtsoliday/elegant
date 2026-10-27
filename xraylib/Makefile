@@ -1,10 +1,13 @@
+.DEFAULT_GOAL := all
 SDDS_REPO = $(firstword $(wildcard ../../SDDS ../../../../../epics/extensions/src/SDDS))
 ifeq ($(SDDS_REPO),)
   $(error SDDS source code not found. Run 'git clone https://github.com/rtsoliday/SDDS.git' next to the elegant repository)
 endif
 
+ENABLE_OPENMP ?= 1
+BUNDLE_OPENMP ?= 1
 include ../Makefile.rules
-
+include $(RULES_DIR)Makefile.elegant
 LIBRARY = xrl
 LIBRARY_SRC = atomiclevelwidth.c \
         atomicweight.c \
@@ -52,4 +55,4 @@ ifeq ($(OS), Windows)
 endif
 
 include ../Makefile.build
-
+$(BUILD_GENERATED): | $(OBJ_DIR)

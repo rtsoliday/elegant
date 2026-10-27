@@ -1,10 +1,13 @@
+.DEFAULT_GOAL := all
 SDDS_REPO = $(firstword $(wildcard ../../SDDS ../../../../../epics/extensions/src/SDDS))
 ifeq ($(SDDS_REPO),)
   $(error SDDS source code not found. Run 'git clone https://github.com/rtsoliday/SDDS.git' next to the elegant repository)
 endif
 
+ENABLE_OPENMP ?= 1
+BUNDLE_OPENMP ?= 1
 include ../Makefile.rules
-
+include $(RULES_DIR)Makefile.elegant
 PROD = elegant elegantto sddssasefel ibsEmittance abrat trimda iirFilterTest
 
 elegant_SRC = alpha_data.c \
@@ -225,7 +228,7 @@ endif
 
 
 CFLAGS +=  -I../physics -I$(SDDS_REPO)/include -I$(OBJ_DIR) -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" $(OG_OPT_FLAG)
-CCFLAGS +=  -I../physics -I$(SDDS_REPO)/include -I$(OBJ_DIR) -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" $(OG_OPT_FLAG)
+CXXFLAGS +=  -I../physics -I$(SDDS_REPO)/include -I$(OBJ_DIR) -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" $(OG_OPT_FLAG)
 
 ELEGANT_INSTALL_NAME = elegant$(EXEEXT)
 CUDA_REQUESTED := $(filter 1 yes YES true TRUE on ON,$(HAVE_CUDA) $(HAVE_GPU))
@@ -265,11 +268,11 @@ ifneq ($(CUDA_REQUESTED),)
     OBJ_DIR := $(OBJ_DIR).verify
     BIN_DIR := $(BIN_DIR)-verify
     CFLAGS += -DGPU_VERIFY=1
-    CCFLAGS += -DGPU_VERIFY=1
+    CXXFLAGS += -DGPU_VERIFY=1
     NVCCFLAGS += -DGPU_VERIFY=1
   endif
   CFLAGS += $(OG_OPT_FLAG) -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
-  CCFLAGS += $(OG_OPT_FLAG) -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
+  CXXFLAGS += $(OG_OPT_FLAG) -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
   # CUDA 13 CCCL headers require C++17, including with older host defaults.
   NVCCFLAGS += $(NVCC_OPT) -std=c++17 -g -arch=$(CUDA_ARCH) --fmad=false --prec-div=true --prec-sqrt=true -Xcompiler -fPIC -I$(SDDS_REPO)/include -I$(OBJ_DIR) -Igpu -I$(CUDA_HOME)/include -DIEEE_MATH -DMINIMIZE_MEMORY -DUSE_KAHAN -DUSE_GSL -DSVN_VERSION=\"$(SVN_VERSION)\" -DHAVE_GPU=1
   NVCCDEPFLAGS ?= $(DEPFLAGS)
@@ -281,12 +284,12 @@ endif
 
 ifeq ($(MDEBUG),1)
   CFLAGS += -DMPI_DEBUG=1 $(OG_OPT_FLAG)
-  CCFLAGS += -DMPI_DEBUG=1 $(OG_OPT_FLAG)
+  CXXFLAGS += -DMPI_DEBUG=1 $(OG_OPT_FLAG)
 endif
 
 ifeq ($(OS), Linux)
   CFLAGS += -std=gnu11 -fopenmp $(MKL_CFLAG) $(MKL_INCLUDE) $(LAPACK_CFLAG) $(LAPACK_INCLUDE) $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
-  CCFLAGS += -fopenmp $(MKL_CFLAG) $(MKL_INCLUDE) $(LAPACK_CFLAG) $(LAPACK_INCLUDE) $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
+  CXXFLAGS += -fopenmp $(MKL_CFLAG) $(MKL_INCLUDE) $(LAPACK_CFLAG) $(LAPACK_INCLUDE) $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) -fopenmp $(LDFLAGS)
   PROD_SYS_LIBS := $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(FFTW3_LIB)  $(MKL_LIB) $(LAPACK_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -loagphy
@@ -295,7 +298,7 @@ endif
 
 ifeq ($(OS), Darwin)
   CFLAGS += -DCLAPACK
-  CCFLAGS += -DCLAPACK
+  CXXFLAGS += -DCLAPACK
   LDFLAGS := -L$(SDDS_REPO)/lib/$(OS)-$(ARCH) -L../lib/$(OS)-$(ARCH) $(LDFLAGS)
   PROD_SYS_LIBS := -framework Accelerate $(LZMA_LIB) $(GSL_LIB) $(GSLCBLAS_LIB) $(Z_LIB) $(FFTW3_LIB)  $(MKL_LIB) $(LAPACK_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = -loagphy
@@ -304,7 +307,7 @@ endif
 
 ifeq ($(OS), Windows)
   CFLAGS += -I$(SDDS_REPO)/lzma -I../../gsl $(MKL_CFLAG) $(MKL_INCLUDE) $(MKL_INCLUDE)/fftw -wd4018 -wd4244 -wd4267 -wd4311
-  CCFLAGS += -I$(SDDS_REPO)/lzma -I../../gsl $(MKL_CFLAG) $(MKL_INCLUDE) $(MKL_INCLUDE)/fftw -wd4018 -wd4244 -wd4267 -wd4311
+  CXXFLAGS += -I$(SDDS_REPO)/lzma -I../../gsl $(MKL_CFLAG) $(MKL_INCLUDE) $(MKL_INCLUDE)/fftw -wd4018 -wd4244 -wd4267 -wd4311
   PROD_SYS_LIBS := gsl.lib gslcblas.lib $(MKL_LIB) $(PROD_SYS_LIBS)
   PROD_LIBS = oagphy.lib
   PROD_LIBS_SDDS = mdbcommon.lib matlib.lib fftpack.lib SDDS1.lib namelist.lib rpnlib.lib mdbmth.lib mdblib.lib lzma.lib z.lib
@@ -317,12 +320,18 @@ endif
 
 ifeq ($(MPROFILE),1)
   CFLAGS += -g -pg 
-  CCFLAGS += -g -pg 
+  CXXFLAGS += -g -pg
   LDFLAGS += -g -pg
 endif
 
+CUSTOM_LINK_PRODUCTS += elegant elegantto sddssasefel ibsEmittance abrat trimda iirFilterTest
+BUILD_GENERATED += $(patsubst %.nl,$(OBJ_DIR)/%.h,$(wildcard *.nl))
+BUILD_CONFIG_VARIABLES += NVCC NVCCFLAGS NVCCDEPFLAGS CUDA_ARCH HAVE_CUDA HAVE_GPU GPU_VERIFY MDEBUG MPROFILE
+ifneq ($(CUDA_REQUESTED),)
+INSTALL_PROGRAMS = $(filter-out $(OBJ_DIR)/elegant$(EXEEXT),$(FULLPROD))
+endif
 include ../Makefile.build
-
+$(BUILD_GENERATED): | $(OBJ_DIR)
 .PHONY: FORCE_LINK_DATE
 FORCE_LINK_DATE:
 
@@ -656,3 +665,8 @@ $(OBJ_DIR)/particleTunes.$(OBJEXT): $(OBJ_DIR)/particleTunes.h
 
 $(OBJ_DIR)/particleTunes.h: particleTunes.nl
 	$(SDDS_REPO)/bin/$(OS)-$(ARCH)/nlpp -suppressSummaryVariables particleTunes.nl $(OBJ_DIR)/particleTunes.h
+
+# CUDA sources use the shared object/dependency registry with their own compiler.
+$(OBJ_DIR)/%.$(OBJEXT): %.cu | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(NVCC) $(NVCCFLAGS) $(NVCCDEPFLAGS) -c $< $(OUTPUT)

@@ -1,0 +1,31 @@
+# Elegant-specific compiler modes and CUDA discovery. Keep the shared files generic.
+CUDA_NVCC_MINIMUM_MAJOR ?= 12
+CUDA_NVCC_RELEASE_VERSION = $(shell $(1) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9.]*\).*/\1/p' | tail -n 1)
+CUDA_NVCC_RELEASE_MAJOR = $(shell $(1) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | tail -n 1)
+CUDA_NVCC_IS_SUPPORTED = $(shell major=`$(1) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | tail -n 1`; if [ -n "$$major" ] && [ "$$major" -ge "$(CUDA_NVCC_MINIMUM_MAJOR)" ]; then printf 1; fi)
+CUDA_SUPPORTED_NVCCS = $(strip $(foreach nvcc,$(1),$(if $(call CUDA_NVCC_IS_SUPPORTED,$(nvcc)),$(nvcc))))
+
+ifeq ($(SWING_BUILD),1)
+  CUDA_ARCH ?= sm_80
+else
+  CUDA_ARCH ?= sm_86
+endif
+
+# Preserve the existing numerical/debug optimization choices for CPU and CUDA hosts.
+ifeq ($(OS),Windows)
+  OG_OPT_FLAG =
+else ifneq ($(filter-out 0,$(strip $(MDEBUG))),)
+  OG_OPT_FLAG = -O0
+else
+  OG_OPT_FLAG = -Og
+endif
+
+# Elegant uses the GNU-threaded MKL interface with compiler OpenMP support.
+# Preserve its single-runtime policy on Improv as well as Swing.
+ifeq ($(OS),Linux)
+ifneq ($(MKLROOT),)
+MKL_LIB := $(filter-out $(IOMP5_LIB),$(MKL_LIB)) -lgomp
+endif
+PROD_SYS_LIBS := $(filter-out $(IOMP5_LIB),$(PROD_SYS_LIBS))
+LIBRARY_SYS_LIBS := $(filter-out $(IOMP5_LIB),$(LIBRARY_SYS_LIBS))
+endif

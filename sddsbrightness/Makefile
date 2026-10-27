@@ -1,10 +1,13 @@
+.DEFAULT_GOAL := all
 SDDS_REPO = $(firstword $(wildcard ../../SDDS ../../../../../epics/extensions/src/SDDS))
 ifeq ($(SDDS_REPO),)
   $(error SDDS source code not found. Run 'git clone https://github.com/rtsoliday/SDDS.git' next to the SDDS-Python-module repository)
 endif
 
+ENABLE_OPENMP ?= 1
+BUNDLE_OPENMP ?= 1
 include ../Makefile.rules
-
+include $(RULES_DIR)Makefile.elegant
 SCRIPTS = brightnessEnvelope
 
 PROD = sddsws sddsbs sddsecon sddscompton sddsxrf xrltool xrltest sddssyncflux
@@ -41,8 +44,12 @@ ifeq ($(OS), Windows)
   LIB_LINK_DIRS += -LIBPATH:$(SDDS_REPO)/lib/$(OS)-$(ARCH) -LIBPATH:../lib/$(OS)-$(ARCH)
 endif
 
+CUSTOM_LINK_PRODUCTS += sddsbrightness sddsurgent sddsfluxcurve sddsfresnel
+BUILD_GENERATED += $(patsubst %.nl,$(OBJ_DIR)/%.h,$(wildcard *.nl))
+BUILD_OBJECTS += $(addprefix $(OBJ_DIR)/,usb.$(OBJEXT) us.$(OBJEXT) hunt.$(OBJEXT) brighte.$(OBJEXT) urgent.$(OBJEXT))
+BUILD_CONFIG_VARIABLES += F77 RPATH
 include ../Makefile.build
-
+$(BUILD_GENERATED): | $(OBJ_DIR)
 $(OBJ_DIR)/sddsbrightness$(EXEEXT): $(sddsbrightness_OBJS) $(PROD_DEPS) $(OBJ_DIR)/usb.$(OBJEXT) $(OBJ_DIR)/hunt.$(OBJEXT) $(OBJ_DIR)/brighte.$(OBJEXT)
 	$(F77) $(RPATH) $(OUTPUTEXE) $(sddsbrightness_OBJS) $(OBJ_DIR)/usb.$(OBJEXT) $(OBJ_DIR)/hunt.$(OBJEXT) $(OBJ_DIR)/brighte.$(OBJEXT) $(LDFLAGS) $(LIB_LINK_DIRS) $(PROD_LIBS) $(PROD_LIBS_SDDS) $(PROD_SYS_LIBS)
 	cp -f $@ $(BIN_DIR)/
@@ -81,3 +88,5 @@ $(OBJ_DIR)/sddsfresnel$(EXEEXT): $(sddsfresnel_OBJS) $(PROD_DEPS)
 	cp -f $@ $(BIN_DIR)/
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then echo cp -f $@ $(EPICS_BIN_DIR)/; fi
 	@if [ -n "$(EPICS_BIN_DIR)" ]; then cp -f $@ $(EPICS_BIN_DIR)/; fi
+
+$(filter %.$(OBJEXT),$(BUILD_OBJECTS)): | $(OBJ_DIR)
