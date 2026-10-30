@@ -3453,6 +3453,8 @@ whenever the RF-frequency loop is active (see above).
 &fast_orbit_feedback
     STRING response[4] = {NULL, NULL, NULL, NULL};
     STRING response_output[4] = {NULL, NULL, NULL, NULL};
+    STRING svd_value_output[2] = {NULL, NULL};
+    STRING svd_mode_output[2] = {NULL, NULL};
     long fixed_length_matrix = 0;
     long use_response_from_computed_orbits = 0;
     double closed_orbit_accuracy = 1e-12;
@@ -3467,6 +3469,7 @@ whenever the RF-frequency loop is active (see above).
     double minimum_SV_ratio = 0;
     double Tikhonov_relative_alpha = 0;
     long Tikhonov_n = -1;
+    double maximum_dispersive_fraction = 1.0;
     double steering_Kp = 0;
     double steering_Ki = 1;
     double steering_Kd = 0;
@@ -3521,6 +3524,55 @@ whenever the RF-frequency loop is active (see above).
   RF-frequency and RF-phase actuators remain analytic.  Only \verb|response[0]| and
   \verb|response[1]| are used (the cross-plane entries \verb|[2]|/\verb|[3]| are rejected), and
   loading is mutually exclusive with \verb|use_response_from_computed_orbits|.
+\item \verb|svd_value_output| --- Optional files (\verb|svd_value_output[0]| horizontal,
+  \verb|svd_value_output[1]| vertical --- one file per plane) giving the singular-value spectrum of
+  the matrix the feedback inverts, together with how much of the residual motion sits in each mode.
+  One row per mode, with columns \verb|Index|, \verb|SingularValue|, \verb|Ratio| (the singular value
+  divided by the largest), \verb|Retained| (nonzero if the mode survived singular-value truncation),
+  and \verb|RmsAmplitude| (the RMS over all feedback iterations of that mode's amplitude in the
+  orbit).  This is the file that answers ``which orbit patterns can these correctors actually make,
+  and which of them is my leftover motion sitting in?''  Two further columns describe the dispersive
+  content of each mode: \verb|DispersiveFraction| is
+  $|\mathbf{u}_i\cdot\hat{\mathbf{\eta}}|$, the overlap of the mode's orbit pattern with the unit
+  dispersion pattern at the monitors, so a mode with a large value drives an energy error.  It is
+  always computed, whether or not \verb|maximum_dispersive_fraction| is in use, since it is what one
+  inspects in order to choose the threshold.  Note that these are the modes of the matrix actually
+  inverted, which is the AUGMENTED matrix when an RF-phase column is present; the dispersive removal
+  acts on the corrector-only matrix beforehand, so the modes it removed do not appear in this
+  spectrum at all and only their count is reported.  On a deck using both, the expected signature
+  here is a single mode with \verb|DispersiveFraction| near 1 --- the RF-phase column, which now owns
+  the dispersion by itself --- with every corrector mode near zero.  Parameters record
+  \verb|NMonitors|,
+  \verb|NCorrectors|, \verb|NModes|, \verb|NModesRetained|, \verb|NModesDispersiveDeleted| (the
+  number of corrector modes removed), and \verb|ConditionNumber|.
+
+  Note the normalization, which differs from the rms columns of the \verb|output| file:
+  \verb|RmsAmplitude| is the modal \emph{coefficient} $a_i=u_i^T x$ (in m) and is not divided by the
+  number of monitors, whereas \verb|xBpmRms| and its relatives are.  Since the $u_i$ are orthonormal,
+  the two are related by $\sum_i a_i^2 = N_{\rm mon}\,{\rm rms}^2$, so an individual mode amplitude is
+  legitimately about $\sqrt{N_{\rm mon}}$ times larger than the rms it contributes --- the files are
+  consistent, not contradictory.  That identity is also a useful check: summed over all modes it
+  recovers the total orbit power, and any shortfall is precisely the motion lying outside the span of
+  the correctors.
+
+\item \verb|svd_mode_output| --- Optional files (\verb|[0]| horizontal, \verb|[1]| vertical) giving
+  the time series of the modal amplitudes: one row per feedback iteration, with columns \verb|Step|,
+  \verb|Pass|, and \verb|Mode000|, \verb|Mode001|, \dots, one per singular mode.  Modes are columns
+  so that the spectrum of an individual mode is directly accessible, e.g.\
+  \verb|sddsfft -columns=Step,Mode042|.  Like the \verb|output| file this is a single page updated
+  in place as the run proceeds, so it can be examined while tracking continues.
+
+  Interpreting the decomposition: writing the response matrix as $C=USV^T$, the orbit is projected
+  onto the left singular vectors, $a_i=u_i^T x$.  Modes with large singular values are corrected
+  cheaply, so residual there indicates the \emph{loop} is limited (gain, bandwidth, or actuator lag).
+  Modes with small but retained singular values need large kicks, so residual there points at
+  \verb|corrector_limit| or the truncation settings.  Motion lying outside the retained span cannot
+  be produced by these correctors at any gain --- no change of gain will remove it, and only a
+  different corrector set or a different disturbance will.  Note that when \verb|include_rf_phase| is
+  set the decomposed matrix includes the RF-phase column, which is internally scaled for
+  conditioning, so the spectrum then mixes units; and if the monitor weights are not all equal the
+  decomposition is performed in the weighted monitor space.
+
 \item \verb|response_output| --- Optional files to which the forward steering response matrices
   that \verb|elegant| computes are written (\verb|response_output[0]| horizontal,
   \verb|response_output[1]| vertical), in the same \verb|correction_matrix_output| layout.  This
@@ -3555,6 +3607,38 @@ whenever the RF-frequency loop is active (see above).
 \item \verb|keep_largest_SVs|, \verb|remove_smallest_SVs|, \verb|minimum_SV_ratio|,
   \verb|Tikhonov_relative_alpha|, \verb|Tikhonov_n| --- Singular-value-decomposition
   controls for inverting the response matrix, with the same meaning as in \verb|correct|.
+\item \verb|maximum_dispersive_fraction| --- Prevents the steering correctors from
+  driving energy errors, by removing the dispersive singular vectors from the
+  corrector-only response matrix.  Horizontal plane only.
+
+  A corrector pattern whose orbit lies along the dispersion changes the ring path
+  length and so shifts the equilibrium momentum offset.  For each singular vector of
+  the corrector-only matrix \verb|elegant| computes the dispersive fraction
+  $|\mathbf{u}_i \cdot \hat{\mathbf{\eta}}|$, the overlap of that mode's orbit pattern
+  with the unit dispersion pattern at the monitors; it lies between 0 and 1.  Modes
+  whose fraction exceeds \verb|maximum_dispersive_fraction| are dropped and the matrix
+  is recomposed from the survivors, $C' = \sum_{i\,\mathrm{kept}} s_i \mathbf{u}_i
+  \mathbf{v}_i^T$, before any RF-phase column is appended.  The recomposed matrix is
+  exact on the span of the retained singular vectors and zero elsewhere, and the
+  pseudo-inverse only ever commands patterns inside that span, so the forward model
+  remains correct for everything the feedback actually does.  The removal necessarily
+  creates an equal number of null singular values, so \verb|remove_smallest_SVs| is
+  raised automatically to discard them.
+
+  The default of 1.0 removes nothing, since the fraction can never exceed 1.  Choose a
+  value by inspecting the \verb|DispersiveFraction| column of \verb|svd_value_output|,
+  which is always written: the dispersive content is typically concentrated in a few
+  modes, with the rest zero to machine precision.  How much this costs depends strongly
+  on the lattice.  Where dispersion is confined and correctors are plentiful, a
+  threshold of 0.5 may remove a single mode out of many.  In a small ring with
+  dispersion everywhere, the dispersive modes can include the one with the largest
+  singular value, and removing it will cripple the correction --- check the singular
+  values of the modes being removed before using this.
+
+  The cut is applied before the RF-phase column is added, which matters: that column is
+  itself proportional to $\eta$ and therefore lies entirely within the dispersive modes,
+  so cutting after augmentation would delete the energy actuator's own channel along
+  with the correctors'.
 \item \verb|steering_Kp|, \verb|steering_Ki|, \verb|steering_Kd| --- Proportional,
   integral, and derivative gains of the PID controller for the steering-corrector
   actuator class.  Pure integral action (\verb|steering_Ki| only) gives bounded
@@ -3670,6 +3754,10 @@ whenever the RF-frequency loop is active (see above).
   corresponding namelist variable; the \verb|response| and \verb|response_output| arrays are
   stored as \verb|response0|...\verb|response3| and \verb|response_output0|...\verb|response_output3|),
   so the run is self-documenting and reproducible.
+  Also recorded are \verb|xRmsCorrectable|, \verb|xRmsUncorrectable|, \verb|yRmsCorrectable|
+  and \verb|yRmsUncorrectable| (m), which split the same orbit rms into the part lying in the
+  span of the retained singular vectors and the part these correctors cannot produce; see
+  \verb|svd_value_output|.  The two add in quadrature to the corresponding rms column.
 \item \verb|flush_interval| --- Number of feedback iterations between in-place flushes of the
   single-page \verb|output| file to disk during tracking.  Larger values reduce file I/O (the
   previous behavior wrote and synced a page every iteration, which can be slow); the complete

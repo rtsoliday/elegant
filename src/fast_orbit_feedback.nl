@@ -31,6 +31,8 @@
 #namelist fast_orbit_feedback static
     STRING response[4] = {NULL, NULL, NULL, NULL};
     STRING response_output[4] = {NULL, NULL, NULL, NULL};
+    STRING svd_value_output[2] = {NULL, NULL};
+    STRING svd_mode_output[2] = {NULL, NULL};
     long fixed_length_matrix = 0;
     long use_response_from_computed_orbits = 0;
     double closed_orbit_accuracy = 1e-12;
@@ -45,6 +47,7 @@
     double minimum_SV_ratio = 0;
     double Tikhonov_relative_alpha = 0;
     long Tikhonov_n = -1;
+    double maximum_dispersive_fraction = 1.0;
     double steering_Kp = 0;
     double steering_Ki = 1;
     double steering_Kd = 0;

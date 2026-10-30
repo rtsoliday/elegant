@@ -74,6 +74,7 @@ long fofbTotalPasses = 0;
 #define FOFB_MAX_FILTERS 100
 
 double noise_value(double xamplitude, double xcutoff, long xerror_type);
+double getMonitorWeight(ELEMENT_LIST *elem); /* correct.c; no header declares it */
 long add_steer_type_to_lists(STEERING_LIST *SL, long plane, long type, char *item, double tweek, double limit,
                              LINE_LIST *beamline, RUN *run, long forceQuads);
 long add_steer_elem_to_lists(STEERING_LIST *SL, long plane, char *name, char *item,
@@ -239,6 +240,35 @@ typedef struct {
   double rfPhaseKp, rfPhaseKi, rfPhaseKd; /* RF-phase-class PID gains */
   double phaseScale;          /* deg of RF phase per unit delta (signed); builds the column */
   double deltaEst;            /* last dispersion-projected energy offset (diagnostic only) */
+  /* --- SVD decomposition of the fast matrix, retained for residual-motion diagnostics ---
+     matrix_invert() already runs an SVD to form CM->T; we simply ask it to hand back the
+     factors instead of freeing them.  svdU is the ECONOMY left-singular basis, nmon x nSV
+     with nSV=min(nmon,ncor), so the (nmon-nSV)-dimensional subspace that no corrector can
+     reach is NOT stored -- its content is recovered from the Parseval norm deficit.
+     CAUTION: when the monitor weights are not all equal, matrix_invert weights the rows of
+     the matrix BEFORE the SVD (matrixOp.c), so svdU is the basis of W*C and the orbit must
+     be weighted the same way before projecting.  svdWeighted records which case applies. */
+  MAT *svdU;           /* left singular vectors (nmon x nSV) */
+  VEC *svdS;           /* singular values (nSV) */
+  long nSV;            /* number computed = min(nmon,ncor) */
+  long nSVused;        /* number retained after truncation/regularization */
+  double svdCond;      /* condition number reported by matrix_invert */
+  short svdWeighted;   /* nonzero if svdU is the basis of W*C rather than C */
+  double *svdAmp;      /* per-step modal amplitudes a_i = u_i^T x (length nSV) */
+  double *svdRms2;     /* running sum of a_i^2 over steps (length nSV) */
+  long svdNAcc;        /* steps accumulated into svdRms2 */
+  /* Dispersive content of each mode, |u_i . etahat| in [0,1], where etahat is the unit
+     dispersion pattern at the monitors (weighted alongside svdU when svdWeighted).  A mode
+     with a large value steers the beam along the dispersion, i.e. drives an energy error.
+     Modes above maximum_dispersive_fraction are DELETED FROM THE INVERSE by matrix_invert's
+     deleteVector list, which zeroes 1/s_i for them: CM->C and the forward model are left
+     untouched, the inverse is simply forbidden to command the correctors into those modes. */
+  double *svdEtaFrac;  /* |u_i . etahat| per mode of the AUGMENTED matrix (length nSV) */
+  long nSVdeleted;     /* number of corrector modes deleted as dispersive.  There is no
+                          per-mode flag here on purpose: the deletion happens on the
+                          corrector-only spectrum, which is a DIFFERENT spectrum from the
+                          augmented one these arrays describe, so its indices do not map. */
+  double rmsCorrectable, rmsUncorrectable; /* last step's split (m) */
 } FOFB_PLANE;
 
 static FOFB_PLANE planeData[2]; /* [0]=x, [1]=y */
@@ -332,24 +362,361 @@ static void attachMonitorData(FOFB_PLANE *plane) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Write the per-mode singular-value / residual-content summary for one plane.
+   Rows are modes; this is the file that answers "which patterns can these correctors make,
+   and which of them is the leftover motion sitting in?".  Layout follows sddspseudoinverse's
+   -sFile convention (Index + SingularValue rows). */
+
+static void fofbWriteSVDValues(FOFB_PLANE *plane, char *filename, long coord) {
+  SDDS_DATASET SDDSout;
+  CORMON_DATA *CM = &plane->CM;
+  long j;
+  char desc[256];
+  int32_t nmon32, ncor32, nSV32, nUsed32, nDel32;
+  if (!FOFB_IS_MASTER || !plane->svdU || plane->nSV <= 0 || !filename)
+    return;
+  snprintf(desc, sizeof(desc), "%s-plane fast_orbit_feedback singular values and modal residual content",
+           coord == 0 ? "horizontal" : "vertical");
+  if (!SDDS_InitializeOutputElegant(&SDDSout, SDDS_BINARY, 1, desc, desc, filename))
+    SDDS_Bomb("fast_orbit_feedback: unable to initialize svd_value_output file");
+  if (SDDS_DefineColumn(&SDDSout, "Index", NULL, NULL, "singular-value index", NULL, SDDS_LONG, 0) < 0 ||
+      SDDS_DefineColumn(&SDDSout, "SingularValue", NULL, NULL,
+                        "singular value of the matrix the feedback inverts", NULL, SDDS_DOUBLE, 0) < 0 ||
+      SDDS_DefineColumn(&SDDSout, "Ratio", NULL, NULL,
+                        "singular value divided by the largest", NULL, SDDS_DOUBLE, 0) < 0 ||
+      SDDS_DefineColumn(&SDDSout, "Retained", NULL, NULL,
+                        "nonzero if this mode survived singular-value truncation", NULL, SDDS_SHORT, 0) < 0 ||
+      SDDS_DefineColumn(&SDDSout, "RmsAmplitude", NULL, "m",
+                        "RMS over all feedback steps of this mode's amplitude in the orbit",
+                        NULL, SDDS_DOUBLE, 0) < 0 ||
+      SDDS_DefineColumn(&SDDSout, "DispersiveFraction", NULL, NULL,
+                        "|u.etahat|, overlap of this mode's orbit pattern with the unit "
+                        "dispersion pattern; large means the mode drives an energy error",
+                        NULL, SDDS_DOUBLE, 0) < 0 ||
+      0)
+    SDDS_Bomb("fast_orbit_feedback: unable to define svd_value_output columns");
+  SDDS_DefineParameter(&SDDSout, "Plane", NULL, NULL, "plane", NULL, SDDS_STRING,
+                       coord == 0 ? "horizontal" : "vertical");
+  nmon32 = CM->nmon;
+  ncor32 = CM->ncor;
+  nSV32 = plane->nSV;
+  nUsed32 = plane->nSVused;
+  SDDS_DefineParameter1(&SDDSout, "NMonitors", NULL, NULL, "Number of monitors", NULL, SDDS_LONG, &nmon32);
+  SDDS_DefineParameter1(&SDDSout, "NCorrectors", NULL, NULL, "Number of actuator columns", NULL, SDDS_LONG, &ncor32);
+  SDDS_DefineParameter1(&SDDSout, "NModes", NULL, NULL, "Number of singular values computed", NULL, SDDS_LONG, &nSV32);
+  SDDS_DefineParameter1(&SDDSout, "NModesRetained", NULL, NULL, "Number retained after truncation",
+                        NULL, SDDS_LONG, &nUsed32);
+  nDel32 = plane->nSVdeleted;
+  SDDS_DefineParameter1(&SDDSout, "NModesDispersiveDeleted", NULL, NULL,
+                        "Number deleted from the inverse as dispersive", NULL, SDDS_LONG, &nDel32);
+  SDDS_DefineParameter1(&SDDSout, "ConditionNumber", NULL, NULL, "Condition number of the inverted matrix",
+                        NULL, SDDS_DOUBLE, &plane->svdCond);
+  SDDS_DefineParameter1(&SDDSout, "WeightedDecomposition", NULL, NULL,
+                        "nonzero if monitor weights were folded in before the decomposition",
+                        NULL, SDDS_SHORT, &plane->svdWeighted);
+  if (plane->rfPhaseActive)
+    SDDS_DefineParameter1(&SDDSout, "RFPhaseColumnScale", NULL, NULL,
+                          "conditioning scale on the RF-phase column (mixes units into the spectrum)",
+                          NULL, SDDS_DOUBLE, &plane->s_phase);
+  if (!SDDS_WriteLayout(&SDDSout) || !SDDS_StartPage(&SDDSout, plane->nSV))
+    SDDS_Bomb("fast_orbit_feedback: unable to start svd_value_output page");
+  if (!SDDS_SetParameters(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, "Plane",
+                          coord == 0 ? "horizontal" : "vertical", NULL))
+    SDDS_Bomb("fast_orbit_feedback: unable to set svd_value_output parameters");
+  for (j = 0; j < plane->nSV; j++) {
+    double sv = plane->svdS->ve[j];
+    double sv0 = plane->svdS->ve[0];
+    double rms = plane->svdNAcc ? sqrt(plane->svdRms2[j] / plane->svdNAcc) : 0;
+    if (!SDDS_SetRowValues(&SDDSout, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, j,
+                           "Index", (int32_t)j, "SingularValue", sv,
+                           "Ratio", sv0 != 0 ? sv / sv0 : 0,
+                           "Retained", (short)(j < plane->nSVused ? 1 : 0),
+                           "RmsAmplitude", rms,
+                           "DispersiveFraction", plane->svdEtaFrac ? plane->svdEtaFrac[j] : 0.0,
+                           NULL))
+      SDDS_Bomb("fast_orbit_feedback: unable to set svd_value_output row");
+  }
+  if (!SDDS_WritePage(&SDDSout) || !SDDS_Terminate(&SDDSout))
+    SDDS_Bomb("fast_orbit_feedback: unable to write svd_value_output file");
+}
+
+/* Per-plane modal time-series output: rows are feedback steps, columns are modes.
+   Modes-as-columns (the orientation sddspseudoinverse uses for U/V) is deliberate -- it makes
+   the spectrum of an individual mode a one-liner, e.g. sddsfft -columns=Step,Mode042.  Like
+   the .fofb file this is a single page pre-sized to n_steps and updated in place, so it can
+   be examined while the run proceeds. */
+
+static SDDS_DATASET SDDS_fofbMode[2];
+static long fofbModeActive[2] = {0, 0};
+/* svd_value_output names, composed at setup because the file is written at teardown,
+   where no RUN* is available (and caching the RUN* risks a dangling pointer). */
+static char *fofbSVDValueFile[2] = {NULL, NULL};
+
+static void fofbSetupModeOutput(FOFB_PLANE *plane, char *filename, RUN *run, long coord, long nSteps) {
+  SDDS_DATASET *sd = &SDDS_fofbMode[coord ? 1 : 0];
+  char name[64], desc[256];
+  long j;
+  int32_t nSV32, nUsed32;
+  if (!FOFB_IS_MASTER || !plane->svdU || plane->nSV <= 0)
+    return;
+  filename = compose_filename(filename, run->rootname);
+  snprintf(desc, sizeof(desc), "%s-plane fast_orbit_feedback modal orbit amplitudes",
+           coord == 0 ? "horizontal" : "vertical");
+  if (!SDDS_InitializeOutputElegant(sd, SDDS_BINARY, 1, desc, desc, filename))
+    SDDS_Bomb("fast_orbit_feedback: unable to initialize svd_mode_output file");
+  if (SDDS_DefineColumn(sd, "Step", NULL, NULL, "feedback iteration", NULL, SDDS_LONG, 0) < 0 ||
+      SDDS_DefineColumn(sd, "Pass", NULL, NULL, "tracking pass at this iteration", NULL, SDDS_LONG, 0) < 0)
+    SDDS_Bomb("fast_orbit_feedback: unable to define svd_mode_output columns");
+  for (j = 0; j < plane->nSV; j++) {
+    snprintf(name, sizeof(name), "Mode%03ld", j);
+    snprintf(desc, sizeof(desc), "amplitude of singular mode %ld in the orbit", j);
+    if (SDDS_DefineColumn(sd, name, NULL, "m", desc, NULL, SDDS_DOUBLE, 0) < 0)
+      SDDS_Bomb("fast_orbit_feedback: unable to define svd_mode_output mode column");
+  }
+  SDDS_DefineParameter(sd, "Plane", NULL, NULL, "plane", NULL, SDDS_STRING,
+                       coord == 0 ? "horizontal" : "vertical");
+  nSV32 = plane->nSV;
+  nUsed32 = plane->nSVused;
+  SDDS_DefineParameter1(sd, "NModes", NULL, NULL, "Number of singular values computed", NULL, SDDS_LONG, &nSV32);
+  SDDS_DefineParameter1(sd, "NModesRetained", NULL, NULL, "Number retained after truncation",
+                        NULL, SDDS_LONG, &nUsed32);
+  SDDS_DefineParameter1(sd, "ConditionNumber", NULL, NULL, "Condition number of the inverted matrix",
+                        NULL, SDDS_DOUBLE, &plane->svdCond);
+  if (!SDDS_WriteLayout(sd) || !SDDS_StartPage(sd, nSteps > 0 ? nSteps : 1))
+    SDDS_Bomb("fast_orbit_feedback: unable to start svd_mode_output page");
+  if (!SDDS_SetParameters(sd, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, "Plane",
+                          coord == 0 ? "horizontal" : "vertical", NULL))
+    SDDS_Bomb("fast_orbit_feedback: unable to set svd_mode_output parameters");
+  fofbModeActive[coord ? 1 : 0] = 1;
+}
+
+static void fofbWriteModeRow(FOFB_PLANE *plane, long coord, long iStep, long pass) {
+  SDDS_DATASET *sd = &SDDS_fofbMode[coord ? 1 : 0];
+  char name[64];
+  long j;
+  if (!FOFB_IS_MASTER || !fofbModeActive[coord ? 1 : 0] || !plane->svdAmp)
+    return;
+  if (!SDDS_SetRowValues(sd, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, iStep,
+                         "Step", (int32_t)iStep, "Pass", (int32_t)pass, NULL))
+    SDDS_Bomb("fast_orbit_feedback: unable to set svd_mode_output row");
+  for (j = 0; j < plane->nSV; j++) {
+    snprintf(name, sizeof(name), "Mode%03ld", j);
+    if (!SDDS_SetRowValues(sd, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, iStep,
+                           name, plane->svdAmp[j], NULL))
+      SDDS_Bomb("fast_orbit_feedback: unable to set svd_mode_output amplitude");
+  }
+}
+
+static void fofbFlushModeOutput(long final) {
+  long ip;
+  if (!FOFB_IS_MASTER)
+    return;
+  for (ip = 0; ip < 2; ip++) {
+    if (!fofbModeActive[ip])
+      continue;
+    if (!SDDS_UpdatePage(&SDDS_fofbMode[ip], 0))
+      SDDS_Bomb("fast_orbit_feedback: unable to update svd_mode_output page");
+    if (final) {
+      SDDS_Terminate(&SDDS_fofbMode[ip]);
+      fofbModeActive[ip] = 0;
+    }
+  }
+}
+
+/* Release the retained SVD factors (see FOFB_PLANE).  Safe to call repeatedly and on a
+   plane that never had an SVD. */
+
+static void fofbFreeSVD(FOFB_PLANE *plane) {
+  if (plane->svdU) {
+    matrix_free(plane->svdU);
+    plane->svdU = NULL;
+  }
+  if (plane->svdS) {
+    vec_free(plane->svdS);
+    plane->svdS = NULL;
+  }
+  if (plane->svdAmp) {
+    free(plane->svdAmp);
+    plane->svdAmp = NULL;
+  }
+  if (plane->svdRms2) {
+    free(plane->svdRms2);
+    plane->svdRms2 = NULL;
+  }
+  if (plane->svdEtaFrac) {
+    free(plane->svdEtaFrac);
+    plane->svdEtaFrac = NULL;
+  }
+  plane->nSV = plane->nSVused = plane->svdNAcc = plane->nSVdeleted = 0;
+}
+
+/* Decompose one plane's orbit vector onto the left singular vectors of the matrix the loop
+   inverts, splitting the residual into what these correctors can and cannot produce.
+
+   a_i = u_i^T x  for i < nSV = min(nmon,ncor).  Because matrix_invert returns the ECONOMY
+   SVD, u_i spans only the column space; the (nmon-nSV)-dimensional subspace no corrector can
+   reach is never formed.  Its content follows from Parseval as the norm deficit
+   ||x||^2 - sum_i a_i^2, which is why "outside" below needs no extra linear algebra.
+
+   Correctable  = modes actually retained by the truncation (i < nSVused).
+   Uncorrectable = truncated modes + the unreachable complement: both are motion these
+   correctors cannot remove at any gain.
+
+   x must be weighted exactly as the matrix was (see svdWeighted). */
+
+static void fofbDecompose(FOFB_PLANE *plane, MAT *Q) {
+  CORMON_DATA *CM = &plane->CM;
+  long i, j, n = CM->nmon, k = plane->nSV;
+  double norm2 = 0, inSpace2 = 0, corr2 = 0, outside2;
+  if (!plane->svdU || k <= 0 || !plane->svdAmp) {
+    plane->rmsCorrectable = plane->rmsUncorrectable = 0;
+    return;
+  }
+  for (i = 0; i < n; i++) {
+    double xi = Mij(Q, i, 0);
+    if (plane->svdWeighted)
+      xi *= CM->weight[i];
+    norm2 += xi * xi;
+  }
+  for (j = 0; j < k; j++) {
+    double a = 0;
+    for (i = 0; i < n; i++) {
+      double xi = Mij(Q, i, 0);
+      if (plane->svdWeighted)
+        xi *= CM->weight[i];
+      a += Mij(plane->svdU, i, j) * xi;
+    }
+    plane->svdAmp[j] = a;
+    plane->svdRms2[j] += a * a;
+    inSpace2 += a * a;
+    if (j < plane->nSVused)
+      corr2 += a * a;
+  }
+  plane->svdNAcc++;
+  outside2 = norm2 - inSpace2;
+  if (outside2 < 0)
+    outside2 = 0; /* round-off only; the deficit is a sum of squares */
+  plane->rmsCorrectable = n ? sqrt(corr2 / n) : 0;
+  plane->rmsUncorrectable = n ? sqrt((norm2 - corr2) / n) : 0;
+}
+
 /* invert CM->C into CM->T = -C^-1, mirroring the COMPUTE_RESPONSE_INVERT block of
    compute_orbcor_matrices (correct.c).  Used after the RF-phase column is appended. */
 
-static void fofbInvertCM(CORMON_DATA *CM) {
+static void fofbInvertCM(CORMON_DATA *CM, FOFB_PLANE *plane) {
   double conditionNumber;
+  VEC *S_all = NULL, *S_used = NULL;
+  MAT *U = NULL;
+  int32_t nAll = 0, nUsed = 0;
+  double *etaFrac = NULL;
   if (CM->T) {
     matrix_free(CM->T);
     CM->T = NULL;
   }
-  if (CM->auto_limit_SVs && (CM->C->m < CM->C->n) && CM->remove_smallest_SVs < (long)(CM->C->n - CM->C->m))
+  /* Ensure the monitor weights are initialized.  This matters because the two response-matrix
+     builders differ: compute_orbcor_matrices sets CM->weight/equalW unconditionally, but
+     compute_orbcor_matrices1 (use_response_from_computed_orbits) sets them INSIDE its
+     COMPUTE_RESPONSE_INVERT block (correct.c), which we no longer request.  Recomputing them
+     here is idempotent for the first builder and essential for the second. */
+  {
+    long i;
+    double W0 = 0;
+    CM->equalW = 1;
+    for (i = 0; i < CM->nmon; i++) {
+      CM->weight[i] = getMonitorWeight(CM->umoni[i]);
+      if (!i)
+        W0 = CM->weight[i];
+      else if (CM->weight[i] != W0)
+        CM->equalW = 0;
+    }
+  }
+  if (CM->auto_limit_SVs && (CM->C->m < CM->C->n) && CM->remove_smallest_SVs < (long)(CM->C->n - CM->C->m)) {
     CM->remove_smallest_SVs = CM->C->n - CM->C->m;
+    /* same message the COMPUTE_RESPONSE_INVERT block in correct.c emits, kept so deferring
+       the inversion here does not silently change the log */
+    printf("Removing %ld smallest singular values to prevent instability\n", (long)CM->remove_smallest_SVs);
+  }
+  /* Ask for the SVD factors (previously all NULL, so matrix_invert freed them).  Pattern
+     follows LRC_svdSolve (correctionEngine.c).  We need U and the full/used singular-value
+     vectors; Vt is still discarded since the diagnostic lives in monitor space. */
   CM->T = matrix_invert(CM->C, CM->equalW ? NULL : CM->weight,
                         (int32_t)CM->keep_largest_SVs, (int32_t)CM->remove_smallest_SVs,
                         CM->minimum_SV_ratio, CM->Tikhonov_relative_alpha, CM->Tikhonov_n,
-                        0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &conditionNumber);
+                        0, NULL, NULL,                  /* deleteVectors, deleteVector, deletedVector */
+                        &S_all, &nAll, &S_used, &nUsed, /* full and retained singular values */
+                        &U, NULL,                       /* U kept; Vt unused (monitor-space diagnostic) */
+                        &conditionNumber);
+
+  /* ---- dispersive-content DIAGNOSTIC for the matrix actually inverted ----------------
+     etaFrac_i = |u_i . etahat| is the overlap of mode i's orbit pattern with the unit
+     dispersion pattern at the monitors: large means the mode moves the beam along eta and
+     so drives an energy error.  Reported per mode in svd_value_output as
+     DispersiveFraction, and it is what you inspect to choose maximum_dispersive_fraction.
+
+     The actual removal happens earlier, in fofbDeleteDispersiveModes, on the corrector-only
+     matrix before the RF-phase column is appended.  So on a deck with an RF-phase column
+     the only mode left with a large value here should be the phase actuator's own -- which
+     is exactly what we want it to be. */
+  if (plane && plane->coord == 0 && U && nAll > 0 && CM->nmon > 0) {
+    long i, j;
+    double norm = 0, *eh;
+    eh = tmalloc(sizeof(*eh) * CM->nmon);
+    for (i = 0; i < CM->nmon; i++) {
+      eh[i] = CM->umoni[i]->twiss ? CM->umoni[i]->twiss->etax : 0;
+      if (!CM->equalW)
+        eh[i] *= CM->weight[i]; /* U is the basis of W*C when the weights are unequal */
+      norm += eh[i] * eh[i];
+    }
+    if (norm > 0) {
+      norm = sqrt(norm);
+      for (i = 0; i < CM->nmon; i++)
+        eh[i] /= norm;
+      etaFrac = tmalloc(sizeof(*etaFrac) * nAll);
+      for (j = 0; j < nAll; j++) {
+        double d = 0;
+        for (i = 0; i < CM->nmon; i++)
+          d += Mij(U, i, j) * eh[i];
+        etaFrac[j] = fabs(d);
+      }
+    }
+    free(eh);
+  }
+
   matrix_scmul(CM->T, -1);
   if (verbosity)
     printf("fast_orbit_feedback: fast correction matrix condition number %e\n", conditionNumber);
+  if (plane) {
+    long nDelSave = plane->nSVdeleted; /* set by fofbDeleteDispersiveModes, survives the free */
+    fofbFreeSVD(plane); /* fofbInvertCM may run more than once */
+    plane->svdU = U;
+    plane->svdS = S_all;
+    plane->nSV = nAll;
+    plane->nSVused = nUsed;
+    plane->svdCond = conditionNumber;
+    plane->svdWeighted = CM->equalW ? 0 : 1;
+    if (nAll > 0) {
+      plane->svdAmp = tmalloc(sizeof(*plane->svdAmp) * nAll);
+      plane->svdRms2 = tmalloc(sizeof(*plane->svdRms2) * nAll);
+      memset(plane->svdRms2, 0, sizeof(*plane->svdRms2) * nAll);
+      plane->svdNAcc = 0;
+      plane->svdEtaFrac = tmalloc(sizeof(*plane->svdEtaFrac) * nAll);
+      if (etaFrac)
+        memcpy(plane->svdEtaFrac, etaFrac, sizeof(*etaFrac) * nAll);
+      else
+        memset(plane->svdEtaFrac, 0, sizeof(*plane->svdEtaFrac) * nAll);
+      plane->nSVdeleted = nDelSave;
+    }
+    U = NULL;
+    S_all = NULL;
+  }
+  if (U)
+    matrix_free(U);
+  if (S_all)
+    vec_free(S_all);
+  if (S_used)
+    vec_free(S_used);
+  if (etaFrac)
+    free(etaFrac);
 }
 
 /* Build the standalone RF-frequency response matrix and its pseudo-inverse.  The selected
@@ -863,6 +1230,166 @@ static void fofbLoadResponseMatrix(CORMON_DATA *CM, char *filename, RUN *run, lo
 
 /* ------------------------------------------------------------------ */
 
+/* Eta-blind the CORRECTORS by deleting dispersive singular vectors from the corrector-only
+ * forward matrix, then recomposing it.
+ *
+ * Rationale.  A corrector pattern whose orbit lies along the dispersion changes the ring
+ * path length and so drives an energy error.  We do not want the feedback to command such
+ * patterns, but we must not lie about what the correctors do: projecting eta out of the
+ * response columns (tried and rejected) tells the solve that a corrector does not produce
+ * the dispersion it physically does produce, and the resulting model error destabilizes the
+ * slow RF-frequency loop.
+ *
+ * Truncated-SVD recomposition has no such defect.  Writing C = sum_i s_i u_i v_i^T and
+ * dropping the dispersive terms gives
+ *
+ *     C' = sum_{i kept} s_i u_i v_i^T,
+ *
+ * which is EXACT on the span of the retained right singular vectors and zero elsewhere.
+ * The pseudo-inverse of C' only ever commands corrector patterns inside that span, and on
+ * that span C' and C agree identically -- so the forward model is truthful for everything
+ * the loop actually does, while the energy-driving patterns have simply been made
+ * uncommandable.
+ *
+ * Ordering matters: this runs on the corrector-only matrix, BEFORE the RF-phase column is
+ * appended.  The phase column is itself proportional to eta, so it lives entirely in the
+ * dispersive modes; cutting after augmentation would delete the energy actuator's own
+ * channel along with the correctors' (verified: with maximum_dispersive_fraction=0.1 on the
+ * augmented matrix, the two deleted modes were the phase actuator's).
+ *
+ * Horizontal plane only -- eta_y is not modelled here.
+ */
+static void fofbDeleteDispersiveModes(CORMON_DATA *CM, FOFB_PLANE *plane) {
+  MAT *U = NULL, *Vt = NULL, *Cnew = NULL, *Tthrow = NULL;
+  VEC *S = NULL, *Sused = NULL;
+  int32_t nSV = 0, nUsed = 0;
+  double cond, norm = 0, *eh = NULL;
+  long i, j, m, nmon, ncor, nDel = 0;
+  short *drop = NULL;
+
+  if (plane->coord != 0 || maximum_dispersive_fraction >= 1.0 || !CM->C)
+    return;
+  nmon = CM->nmon;
+  ncor = CM->ncor;
+  if (nmon <= 0 || ncor <= 0)
+    return;
+
+  /* unit dispersion pattern at the monitors; the SVD below is of the UNWEIGHTED matrix
+     (weight=NULL), so eta is not weighted either.  Monitor weighting is applied later, by
+     fofbInvertCM, when the inverse is actually formed. */
+  eh = tmalloc(sizeof(*eh) * nmon);
+  for (i = 0; i < nmon; i++) {
+    eh[i] = CM->umoni[i]->twiss ? CM->umoni[i]->twiss->etax : 0;
+    norm += eh[i] * eh[i];
+  }
+  if (norm <= 0) {
+    free(eh);
+    return;
+  }
+  norm = sqrt(norm);
+  for (i = 0; i < nmon; i++)
+    eh[i] /= norm;
+
+  /* factor the corrector-only matrix.  No truncation is requested here (that is
+     fofbInvertCM's job); we want the full spectrum so the recomposition is faithful.  The
+     returned inverse is discarded -- we are only after U, S and Vt. */
+  Tthrow = matrix_invert(CM->C, NULL, 0, 0, 0.0, 0.0, -1,
+                         0, NULL, NULL,
+                         &S, &nSV, &Sused, &nUsed,
+                         &U, &Vt,
+                         &cond);
+  if (!U || !Vt || !S || nSV <= 0) {
+    printWarning("fast_orbit_feedback: could not factor the corrector matrix for dispersive-mode removal.",
+                 "maximum_dispersive_fraction was ignored for this plane.");
+    goto cleanup;
+  }
+
+  drop = tmalloc(sizeof(*drop) * nSV);
+  for (m = 0; m < nSV; m++) {
+    double d = 0;
+    for (i = 0; i < nmon; i++)
+      d += Mij(U, i, m) * eh[i];
+    drop[m] = (fabs(d) > maximum_dispersive_fraction) ? 1 : 0;
+    if (drop[m])
+      nDel++;
+  }
+  if (nDel == 0)
+    goto cleanup;
+  if (nDel == nSV) {
+    printWarning("fast_orbit_feedback: maximum_dispersive_fraction would delete every corrector mode.",
+                 "No singular vector survives the dispersive cut, which would leave the correctors "
+                 "with no authority at all.  Raise maximum_dispersive_fraction.  No modes were deleted.");
+    goto cleanup;
+  }
+
+  /* C' = sum over retained modes of s_m u_m v_m^T  (Vt row m is v_m^T) */
+  Cnew = matrix_get(nmon, ncor);
+  for (j = 0; j < ncor; j++)
+    for (i = 0; i < nmon; i++)
+      Mij(Cnew, i, j) = 0;
+  for (m = 0; m < nSV; m++) {
+    double sm;
+    if (drop[m])
+      continue;
+    sm = S->ve[m];
+    for (j = 0; j < ncor; j++) {
+      double vmj = sm * Mij(Vt, m, j);
+      if (vmj == 0)
+        continue;
+      for (i = 0; i < nmon; i++)
+        Mij(Cnew, i, j) += Mij(U, i, m) * vmj;
+    }
+  }
+  matrix_free(CM->C);
+  CM->C = Cnew;
+  Cnew = NULL;
+  plane->nSVdeleted = nDel;
+
+  /* The recomposition leaves exactly nDel EXACT null singular values behind (those are the
+     modes we dropped from the sum).  They must not reach the pseudo-inverse: 1/s with
+     s ~ 1e-16 amplifies numerical noise into corrector demands that peg instantly.  Raise
+     remove_smallest_SVs so the subsequent inversion discards precisely that induced null
+     space.  Appending the RF-phase column afterwards adds an independent direction with a
+     normal-sized singular value, so the count still matches. */
+  if (CM->remove_smallest_SVs < nDel) {
+    if (verbosity)
+      printf("fast_orbit_feedback: raising remove_smallest_SVs from %ld to %ld to discard the "
+             "null space created by deleting the dispersive modes\n",
+             (long)CM->remove_smallest_SVs, nDel);
+    CM->remove_smallest_SVs = nDel;
+  }
+
+  if (verbosity) {
+    printf("fast_orbit_feedback: removed %ld dispersive corrector mode(s) (|u.etahat| > %g) "
+           "from the %ld-mode corrector matrix before augmentation:",
+           nDel, maximum_dispersive_fraction, (long)nSV);
+    for (m = 0; m < nSV; m++)
+      if (drop[m])
+        printf(" %ld", m);
+    printf("\n");
+    fflush(stdout);
+  }
+
+cleanup:
+  if (Tthrow)
+    matrix_free(Tthrow);
+  if (U)
+    matrix_free(U);
+  if (Vt)
+    matrix_free(Vt);
+  if (S)
+    vec_free(S);
+  if (Sused)
+    vec_free(Sused);
+  if (Cnew)
+    matrix_free(Cnew);
+  if (drop)
+    free(drop);
+  free(eh);
+}
+
+/* ------------------------------------------------------------------ */
+
 static void setupPlane(FOFB_PLANE *plane, long coord, RUN *run, VARY *control, LINE_LIST *beamline) {
   CORMON_DATA *CM;
   STEERING_LIST *SL;
@@ -938,8 +1465,12 @@ static void setupPlane(FOFB_PLANE *plane, long coord, RUN *run, VARY *control, L
      inverting, so in both cases defer the inversion; otherwise invert here.  (The
      RF-frequency actuator now has its own separate matrix and does NOT affect the fast
      inversion.) */
-  flags = ((phaseActive || responseLoad) ? 0 : COMPUTE_RESPONSE_INVERT) |
-          (verbosity < 2 ? COMPUTE_RESPONSE_SILENT : 0);
+  /* Inversion is ALWAYS deferred to fofbInvertCM so the SVD factors it requests are
+     available in every configuration (the COMPUTE_RESPONSE_INVERT block in correct.c
+     discards them).  fofbInvertCM reproduces that block exactly -- same auto_limit_SVs
+     adjustment, same matrix_invert arguments, same scmul(-1) -- so the correction matrix
+     is bit-identical to what the flag would have produced. */
+  flags = (verbosity < 2 ? COMPUTE_RESPONSE_SILENT : 0);
   if (use_response_from_computed_orbits) {
     /* Build the response matrix by tweaking each corrector and differencing perturbed
        closed orbits (mirrors &correct use_response_from_computed_orbits). Reuse the
@@ -987,12 +1518,10 @@ static void setupPlane(FOFB_PLANE *plane, long coord, RUN *run, VARY *control, L
   /* fast matrix: append the RF-phase column (if any) then invert.  The RF-frequency knob
      is built as a separate slow-cadence matrix that leaves CM->C/T untouched.  A loaded
      matrix with no phase column is inverted here. */
-  if (phaseActive) {
+  fofbDeleteDispersiveModes(CM, plane); /* corrector-only matrix, BEFORE augmentation */
+  if (phaseActive)
     appendPhaseActuator(plane, run, beamline);
-    fofbInvertCM(CM);
-  } else if (responseLoad) {
-    fofbInvertCM(CM);
-  }
+  fofbInvertCM(CM, plane);
   if (rfActive)
     buildRFMatrix(plane, run, beamline);
 
@@ -1247,7 +1776,22 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
                           NULL, SDDS_LONG, 0) < 0 ||
         SDDS_DefineColumn(&SDDS_fofb, "PeggedY", NULL, NULL,
                           "Number of vertical actuators saturated at their limit at this iteration",
-                          NULL, SDDS_LONG, 0) < 0) {
+                          NULL, SDDS_LONG, 0) < 0 ||
+        /* SVD split of the same orbit xBpmRms/yBpmRms report: the part lying in the span of
+           the retained singular vectors (reachable by these correctors) and the remainder
+           (truncated modes plus the subspace no corrector can produce). */
+        SDDS_DefineColumn(&SDDS_fofb, "xRmsCorrectable", NULL, "m",
+                          "RMS of the horizontal orbit lying in the retained singular-vector span",
+                          NULL, SDDS_DOUBLE, 0) < 0 ||
+        SDDS_DefineColumn(&SDDS_fofb, "xRmsUncorrectable", NULL, "m",
+                          "RMS of the horizontal orbit the steering correctors cannot produce",
+                          NULL, SDDS_DOUBLE, 0) < 0 ||
+        SDDS_DefineColumn(&SDDS_fofb, "yRmsCorrectable", NULL, "m",
+                          "RMS of the vertical orbit lying in the retained singular-vector span",
+                          NULL, SDDS_DOUBLE, 0) < 0 ||
+        SDDS_DefineColumn(&SDDS_fofb, "yRmsUncorrectable", NULL, "m",
+                          "RMS of the vertical orbit the steering correctors cannot produce",
+                          NULL, SDDS_DOUBLE, 0) < 0) {
       SDDS_SetError("Unable to set up fast_orbit_feedback output file");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
@@ -1281,6 +1825,7 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "minimum_SV_ratio", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "Tikhonov_relative_alpha", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "Tikhonov_n", NULL, SDDS_LONG) ||
+        !SDDS_DefineSimpleParameter(&SDDS_fofb, "maximum_dispersive_fraction", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "steering_Kp", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "steering_Ki", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "steering_Kd", NULL, SDDS_DOUBLE) ||
@@ -1348,6 +1893,16 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
        periodically during tracking (see doFastOrbitFeedback / finishFastOrbitFeedback),
        so start the page once here sized to the full step count and set the page-constant
        monitor/corrector counts once.  planeData[] is populated by the setupPlane calls above. */
+    /* svd_value_output: compose now, write at teardown once amplitudes have accumulated */
+    if (svd_value_output[0] != NULL && !SDDS_StringIsBlank(svd_value_output[0]))
+      fofbSVDValueFile[0] = compose_filename(svd_value_output[0], run->rootname);
+    if (svd_value_output[1] != NULL && !SDDS_StringIsBlank(svd_value_output[1]))
+      fofbSVDValueFile[1] = compose_filename(svd_value_output[1], run->rootname);
+    /* per-plane modal time-series files (rows=steps, cols=modes) */
+    if (svd_mode_output[0] != NULL && !SDDS_StringIsBlank(svd_mode_output[0]))
+      fofbSetupModeOutput(&planeData[0], svd_mode_output[0], run, 0, control->n_steps);
+    if (svd_mode_output[1] != NULL && !SDDS_StringIsBlank(svd_mode_output[1]))
+      fofbSetupModeOutput(&planeData[1], svd_mode_output[1], run, 2, control->n_steps);
     if (!SDDS_StartPage(&SDDS_fofb, control->n_steps > 0 ? control->n_steps : 1) ||
         !SDDS_SetParameters(&SDDS_fofb, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE,
                             "nMonitorsX", (int32_t)planeData[0].CM.nmon, "nCorrectorsX", (int32_t)planeData[0].CM.ncor,
@@ -1385,6 +1940,7 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
             "minimum_SV_ratio", minimum_SV_ratio,
             "Tikhonov_relative_alpha", Tikhonov_relative_alpha,
             "Tikhonov_n", (int32_t)Tikhonov_n,
+            "maximum_dispersive_fraction", maximum_dispersive_fraction,
             "steering_Kp", steering_Kp, "steering_Ki", steering_Ki, "steering_Kd", steering_Kd,
             "corrector_limit", corrector_limit,
             "include_rf_frequency", (int32_t)include_rf_frequency,
@@ -1578,6 +2134,10 @@ static void updateSetpoints(FOFB_PLANE *plane, double *rmsOrbit, double *maxCorr
     sum2 += reading * reading;
   }
   *rmsOrbit = CM->nmon ? sqrt(sum2 / CM->nmon) : 0;
+
+  /* SVD decomposition of the SAME vector xBpmRms reports, taken before the dispersion
+     projection below mutates Q, so rmsCorrectable^2+rmsUncorrectable^2 == xBpmRms^2. */
+  fofbDecompose(plane, Q);
 
   /* Auto eta-blind the correctors: when the SLOW RF-frequency loop owns the dispersive
      (eta-shaped) orbit and there is NO RF-phase column to absorb it in the fast deadbeat
@@ -1952,7 +2512,11 @@ long doFastOrbitFeedback(RUN *run, VARY *control, LINE_LIST *beamline, BEAM *bea
       if (!SDDS_SetRowValues(&SDDS_fofb, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, i_step,
                              "Step", (int32_t)i_step, "Pass", (int32_t)passOffset,
                              "xBpmRms", xrms, "yBpmRms", yrms, "MaxCorrX", xcor, "MaxCorrY", ycor,
-                             "PeggedX", (int32_t)xpeg, "PeggedY", (int32_t)ypeg, NULL)) {
+                             "PeggedX", (int32_t)xpeg, "PeggedY", (int32_t)ypeg,
+                             "xRmsCorrectable", planeData[0].rmsCorrectable,
+                             "xRmsUncorrectable", planeData[0].rmsUncorrectable,
+                             "yRmsCorrectable", planeData[1].rmsCorrectable,
+                             "yRmsUncorrectable", planeData[1].rmsUncorrectable, NULL)) {
         SDDS_SetError("Unable to set fast_orbit_feedback output row");
         SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
       }
@@ -1978,7 +2542,10 @@ long doFastOrbitFeedback(RUN *run, VARY *control, LINE_LIST *beamline, BEAM *bea
         }
       }
       /* periodic in-place flush (first SDDS_UpdatePage writes the page, later ones update it) */
+      fofbWriteModeRow(&planeData[0], 0, i_step, fofbTotalPasses);
+      fofbWriteModeRow(&planeData[1], 2, i_step, fofbTotalPasses);
       if (flush_interval >= 1 && ((i_step + 1) % flush_interval) == 0) {
+        fofbFlushModeOutput(0);
         if (!SDDS_UpdatePage(&SDDS_fofb, 0)) {
           SDDS_SetError("Unable to flush fast_orbit_feedback output page");
           SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
@@ -2003,6 +2570,7 @@ long doFastOrbitFeedback(RUN *run, VARY *control, LINE_LIST *beamline, BEAM *bea
 /* ------------------------------------------------------------------ */
 
 static void freePlane(FOFB_PLANE *plane) {
+  fofbFreeSVD(plane);
   long i;
   if (!plane->active) {
     if (plane->CM.C)
@@ -2091,6 +2659,14 @@ void finishFastOrbitFeedback(void) {
   fofbTotalPasses = 0;
   if (!fofbSetupDone)
     return;
+
+  /* SVD diagnostics: close the modal time series and write the per-mode summary, which
+     needs the amplitude accumulation completed by the final step.  Must happen here in
+     finishFastOrbitFeedback -- NOT in the per-step path -- or the files are terminated
+     before any row is written. */
+  fofbFlushModeOutput(1);
+  fofbWriteSVDValues(&planeData[0], fofbSVDValueFile[0], 0);
+  fofbWriteSVDValues(&planeData[1], fofbSVDValueFile[1], 2);
 
   if (fofbOutputActive && FOFB_IS_MASTER) {
     /* The run accumulated one page of rows (one per step), periodically flushed during
