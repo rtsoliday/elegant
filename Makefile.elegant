@@ -1,4 +1,22 @@
 # Elegant-specific compiler modes and CUDA discovery. Keep the shared files generic.
+
+# Linux SDDS checkouts may bundle GSL instead of using system development files.
+# The legacy OAG layout keeps SDDS in a separate EPICS extensions tree; its GSL
+# libraries are installed in extensions/lib, not elegant's installation tree.
+ifeq ($(OS),Linux)
+  GSL_INC_LOCAL ?= -I$(SDDS_REPO)/gsl
+  EPICS_EXTENSIONS_GSL_INC_LOCAL ?= $(GSL_INC_LOCAL)
+  ELEGANT_GSL_LIB_DIRS = $(abspath $(SDDS_REPO)/lib/$(OS)-$(ARCH))
+  ifeq ($(notdir $(abspath $(SDDS_REPO)/..)),src)
+    ELEGANT_GSL_LIB_DIRS += $(abspath $(SDDS_REPO)/../../lib/$(EPICS_HOST)-$(EPICS_ARCH))
+  endif
+  # Preserve libraries already found by the shared rules and explicit overrides.
+  GSL_LIB := $(or $(GSL_LIB),$(call find_lib,gsl,dylib a so,$(ELEGANT_GSL_LIB_DIRS)))
+  GSLCBLAS_LIB := $(or $(GSLCBLAS_LIB),$(call find_lib,gslcblas,dylib a so,$(ELEGANT_GSL_LIB_DIRS)))
+  # C/C++ components already consume the include variables; CUDA needs them too.
+  NVCCFLAGS += $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
+endif
+
 CUDA_NVCC_MINIMUM_MAJOR ?= 12
 CUDA_NVCC_RELEASE_VERSION = $(shell $(1) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9.]*\).*/\1/p' | tail -n 1)
 CUDA_NVCC_RELEASE_MAJOR = $(shell $(1) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | tail -n 1)

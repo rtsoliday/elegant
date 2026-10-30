@@ -34,6 +34,14 @@ bin/Linux-x86_64-gpu/gpu-Pelegant
 
 Use `make CUDA_AUTO=0 -j` for a CPU-only build, or force a specific CUDA compiler with `make HAVE_CUDA=1 NVCC=/usr/local/cuda-12.4/bin/nvcc -j`.  CUDA runtime controls and verification workflows are documented in [doc/CUDA_GPU_SUPPORT.md](doc/CUDA_GPU_SUPPORT.md).
 
+On Linux, bundled GSL headers are found in `SDDS/gsl`. If the normal library
+search does not find GSL, the build also checks `SDDS/lib/Linux-<architecture>`
+and, for an SDDS checkout under EPICS `extensions/src`,
+`extensions/lib/linux-<architecture>`. Explicit `GSL_LIB`, `GSLCBLAS_LIB`, and
+GSL include overrides remain supported. Run `python3 -m unittest discover -s
+tests -p test_gsl_build.py` to check discovery for the serial, MPI, and CUDA
+Makefiles; fixtures and logs are retained in `tests/artifacts`.
+
 ## Usage
 
 Run **elegant** with an appropriate input file:
