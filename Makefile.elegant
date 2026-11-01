@@ -10,9 +10,13 @@ ifeq ($(OS),Linux)
   ifeq ($(notdir $(abspath $(SDDS_REPO)/..)),src)
     ELEGANT_GSL_LIB_DIRS += $(abspath $(SDDS_REPO)/../../lib/$(EPICS_HOST)-$(EPICS_ARCH))
   endif
-  # Preserve libraries already found by the shared rules and explicit overrides.
-  GSL_LIB := $(or $(GSL_LIB),$(call find_lib,gsl,dylib a so,$(ELEGANT_GSL_LIB_DIRS)))
-  GSLCBLAS_LIB := $(or $(GSLCBLAS_LIB),$(call find_lib,gslcblas,dylib a so,$(ELEGANT_GSL_LIB_DIRS)))
+  # Prefer bundled GSL libraries and matching headers over cluster defaults.
+  # GNU Make command-line overrides still take precedence.
+  GSL_LIB := $(or $(call find_lib,gsl,dylib a so,$(ELEGANT_GSL_LIB_DIRS)),$(GSL_LIB))
+  GSLCBLAS_LIB := $(or $(call find_lib,gslcblas,dylib a so,$(ELEGANT_GSL_LIB_DIRS)),$(GSLCBLAS_LIB))
+  ifneq ($(strip $(GSL_LOCAL) $(wildcard $(SDDS_REPO)/gsl/gsl_version.h)),)
+    CPPFLAGS += $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
+  endif
   # C/C++ components already consume the include variables; CUDA needs them too.
   NVCCFLAGS += $(EPICS_EXTENSIONS_GSL_INC_LOCAL)
 endif

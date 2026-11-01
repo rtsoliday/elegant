@@ -111,6 +111,22 @@ ifeq ($(OS),Linux)
     $(error IMPROV_BUILD and SWING_BUILD cannot both be 1; select one build site)
   endif
 endif
+ifeq ($(OS):$(IMPROV_BUILD),Linux:1)
+  export HOST_ARCH ?= linux-x86_64
+  export EPICS_HOST_ARCH ?= linux-x86_64
+endif
+# Component policies for cluster-provided dependencies and MPI compilers.
+ifeq ($(OS),Linux)
+  ifneq ($(filter 1,$(IMPROV_BUILD) $(SWING_BUILD)),)
+    BUILD_LOCAL_HDF5 ?= 0
+  endif
+  ifneq ($(IMPROV_BUILD),1)
+    PGAPACK_CFLAGS ?= -Wno-maybe-uninitialized
+  endif
+endif
+BUILD_LOCAL_HDF5 ?= 1
+PGAPACK_CFLAGS ?=
+
 # Components declare their own EPICS dependencies before including these rules.
 EPICS_REQUIRED_LIBS ?=
 # Keep compiler target defaults unless CPU tuning is explicitly requested.
@@ -272,7 +288,7 @@ else
   GSL_LINK_LIBS = $(GSL_RPATH) $(GSL_LIB) $(GSLCBLAS_LIB)
 endif
 ifeq ($(OS),Linux)
-ifneq ($(filter 1,$(IMPROV_BUILD) $(SWING_BUILD)),)
+ifeq ($(IMPROV_BUILD),1)
   LZMA_LIB = $(LCRC_SPACK)/gcc-13.2.0/xz-5.4.6-3zhah5p/lib/liblzma.so
   HDF5_LIB = -Wl,-rpath,$(LCRC_SPACK)/gcc-13.2.0/hdf5-1.14.3-o6prqns/lib \
              $(LCRC_SPACK)/gcc-13.2.0/hdf5-1.14.3-o6prqns/lib/libhdf5.so
@@ -288,8 +304,31 @@ ifeq ($(IMPROV_BUILD),1)
   IOMP5_LIB = -Wl,-rpath,$(IOMP5_LIB_DIR) $(IOMP5_LIB_DIR)/libiomp5.so
 endif
 ifeq ($(SWING_BUILD),1)
+  # Swing uses Ubuntu-built dependencies, independently of the Improv mount.
+  SWING_HDF5_DIR ?= /soft/hdf5/1.14.2/gcc-10.3/serial
+  SWING_FFTW_DIR ?= /soft/fftw/3.3.10/swing-gcc-9.4.0
+  SWING_GSL_DIR ?= /soft/gsl/2.7.1/gcc11.3
+  SWING_PNG_DIR ?= /soft/libpng/1.6.41.git/swing
+  SWING_TIFF_DIR ?= /soft/libtiff/4.5.1/swing/gcc10.3
+  SWING_XZ_DIR ?= /soft/xz/5.2.2
+  SWING_GD_INCLUDE_DIR ?= /home/soliday/swing/build-deps/usr/include
+  SWING_MKL_DIR ?= /gpfs/fs1/soft/swing/spack-0.16.1/opt/spack/linux-ubuntu20.04-x86_64/gcc-9.3.0/intel-oneapi-mkl-2023.1.0-fnkpcat/mkl/2023.1.0
+  # Use the installed MKL even when its module has not exported MKLROOT.
+  ifeq ($(strip $(MKLROOT)),)
+    MKLROOT = $(SWING_MKL_DIR)
+  endif
+  LZMA_LIB = $(SWING_XZ_DIR)/lib/liblzma.so
+  HDF5_LIB = $(SWING_HDF5_DIR)/lib/libhdf5.so
+  FFTW3_LIB = $(SWING_FFTW_DIR)/lib/libfftw3.a
+  GSL_LIB = -Wl,-rpath,$(SWING_GSL_DIR)/lib $(SWING_GSL_DIR)/lib/libgsl.so
+  GSLCBLAS_LIB = $(SWING_GSL_DIR)/lib/libgslcblas.so
+  PNG_LIB = $(SWING_PNG_DIR)/lib/libpng.so
+  TIFF_LIB = $(SWING_TIFF_DIR)/lib/libtiff.so
+  GD_LIB = /lib/x86_64-linux-gnu/libgd.so.3
+  JPEG_LIB = /lib/x86_64-linux-gnu/libjpeg.so.8
+  SWING_RUNTIME_LIB_DIRS = $(addsuffix /lib,$(SWING_HDF5_DIR) $(SWING_FFTW_DIR) $(SWING_GSL_DIR) $(SWING_PNG_DIR) $(SWING_TIFF_DIR) $(SWING_XZ_DIR))
+  LDFLAGS += $(addprefix -Wl$(build_comma)-rpath$(build_comma),$(SWING_RUNTIME_LIB_DIRS))
   # Linking Intel's OpenMP runtime on Swing loads two OpenMP libraries.
-  PNG_LIB = $(LCRC_SPACK)/gcc-12.3.0/libpng-1.6.39-hsjzalf/lib64/libpng.so
   IOMP5_LIB_DIR =
   IOMP5_LIB =
   MPI_BIN = /soft/openmpi/4.1.1/swing/bin
@@ -437,20 +476,20 @@ endif
 ifeq ($(OS), Windows)
   EXTRA_INC_DIRS =
 else
-  EXTRA_INC_DIRS = $(sort $(dir $(filter-out ,$(Z_LIB) $(LZMA_LIB) $(HDF5_LIB) $(FFTW3_LIB) $(SZ_LIB) $(GSL_LIB) $(GSLCBLAS_LIB))))
+  EXTRA_INC_DIRS = $(sort $(dir $(filter-out -Wl%,$(Z_LIB) $(LZMA_LIB) $(HDF5_LIB) $(FFTW3_LIB) $(SZ_LIB) $(GSL_LIB) $(GSLCBLAS_LIB))))
   EXTRA_INC_DIRS := $(patsubst %/lib64/,%/include, $(EXTRA_INC_DIRS))
   EXTRA_INC_DIRS := $(patsubst %/x86_64-linux-gnu/,%/include, $(EXTRA_INC_DIRS))
   EXTRA_INC_DIRS := $(patsubst %/lib/,%/include, $(EXTRA_INC_DIRS))
   EXTRA_INC_DIRS := $(patsubst %/$(OBJ_DIR)/,%, $(EXTRA_INC_DIRS))
   EXTRA_INC_DIRS := $(patsubst %,-I%, $(EXTRA_INC_DIRS))
   ifeq ($(OS),Linux)
-    ifneq ($(filter 1,$(IMPROV_BUILD) $(SWING_BUILD)),)
+    ifeq ($(IMPROV_BUILD),1)
       EXTRA_INC_DIRS += -I$(LCRC_SPACK)/aocc-4.1.0/xz-5.4.1-gju4bpk/include
       EXTRA_INC_DIRS += -I$(LCRC_SPACK)/gcc-11.4.0/libtiff-4.5.1-bzputfw/include
       EXTRA_INC_DIRS += -I$(LCRC_SPACK)/gcc-12.3.0/libgd-2.3.3-enxppnl/include
     endif
     ifeq ($(SWING_BUILD),1)
-      EXTRA_INC_DIRS += -I$(LCRC_SPACK)/gcc-12.3.0/libpng-1.6.39-hsjzalf/include
+      EXTRA_INC_DIRS += -I$(SWING_PNG_DIR)/include -I$(SWING_TIFF_DIR)/include -I$(SWING_GD_INCLUDE_DIR)
     endif
   endif
 endif
@@ -765,10 +804,37 @@ QT_DIR ?= C:/Qt/6.12.0/msvc2022_64
 qt_modules = $(sort $(1) Core $(if $(filter Widgets PrintSupport Multimedia,$(1)),Gui) $(if $(filter PrintSupport,$(1)),Widgets) $(if $(filter Multimedia,$(1)),Network))
 QT_DEFINE_Test = QT_TESTLIB_LIB
 qt_define = $(or $(QT_DEFINE_$(1)),QT_$(shell echo $(1) | tr '[:lower:]' '[:upper:]')_LIB)
-qt_cflags = $(shell $(PKG_CONFIG) --cflags $(addprefix Qt$(QT_VERSION),$(1)))
+qt_cflags = $(LCRC_QT_EXTRA_CFLAGS) $(shell $(PKG_CONFIG) --cflags $(addprefix Qt$(QT_VERSION),$(1)))
 qt_libs = $(shell $(PKG_CONFIG) --libs $(addprefix Qt$(QT_VERSION),$(1)))
 
 ifneq ($(strip $(QT_MODULES)),)
+ifeq ($(OS),Linux)
+ifneq ($(filter 1,$(IMPROV_BUILD) $(SWING_BUILD)),)
+  # Collaborators share fixed Qt kits; Swing has a native Ubuntu build.
+  IMPROV_QT_DIR ?= /home/soliday/improv/qt6.12.0
+  IMPROV_QT_DEPS_DIR ?= /home/soliday/improv/qt6-deps/install
+  SWING_QT_DIR ?= /home/soliday/swing/qt6.12.0
+  SWING_QT_DEPS_DIR ?= /home/soliday/swing/build-deps/usr
+  LCRC_QT_DIR = $(if $(filter 1,$(SWING_BUILD)),$(SWING_QT_DIR),$(IMPROV_QT_DIR))
+  LCRC_QT_DEPS_DIR = $(if $(filter 1,$(SWING_BUILD)),$(SWING_QT_DEPS_DIR),$(IMPROV_QT_DEPS_DIR))
+  QT_VERSION ?= 6
+  ifeq ($(QT_VERSION),6)
+    QMAKE ?= $(LCRC_QT_DIR)/bin/qmake
+    ifeq ($(IMPROV_BUILD),1)
+      # Login nodes may lack system OpenGL development headers.
+      LCRC_QT_EXTRA_CFLAGS = -I$(LCRC_QT_DEPS_DIR)/include
+    endif
+    LCRC_QT_DEPS_LIB_DIR = $(LCRC_QT_DEPS_DIR)/$(if $(filter 1,$(SWING_BUILD)),lib/x86_64-linux-gnu,lib)
+    LCRC_QT_PKG_CONFIG_PATH = $(LCRC_QT_DIR)/lib/pkgconfig:$(LCRC_QT_DEPS_LIB_DIR)/pkgconfig$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH))
+    PKG_CONFIG := env PKG_CONFIG_PATH="$(LCRC_QT_PKG_CONFIG_PATH)" $(PKG_CONFIG)
+    # Helpers linked through LDFLAGS need the same runtime paths as programs.
+    LCRC_QT_COMPILER_LIB_DIR ?= $(patsubst %/,%,$(dir $(realpath $(shell $(CXX) -print-file-name=libstdc++.so 2>/dev/null))))
+    LCRC_QT_COMPILER_LIB_DIR := $(LCRC_QT_COMPILER_LIB_DIR)
+    LCRC_QT_RUNTIME_DIRS = $(LCRC_QT_DIR)/lib $(LCRC_QT_DEPS_LIB_DIR) $(LCRC_QT_COMPILER_LIB_DIR)
+    LDFLAGS += $(addprefix -Wl$(build_comma)-rpath$(build_comma),$(LCRC_QT_RUNTIME_DIRS))
+  endif
+endif
+endif
 ifeq ($(OS),Windows)
   QT_VERSION ?= 6
   QT_DIR := $(subst \,/,$(QT_DIR))
@@ -805,7 +871,7 @@ else
         HAVE_QT := 1
         QT_USE_QMAKE := 1
         QT_TOOL_DIRS := $(shell $(QMAKE) -query QT_HOST_LIBEXECS 2>/dev/null) $(shell $(QMAKE) -query QT_HOST_BINS 2>/dev/null)
-        qt_cflags = -I$(QT_HEADERS) $(foreach mod,$(call qt_modules,$(1)),-I$(QT_HEADERS)/Qt$(mod) -D$(call qt_define,$(mod)))
+        qt_cflags = $(LCRC_QT_EXTRA_CFLAGS) -I$(QT_HEADERS) $(foreach mod,$(call qt_modules,$(1)),-I$(QT_HEADERS)/Qt$(mod) -D$(call qt_define,$(mod)))
         qt_libs = -L$(QT_LIBRARY_DIR) -Wl,-rpath,$(QT_LIBRARY_DIR) $(foreach mod,$(call qt_modules,$(1)),-lQt$(QT_VERSION)$(mod))
       endif
     endif
