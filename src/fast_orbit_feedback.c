@@ -1654,16 +1654,25 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
                  "does not do that, so the predicted corrector-to-orbit response does not match the "
                  "machine and the loop may converge poorly or go unstable.  Use fixed_length_matrix=2 "
                  "(or 1).");
-  /* subtract_dispersion is deprecated: the dispersive/betatron partition is now automatic.
-     With an RF-phase column the deadbeat solve assigns the eta-shaped energy orbit to the
-     phase knob; without one but with the RF-frequency loop active, the corrector solve is
-     made eta-blind automatically (dispersion projected out of Q in updateSetpoints).  Either
-     way the manual subtraction is obsolete. */
-  if (subtract_dispersion)
-    printWarning("fast_orbit_feedback: subtract_dispersion is deprecated and now a no-op.",
-                 "The dispersive orbit is partitioned automatically: the RF-phase column owns "
-                 "it when include_rf_phase is set, otherwise the correctors are made eta-blind "
-                 "whenever the RF-frequency loop is active.");
+  /* subtract_dispersion controls whether the dispersion pattern is projected out of the
+     steering loop's orbit vector before the corrector solve (updateSetpoints):
+       0 (default)  automatic -- project only when the RF-frequency loop is on and there is no
+                    RF-phase column, so the slow frequency loop owns the dispersive orbit;
+      -1            never project -- the correctors also act on the dispersive orbit;
+       1            always project.
+     Forcing it with an RF-phase column is refused: that column is solved from the same orbit
+     vector, so removing eta would blind the phase actuator along with the correctors. */
+  if (subtract_dispersion < -1 || subtract_dispersion > 1)
+    bombElegant("fast_orbit_feedback: subtract_dispersion must be -1 (never), 0 (automatic) or 1 (always).", NULL);
+  if (subtract_dispersion == 1 && include_rf_phase)
+    bombElegant("fast_orbit_feedback: subtract_dispersion=1 cannot be combined with include_rf_phase. "
+                "The RF-phase column is solved from the same orbit vector, so projecting out the "
+                "dispersion would blind the phase actuator too.", NULL);
+  if (subtract_dispersion == 1 && !include_rf_frequency)
+    printWarning("fast_orbit_feedback: subtract_dispersion=1 with no RF-frequency loop.",
+                 "The correctors are made blind to the dispersive orbit and no other actuator is "
+                 "present to correct it, so any dispersive orbit (e.g. from an energy offset) "
+                 "will be left uncorrected.");
   /* rf_bpm_filter_file gives the RF-frequency loop its own BPM filter (to notch the
      synchrotron line that destabilizes the frequency integrator at any gain) -- it only
      has meaning for that loop. */
@@ -2146,11 +2155,15 @@ static void updateSetpoints(FOFB_PLANE *plane, double *rmsOrbit, double *maxCorr
      then fighting -- the slow frequency integrator (two integral loops competing over the
      same energy channel => windup/divergence).  Removing the eta component here makes the
      correctors blind to dispersion, leaving that DC channel to the frequency loop (which acts
-     on xTickRF).  This is the classic radial-loop spatial decoupling, and is exactly what the
-     deprecated subtract_dispersion did by hand -- now applied automatically only in the
-     frequency-only case (with an RF-phase column present, that column already owns the fast
-     dispersion mode, so we leave Q intact). */
-  if (plane->coord == 0 && plane->nRF > 0 && !plane->rfPhaseActive) {
+     on xTickRF).  This is the classic radial-loop spatial decoupling.  By default
+     (subtract_dispersion=0) it is applied automatically only in the frequency-only case: with
+     an RF-phase column present, that column is solved from this same Q and must still see the
+     dispersive orbit, so Q is left intact.  subtract_dispersion=-1 disables it (correctors also
+     act on the dispersive orbit) and subtract_dispersion=1 forces it; forcing it together with
+     a phase column is refused at setup. */
+  if (plane->coord == 0 &&
+      (subtract_dispersion == 1 ||
+       (subtract_dispersion == 0 && plane->nRF > 0 && !plane->rfPhaseActive))) {
     double sxe = 0, see = 0;
     for (i = 0; i < CM->nmon; i++) {
       double eta = CM->umoni[i]->twiss ? CM->umoni[i]->twiss->etax : 0;

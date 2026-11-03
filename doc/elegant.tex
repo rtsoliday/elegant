@@ -3374,8 +3374,8 @@ destabilize its integrator while the fast steering loop keeps a short filter for
 When the RF-frequency loop is active and no RF-phase column is present, the fast corrector
 solve is automatically made \emph{dispersion-blind}: the $\eta$-shaped mode is projected out
 of the corrector control vector so the fast correctors do not fight the slow frequency
-integrator over the dispersive channel (classic radial-loop spatial decoupling; this is done
-internally and is what the deprecated \verb|subtract_dispersion| once did by hand).  Select
+integrator over the dispersive channel (classic radial-loop spatial decoupling; this is the
+default behavior of \verb|subtract_dispersion|, see below).  Select
 which cavities are driven with \verb|steering_element|, \verb|target="fast_orbit_feedback"|,
 \verb|item="FREQ"| on the desired \verb|RFCA| elements; if none are declared, every
 \verb|RFCA| in the beamline is used.  A finite-bandwidth frequency actuator (a power supply
@@ -3392,8 +3392,8 @@ measurable dispersive orbit shift (linearized about the synchronous phase $\phi_
 phase knob is added as an extra \emph{column} of the fast horizontal response matrix,
 $\partial x_i/\partial\phi=\eta_i/\verb|phaseScale|$, inverted together with the correctors.
 The deadbeat solve then assigns the $\eta$-shaped (energy) part of the orbit to the phase
-knob and the betatron residual to the correctors automatically---the partitioning the
-deprecated \verb|subtract_dispersion| once did by hand.  The phase column is driven by its own
+knob and the betatron residual to the correctors automatically, without any projection of
+the measured orbit.  The phase column is driven by its own
 PID class (\verb|rf_phase_Kp/Ki/Kd|, all zero by default; clamp \verb|rf_phase_limit|).  Because
 the RF phase sets the energy kick directly ($\Delta\gamma=V\sin\phi$), this channel is a fast,
 first-order damper---it damps the synchrotron transient quickly and, run proportionally
@@ -3444,10 +3444,11 @@ feedback loop's own bandwidth, so the effective actuator has additional lag rela
 an RF phase \emph{error} on such a cavity, use \verb|RFMODE|'s own generator-noise waveforms rather
 than modulating \verb|PHASE_SETPOINT| (there is no separate additive channel as with \verb|RFCA|).
 
-The former \verb|subtract_dispersion| option is \textbf{deprecated} and is now a no-op that
-prints a warning: the dispersive orbit is partitioned automatically---the RF-phase column owns
-it when \verb|include_rf_phase| is set, and otherwise the correctors are made dispersion-blind
-whenever the RF-frequency loop is active (see above).
+Whether the correctors act on the dispersive orbit is controlled by \verb|subtract_dispersion|.
+By default the partition is automatic: the RF-phase column owns the dispersive orbit when
+\verb|include_rf_phase| is set, and otherwise the correctors are made dispersion-blind whenever
+the RF-frequency loop is active.  The parameter can override this in either direction (see its
+description below).
 
 \begin{verbatim}
 &fast_orbit_feedback
@@ -3700,10 +3701,34 @@ whenever the RF-frequency loop is active (see above).
   run the fast steering loop at a short step while giving the RF-frequency loop a slow interval
   long enough for its synchrotron-period filter (see \verb|rf_bpm_filter_file|).  Has no effect
   unless \verb|include_rf_frequency| is set.
-\item \verb|subtract_dispersion| --- \textbf{Deprecated} no-op (kept for backward
-  compatibility); setting it prints a warning.  The dispersive orbit is now partitioned
-  automatically: the RF-phase column owns it when \verb|include_rf_phase| is set, and otherwise
-  the correctors are made dispersion-blind whenever the RF-frequency loop is active.
+\item \verb|subtract_dispersion| --- Controls whether the dispersion pattern is projected out
+  of the steering loop's measured orbit before the corrector solve, which makes the correctors
+  blind to the dispersive orbit.  The projection removes the component of the orbit along the
+  model $\eta_x$ at the monitors, $\mathbf{x} \rightarrow \mathbf{x} - \eta\,(\mathbf{x}\cdot\eta)/
+  (\eta\cdot\eta)$; the RF-frequency loop is unaffected, since it reads its own signal.
+  \begin{itemize}
+  \item $0$ (default) --- automatic: project only when \verb|include_rf_frequency| is set and
+    \verb|include_rf_phase| is not, so that the slow frequency loop owns the dispersive orbit
+    and the correctors do not fight it.
+  \item $-1$ --- never project: the correctors also act on the dispersive orbit.  With the
+    frequency loop on, the two loops then share that channel.  This can help when part of the
+    $\eta$-shaped orbit is not caused by an energy error (for instance orbit driven directly by
+    dipole field errors), which the frequency loop can only remove by changing the beam energy.
+    \textbf{Use with care when the RF-frequency loop is on}: the correctors then act as a second,
+    high-gain energy actuator, because their response includes the path-length change and the
+    resulting energy shift (amplified by $1/\alpha_c$ in a low-momentum-compaction ring), and they
+    run at the full feedback rate with no notch at the synchrotron frequency.  The combined loop
+    can lose its phase margin at $f_s$ and go unstable, typically as an oscillation near the
+    synchrotron period that grows from one feedback step to the next.  In one APS-U test with
+    \verb|steering_Ki|$=0.25$, \verb|rf_Ki|$=0.08$ and \verb|rf_Kd|$=4$ the beam was lost within
+    about 120 steps, whereas the same configuration with the default setting was stable.  If
+    $-1$ is wanted with the frequency loop on, reduce the steering and RF gains and confirm
+    stability over a full run.
+  \item $1$ --- always project.  Not allowed together with \verb|include_rf_phase|, because the
+    RF-phase column is solved from the same orbit vector and would be blinded too.  Without an
+    RF-frequency loop a warning is printed, since nothing else will then correct the
+    dispersive orbit.
+  \end{itemize}
 \item \verb|bpm_filter_file|, \verb|steering_filter_file|, \verb|rf_phase_filter_file|,
   \verb|rf_frequency_filter_file| --- Optional SDDS files giving the digital-filter
   (z-transform) coefficients for, respectively, the monitor readout and the step response of
