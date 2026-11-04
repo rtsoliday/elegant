@@ -756,7 +756,7 @@ void init_IBS(ELEMENT_LIST *element) {
   TWISS *tp;
 
   if (!element->twiss)
-    bombElegant("Twiss parameters must be calculated befor IBS tracking.", NULL);
+    bombElegant("Twiss parameters must be calculated before IBS tracking.", NULL);
 
   /* Find out start point of ring */
   element0 = elementStartRing = element;

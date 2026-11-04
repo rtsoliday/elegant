@@ -2514,7 +2514,7 @@ PARAMETER ibscatter_param[N_IBSCATTER_PARAMS] = {
   {"DO_Z", "", IS_SHORT, 0, (long)((char *)&ibs_example.do_z), NULL, 0.0, 1, "do z-plane scattering?"},
   {"SMOOTH", "", IS_SHORT, 0, (long)((char *)&ibs_example.smooth), NULL, 0.0, 1, "Use smooth method instead of random numbers?"},
   {"FORCE_MATCHED_TWISS", "", IS_SHORT, 0, (long)((char *)&ibs_example.forceMatchedTwiss), NULL, 0.0, 0, "Force computations to be done with twiss parameters of the beamline, not the beam."},
-  {"ISRING", "", IS_SHORT, 0, (long)((char *)&ibs_example.isRing), NULL, 0.0, 1, "Is it storage ring?"},
+  {"ISRING", "", IS_SHORT, 0, (long)((char *)&ibs_example.isRing), NULL, 0.0, 1, "Is this a storage ring?"},
   {"NSLICE", "", IS_LONG, 0, (long)((char *)&ibs_example.nslice), NULL, 0.0, 1, "The number of slices per bunch"},
   {"INTERVAL", "", IS_LONG, 0, (long)((char *)&ibs_example.interval), NULL, 0.0, 1, "Interval in passes at which to update output file."},
   {"FILENAME", "", IS_STRING, 0, (long)((char *)&ibs_example.filename), NULL, 0.0, 0, "Output filename."},
