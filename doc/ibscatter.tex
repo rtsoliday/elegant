@@ -1,27 +1,21 @@
-This element is used for simulating intra-beam scattering
-(IBS) effect. The IBS algorithm is based on the Bjorken and
-Mtingwa's~\cite{BM} formula, and with an extension of including
-vertical dispersion. It can be used for both storage ring and Linac.
+This element is used for simulating intra-beam scattering (IBS).  The IBS algorithm is based on Bjorken and
+Mtingwa~\cite{BM}, and with an extension to include vertical dispersion. It can be used for storage
+rings, transport lines, and linacs.
 
-To initialize IBS calculation, one or more IBSCATTER elements must be
-inserted into the beamline. {\tt elegant} calculates the integrated
-IBS growth rates between IBSCATTERs (or from beginning of the beamline
-to the first IBSCATTER), then scatter particles at each IBSCATTER
-element. Beam's parameters are updated for use in downstream elements.
+To perform IBS calculations, one or more IBSCATTER elements must be inserted in the beamline. {\tt elegant} calculates
+the integrated IBS growth rates between IBSCATTERs (or from beginning of the beamline to the first IBSCATTER), then
+scatters particles accordingly at each IBSCATTER element. The beam's parameters are updated for use in downstream
+elements.
 
-This method requires that IBSCATTER can not be installed at the beginning
-of beamline. The number of other elements between IBSCATTERs or from the beginning of
-beamline to the first IBSCATTER has to be 2 or more. For storage ring, an
-IBSCATTER must be installed at the end of beamline.
+The IBSCATTER element cannot be can inserted at the beginning of beamline. The number of other elements between
+IBSCATTERs or from the beginning of beamline to the first IBSCATTER has to be 2 or more. For storage ring, an IBSCATTER
+must be the last element in the beamline.
 
-Because the IBS growth rates are energy dependent, special caution is
-needed for calculations with accelerating beam. The user needs to
-split their accelerating cavity into several pieces, so that $\gamma$
-has no large changes between elements.
+Because the IBS growth rates are energy dependent, special caution is needed for calculations with accelerating
+beam. The user may need to split accelerating cavities into several pieces, so that $\gamma$ has no large changes
+between elements.
 
-The user can examine the calculation through an optional SDDS output
-file - {\it filename}. The file has a multiple page structure. Each
-slice at pass $i$ at each IBSCATTER element occupies one page. Each
-page contains integrated IBS growth rates between IBSCATTERs (or from
-beginning of the beamline to first IBSCATTER) as parameters, and local
-rates for elements in between as tabular data.
+The user can examine the calculation through an optional SDDS output file.  The file has a multiple page structure. Each
+slice at pass $i$ at each IBSCATTER element occupies one page. Each page contains integrated IBS growth rates between
+IBSCATTERs (or from the beginning of the beamline to first IBSCATTER) as parameters, and local rates for elements in between
+as tabular data.
