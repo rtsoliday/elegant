@@ -24,9 +24,16 @@
  *     matrix T=-C^-1, and passed through a per-actuator-class PID controller
  *     (with anti-windup) to update the held setpoints u[].
  *
- * The command is organized by TIMESCALE.  run_control n_passes is NOT used:
- * the fast update cadence is passes_between_updates, and the slow RF-frequency
- * loop updates every rf_update_multiplier fast iterations.
+ * run_control n_passes is NOT used: the fast update cadence is passes_between_updates.
+ *
+ * Energy channel.  The RF-phase and RF-frequency actuators are one physical knob, the RF phase
+ * seen by the beam, separated by an integration (a frequency offset held for one turn advances
+ * the cavity phase by 2*pi*h*df/f).  Which of them "damps" and which "corrects DC" is therefore
+ * a property of the CONTROLLER, not the actuator: rf_Kd on the frequency acts like rf_phase_Kp
+ * (damping at the synchrotron frequency), and only an integral frequency term reaches DC.  An
+ * integral-only frequency loop has no damping term and is unstable through the synchrotron
+ * resonance unless it is notched (rf_bpm_filter_file) or given derivative gain.  Three energy
+ * configurations are available:
  *
  * FAST loop (CM->C/T matrices): updates every iteration. The steering correctors plus an
  * optional RF-PHASE column (include_rf_phase, rf_phase_Kp/Ki/Kd).  A held RF phase
@@ -36,18 +43,21 @@
  * dispersive (eta-shaped) orbit to the phase knob and the betatron residual to the
  * correctors automatically.  Cavities: &steering_element target=fofb, item=DELTA_PHASE.
  *
- * SLOW loop (separate matrix plane->Crf/Trf, updated every rf_update_multiplier
- * iterations): the RF-FREQUENCY actuator (include_rf_frequency, rf_Kp/Ki/Kd).  The
- * selected RFCA cavities form one joint frequency knob whose static dispersive
- * response dx_i/df = -eta_i/(alpha_c*f0) is its own single-column pseudo-inverse.
- * Cavities: &steering_element target=fofb, item=FREQ.
+ * SEPARATE frequency loop (include_rf_frequency=1; matrix plane->Crf/Trf, updated every
+ * rf_update_multiplier iterations, optionally on its own rf_bpm_filter_file signal): the
+ * selected RFCA cavities form one joint frequency knob whose static dispersive response
+ * dx_i/df = -eta_i/(alpha_c*f0) is its own single-column pseudo-inverse.  Without a phase
+ * column the corrector solve is made eta-blind by projecting the dispersion out of Q
+ * (subtract_dispersion=0, the default), so the correctors stay out of the energy channel.
+ * This mode may be combined with include_rf_phase.
  *
- * With both loops enabled they coexist: the fast phase column damps the AC synchrotron
- * transient (zero DC, the beam re-phases) and the slow frequency loop nails the DC
- * dispersive orbit.  When the frequency loop runs WITHOUT a phase column, the fast
- * corrector solve is automatically made eta-blind (the dispersion mode is projected
- * out of Q in updateSetpoints) so the correctors do not fight the slow frequency
- * integrator over the energy channel.
+ * FAST-MATRIX frequency column (include_rf_frequency=2, appendFrequencyColumn): the same
+ * response as a column of CM->C in place of the phase column, solved with the correctors every
+ * iteration.  The least-squares solve partitions the orbit itself (no projection), and the
+ * frequency demand accounts for the dispersive orbit the same step's corrector change will
+ * produce.  Cannot be combined with include_rf_phase (the two columns are collinear).
+ *
+ * Cavities: &steering_element target=fofb, item=FREQ (frequency) or item=DELTA_PHASE (phase).
  *
  * See fast_orbit_feedback.nl for the namelist and the plan file for the full
  * design rationale.
@@ -231,6 +241,13 @@ typedef struct {
      u[phaseIndex]-base[phaseIndex] (deg), written to the cavity PHASE without touching
      phase_fiducial.  phaseScale (deg per unit delta) sets the column dx_i/dphi=eta_i/phaseScale. */
   long phaseIndex;            /* CM->ncor index of the RF-phase column, or -1 if inactive */
+  /* RF-FREQUENCY as a column of the fast matrix (include_rf_frequency=2): CM->C column at
+     freqIndex (sl_index==-3 sentinel), response -eta_i/(alpha_c*f0) per Hz scaled by s_freq,
+     driven by the rf_Kp/Ki/Kd class and clamped at rf_frequency_limit.  Its command is handed
+     to rfU, so the per-turn frequency write path (actuator filter, phase_fiducial rescale) is
+     shared with the separate slow loop, which is not run in this mode. */
+  long freqIndex;             /* CM->ncor index of the RF-frequency column, or -1 if none */
+  double s_freq;              /* conditioning scale applied to the RF-frequency column */
   long rfPhaseActive;         /* nonzero when include_rf_phase drives this plane */
   double s_phase;             /* conditioning scale applied to the RF-phase response column */
   ELEMENT_LIST **rfPhaseElem; /* selected RFCA cavities whose PHASE is modulated */
@@ -260,14 +277,8 @@ typedef struct {
   /* Dispersive content of each mode, |u_i . etahat| in [0,1], where etahat is the unit
      dispersion pattern at the monitors (weighted alongside svdU when svdWeighted).  A mode
      with a large value steers the beam along the dispersion, i.e. drives an energy error.
-     Modes above maximum_dispersive_fraction are DELETED FROM THE INVERSE by matrix_invert's
-     deleteVector list, which zeroes 1/s_i for them: CM->C and the forward model are left
-     untouched, the inverse is simply forbidden to command the correctors into those modes. */
-  double *svdEtaFrac;  /* |u_i . etahat| per mode of the AUGMENTED matrix (length nSV) */
-  long nSVdeleted;     /* number of corrector modes deleted as dispersive.  There is no
-                          per-mode flag here on purpose: the deletion happens on the
-                          corrector-only spectrum, which is a DIFFERENT spectrum from the
-                          augmented one these arrays describe, so its indices do not map. */
+     Diagnostic only (svd_value_output DispersiveFraction). */
+  double *svdEtaFrac;  /* |u_i . etahat| per mode of the inverted matrix (length nSV) */
   double rmsCorrectable, rmsUncorrectable; /* last step's split (m) */
 } FOFB_PLANE;
 
@@ -282,6 +293,7 @@ static SDDS_DATASET SDDS_fofb;
 static long fofbOutputActive = 0;
 static long fofbHasDfrfColumn = 0;
 static long fofbHasPhaseColumns = 0;
+static long fofbHasEnergyEstColumn = 0;
 
 /* master-only guard for output under MPI */
 #if USE_MPI
@@ -372,7 +384,7 @@ static void fofbWriteSVDValues(FOFB_PLANE *plane, char *filename, long coord) {
   CORMON_DATA *CM = &plane->CM;
   long j;
   char desc[256];
-  int32_t nmon32, ncor32, nSV32, nUsed32, nDel32;
+  int32_t nmon32, ncor32, nSV32, nUsed32;
   if (!FOFB_IS_MASTER || !plane->svdU || plane->nSV <= 0 || !filename)
     return;
   snprintf(desc, sizeof(desc), "%s-plane fast_orbit_feedback singular values and modal residual content",
@@ -406,9 +418,6 @@ static void fofbWriteSVDValues(FOFB_PLANE *plane, char *filename, long coord) {
   SDDS_DefineParameter1(&SDDSout, "NModes", NULL, NULL, "Number of singular values computed", NULL, SDDS_LONG, &nSV32);
   SDDS_DefineParameter1(&SDDSout, "NModesRetained", NULL, NULL, "Number retained after truncation",
                         NULL, SDDS_LONG, &nUsed32);
-  nDel32 = plane->nSVdeleted;
-  SDDS_DefineParameter1(&SDDSout, "NModesDispersiveDeleted", NULL, NULL,
-                        "Number deleted from the inverse as dispersive", NULL, SDDS_LONG, &nDel32);
   SDDS_DefineParameter1(&SDDSout, "ConditionNumber", NULL, NULL, "Condition number of the inverted matrix",
                         NULL, SDDS_DOUBLE, &plane->svdCond);
   SDDS_DefineParameter1(&SDDSout, "WeightedDecomposition", NULL, NULL,
@@ -547,7 +556,7 @@ static void fofbFreeSVD(FOFB_PLANE *plane) {
     free(plane->svdEtaFrac);
     plane->svdEtaFrac = NULL;
   }
-  plane->nSV = plane->nSVused = plane->svdNAcc = plane->nSVdeleted = 0;
+  plane->nSV = plane->nSVused = plane->svdNAcc = 0;
 }
 
 /* Decompose one plane's orbit vector onto the left singular vectors of the matrix the loop
@@ -651,12 +660,9 @@ static void fofbInvertCM(CORMON_DATA *CM, FOFB_PLANE *plane) {
      etaFrac_i = |u_i . etahat| is the overlap of mode i's orbit pattern with the unit
      dispersion pattern at the monitors: large means the mode moves the beam along eta and
      so drives an energy error.  Reported per mode in svd_value_output as
-     DispersiveFraction, and it is what you inspect to choose maximum_dispersive_fraction.
-
-     The actual removal happens earlier, in fofbDeleteDispersiveModes, on the corrector-only
-     matrix before the RF-phase column is appended.  So on a deck with an RF-phase column
-     the only mode left with a large value here should be the phase actuator's own -- which
-     is exactly what we want it to be. */
+     DispersiveFraction.  It identifies which orbit patterns couple to the energy channel; on
+     a deck with an RF column in the fast matrix, that column's mode shows up here with a
+     value near one. */
   if (plane && plane->coord == 0 && U && nAll > 0 && CM->nmon > 0) {
     long i, j;
     double norm = 0, *eh;
@@ -686,7 +692,6 @@ static void fofbInvertCM(CORMON_DATA *CM, FOFB_PLANE *plane) {
   if (verbosity)
     printf("fast_orbit_feedback: fast correction matrix condition number %e\n", conditionNumber);
   if (plane) {
-    long nDelSave = plane->nSVdeleted; /* set by fofbDeleteDispersiveModes, survives the free */
     fofbFreeSVD(plane); /* fofbInvertCM may run more than once */
     plane->svdU = U;
     plane->svdS = S_all;
@@ -704,7 +709,6 @@ static void fofbInvertCM(CORMON_DATA *CM, FOFB_PLANE *plane) {
         memcpy(plane->svdEtaFrac, etaFrac, sizeof(*etaFrac) * nAll);
       else
         memset(plane->svdEtaFrac, 0, sizeof(*plane->svdEtaFrac) * nAll);
-      plane->nSVdeleted = nDelSave;
     }
     U = NULL;
     S_all = NULL;
@@ -790,8 +794,9 @@ static void buildRFMatrix(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline) {
   plane->rfActFilter = loadFilterBank(rf_frequency_filter_file, &plane->nRfActFilter);
 
   if (verbosity)
-    printf("fast_orbit_feedback: RF-frequency actuator active over %ld cavity(ies), f0=%.6e Hz, alpha_c=%.6e (separate slow matrix)\n",
-           plane->nRF, f0, alpha_c);
+    printf("fast_orbit_feedback: RF-frequency actuator active over %ld cavity(ies), f0=%.6e Hz, alpha_c=%.6e (%s)\n",
+           plane->nRF, f0, alpha_c,
+           include_rf_frequency == 2 ? "column of the fast matrix" : "separate slow matrix");
   fflush(stdout);
 }
 
@@ -1055,6 +1060,81 @@ static void appendPhaseActuator(FOFB_PLANE *plane, RUN *run, LINE_LIST *beamline
 }
 
 /* ------------------------------------------------------------------ */
+/* Append the RF-FREQUENCY actuator as a column of the fast matrix (include_rf_frequency=2).
+ *
+ * The frequency and phase actuators are one physical knob, the RF phase seen by the beam,
+ * separated by an integration: a frequency offset held for one turn advances the cavity phase
+ * by 2*pi*h*df/f.  So a frequency column with PID control covers what the phase column does --
+ * rf_Kd acts as a damper like rf_phase_Kp, rf_Kp shifts the synchrotron tune like rf_phase_Ki,
+ * and rf_Ki adds the DC authority the phase column lacks.  Putting it in the fast matrix rather
+ * than in the separate slow loop has two consequences:
+ *   - the least-squares solve partitions the orbit by itself, the eta-shaped part going to this
+ *     column and the rest to the correctors, exactly as with the phase column, so no projection
+ *     of the measured orbit is needed;
+ *   - the frequency demand accounts for the dispersive orbit that the same step's corrector
+ *     change will itself produce (each corrector column includes its path-length effect when
+ *     fixed_length_matrix is 1 or 2), instead of seeing it only a step later.
+ * The column is collinear with the phase column (both are proportional to eta), so the two
+ * cannot share a matrix; setup refuses include_rf_frequency=2 together with include_rf_phase.
+ *
+ * Requires buildRFMatrix to have run first (cavity list, base frequency, actuator filter). */
+static void appendFrequencyColumn(FOFB_PLANE *plane, LINE_LIST *beamline) {
+  CORMON_DATA *CM = &plane->CM;
+  long nSteer = CM->ncor, nmon = CM->nmon, i, j;
+  double *fcol, sC = 0, sF = 0, rmsC, rmsF, s_freq, alpha_c, f0;
+  MAT *Caug;
+
+  alpha_c = beamline->alpha[0];
+  f0 = plane->rfBase;
+  if (alpha_c == 0 || f0 <= 0)
+    bombElegant("fast_orbit_feedback: cannot form the RF-frequency column (need alpha_c from &twiss_output and a positive cavity FREQ)", NULL);
+
+  /* static dispersive response per Hz at the monitors */
+  fcol = tmalloc(sizeof(*fcol) * nmon);
+  for (i = 0; i < nmon; i++)
+    fcol[i] = -(CM->umoni[i]->twiss ? CM->umoni[i]->twiss->etax : 0) / (alpha_c * f0);
+
+  /* conditioning scale so the column carries weight comparable to the correctors (same rule as
+     the phase column; rf_response_scale>0 overrides) */
+  for (j = 0; j < nSteer; j++)
+    for (i = 0; i < nmon; i++)
+      sC += Mij(CM->C, i, j) * Mij(CM->C, i, j);
+  for (i = 0; i < nmon; i++)
+    sF += fcol[i] * fcol[i];
+  rmsC = nSteer ? sqrt(sC / ((double)nmon * nSteer)) : 1.0;
+  rmsF = sqrt(sF / nmon);
+  if (rf_response_scale > 0)
+    s_freq = rf_response_scale;
+  else
+    s_freq = (rmsF > 0 && rmsC > 0) ? rmsC / rmsF : 1.0;
+  plane->s_freq = s_freq;
+
+  Caug = matrix_get(nmon, nSteer + 1);
+  for (j = 0; j < nSteer; j++)
+    memcpy(Caug->me[j], CM->C->me[j], sizeof(double) * nmon);
+  for (i = 0; i < nmon; i++)
+    Mij(Caug, i, nSteer) = fcol[i] * s_freq;
+  free(fcol);
+  matrix_free(CM->C);
+  CM->C = Caug;
+
+  CM->kick_coef = trealloc(CM->kick_coef, sizeof(*CM->kick_coef) * (nSteer + 1));
+  CM->sl_index = trealloc(CM->sl_index, sizeof(*CM->sl_index) * (nSteer + 1));
+  CM->ucorr = trealloc(CM->ucorr, sizeof(*CM->ucorr) * (nSteer + 1));
+  CM->pegged = trealloc(CM->pegged, sizeof(*CM->pegged) * (nSteer + 1));
+  CM->kick_coef[nSteer] = 1.0 / s_freq; /* e = Mij(dK,freq)/kick_coef is then in Hz */
+  CM->sl_index[nSteer] = -3;            /* RF-frequency sentinel */
+  CM->ucorr[nSteer] = plane->rfElem[0];
+  CM->pegged[nSteer] = 0;
+  CM->ncor = nSteer + 1;
+  plane->freqIndex = nSteer;
+
+  if (verbosity)
+    printf("fast_orbit_feedback: RF-frequency column appended to the fast matrix, s_freq=%.3e\n", s_freq);
+  fflush(stdout);
+}
+
+/* ------------------------------------------------------------------ */
 /* Response-matrix file I/O.  FOFB can LOAD the forward steering response matrix from an
    SDDS file (response[0]/response[1]) or WRITE the one it computed (response_output[0]/[1]),
    in the exact layout &correction_matrix_output produces for the default (unscaled) units:
@@ -1230,166 +1310,6 @@ static void fofbLoadResponseMatrix(CORMON_DATA *CM, char *filename, RUN *run, lo
 
 /* ------------------------------------------------------------------ */
 
-/* Eta-blind the CORRECTORS by deleting dispersive singular vectors from the corrector-only
- * forward matrix, then recomposing it.
- *
- * Rationale.  A corrector pattern whose orbit lies along the dispersion changes the ring
- * path length and so drives an energy error.  We do not want the feedback to command such
- * patterns, but we must not lie about what the correctors do: projecting eta out of the
- * response columns (tried and rejected) tells the solve that a corrector does not produce
- * the dispersion it physically does produce, and the resulting model error destabilizes the
- * slow RF-frequency loop.
- *
- * Truncated-SVD recomposition has no such defect.  Writing C = sum_i s_i u_i v_i^T and
- * dropping the dispersive terms gives
- *
- *     C' = sum_{i kept} s_i u_i v_i^T,
- *
- * which is EXACT on the span of the retained right singular vectors and zero elsewhere.
- * The pseudo-inverse of C' only ever commands corrector patterns inside that span, and on
- * that span C' and C agree identically -- so the forward model is truthful for everything
- * the loop actually does, while the energy-driving patterns have simply been made
- * uncommandable.
- *
- * Ordering matters: this runs on the corrector-only matrix, BEFORE the RF-phase column is
- * appended.  The phase column is itself proportional to eta, so it lives entirely in the
- * dispersive modes; cutting after augmentation would delete the energy actuator's own
- * channel along with the correctors' (verified: with maximum_dispersive_fraction=0.1 on the
- * augmented matrix, the two deleted modes were the phase actuator's).
- *
- * Horizontal plane only -- eta_y is not modelled here.
- */
-static void fofbDeleteDispersiveModes(CORMON_DATA *CM, FOFB_PLANE *plane) {
-  MAT *U = NULL, *Vt = NULL, *Cnew = NULL, *Tthrow = NULL;
-  VEC *S = NULL, *Sused = NULL;
-  int32_t nSV = 0, nUsed = 0;
-  double cond, norm = 0, *eh = NULL;
-  long i, j, m, nmon, ncor, nDel = 0;
-  short *drop = NULL;
-
-  if (plane->coord != 0 || maximum_dispersive_fraction >= 1.0 || !CM->C)
-    return;
-  nmon = CM->nmon;
-  ncor = CM->ncor;
-  if (nmon <= 0 || ncor <= 0)
-    return;
-
-  /* unit dispersion pattern at the monitors; the SVD below is of the UNWEIGHTED matrix
-     (weight=NULL), so eta is not weighted either.  Monitor weighting is applied later, by
-     fofbInvertCM, when the inverse is actually formed. */
-  eh = tmalloc(sizeof(*eh) * nmon);
-  for (i = 0; i < nmon; i++) {
-    eh[i] = CM->umoni[i]->twiss ? CM->umoni[i]->twiss->etax : 0;
-    norm += eh[i] * eh[i];
-  }
-  if (norm <= 0) {
-    free(eh);
-    return;
-  }
-  norm = sqrt(norm);
-  for (i = 0; i < nmon; i++)
-    eh[i] /= norm;
-
-  /* factor the corrector-only matrix.  No truncation is requested here (that is
-     fofbInvertCM's job); we want the full spectrum so the recomposition is faithful.  The
-     returned inverse is discarded -- we are only after U, S and Vt. */
-  Tthrow = matrix_invert(CM->C, NULL, 0, 0, 0.0, 0.0, -1,
-                         0, NULL, NULL,
-                         &S, &nSV, &Sused, &nUsed,
-                         &U, &Vt,
-                         &cond);
-  if (!U || !Vt || !S || nSV <= 0) {
-    printWarning("fast_orbit_feedback: could not factor the corrector matrix for dispersive-mode removal.",
-                 "maximum_dispersive_fraction was ignored for this plane.");
-    goto cleanup;
-  }
-
-  drop = tmalloc(sizeof(*drop) * nSV);
-  for (m = 0; m < nSV; m++) {
-    double d = 0;
-    for (i = 0; i < nmon; i++)
-      d += Mij(U, i, m) * eh[i];
-    drop[m] = (fabs(d) > maximum_dispersive_fraction) ? 1 : 0;
-    if (drop[m])
-      nDel++;
-  }
-  if (nDel == 0)
-    goto cleanup;
-  if (nDel == nSV) {
-    printWarning("fast_orbit_feedback: maximum_dispersive_fraction would delete every corrector mode.",
-                 "No singular vector survives the dispersive cut, which would leave the correctors "
-                 "with no authority at all.  Raise maximum_dispersive_fraction.  No modes were deleted.");
-    goto cleanup;
-  }
-
-  /* C' = sum over retained modes of s_m u_m v_m^T  (Vt row m is v_m^T) */
-  Cnew = matrix_get(nmon, ncor);
-  for (j = 0; j < ncor; j++)
-    for (i = 0; i < nmon; i++)
-      Mij(Cnew, i, j) = 0;
-  for (m = 0; m < nSV; m++) {
-    double sm;
-    if (drop[m])
-      continue;
-    sm = S->ve[m];
-    for (j = 0; j < ncor; j++) {
-      double vmj = sm * Mij(Vt, m, j);
-      if (vmj == 0)
-        continue;
-      for (i = 0; i < nmon; i++)
-        Mij(Cnew, i, j) += Mij(U, i, m) * vmj;
-    }
-  }
-  matrix_free(CM->C);
-  CM->C = Cnew;
-  Cnew = NULL;
-  plane->nSVdeleted = nDel;
-
-  /* The recomposition leaves exactly nDel EXACT null singular values behind (those are the
-     modes we dropped from the sum).  They must not reach the pseudo-inverse: 1/s with
-     s ~ 1e-16 amplifies numerical noise into corrector demands that peg instantly.  Raise
-     remove_smallest_SVs so the subsequent inversion discards precisely that induced null
-     space.  Appending the RF-phase column afterwards adds an independent direction with a
-     normal-sized singular value, so the count still matches. */
-  if (CM->remove_smallest_SVs < nDel) {
-    if (verbosity)
-      printf("fast_orbit_feedback: raising remove_smallest_SVs from %ld to %ld to discard the "
-             "null space created by deleting the dispersive modes\n",
-             (long)CM->remove_smallest_SVs, nDel);
-    CM->remove_smallest_SVs = nDel;
-  }
-
-  if (verbosity) {
-    printf("fast_orbit_feedback: removed %ld dispersive corrector mode(s) (|u.etahat| > %g) "
-           "from the %ld-mode corrector matrix before augmentation:",
-           nDel, maximum_dispersive_fraction, (long)nSV);
-    for (m = 0; m < nSV; m++)
-      if (drop[m])
-        printf(" %ld", m);
-    printf("\n");
-    fflush(stdout);
-  }
-
-cleanup:
-  if (Tthrow)
-    matrix_free(Tthrow);
-  if (U)
-    matrix_free(U);
-  if (Vt)
-    matrix_free(Vt);
-  if (S)
-    vec_free(S);
-  if (Sused)
-    vec_free(Sused);
-  if (Cnew)
-    matrix_free(Cnew);
-  if (drop)
-    free(drop);
-  free(eh);
-}
-
-/* ------------------------------------------------------------------ */
-
 static void setupPlane(FOFB_PLANE *plane, long coord, RUN *run, VARY *control, LINE_LIST *beamline) {
   CORMON_DATA *CM;
   STEERING_LIST *SL;
@@ -1400,6 +1320,7 @@ static void setupPlane(FOFB_PLANE *plane, long coord, RUN *run, VARY *control, L
   memset(plane, 0, sizeof(*plane));
   plane->coord = coord;
   plane->phaseIndex = -1;
+  plane->freqIndex = -1;
   CM = &plane->CM;
 
   /* select the corrector steering list: if this plane's correctors were declared
@@ -1518,11 +1439,14 @@ static void setupPlane(FOFB_PLANE *plane, long coord, RUN *run, VARY *control, L
   /* fast matrix: append the RF-phase column (if any) then invert.  The RF-frequency knob
      is built as a separate slow-cadence matrix that leaves CM->C/T untouched.  A loaded
      matrix with no phase column is inverted here. */
-  fofbDeleteDispersiveModes(CM, plane); /* corrector-only matrix, BEFORE augmentation */
   if (phaseActive)
     appendPhaseActuator(plane, run, beamline);
+  if (rfActive && include_rf_frequency == 2) {
+    buildRFMatrix(plane, run, beamline); /* cavities, base frequency, actuator filter */
+    appendFrequencyColumn(plane, beamline);
+  }
   fofbInvertCM(CM, plane);
-  if (rfActive)
+  if (rfActive && include_rf_frequency != 2)
     buildRFMatrix(plane, run, beamline);
 
   if (CM->ncor == 0 || CM->T == NULL) {
@@ -1558,6 +1482,14 @@ static void setupPlane(FOFB_PLANE *plane, long coord, RUN *run, VARY *control, L
       plane->kickOffset[i] = plane->rfPhaseOffset[0];
       plane->base[i] = plane->rfBasePhase[0];
       plane->actFilter[i] = loadFilterBank(rf_phase_filter_file, &plane->nActFilter[i]);
+    } else if (sl_index == -3) {
+      /* RF-frequency column: setpoint in Hz about the reference cavity frequency.  It is not
+         written through this per-actuator path; updateSetpoints hands it to rfU and the shared
+         frequency writer applies it (with rf_frequency_filter_file, if any). */
+      plane->kickOffset[i] = plane->rfFreqOffset[0];
+      plane->base[i] = plane->rfBase;
+      plane->actFilter[i] = NULL;
+      plane->nActFilter[i] = 0;
     } else {
       ELEMENT_LIST *corr = CM->ucorr[i];
       plane->kickOffset[i] = SL->param_offset[sl_index];
@@ -1641,19 +1573,36 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
     bombElegant("fixed_length_matrix must be 0 (vary RF frequency), 1 (vary energy, momentum secant), or 2 (full 6-D closed orbit).", NULL);
   if (fixed_length_matrix == 1 && checkChangeT(beamline))
     bombElegant("change_t is nonzero on one or more RF cavities. This is incompatible with fixed_length_matrix=1 orbit computations.", NULL);
-  if (fixed_length_matrix && include_rf_frequency)
-    printWarning("fast_orbit_feedback: fixed_length_matrix is set together with include_rf_frequency.",
-                 "The RF-frequency actuator moves the orbit by varying the RF frequency, which is inconsistent with a fixed-length response matrix. Use fixed_length_matrix=0 (variable-length, vary-RF-frequency model) or disable include_rf_frequency.");
-  /* Gated on include_rf_frequency so this does not contradict the warning just above: when the
-     RF-frequency actuator is active the loop really does vary the rf frequency, and a
-     variable-length matrix is then the right model. */
-  if (fixed_length_matrix == 0 && !include_rf_frequency)
+  if (include_rf_frequency < 0 || include_rf_frequency > 2)
+    bombElegant("fast_orbit_feedback: include_rf_frequency must be 0 (off), 1 (separate slow loop) or 2 (column of the fast matrix).", NULL);
+  if (include_rf_frequency == 2 && include_rf_phase)
+    bombElegant("fast_orbit_feedback: include_rf_frequency=2 cannot be combined with include_rf_phase. "
+                "Both actuators are columns proportional to the dispersion, so together they make the "
+                "fast matrix singular.  A frequency column with rf_Kd provides the damping the phase "
+                "column would.", NULL);
+  if (include_rf_frequency == 2 && rf_bpm_filter_file)
+    bombElegant("fast_orbit_feedback: rf_bpm_filter_file is not used with include_rf_frequency=2. "
+                "The frequency column is solved from the same filtered orbit as the correctors "
+                "(bpm_filter_file).", NULL);
+  if (include_rf_frequency == 2 && rf_update_multiplier > 1)
+    printWarning("fast_orbit_feedback: rf_update_multiplier is ignored with include_rf_frequency=2.",
+                 "The frequency column is updated every iteration together with the correctors.");
+  /* The corrector columns must describe the machine the loop actually controls.  The RF
+     frequency does not follow each corrector -- it is held fixed, or moved only by the
+     RF-frequency actuator, whose response is modelled separately (its own matrix in mode 1, its
+     own column in mode 2).  So the corrector response belongs at FIXED RF frequency, which is
+     fixed_length_matrix=2 (or 1).  fixed_length_matrix=0 instead lets the circumference float
+     as if the RF followed every corrector: wrong with no frequency actuator, and with one it
+     double-counts the frequency response.  In a low-momentum-compaction ring the error is large
+     (the dispersive part of each corrector's response is amplified by 1/alpha_c). */
+  if (fixed_length_matrix == 0)
     printWarning((char *)"fast_orbit_feedback: fixed_length_matrix=0 is unphysical for orbit feedback.",
                  (char *)"A fixed_length_matrix=0 response matrix lets the orbit length vary, which "
-                 "corresponds to the rf frequency changing in response to each corrector.  The feedback "
-                 "does not do that, so the predicted corrector-to-orbit response does not match the "
-                 "machine and the loop may converge poorly or go unstable.  Use fixed_length_matrix=2 "
-                 "(or 1).");
+                 "corresponds to the rf frequency following each corrector.  The feedback does not do "
+                 "that (with include_rf_frequency the frequency response is modelled separately, so it "
+                 "would be counted twice), so the predicted corrector-to-orbit response does not match "
+                 "the machine and the loop may converge poorly or go unstable.  Use "
+                 "fixed_length_matrix=2 (or 1).");
   /* subtract_dispersion controls whether the dispersion pattern is projected out of the
      steering loop's orbit vector before the corrector solve (updateSetpoints):
        0 (default)  automatic -- project only when the RF-frequency loop is on and there is no
@@ -1664,6 +1613,10 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
      vector, so removing eta would blind the phase actuator along with the correctors. */
   if (subtract_dispersion < -1 || subtract_dispersion > 1)
     bombElegant("fast_orbit_feedback: subtract_dispersion must be -1 (never), 0 (automatic) or 1 (always).", NULL);
+  if (subtract_dispersion == 1 && include_rf_frequency == 2)
+    bombElegant("fast_orbit_feedback: subtract_dispersion=1 cannot be combined with include_rf_frequency=2. "
+                "The RF-frequency column is solved from the same orbit vector, so projecting out the "
+                "dispersion would blind it too.", NULL);
   if (subtract_dispersion == 1 && include_rf_phase)
     bombElegant("fast_orbit_feedback: subtract_dispersion=1 cannot be combined with include_rf_phase. "
                 "The RF-phase column is solved from the same orbit vector, so projecting out the "
@@ -1834,7 +1787,6 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "minimum_SV_ratio", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "Tikhonov_relative_alpha", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "Tikhonov_n", NULL, SDDS_LONG) ||
-        !SDDS_DefineSimpleParameter(&SDDS_fofb, "maximum_dispersive_fraction", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "steering_Kp", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "steering_Ki", NULL, SDDS_DOUBLE) ||
         !SDDS_DefineSimpleParameter(&SDDS_fofb, "steering_Kd", NULL, SDDS_DOUBLE) ||
@@ -1880,18 +1832,25 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
       SDDS_SetError("Unable to set up fast_orbit_feedback DeltaFrf column");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
-    /* RF-phase energy-actuator diagnostics exist only when include_rf_phase is set, so
-       include_rf_phase=0 runs keep the output layout unchanged */
+    /* RF-phase command column exists only when include_rf_phase is set, and the energy
+       estimate only when an RF energy actuator (phase or frequency) is active, so runs without
+       them keep the output layout unchanged.  Defined in this order so phase-column runs keep
+       their previous layout (DeltaPhase, deltaEnergyEst). */
     if (include_rf_phase &&
-        (SDDS_DefineColumn(&SDDS_fofb, "DeltaPhase", NULL, "deg",
-                           "Applied RF-phase offset from the base phase at this iteration "
-                           "(one common offset shared by all selected cavities), the energy actuator command",
-                           NULL, SDDS_DOUBLE, 0) < 0 ||
-         SDDS_DefineColumn(&SDDS_fofb, "deltaEnergyEst", NULL, NULL,
-                           "Dispersion-projected common energy offset sum(x_i*eta_i)/sum(eta_i^2) "
-                           "estimated from the horizontal BPMs at this iteration",
-                           NULL, SDDS_DOUBLE, 0) < 0)) {
-      SDDS_SetError("Unable to set up fast_orbit_feedback RF-phase columns");
+        SDDS_DefineColumn(&SDDS_fofb, "DeltaPhase", NULL, "deg",
+                          "Applied RF-phase offset from the base phase at this iteration "
+                          "(one common offset shared by all selected cavities), the energy actuator command",
+                          NULL, SDDS_DOUBLE, 0) < 0) {
+      SDDS_SetError("Unable to set up fast_orbit_feedback DeltaPhase column");
+      SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+    }
+    if ((include_rf_phase || include_rf_frequency) &&
+        SDDS_DefineColumn(&SDDS_fofb, "deltaEnergyEst", NULL, NULL,
+                          "Dispersion-projected common energy offset sum(x_i*eta_i)/sum(eta_i^2) "
+                          "estimated from the filtered horizontal BPM readings (bpm_filter_file) at "
+                          "this iteration; diagnostic only",
+                          NULL, SDDS_DOUBLE, 0) < 0) {
+      SDDS_SetError("Unable to set up fast_orbit_feedback deltaEnergyEst column");
       SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
     }
     if (!SDDS_WriteLayout(&SDDS_fofb)) {
@@ -1949,7 +1908,6 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
             "minimum_SV_ratio", minimum_SV_ratio,
             "Tikhonov_relative_alpha", Tikhonov_relative_alpha,
             "Tikhonov_n", (int32_t)Tikhonov_n,
-            "maximum_dispersive_fraction", maximum_dispersive_fraction,
             "steering_Kp", steering_Kp, "steering_Ki", steering_Ki, "steering_Kd", steering_Kd,
             "corrector_limit", corrector_limit,
             "include_rf_frequency", (int32_t)include_rf_frequency,
@@ -1982,6 +1940,7 @@ void setupFastOrbitFeedback(NAMELIST_TEXT *nltext, RUN *run, VARY *control, LINE
     fofbOutputActive = 1;
     fofbHasDfrfColumn = include_rf_frequency ? 1 : 0;
     fofbHasPhaseColumns = include_rf_phase ? 1 : 0;
+    fofbHasEnergyEstColumn = (include_rf_phase || include_rf_frequency) ? 1 : 0;
   }
 
   fofbSetupDone = 1;
@@ -2000,6 +1959,8 @@ long fofbUpdateActuators(LINE_LIST *beamline, RUN *run, long i_pass) {
       continue;
     for (i = 0; i < plane->CM.ncor; i++) {
       double delta, applied, *pval;
+      if (i == plane->freqIndex)
+        continue; /* applied below through rfU, shared with the separate frequency loop */
       delta = plane->u[i] - plane->base[i];
       if (plane->nActFilter[i] > 0)
         applied = plane->base[i] + applyIIRFilterCascade(plane->actFilter[i], plane->nActFilter[i], delta);
@@ -2114,11 +2075,13 @@ static void updateSetpoints(FOFB_PLANE *plane, double *rmsOrbit, double *maxCorr
   double sum2 = 0, maxc = 0;
   *nPegged = 0;
 
-  /* Diagnostic dispersion projection delta_est = sum(x_i*eta_i)/sum(eta_i^2) from the RAW x
-     ticks (x plane, phase active only).  This is now DIAGNOSTIC-ONLY -- the phase command
-     comes from the deadbeat solve below, not from this projection.  sums->centroid (hence
-     xTick) is already MPI_Allreduce'd, so delta_est is bit-identical on every rank. */
-  if (plane->coord == 0 && plane->rfPhaseActive) {
+  /* Diagnostic dispersion projection delta_est = sum(x_i*eta_i)/sum(eta_i^2) from the x ticks
+     (bpm_filter_file readout), computed whenever an RF energy actuator is active (phase
+     column, or frequency in either mode).  DIAGNOSTIC-ONLY: no actuator command is taken from
+     it -- the RF commands come from the deadbeat solve below or from updateRFLoop (which, in
+     the separate-loop mode, reads the rf_bpm_filter_file signal instead).  sums->centroid
+     (hence xTick) is already MPI_Allreduce'd, so delta_est is bit-identical on every rank. */
+  if (plane->coord == 0 && (plane->rfPhaseActive || plane->nRF > 0)) {
     double sxe = 0, see = 0;
     for (i = 0; i < CM->nmon; i++) {
       void **pp = fofbDataPtr(CM->umoni[i]);
@@ -2163,7 +2126,7 @@ static void updateSetpoints(FOFB_PLANE *plane, double *rmsOrbit, double *maxCorr
      a phase column is refused at setup. */
   if (plane->coord == 0 &&
       (subtract_dispersion == 1 ||
-       (subtract_dispersion == 0 && plane->nRF > 0 && !plane->rfPhaseActive))) {
+       (subtract_dispersion == 0 && plane->nRF > 0 && !plane->rfPhaseActive && plane->freqIndex < 0))) {
     double sxe = 0, see = 0;
     for (i = 0; i < CM->nmon; i++) {
       double eta = CM->umoni[i]->twiss ? CM->umoni[i]->twiss->etax : 0;
@@ -2185,7 +2148,15 @@ static void updateSetpoints(FOFB_PLANE *plane, double *rmsOrbit, double *maxCorr
   for (i = 0; i < CM->ncor; i++) {
     double e, d, uProp, uNew, applied, Kp, Ki, Kd, limitVal, limitRef;
     long isPhase = (i == plane->phaseIndex);
-    if (isPhase) {
+    long isFreq = (i == plane->freqIndex);
+    if (isFreq) {
+      /* RF-frequency column: rf_* gains, clamp about the base frequency (Hz) */
+      Kp = plane->rfKp;
+      Ki = plane->rfKi;
+      Kd = plane->rfKd;
+      limitVal = rf_frequency_limit;
+      limitRef = plane->base[i];
+    } else if (isPhase) {
       /* RF-phase class: gains energy_*, and the limit is a phase excursion about the base
          phase (|phi-phi0| <= rf_phase_limit). */
       Kp = plane->rfPhaseKp;
@@ -2217,7 +2188,11 @@ static void updateSetpoints(FOFB_PLANE *plane, double *rmsOrbit, double *maxCorr
       plane->actPegged[i] = 0;
     plane->u[i] = uNew;
     plane->ePrev[i] = e;
-    if (!isPhase) {
+    if (isFreq) {
+      plane->rfU = uNew; /* the shared per-turn frequency writer applies it */
+      plane->rfPegged = plane->actPegged[i];
+    }
+    if (!isPhase && !isFreq) {
       /* MaxCorr* reports the steering excursion (rad); the RF-phase command is a
          different quantity and is excluded here. */
       applied = fabs(plane->u[i] - plane->base[i]);
@@ -2246,8 +2221,8 @@ static void updateRFLoop(FOFB_PLANE *plane, long *nPegged) {
   long i;
   double e, d, uProp, uNew;
   *nPegged = 0;
-  if (!plane->active || plane->nRF == 0)
-    return;
+  if (!plane->active || plane->nRF == 0 || plane->freqIndex >= 0)
+    return; /* include_rf_frequency=2: the fast solve drives the frequency instead */
 
   Q_rf = matrix_get(CM->nmon, 1);
   for (i = 0; i < CM->nmon; i++) {
@@ -2348,8 +2323,8 @@ static void fofbCheckModulationConflicts(RUN *run) {
     if (!plane->active)
       continue;
     for (i = 0; i < plane->CM.ncor; i++) {
-      if (i == plane->phaseIndex)
-        continue; /* the phase column is covered via rfPhaseElem/rfPhaseOffset below */
+      if (i == plane->phaseIndex || i == plane->freqIndex)
+        continue; /* covered via rfPhaseElem / rfElem below */
       fofbBombIfModulated(mod, plane->CM.ucorr[i], plane->kickOffset[i]);
     }
     for (k = 0; k < plane->nRFPhase; k++)
@@ -2547,10 +2522,18 @@ long doFastOrbitFeedback(RUN *run, VARY *control, LINE_LIST *beamline, BEAM *bea
         double dphase = (planeData[0].active && planeData[0].phaseIndex >= 0)
                           ? planeData[0].u[planeData[0].phaseIndex] - planeData[0].base[planeData[0].phaseIndex]
                           : 0.0;
-        double dest = (planeData[0].active && planeData[0].rfPhaseActive) ? planeData[0].deltaEst : 0.0;
         if (!SDDS_SetRowValues(&SDDS_fofb, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, i_step,
-                               "DeltaPhase", dphase, "deltaEnergyEst", dest, NULL)) {
-          SDDS_SetError("Unable to set fast_orbit_feedback RF-phase values");
+                               "DeltaPhase", dphase, NULL)) {
+          SDDS_SetError("Unable to set fast_orbit_feedback DeltaPhase value");
+          SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+        }
+      }
+      if (fofbHasEnergyEstColumn) {
+        double dest = (planeData[0].active && (planeData[0].rfPhaseActive || planeData[0].nRF > 0))
+                        ? planeData[0].deltaEst : 0.0;
+        if (!SDDS_SetRowValues(&SDDS_fofb, SDDS_SET_BY_NAME | SDDS_PASS_BY_VALUE, i_step,
+                               "deltaEnergyEst", dest, NULL)) {
+          SDDS_SetError("Unable to set fast_orbit_feedback deltaEnergyEst value");
           SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
         }
       }
@@ -2659,6 +2642,7 @@ static void freePlane(FOFB_PLANE *plane) {
   plane->rfBasePhase = NULL;
   plane->rfPhaseOffset = NULL;
   plane->rfPhaseActive = 0;
+  plane->freqIndex = -1;
   if (plane->CM.C)
     matrix_free(plane->CM.C);
   if (plane->CM.T)
@@ -2699,6 +2683,7 @@ void finishFastOrbitFeedback(void) {
   fofbOutputActive = 0;
   fofbHasDfrfColumn = 0;
   fofbHasPhaseColumns = 0;
+  fofbHasEnergyEstColumn = 0;
 
   /* restore each phase-actuator cavity to its base phase for a clean end state (the
      RFCA otherwise retains the last commanded offset); do this before freePlane frees

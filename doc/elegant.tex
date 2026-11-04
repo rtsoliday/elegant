@@ -3355,7 +3355,7 @@ with the \verb|steering_element| command using \verb|target="fast_orbit_feedback
 corrector is declared for a plane, exactly the declared correctors are used for that
 plane, otherwise the dedicated correctors are auto-added.
 
-\textbf{RF-frequency actuator (slow radial loop).}  Setting \verb|include_rf_frequency=1|
+\textbf{RF-frequency actuator (radial loop).}  Setting \verb|include_rf_frequency| to 1 or 2
 adds the RF frequency as a horizontal actuator (the machine ``radial loop'').  In a ring with
 horizontal dispersion, moving the horizontal correctors changes the path length, which
 shifts the equilibrium momentum offset $\delta$ and re-distorts the dispersive orbit
@@ -3363,8 +3363,12 @@ $\eta_x\delta$ at the monitors; with the RF frequency held fixed the horizontal 
 therefore shows a slow residual drift that pure steering cannot remove.  The RF frequency
 is the DC orbit/energy knob, $\delta=-(1/\alpha_c)(\Delta f/f_0)$, so an integral RF loop
 nails zero steady-state horizontal error.  All selected cavities form one joint actuator
-(a common fractional detuning).  This knob is \emph{not} folded into the fast corrector
-matrix; it has its own single-column matrix with the analytic dispersive response
+(a common fractional detuning).  The response at the monitors is the analytic dispersive
+term $\partial x_i/\partial f=-\eta_i/(\alpha_c f_0)$, and the knob is driven by its own scalar
+PID class (\verb|rf_Kp/Ki/Kd|, all zero by default).  Two arrangements are available.
+
+\emph{Separate loop} (\verb|include_rf_frequency=1|).  The knob is \emph{not} folded into the
+fast corrector matrix; it has its own single-column matrix with the analytic dispersive response
 $\partial x_i/\partial f=-\eta_i/(\alpha_c f_0)$, its own pseudo-inverse, and its own scalar
 PID class (\verb|rf_Kp/Ki/Kd|, all zero by default, so the RF loop is off until \verb|rf_Ki|
 is set; expect $\verb|rf_Ki|\ll\verb|steering_Ki|$).  It acts at the slow cadence
@@ -3375,7 +3379,35 @@ When the RF-frequency loop is active and no RF-phase column is present, the fast
 solve is automatically made \emph{dispersion-blind}: the $\eta$-shaped mode is projected out
 of the corrector control vector so the fast correctors do not fight the slow frequency
 integrator over the dispersive channel (classic radial-loop spatial decoupling; this is the
-default behavior of \verb|subtract_dispersion|, see below).  Select
+default behavior of \verb|subtract_dispersion|, see below).
+
+\emph{Column of the fast matrix} (\verb|include_rf_frequency=2|).  The same response is
+appended as a column of the fast horizontal matrix and solved with the correctors every
+iteration, in place of the RF-phase column.  The least-squares solve then partitions the orbit
+by itself, the $\eta$-shaped part going to the frequency and the rest to the correctors, so no
+projection of the measured orbit is needed; and the frequency demand accounts for the
+dispersive orbit that the same step's corrector change will itself produce (each corrector
+column includes its path-length effect when \verb|fixed_length_matrix| is 1 or 2), rather than
+seeing it a step later.  This mode cannot be combined with \verb|include_rf_phase|, because both
+columns are proportional to $\eta$ and together make the matrix singular; it uses the
+\verb|bpm_filter_file| orbit (setting \verb|rf_bpm_filter_file| is an error), and
+\verb|rf_update_multiplier| is ignored.  Use \verb|fixed_length_matrix=2| (or 1) with it.
+
+\emph{Choosing the controller.}  The RF phase and the RF frequency are one physical knob, the
+RF phase seen by the beam, separated by an integration: a frequency offset held for one turn
+advances the cavity phase by $2\pi h\,\Delta f/f$.  Which actuator ``damps'' and which
+``corrects DC'' is therefore set by the controller, not the actuator.  Derivative gain on the
+frequency (\verb|rf_Kd|) acts like proportional gain on the phase: it adds a damping term at the
+synchrotron frequency.  Proportional gain on the frequency only shifts the synchrotron tune.
+Integral gain on the frequency gives the DC authority the phase lacks, but on its own it has no
+damping term and is unstable through the synchrotron resonance unless either that resonance is
+removed from its measurement (a one-synchrotron-period boxcar \verb|rf_bpm_filter_file|, separate
+loop only) or \verb|rf_Kd| is added.  With \verb|rf_Kd| the notch is unnecessary and higher
+\verb|rf_Ki| becomes usable; a frequency loop with \verb|rf_Ki| and \verb|rf_Kd| then covers
+what the phase loop does as well as the DC.  In either mode the gains have the same meaning,
+so switching between modes does not require retuning.
+
+Select
 which cavities are driven with \verb|steering_element|, \verb|target="fast_orbit_feedback"|,
 \verb|item="FREQ"| on the desired \verb|RFCA| elements; if none are declared, every
 \verb|RFCA| in the beamline is used.  A finite-bandwidth frequency actuator (a power supply
@@ -3397,8 +3429,10 @@ the measured orbit.  The phase column is driven by its own
 PID class (\verb|rf_phase_Kp/Ki/Kd|, all zero by default; clamp \verb|rf_phase_limit|).  Because
 the RF phase sets the energy kick directly ($\Delta\gamma=V\sin\phi$), this channel is a fast,
 first-order damper---it damps the synchrotron transient quickly and, run proportionally
-(\verb|rf_phase_Ki=0|), leaves no DC energy change, so it does not fight the slow frequency
-loop.  This matches real machines, where fast longitudinal damping of the rigid common
+(\verb|rf_phase_Ki=0|), leaves no DC energy change, so it does not fight a separate frequency
+loop.  Its useful range is near the synchrotron frequency; well below it a held phase offset
+simply lets the beam re-phase.  A frequency column (\verb|include_rf_frequency=2|) with
+\verb|rf_Kd| provides the same damping and adds DC authority, and replaces this column.  This matches real machines, where fast longitudinal damping of the rigid common
 energy---which low-power bunch-by-bunch feedback cannot move---is done by phase modulation of
 the main RF.  Select the cavities with \verb|steering_element|, \verb|item="PHASE"|; if none
 are declared, every \verb|RFCA| is used.  The actuator drives each selected cavity's additive
@@ -3470,7 +3504,6 @@ description below).
     double minimum_SV_ratio = 0;
     double Tikhonov_relative_alpha = 0;
     long Tikhonov_n = -1;
-    double maximum_dispersive_fraction = 1.0;
     double steering_Kp = 0;
     double steering_Ki = 1;
     double steering_Kd = 0;
@@ -3532,20 +3565,15 @@ description below).
   divided by the largest), \verb|Retained| (nonzero if the mode survived singular-value truncation),
   and \verb|RmsAmplitude| (the RMS over all feedback iterations of that mode's amplitude in the
   orbit).  This is the file that answers ``which orbit patterns can these correctors actually make,
-  and which of them is my leftover motion sitting in?''  Two further columns describe the dispersive
-  content of each mode: \verb|DispersiveFraction| is
-  $|\mathbf{u}_i\cdot\hat{\mathbf{\eta}}|$, the overlap of the mode's orbit pattern with the unit
-  dispersion pattern at the monitors, so a mode with a large value drives an energy error.  It is
-  always computed, whether or not \verb|maximum_dispersive_fraction| is in use, since it is what one
-  inspects in order to choose the threshold.  Note that these are the modes of the matrix actually
-  inverted, which is the AUGMENTED matrix when an RF-phase column is present; the dispersive removal
-  acts on the corrector-only matrix beforehand, so the modes it removed do not appear in this
-  spectrum at all and only their count is reported.  On a deck using both, the expected signature
-  here is a single mode with \verb|DispersiveFraction| near 1 --- the RF-phase column, which now owns
-  the dispersion by itself --- with every corrector mode near zero.  Parameters record
-  \verb|NMonitors|,
-  \verb|NCorrectors|, \verb|NModes|, \verb|NModesRetained|, \verb|NModesDispersiveDeleted| (the
-  number of corrector modes removed), and \verb|ConditionNumber|.
+  and which of them is my leftover motion sitting in?''  A further column, \verb|DispersiveFraction|
+  $=|\mathbf{u}_i\cdot\hat{\mathbf{\eta}}|$, gives the overlap of each mode's orbit pattern with the
+  unit dispersion pattern at the monitors (horizontal plane), so a mode with a large value moves the
+  beam along the dispersion and couples to the beam energy.  The dispersive content is typically
+  concentrated in a few modes, with the rest near zero.  These are the modes of the matrix actually
+  inverted, so when an RF column (phase, or frequency with \verb|include_rf_frequency=2|) is in the
+  fast matrix, its mode appears here with \verb|DispersiveFraction| near 1.  Parameters record
+  \verb|NMonitors|, \verb|NCorrectors|, \verb|NModes|, \verb|NModesRetained|, and
+  \verb|ConditionNumber|.
 
   Note the normalization, which differs from the rms columns of the \verb|output| file:
   \verb|RmsAmplitude| is the modal \emph{coefficient} $a_i=u_i^T x$ (in m) and is not divided by the
@@ -3586,11 +3614,14 @@ description below).
   secant), adding the dispersive fixed-length term to the response; \verb|2| uses the full
   six-dimensional closed-orbit method.  Value \verb|1| is incompatible with \verb|change_t|
   being nonzero on any RF cavity (the run stops with an error), whereas values \verb|0| and
-  \verb|2| may be used with \verb|change_t|.  A nonzero \verb|fixed_length_matrix| combined with
-  \verb|include_rf_frequency=1| is physically inconsistent---the RF-frequency actuator moves the
-  orbit by varying the RF frequency, which contradicts a fixed-length response model---so a
-  warning is issued (the run continues); use \verb|fixed_length_matrix=0| or disable
-  \verb|include_rf_frequency| to remove it.
+  \verb|2| may be used with \verb|change_t|.  For orbit feedback the corrector columns should
+  describe the response at \emph{fixed} RF frequency, i.e.\ \verb|fixed_length_matrix| 2 (or 1):
+  the RF frequency does not follow each corrector, and when \verb|include_rf_frequency| is set its
+  response is modelled separately (its own matrix, or its own column).  A value of 0 lets the
+  circumference float as if the RF followed every corrector, which mispredicts the corrector
+  response---badly in a low-momentum-compaction ring, where the dispersive part is amplified by
+  $1/\alpha_c$---and, with the frequency actuator on, counts the frequency response twice.  A
+  warning is therefore issued whenever \verb|fixed_length_matrix=0|.
 \item \verb|use_response_from_computed_orbits| --- If nonzero, the steering response matrices
   are built by tweaking each corrector, re-solving the closed orbit, and differencing the
   monitor readings, exactly as in \verb|correct|.  This is slower than the default analytic
@@ -3608,51 +3639,22 @@ description below).
 \item \verb|keep_largest_SVs|, \verb|remove_smallest_SVs|, \verb|minimum_SV_ratio|,
   \verb|Tikhonov_relative_alpha|, \verb|Tikhonov_n| --- Singular-value-decomposition
   controls for inverting the response matrix, with the same meaning as in \verb|correct|.
-\item \verb|maximum_dispersive_fraction| --- Prevents the steering correctors from
-  driving energy errors, by removing the dispersive singular vectors from the
-  corrector-only response matrix.  Horizontal plane only.
-
-  A corrector pattern whose orbit lies along the dispersion changes the ring path
-  length and so shifts the equilibrium momentum offset.  For each singular vector of
-  the corrector-only matrix \verb|elegant| computes the dispersive fraction
-  $|\mathbf{u}_i \cdot \hat{\mathbf{\eta}}|$, the overlap of that mode's orbit pattern
-  with the unit dispersion pattern at the monitors; it lies between 0 and 1.  Modes
-  whose fraction exceeds \verb|maximum_dispersive_fraction| are dropped and the matrix
-  is recomposed from the survivors, $C' = \sum_{i\,\mathrm{kept}} s_i \mathbf{u}_i
-  \mathbf{v}_i^T$, before any RF-phase column is appended.  The recomposed matrix is
-  exact on the span of the retained singular vectors and zero elsewhere, and the
-  pseudo-inverse only ever commands patterns inside that span, so the forward model
-  remains correct for everything the feedback actually does.  The removal necessarily
-  creates an equal number of null singular values, so \verb|remove_smallest_SVs| is
-  raised automatically to discard them.
-
-  The default of 1.0 removes nothing, since the fraction can never exceed 1.  Choose a
-  value by inspecting the \verb|DispersiveFraction| column of \verb|svd_value_output|,
-  which is always written: the dispersive content is typically concentrated in a few
-  modes, with the rest zero to machine precision.  How much this costs depends strongly
-  on the lattice.  Where dispersion is confined and correctors are plentiful, a
-  threshold of 0.5 may remove a single mode out of many.  In a small ring with
-  dispersion everywhere, the dispersive modes can include the one with the largest
-  singular value, and removing it will cripple the correction --- check the singular
-  values of the modes being removed before using this.
-
-  The cut is applied before the RF-phase column is added, which matters: that column is
-  itself proportional to $\eta$ and therefore lies entirely within the dispersive modes,
-  so cutting after augmentation would delete the energy actuator's own channel along
-  with the correctors'.
 \item \verb|steering_Kp|, \verb|steering_Ki|, \verb|steering_Kd| --- Proportional,
   integral, and derivative gains of the PID controller for the steering-corrector
   actuator class.  Pure integral action (\verb|steering_Ki| only) gives bounded
   zero-steady-state-error orbit correction.
 \item \verb|rf_Kp|, \verb|rf_Ki|, \verb|rf_Kd| --- PID gains for the RF-frequency actuator
-  class (used only when \verb|include_rf_frequency=1|).  All default to zero, so the RF
-  loop is off until \verb|rf_Ki| is set.
+  class (used when \verb|include_rf_frequency| is 1 or 2, with the same meaning in both).  All
+  default to zero, so the RF loop is off until a gain is set.  \verb|rf_Kd| damps the
+  synchrotron oscillation and \verb|rf_Ki| corrects the low-frequency and DC energy error; see
+  ``Choosing the controller'' above.
 \item \verb|corrector_limit| --- Maximum allowed absolute value of a steering-corrector
   setpoint (0 = no limit).
 \item \verb|rf_frequency_limit| --- Maximum allowed absolute RF-frequency excursion from
   the nominal frequency, in Hz (0 = no limit).
-\item \verb|rf_response_scale| --- Internal conditioning scale for the RF column in the
-  joint SVD (0 = automatic; the RF column is scaled so it carries weight comparable to the
+\item \verb|rf_response_scale| --- Internal conditioning scale for an RF column of the fast
+  matrix in the joint SVD, i.e.\ the RF-phase column or the \verb|include_rf_frequency=2|
+  frequency column (0 = automatic; the column is scaled so it carries weight comparable to the
   corrector columns).  This is a pure conditioning device and does not affect the applied
   physics.
 \item \verb|anti_windup| --- If nonzero, integrator anti-windup back-calculation is
@@ -3661,8 +3663,12 @@ description below).
   reset at the start of each FOFB iteration.
 \item \verb|bpm_noise|, \verb|bpm_noise_cutoff|, \verb|bpm_noise_distribution| --- Optional
   monitor-noise amplitude, cutoff, and distribution (``gaussian'' or ``uniform'').
-\item \verb|include_rf_frequency| --- If nonzero, enable the RF-frequency actuator (see
-  above).  Requires \verb|twiss_output| with dispersion and momentum compaction available.
+\item \verb|include_rf_frequency| --- Enable the RF-frequency actuator (see above): $0$ off
+  (default), $1$ as a separate loop with its own single-column matrix, update rate
+  (\verb|rf_update_multiplier|) and optional filter (\verb|rf_bpm_filter_file|), or $2$ as a
+  column of the fast matrix solved together with the correctors, in place of
+  \verb|include_rf_phase|.  Requires \verb|twiss_output| with dispersion and momentum
+  compaction available.
 \item \verb|include_rf_phase| --- If nonzero, enable the RF-phase energy actuator (see
   above): a fast scalar loop that damps the common (mode-0) momentum offset by modulating
   the main-RF phase.  Requires \verb|twiss_output| so the dispersion used in the projection
@@ -3700,7 +3706,8 @@ description below).
   $\verb|rf_update_multiplier|\times\verb|passes_between_updates|$ turns.  Use a value $>1$ to
   run the fast steering loop at a short step while giving the RF-frequency loop a slow interval
   long enough for its synchrotron-period filter (see \verb|rf_bpm_filter_file|).  Has no effect
-  unless \verb|include_rf_frequency| is set.
+  unless \verb|include_rf_frequency=1| (it is ignored, with a warning, for
+  \verb|include_rf_frequency=2|).
 \item \verb|subtract_dispersion| --- Controls whether the dispersion pattern is projected out
   of the steering loop's measured orbit before the corrector solve, which makes the correctors
   blind to the dispersive orbit.  The projection removes the component of the orbit along the
@@ -3752,26 +3759,33 @@ description below).
   single filter and behaves exactly as before.
 \item \verb|rf_bpm_filter_file| --- Optional SDDS file giving a \emph{separate} monitor-readout
   filter used \emph{only} by the RF-frequency actuator (horizontal plane); it is meaningful only
-  when \verb|include_rf_frequency| is nonzero, and setting it otherwise stops the run with an
-  error.  When unset (the default) the RF-frequency loop shares the \verb|bpm_filter_file| tick
+  when \verb|include_rf_frequency=1|, and setting it otherwise stops the run with an error.  When unset (the default) the RF-frequency loop shares the \verb|bpm_filter_file| tick
   with the steering correctors and behavior is unchanged.  The two loops have opposite filtering
   needs: the steering correctors want a \emph{short} \verb|bpm_filter_file| for bandwidth, which
   necessarily passes the synchrotron line $f_s$ straight through, but the RF-frequency knob is an
   integrator acting on the dispersive signal $\eta_x\delta$ whose actuator variable (frequency)
   is the derivative of the physical one (phase), so it carries an extra pole and is only
-  marginally stable.  Any residual $f_s$ content in its measurement destabilizes it \emph{at any
-  gain} --- lowering \verb|rf_Ki| only slows the runaway, it does not stop it, so a shared filter
-  cannot stabilize the combined loop.  Giving the frequency loop its own filter that averages over
-  a synchrotron period (a one-synchrotron-period boxcar FIR nulls the $f_s$ line) lets it run
-  stably while steering keeps its short filter.  Internally the RF-frequency loop has its own
+  marginally stable.  With \emph{integral-only} control (\verb|rf_Kd=0|), any residual $f_s$
+  content in its measurement destabilizes it at any gain --- lowering \verb|rf_Ki| only slows the
+  runaway, it does not stop it, so a shared filter cannot stabilize the combined loop.  Giving the
+  frequency loop its own filter that averages over a synchrotron period (a one-synchrotron-period
+  boxcar FIR nulls the $f_s$ line) lets it run stably while steering keeps its short filter.  The
+  alternative is derivative gain (\verb|rf_Kd|), which damps the resonance instead of hiding it;
+  the notch is then unnecessary, and the boxcar's half-period of delay no longer limits
+  \verb|rf_Ki|.  Internally the RF-frequency loop has its own
   single-column (dispersion-shaped) matrix and pseudo-inverse; its scalar PID error is taken
   from a solve on this separately-filtered horizontal BPM vector, while the fast steering matrix
   keeps using the \verb|bpm_filter_file| vector.
 \item \verb|output| --- Optional SDDS file recording per-iteration diagnostics (orbit rms
   in each plane, maximum corrector values, pegged-actuator flags, when the RF-frequency
-  actuator is active the applied RF-frequency detuning \verb|DeltaFrf|, and when the RF-phase
-  actuator is active the applied phase command \verb|DeltaPhase| (deg) and the projected
-  energy offset \verb|deltaEnergyEst|).  The whole run is written as a \emph{single} SDDS page
+  actuator is active the applied RF-frequency detuning \verb|DeltaFrf|, when the RF-phase
+  actuator is active the applied phase command \verb|DeltaPhase| (deg), and when either RF
+  actuator is active the projected energy offset \verb|deltaEnergyEst|).
+  \verb|deltaEnergyEst| $=\sum x_i\eta_i/\sum\eta_i^2$ is computed from the
+  \verb|bpm_filter_file| readout and is diagnostic only: no actuator command is taken from it.
+  It equals the beam's energy offset when the horizontal orbit contains only dispersive orbit,
+  but any non-dispersive orbit that projects onto $\eta_x$ contaminates it, and when dipole
+  fields change part of the true energy change produces no orbit and is invisible to it.  The whole run is written as a \emph{single} SDDS page
   with one row per feedback iteration; the page is updated in place on disk periodically as the
   run proceeds (like the \verb|WATCH| element), so the file can be examined live while tracking
   is still in progress rather than only at the end.  The file also records every

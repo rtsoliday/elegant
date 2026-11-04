@@ -47,7 +47,6 @@
     double minimum_SV_ratio = 0;
     double Tikhonov_relative_alpha = 0;
     long Tikhonov_n = -1;
-    double maximum_dispersive_fraction = 1.0;
     double steering_Kp = 0;
     double steering_Ki = 1;
     double steering_Kd = 0;
@@ -62,7 +61,7 @@
     double bpm_noise = 0;
     double bpm_noise_cutoff = 0;
     STRING bpm_noise_distribution = "gaussian";
-    long include_rf_frequency = 0;
+    long include_rf_frequency = 0;          /* 0 off, 1 separate slow loop, 2 column of the fast matrix */
     long include_rf_phase = 0;
     double rf_phase_Kp = 0;
     double rf_phase_Ki = 0;
