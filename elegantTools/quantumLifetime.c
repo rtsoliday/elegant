@@ -40,7 +40,7 @@ outputFile        Output file containing lifetime vs aperture.\n\
                   Set to 0 to disable.\n\
 -nowarning        Suppress warnings.\n\
 -verbose          Provide informational printouts.\n\n\
-Program by M. Borland, based on A. Chao, PAC 97, p. 1885.\n";
+Program by M. Borland, based on A. Chao, PAC 1977, p. 1885.\n";
 
 #define X_PLANE_GIVEN 0x01UL
 #define Y_PLANE_GIVEN 0x02UL
