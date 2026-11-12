@@ -102,7 +102,7 @@ are listed in Section \ref{sect:tools}.
 
 Changes to these tools in this release include
 \begin{itemize}
-\item None.
+\item Add manual page for the program \verb|quantumLifetime|, which was added several years ago but not documented at the time.
 \end{itemize}
 
 \subsection{Known Bugs, Problems, and Limitations}
@@ -8868,6 +8868,10 @@ up-to-date than these manual pages.
   the downloads area on the Android device, from which they can be read by TAPAs for configuration of
   the Storage Ring Scaling activity.
   (Program by M. Borland.)
+\item {\tt quantumLifetime} --- Computes the quantum lifetime as a function of the transverse aperture at a
+  chosen location, using twiss parameter and radiation integral output from {\tt elegant}.  The effect of
+  dispersion, which couples the betatron and synchrotron oscillations, is included by default.
+  (Program by M. Borland.)
 \item {\tt radiationEnvelope} --- A tool for use with the output of {\tt sddsbrightness} and {\tt sddsfluxcurve}.
   It analyzes data for many harmonics and produces a single curve that shows the envelope of maximum
   brightness or flux over all harmonics.
@@ -9662,6 +9666,100 @@ elegantto {\em inputfile} {\em outputfile}
 \end{itemize}
 
 \item {\bf author:} M. Borland, ANL/APS.
+\end{itemize}
+
+%\begin{latexonly}
+\newpage
+\begin{center}{\Large\verb|quantumLifetime|}\end{center}
+%\end{latexonly}
+\subsection{quantumLifetime}
+\label{quantumLifetime}
+
+\begin{itemize}
+\item {\bf description:} \verb|quantumLifetime| computes the transverse quantum lifetime as a function of the
+aperture at a chosen location in a storage ring, using twiss parameter and radiation integral output from
+{\tt elegant}.  By default a two-dimensional computation is performed \cite{Chao-PAC77-1885}, which accounts for
+the fact that, at a location with dispersion, the transverse displacement depends on both the betatron and
+synchrotron oscillations.  Since these are damped at different rates, the quantum lifetime is not given by the
+familiar one-dimensional expression.  The one-dimensional result is available for comparison using the
+\verb|-oneDimensional| option.
+
+Define the mono-energetic (betatron) beam size $\sigma_M = \sqrt{\epsilon \beta}$, the total beam size
+$\sigma_T = \sqrt{\sigma_M^2 + \left(\eta \sigma_\delta\right)^2}$, and the normalized aperture
+$n = A/\sigma_T$, where $A$ is the aperture.  With $x = \left|\eta\right| \sigma_\delta/\sigma_M$,
+$y = \sqrt{1+x^2}$, $\alpha_\beta = 1/\tau_\beta$, and $\alpha_\delta = 1/\tau_\delta$, where $\tau_\beta$
+and $\tau_\delta$ are the betatron and energy-oscillation damping times, the two-dimensional quantum
+lifetime is
+\begin{equation}
+\tau_q^{-1} = n^4 e^{-n^2/2} \int_{-x/y}^{1/(x y)}
+  \left(u + \frac{x}{y}\right)
+  \left(\frac{1}{y} - x u\right)
+  \left(\frac{\alpha_\beta + \alpha_\delta x^2}{y} + \left(\alpha_\delta - \alpha_\beta\right) x u\right)
+  e^{-\left(n u y\right)^2/2} du .
+\end{equation}
+The one-dimensional result, obtained with \verb|-oneDimensional|, is
+\begin{equation}
+\tau_q = \frac{\tau_\beta}{2} \sum_{k=1}^{\infty} \frac{\xi^k}{k\, k!},
+\end{equation}
+where $\xi = A^2/(2 \sigma_T^2)$, or $\xi = A^2/(2 \sigma_M^2)$ if \verb|-ignoreDispersion| is also given.
+This is more accurate for small $\xi$ than the commonly-quoted asymptotic form
+$\tau_q \approx \left(\tau_\beta/2\right) e^\xi/\xi$.
+
+The emittance in the plane of interest is obtained by partitioning the natural emittance $\epsilon_0$ from the
+twiss file using the emittance ratio $\kappa = \epsilon_y/\epsilon_x$, giving
+$\epsilon_x = \epsilon_0/\left(1 + \kappa \tau_x/\tau_y\right)$ and $\epsilon_y = \kappa \epsilon_x$.
+
+\item {\bf examples:}
+\begin{flushleft}{\tt
+quantumLifetime aps.twi aps.qlife -emittanceRatio=0.01 \\
+~~-scanAperture=location=S1A:P1,begin=0.001,end=0.015,points=141
+}\end{flushleft}
+
+\item {\bf synopsis:}
+\begin{flushleft}{\tt
+quantumLifetime {\em twissFile} {\em outputFile} -emittanceRatio={\em value} \\
+~-scanAperture=location={\em elementName},begin={\em meters},end={\em meters},points={\em number} \\
+~[-plane=\{x|y\}] [-oneDimensional [-ignoreDispersion]] \\
+~[-lifetimeLimit={\em valueInDays}] [-nowarning] [-verbose]
+}\end{flushleft}
+
+\item {\bf files:} \\
+{\em twissFile} --- A twiss parameter file from {\tt elegant}.  You must use the \verb|radiation_integrals|
+flag in \verb|twiss_output|, since the natural emittance, energy spread, and damping times are needed. \\
+{\em outputFile} --- Contains the quantum lifetime as a function of the aperture, in the columns
+\verb|aperture| (in meters) and \verb|quantumLifetime| (in seconds).  The beam parameters used in the
+computation are included as parameters, including \verb|emittance|, \verb|beta|, \verb|eta|,
+\verb|SigmaM| ($\sigma_M$), and \verb|SigmaT| ($\sigma_T$).
+
+\item {\bf switches:}
+\begin{itemize}
+\item {\tt -emittanceRatio} --- Give the ratio $\kappa = \epsilon_y/\epsilon_x$, used to partition the
+natural emittance between the two planes.  Required.
+\item {\tt -scanAperture} --- Give the name of the element at which the aperture is imposed, together with
+the starting value, ending value, and number of values of the aperture, which is scanned uniformly.  The
+aperture values are half-apertures in meters, measured from the beam center.  Required.
+\item {\tt -plane} --- Give the plane in which the aperture is imposed and the lifetime computed.
+Default: {\tt x}.
+\item {\tt -oneDimensional} --- If given, the one-dimensional formula is used instead of the
+two-dimensional formula.  This ignores the difference between the betatron and energy-oscillation damping
+rates, but by default still includes the dispersive contribution to the beam size.
+\item {\tt -ignoreDispersion} --- If given together with {\tt -oneDimensional}, the dispersive contribution
+to the beam size is also ignored, giving the textbook result for the betatron distribution alone.  Has no
+effect without {\tt -oneDimensional}.
+\item {\tt -lifetimeLimit} --- Give the maximum lifetime of interest, in days.  The scan terminates once
+this value is exceeded, which avoids wasting time on the very long lifetimes that result from large
+apertures.  Give 0 to disable.  Default: 7 days.
+\item {\tt -nowarning} --- Suppress warnings about scan points that were omitted from the output file.
+\item {\tt -verbose} --- Print information about the progress of the computation.
+\end{itemize}
+
+\item {\bf Note:} The underlying theory assumes that the aperture is well outside the core of the beam.
+Scan points for which the aperture is less than three times the relevant rms beam size are omitted from the
+output file, as are points beyond the first one that exceeds the value given with {\tt -lifetimeLimit}.
+Unless {\tt -nowarning} is given, the number of points omitted for each reason is reported.
+
+\item {\bf author:} M. Borland, ANL/APS.
+
 \end{itemize}
 
 %\begin{latexonly}
