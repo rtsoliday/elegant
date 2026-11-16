@@ -289,7 +289,7 @@ feature("ioneffects", "IONEFFECTS", "IONEFFECTS", charge=1, min=1000, max=100000
 DATA = FEATURE_SET / "data"
 SET_FILES = {
     "helper.rmat": FEATURE_SET / "matrix-helpers" / "helper.rmat",
-    "poly.sdds": FEATURE_SET / "magnet-polyseries-below-threshold" / "poly.sdds",
+    "poly.sdds": FEATURE_SET / "magnet-polyseries-few-particles" / "poly.sdds",
     "srquad.bmapxy": TEST_SET / "bmapxy3" / "srquad.bmapxy",
     "bmxyz_field.sdds": DATA / "bmxyz_field.sdds",
     "brat.sdds": TEST_SET / "brat1" / "GRID_for_M1_L_bend_5_pole_24_1st_9_24_2nd_8_14.sdds",

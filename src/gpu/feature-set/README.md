@@ -171,8 +171,8 @@ rows, paired by `particleID` for `SCRAPER`), fiducial times, and `MATR` and `EMA
 | `aperture-maxamp-open-accepted` | Both shapes with an acceptance file, so accepted coordinates must follow the survivors |
 | `aperture-maxamp-open-global-loss` | Both shapes with global loss coordinates |
 | `aperture-apcontour-tail`, `aperture-scraper-tail`, `aperture-remove-invalid-tail` | Losses only past the first 256 particles, so the loss count has to look at the whole beam. A beam that also loses an early particle can't show a count that stops too soon |
-| `resident-below-threshold` | 12,000 particles on the device, lost at collimators that tighten along the line, through the 10,000 threshold and the 1,000 floor. Runs in auto mode with the default thresholds, so elements below their thresholds stay on the device while the beam is there |
-| `resident-below-threshold-output` | `resident-below-threshold` with an `output` file. Collimator lengths are exact drifts, which match the CPU on the device, so they keep the resident rule with output in CPU order. Below the 1,000 floor, `CCBEND` stays on the CPU when the `MAXAMP` check after it would send the beam back |
+| `resident-threshold-crossing` | 12,000 particles on the device, lost at collimators that tighten along the line, through the 10,000 threshold and the 1,000 floor. Runs in auto mode with the default thresholds, so elements below their thresholds stay on the device while the beam is there |
+| `resident-threshold-crossing-output` | `resident-threshold-crossing` with an `output` file. Collimator lengths are exact drifts, which match the CPU on the device, so they keep the resident rule with output in CPU order. Below the 1,000 floor, `CCBEND` stays on the CPU when the `MAXAMP` check after it would send the beam back |
 | `resident-floor-ring` | A ring that loses its beam a little each pass: `SREFFECTS` takes the same energy from every particle and an `ECOL` where there is dispersion scrapes it. 12,000 particles, below the 10,000 thresholds after the first pass and below the 1,000 floor after about 22, with `KQUAD`, `KSEXT`, `CSBEND`, `MULT` and a `WATCH` file on the device while the beam is there. Auto mode with the default thresholds |
 | `resident-floor-ring-output` | `resident-floor-ring` with output and a losses file, so the survivors' order and the lost rows must match the CPU through the floor |
 | `resident-floor-ring-final` | `resident-floor-ring` with only a `final` file. No beam sums read the beam back first, so the element after the floor brings it to the CPU itself. A build that skipped that copy fails here |
@@ -387,7 +387,7 @@ after the magnet.
 | `magnet-ukickmap-loss-compaction` | `UKICKMAP` with `SYNCH_RAD=1` and losses. Regression test for the extra radiation kicks fixed in `ukickmap.c` on 2026-11-04: CPU and GPU differ in `p` if that returns |
 | `magnet-kickmap-accepted-compaction` | `GKICKMAP` loss compaction with acceptance output |
 | `magnet-polyseries` | `POLYNOMIALSERIES` kernel, with its coefficients in `poly.sdds` |
-| `magnet-polyseries-below-threshold` | Fewer particles than the threshold in `required` mode, so it falls back to the CPU inside the GPU path |
+| `magnet-polyseries-few-particles` | Fewer particles than the threshold in `required` mode, so it falls back to the CPU inside the GPU path |
 | `magnet-polyseries-loss` | Losses at the slope limit, including the first row, which fall back to the CPU. The survivors must reach the next GPU element in the right rows |
 | `magnet-ksbend-loss-with-gpu` | `KSBEND`, on the CPU, loses particles, including the first row, and the next GPU element must see the survivors in the right rows |
 | `magnet-exact-corrector-loss` | `EHKICK`, `EVKICK` and `EKICKER` with losses |

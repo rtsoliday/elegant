@@ -1,4 +1,4 @@
-! resident-below-threshold with an output file, which used to send the beam back for each collimator's length below 10,000 particles. Device exact drifts match the CPU, so they keep the resident rule.
+! resident-threshold-crossing with an output file, which used to send the beam back for each collimator's length below 10,000 particles. Device exact drifts match the CPU, so they keep the resident rule.
 
 &run_setup
  lattice = "lattice.lte",

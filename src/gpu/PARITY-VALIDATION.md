@@ -941,7 +941,7 @@ turn. With one period per turn and no other wedge, they now make one call, and a
 the start of each pass, on the device while the beam is there, numbering passes as the per-turn calls did. The
 `tune-footprint-batched-heavy` outputs are identical to the old path's on the GPU and with it off.
 
-**Results.** Feature set, now 316: the spin cases with output files and `resident-below-threshold` moved by rounding, and
+**Results.** Feature set, now 316: the spin cases with output files and `resident-threshold-crossing` moved by rounding, and
 the frequency map and tune footprint cases are identical; the same 6 flagged against the CPU, and `GPU_VERIFY` has no
 stops. CPU 660 identical. Default GPU 660: only `collimate3` moved, by 1e-21, with the same 63 flagged against the CPU.
 Routine list: only `spinTest2` moved, by rounding.

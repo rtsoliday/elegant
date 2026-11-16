@@ -83,7 +83,7 @@
     "search-aperture-radiation": {
       "ELEGANT_GPU_MODE": "auto"
     },
-    "resident-below-threshold": {
+    "resident-threshold-crossing": {
       "ELEGANT_GPU_MODE": "auto",
       "ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS": "",
       "ELEGANT_GPU_MIN_PARTICLES": "",
@@ -101,7 +101,7 @@
     "matrix-helpers-ordered-output": {
       "ELEGANT_GPU_MIN_HELPER_PARTICLES": ""
     },
-    "resident-below-threshold-output": {
+    "resident-threshold-crossing-output": {
       "ELEGANT_GPU_MODE": "auto",
       "ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS": "",
       "ELEGANT_GPU_MIN_PARTICLES": "",
