@@ -234,8 +234,9 @@ static long doMomentumApertureSearchIndependent(
   /* Default on for eligible searches; retain an explicit scalar-path override. */
   if (option && strtol(option, NULL, 10) == 0)
     return -1;
-  if (fiducialize && gpu_batched_search_beamline_supported(beamline))
-    return -1;
+  /* Fiducial searches come here first too: every boundary is confirmed on the
+   * CPU, so results match the scalar search.  The generic batched search,
+   * which publishes the GPU's results, takes only what this one refuses. */
   if (control->n_passes <= 1)
     reason = "one-turn search has no shared unperturbed first turn";
   else if (run->n_passes_fiducial > 0)

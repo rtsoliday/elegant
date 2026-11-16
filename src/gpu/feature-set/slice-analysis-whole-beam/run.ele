@@ -1,0 +1,26 @@
+! Slice analysis of the whole beam only, between s = 0.5 and 2 m, from the device.  The first element
+! ends before s_start, so the page must start at the first element in range (it used to stop there).
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 3000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 2 &end
+&slice_analysis
+  output = "%s.slan",
+  n_slices = 0,
+  s_start = 0.5,
+  s_end = 2.0,
+&end
+&bunched_beam
+  n_particles_per_bunch = 5000,
+  emit_x = 2e-7, beta_x = 8, alpha_x = 0,
+  emit_y = 2e-7, beta_y = 8, alpha_y = 0,
+  sigma_dp = 5e-4, sigma_s = 1e-3, dp_s_coupling = 0.3,
+&end
+&track &end

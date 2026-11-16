@@ -15,6 +15,9 @@
 #include "mdb.h"
 #include "track.h"
 #include "table.h"
+#ifdef HAVE_GPU
+#  include "gpu_funcs.h"
+#endif
 
 void set_up_ramp_p(RAMPP *rampp);
 
@@ -27,6 +30,14 @@ void ramp_momentum(
   int64_t ip;
   long i_time;
   double P_new, t, t0;
+#ifdef HAVE_GPU
+  static double *gpuTimes = NULL;
+  static int64_t gpuTimesSize = 0;
+  long onGpu = getElementOnGpu();
+#  ifdef GPU_VERIFY
+  double **cpuCoord = coord;
+#  endif
+#endif
 
   log_entry("ramp_momentum");
 
@@ -44,7 +55,27 @@ void ramp_momentum(
   fflush(stdout);
 #endif
 
+#ifdef HAVE_GPU
+  /* The device makes the times and they're added here in the same order */
+  if (onGpu) {
+    if (np > gpuTimesSize) {
+      gpuTimes = trealloc(gpuTimes, sizeof(*gpuTimes) * np);
+      gpuTimesSize = np;
+    }
+    gpu_particle_times(np, *P_central, gpuTimes);
+    coord = NULL;
+  }
+#endif
   for (ip = t0 = 0; ip < np; ip++) {
+#ifdef HAVE_GPU
+    if (onGpu) {
+      t0 += (t = gpuTimes[ip]);
+#  if defined(IEEE_MATH)
+      if ((isnan(t) || isinf(t)) && !coord)
+        coord = copyParticlesToCpuReadOnly("RAMPP bad time coordinate");
+#  endif
+    } else
+#endif
     t0 += (t = coord[ip][4] / (c_mks * beta_from_delta(*P_central, coord[ip][5])));
 #if defined(IEEE_MATH)
     if (isnan(t) || isinf(t)) {
@@ -85,6 +116,17 @@ void ramp_momentum(
   fflush(stdout);
 #endif
 
+#ifdef HAVE_GPU
+  if (onGpu) {
+    gpu_rampp_rescale(np, *P_central, P_new);
+#  ifdef GPU_VERIFY
+    startCpuTimer();
+    for (ip = 0; ip < np; ip++)
+      cpuCoord[ip][5] = (1 + cpuCoord[ip][5]) * (*P_central) / P_new - 1;
+    compareGpuCpu(np, "ramp_momentum");
+#  endif
+  } else
+#endif
   for (ip = 0; ip < np; ip++)
     coord[ip][5] = (1 + coord[ip][5]) * (*P_central) / P_new - 1;
 

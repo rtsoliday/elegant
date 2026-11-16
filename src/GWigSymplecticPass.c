@@ -189,10 +189,132 @@ void GWigInit(struct gwig *Wig,
 #define fourth 4
 
 #ifdef HAVE_GPU
+/* Same rotation as rotateBeamCoordinatesForMisalignment() */
+static void GWigPackGpuTilt(GPU_CWIGGLER_DATA *data, double tilt) {
+  if (!tilt || fabs(fabs(tilt) - PIx2) < 1e-12)
+    return;
+  data->hasTilt = 1;
+  if (fabs(fabs(tilt) - PI) < 1e-12) {
+    data->cosTilt = -1;
+    data->sinTilt = 0;
+  } else if (fabs(tilt - PIo2) < 1e-12) {
+    data->cosTilt = 0;
+    data->sinTilt = 1;
+  } else if (fabs(tilt + PIo2) < 1e-12) {
+    data->cosTilt = 0;
+    data->sinTilt = -1;
+  } else {
+    data->cosTilt = cos(tilt);
+    data->sinTilt = sin(tilt);
+  }
+}
+
+static void GWigPackGpuData(GPU_CWIGGLER_DATA *data, struct gwig *Wig) {
+  double beta0, gamma0, kw;
+
+  kw = 2 * PI / Wig->Lw;
+  memset(data, 0, sizeof(*data));
+  gamma0 = Wig->E0 / XMC2;
+  beta0 = sqrt(1 - 1 / (gamma0 * gamma0));
+  data->periods = Wig->Nw;
+  data->stepsPerPeriod = Wig->PN;
+  data->integrationOrder = Wig->Pmethod;
+  data->hasHorizontal = Wig->NHharm > 0;
+  data->hasVertical = Wig->NVharm > 0;
+  data->synchRad = Wig->sr;
+  data->length = Wig->cwiggler->length;
+  data->periodLength = Wig->Lw;
+  data->kw = kw;
+  data->pCentral = Wig->Po;
+  data->srCoef = Wig->srCoef;
+  data->betaGamma = gamma0 * beta0;
+  if (data->hasHorizontal) {
+    double field = Wig->PB0H != 0 ? Wig->PB0H : Wig->PB0;
+    data->horizontalField = field;
+    data->horizontalAw = (q_e / m_e / clight) / (2 * PI) * Wig->Lw * field;
+    data->horizontalPhase = Wig->Htz[0];
+  }
+  if (data->hasVertical) {
+    double field = Wig->PB0V != 0 ? Wig->PB0V : Wig->PB0;
+    data->verticalField = field;
+    data->verticalAw = (q_e / m_e / clight) / (2 * PI) * Wig->Lw * field;
+    data->verticalPhase = Wig->Vtz[0];
+  }
+  data->zStartHorizontal = Wig->zStartH;
+  data->zEndHorizontal = Wig->zEndH;
+  data->zStartVertical = Wig->zStartV;
+  data->zEndVertical = Wig->zEndV;
+  memcpy(data->poleFactor, Wig->cwiggler->poleFactor,
+         sizeof(data->poleFactor));
+  data->axConstant = -(q_e / m_e / clight) * Wig->BConstant[1];
+  data->ayConstant = (q_e / m_e / clight) * Wig->BConstant[0];
+  data->constantBx = Wig->BConstant[0];
+  data->constantBy = Wig->BConstant[1];
+  data->exitAx = -Wig->BConstant[1] * Wig->cwiggler->length / (gamma0 * beta0) * (q_e / m_e / clight);
+  data->exitAy = Wig->BConstant[0] * Wig->cwiggler->length / (gamma0 * beta0) * (q_e / m_e / clight);
+  /* The CPU field code tests tguGradient, not the TGU flag */
+  data->tguGradient = Wig->cwiggler->tguGradient;
+  data->tguCompFactor = Wig->cwiggler->tguCompFactor;
+  data->tguCharge = q_e;
+  data->tguFieldScale = 2 * m_e * clight * Wig->Po;
+  if (Wig->isr) {
+    data->isrCoef = Wig->isrCoef;
+    data->isrDrawsPerParticle = GWigCountRadiationKicks(Wig);
+  }
+  data->spinOffset = Wig->cwiggler->tilt ? spinCoordOffset : 0;
+  data->hasOffset = Wig->cwiggler->dx || Wig->cwiggler->dy || Wig->cwiggler->dz;
+  data->dx = Wig->cwiggler->dx;
+  data->dy = Wig->cwiggler->dy;
+  data->dz = Wig->cwiggler->dz;
+  data->z1 = Wig->z1;
+  data->z2 = Wig->z2;
+  data->z3 = Wig->z3;
+  data->z4 = Wig->z4;
+  data->z5 = Wig->z5;
+  data->z6 = Wig->z6;
+  GWigPackGpuTilt(data, Wig->cwiggler->tilt);
+}
+
+static void GWigStartFieldOutputPage(CWIGGLER *cwiggler);
+static void GWigWriteFieldOutputPage(CWIGGLER *cwiggler);
+
+#ifndef GPU_VERIFY
+static void GWigConsumeFieldRecords(void *cookie, const double *record, long nParticles, long rowsPerParticle) {
+  CWIGGLER *cwiggler = (CWIGGLER *)cookie;
+  long ip, row;
+
+  for (ip = 0; ip < nParticles; ip++) {
+    for (row = 0; row < rowsPerParticle; row++) {
+      double X[3], B[2];
+      X[0] = record[0];
+      X[1] = record[1];
+      X[2] = record[2];
+      B[0] = record[4];
+      B[1] = record[5];
+      GWigAddToFieldOutput(cwiggler, record[3], X, B, record[6]);
+      record += GPU_CWIGGLER_FIELD_RECORD_SIZE;
+    }
+  }
+}
+#endif
+
+/* Under GPU_VERIFY the CPU tracks these particles again and writes the file */
+static void GWigTrackPackedOnGpu(struct gwig *Wig, GPU_CWIGGLER_DATA *data, long numParticles) {
+#ifndef GPU_VERIFY
+  if (Wig->cwiggler->fieldOutputInitialized) {
+    GWigStartFieldOutputPage(Wig->cwiggler);
+    gpu_track_cwiggler(numParticles, data, GWigConsumeFieldRecords, Wig->cwiggler);
+    GWigWriteFieldOutputPage(Wig->cwiggler);
+    return;
+  }
+#endif
+  gpu_track_cwiggler(numParticles, data, NULL, NULL);
+}
+
 static long GWigTrackIdealSinusoidalOnGpu(struct gwig *Wig,
                                            long numParticles) {
   GPU_CWIGGLER_DATA data;
-  double beta0, gamma0, kw;
+  double kw;
 
   if (!Wig || !Wig->cwiggler || numParticles <= 0 ||
       Wig->NHharm < 0 || Wig->NHharm > 1 ||
@@ -207,52 +329,73 @@ static long GWigTrackIdealSinusoidalOnGpu(struct gwig *Wig,
         Wig->Vky[0] != 0 || Wig->Vkz[0] != kw)))
     return 0;
 
-  memset(&data, 0, sizeof(data));
-  gamma0 = Wig->E0 / XMC2;
-  beta0 = sqrt(1 - 1 / (gamma0 * gamma0));
-  data.periods = Wig->Nw;
-  data.stepsPerPeriod = Wig->PN;
-  data.integrationOrder = Wig->Pmethod;
-  data.hasHorizontal = Wig->NHharm == 1;
-  data.hasVertical = Wig->NVharm == 1;
-  data.synchRad = Wig->sr;
-  data.length = Wig->cwiggler->length;
-  data.periodLength = Wig->Lw;
-  data.kw = kw;
-  data.pCentral = Wig->Po;
-  data.srCoef = Wig->srCoef;
-  if (data.hasHorizontal) {
-    double field = Wig->PB0H != 0 ? Wig->PB0H : Wig->PB0;
-    data.horizontalField = field;
-    data.horizontalCoefficient =
-      (q_e / m_e / clight) / (2 * PI) * Wig->Lw * field /
-      (gamma0 * beta0);
-    data.horizontalPhase = Wig->Htz[0];
+  GWigPackGpuData(&data, Wig);
+  GWigTrackPackedOnGpu(Wig, &data, numParticles);
+  return 1;
+}
+
+static long GWigTrackHarmonicsOnGpu(struct gwig *Wig, long numParticles) {
+  GPU_CWIGGLER_DATA data;
+  GPU_CWIGGLER_HARMONIC *table;
+  double kw;
+  long i;
+
+  if (!Wig || !Wig->cwiggler || numParticles <= 0 ||
+      Wig->NHharm < 0 || Wig->NVharm < 0 || Wig->NHharm + Wig->NVharm == 0)
+    return 0;
+  kw = 2 * PI / Wig->Lw;
+  table = tmalloc(sizeof(*table) * (Wig->NHharm + Wig->NVharm));
+  for (i = 0; i < Wig->NHharm; i++) {
+    table[i].strength = Wig->HCw_raw[i];
+    table[i].kx = Wig->Hkx[i];
+    table[i].ky = Wig->Hky[i];
+    table[i].kz = Wig->Hkz[i];
+    table[i].phase = Wig->Htz[i];
+    table[i].kwOverKz = kw / Wig->Hkz[i];
+    table[i].ratio = Wig->Hkx[i] / Wig->Hky[i];
+    table[i].ratioSquared = table[i].ratio * table[i].ratio;
+    table[i].useSine = abs(Wig->Hkx[i] / kw) > GWIG_EPS;
   }
-  if (data.hasVertical) {
-    double field = Wig->PB0V != 0 ? Wig->PB0V : Wig->PB0;
-    data.verticalField = field;
-    data.verticalCoefficient =
-      (q_e / m_e / clight) / (2 * PI) * Wig->Lw * field /
-      (gamma0 * beta0);
-    data.verticalPhase = Wig->Vtz[0];
+  for (i = 0; i < Wig->NVharm; i++) {
+    GPU_CWIGGLER_HARMONIC *harmonic = table + Wig->NHharm + i;
+    harmonic->strength = Wig->VCw_raw[i];
+    harmonic->kx = Wig->Vkx[i];
+    harmonic->ky = Wig->Vky[i];
+    harmonic->kz = Wig->Vkz[i];
+    harmonic->phase = Wig->Vtz[i];
+    harmonic->kwOverKz = kw / Wig->Vkz[i];
+    harmonic->ratio = Wig->Vky[i] / Wig->Vkx[i];
+    harmonic->ratioSquared = harmonic->ratio * harmonic->ratio;
+    harmonic->useSine = abs(Wig->Vky[i] / kw) > GWIG_EPS;
   }
-  data.zStartHorizontal = Wig->zStartH;
-  data.zEndHorizontal = Wig->zEndH;
-  data.zStartVertical = Wig->zStartV;
-  data.zEndVertical = Wig->zEndV;
-  memcpy(data.poleFactor, Wig->cwiggler->poleFactor,
-         sizeof(data.poleFactor));
-  data.z1 = Wig->z1;
-  data.z2 = Wig->z2;
-  data.z3 = Wig->z3;
-  data.z4 = Wig->z4;
-  data.z5 = Wig->z5;
-  data.z6 = Wig->z6;
-  gpu_track_cwiggler(numParticles, &data);
+
+  GWigPackGpuData(&data, Wig);
+  data.harmonics = table;
+  data.horizontalHarmonics = Wig->NHharm;
+  data.verticalHarmonics = Wig->NVharm;
+  data.horizontalSplitPole = Wig->HSplitPole;
+  data.verticalSplitPole = Wig->VSplitPole;
+  GWigTrackPackedOnGpu(Wig, &data, numParticles);
+  tfree(table);
   return 1;
 }
 #endif
+
+static void GWigStartFieldOutputPage(CWIGGLER *cwiggler) {
+  if (!SDDS_StartPage(cwiggler->SDDSFieldOutput, 1000)) {
+    printf("*** Error: unable to start SDDS page for CWIGGLER field output\n");
+    SDDS_PrintErrors(stdout, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  }
+  cwiggler->fieldOutputRow = 0;
+  cwiggler->fieldOutputRows = 1000;
+}
+
+static void GWigWriteFieldOutputPage(CWIGGLER *cwiggler) {
+  if (!SDDS_WritePage(cwiggler->SDDSFieldOutput)) {
+    printf("*** Error: unable to write SDDS page for CWIGGLER field output\n");
+    SDDS_PrintErrors(stdout, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
+  }
+}
 
 void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
                         CWIGGLER *cwiggler, double *sigmaDelta2,
@@ -302,8 +445,14 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
 
 #ifdef HAVE_GPU
   if (getElementOnGpu()) {
+    /* Until CPU fix 9 is committed (elegant-CPU-bugs-and-fixes.md), the exit offset below moves only the
+     * particle with ID 0, where the device moves every particle back; with DX, DY or DZ the CPU tracks.
+     * Remove the offset test with that fix. */
     if (!singleStep && !ZwStart && !sigmaDelta2 &&
-        GWigTrackIdealSinusoidalOnGpu(&Wig, num_particles)) {
+        !(cwiggler->dx || cwiggler->dy || cwiggler->dz) &&
+        (cwiggler->sinusoidal && !cwiggler->tguGradient
+           ? GWigTrackIdealSinusoidalOnGpu(&Wig, num_particles)
+           : GWigTrackHarmonicsOnGpu(&Wig, num_particles))) {
 #  ifdef GPU_VERIFY
       startCpuTimer();
       gpuTracked = 1;
@@ -312,6 +461,8 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
 #  endif
     } else {
       coord = forceParticlesToCpu("unsupported CWIGGLER tracking call");
+      /* offset_beam below must not act on the device copy */
+      getGpuBase()->elementOnGpu = 0;
     }
   }
 #endif
@@ -334,14 +485,8 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
     offset_beam(coord, num_particles, &malign, pCentral);
   }
 
-  if (cwiggler->fieldOutputInitialized) {
-    if (!SDDS_StartPage(cwiggler->SDDSFieldOutput, 1000)) {
-      printf("*** Error: unable to start SDDS page for CWIGGLER field output\n");
-      SDDS_PrintErrors(stdout, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
-    }
-    cwiggler->fieldOutputRow = 0;
-    cwiggler->fieldOutputRows = 1000;
-  }
+  if (cwiggler->fieldOutputInitialized)
+    GWigStartFieldOutputPage(cwiggler);
 
 #if defined(HAVE_GPU) && defined(_OPENMP)
 #  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) \
@@ -436,12 +581,8 @@ void GWigSymplecticPass(double **coord, long num_particles, double pCentral,
     }
   }
 
-  if (!singleStep && cwiggler->fieldOutputInitialized) {
-    if (!SDDS_WritePage(cwiggler->SDDSFieldOutput)) {
-      printf("*** Error: unable to write SDDS page for CWIGGLER field output\n");
-      SDDS_PrintErrors(stdout, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
-    }
-  }
+  if (!singleStep && cwiggler->fieldOutputInitialized)
+    GWigWriteFieldOutputPage(cwiggler);
 
   if (cwiggler->dx || cwiggler->dy || cwiggler->dz) {
     memset(&malign, 0, sizeof(malign));

@@ -1,0 +1,21 @@
+! BMXYZ inside a sticky APCONTOUR, losing particles on the device at the CPU's points and order.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 100,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 1 &end
+&bunched_beam
+  n_particles_per_bunch = 1000,
+  emit_x = 2e-7, beta_x = 1, alpha_x = -0.5,
+  emit_y = 1e-7, beta_y = 1, alpha_y = -0.5,
+  sigma_dp = 1e-3, sigma_s = 1e-3,
+&end
+&track &end

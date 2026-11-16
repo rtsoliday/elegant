@@ -295,10 +295,10 @@ $(OBJ_DIR)/Pelegant$(EXEEXT): $(Pelegant_OBJS) $(PROD_DEPS)
 
 $(OBJ_DIR)/%.mpi.$(OBJEXT): %.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CFLAGS)) -c $< $(OUTPUT)
+	$(CC) $(CFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CFLAGS)) -c $< $(OUTPUT)
 $(OBJ_DIR)/%.mpi.$(OBJEXT): %.cc
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CXXFLAGS)) -c $< $(OUTPUT)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(if $(filter $(notdir $<), $(LIBRARY_SRC)),$(LIBRARY_CXXFLAGS)) -c $< $(OUTPUT)
 $(OBJ_DIR)/%.mpi.$(OBJEXT): %.cu
 	@mkdir -p $(dir $@)
 	$(NVCC) $(NVCCFLAGS) $(NVCCDEPFLAGS) -c $< $(OUTPUT)

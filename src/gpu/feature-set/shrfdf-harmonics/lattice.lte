@@ -1,0 +1,7 @@
+! SHRFDF with the fundamental and three space harmonics, phases and a tilt: the device's particle loop
+! with CUDA's sin and cos. Identical here; they could differ by rounding
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+SH: SHRFDF, FACTOR=1.1, TILT=-0.2, PERIOD_LENGTH=0.0333, PERIOD_PHASE=2.0944, V0=6e-7, V1=1e-7, V3=5e-8, V9=2e-8, &
+    PHASE0=0.3, PHASE1=1.0, PHASE3=-0.5, PHASE9=2.0
+BL: LINE=(Q1, D, SH, D)

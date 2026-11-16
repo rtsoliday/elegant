@@ -990,9 +990,7 @@ void track_through_rfmode(
               rfmode->n_cavities, Vbin);
         } else
 #endif
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+        GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
         for (ip = 0; ip < np; ip++) {
           double particleV;
           /* compute voltage seen by this particle */
@@ -1026,7 +1024,7 @@ void track_through_rfmode(
             double particleDgamma = rfmode->n_cavities * particleV / (1e6 * particleMassMV * particleRelSign);
             add_to_particle_energy(part[ip], time[ip], Po, particleDgamma);
           }
-        }
+        });
       }
 
 #ifdef DEBUG
@@ -1035,11 +1033,10 @@ void track_through_rfmode(
 #endif
 
       if (nBuckets != 1 && iBucket == jBucket) {
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+        GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
+        );
       }
     }
 

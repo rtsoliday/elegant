@@ -1,0 +1,12 @@
+! A matrix ring tracked with concat_order=1: each run of quadrupoles and drifts is one matrix, so the
+! elements tracked are three matrices, three collimators and a PFILTER, not the 123 of the lattice.
+Q1: QUAD,L=0.3,K1=1.2
+Q2: QUAD,L=0.3,K1=-1.2
+D: DRIF,L=0.5
+AP: RCOL,X_MAX=1,Y_MAX=1
+PF: PFILTER,DELTALIMIT=0.5
+CELL: LINE=(Q1,D,Q2,D)
+! W's sums are the sign of where the beam was: the device adds them in its own order, so they differ
+! from the CPU's in the last digits, while the particles come out the same from either side.
+W: WATCH,FILENAME="%s.w1",MODE="parameter"
+RING: LINE=(10*CELL,AP,10*CELL,W,AP,10*CELL,AP,PF)

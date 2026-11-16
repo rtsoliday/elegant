@@ -1,0 +1,12 @@
+SDDS1
+&column name=Bins_1D, type=long &end
+&column name=Bins_2D, type=long &end
+&column name=Bins_4D, type=long &end
+&column name=Bins_6D, type=long &end
+&data mode=ascii, no_row_counts=1 &end
+100 50 10 5
+100 50 10 5
+100 50 10 5
+100 50 10 5
+100 50 10 5
+100 50 10 5

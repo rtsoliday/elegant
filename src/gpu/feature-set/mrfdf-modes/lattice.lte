@@ -1,0 +1,10 @@
+! MRFDF with all five modes, normal and skew, its own frequency and phase each, a tilt, and a range
+! of particle IDs (the others are still turned with the tilt and back): the device's particle loop with
+! CUDA's sin and cos (identical here; they could differ by rounding). The fiducial time is set_up_mrfdf() on a read-only copy
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+MR: MRFDF, FACTOR=1.2, TILT=0.15, B1=4e-5, A1=1e-5, B2=0.2, A2=0.05, B3=1e3, A3=-300, B4=1e7, A4=2e6, B5=1e11, A5=-3e10, &
+    FREQUENCY1=2.856e9, FREQUENCY2=2.856e9, FREQUENCY3=5.712e9, FREQUENCY4=2.856e9, FREQUENCY5=8.568e9, &
+    PHASE1=10, PHASE2=40, PHASE3=-70, PHASE4=100, PHASE5=0, START_PID=50, END_PID=400
+MW: MRFDF, B1=4e-5, FREQUENCY1=2.856e9, PHASE1=90, START_PASS=1, END_PASS=1
+BL: LINE=(Q1, D, MR, D, MW, D)

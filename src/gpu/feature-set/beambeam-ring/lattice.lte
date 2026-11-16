@@ -1,0 +1,8 @@
+! A collider-like ring: ILMATRIX, an RF cavity and BEAMBEAM each turn, 20 turns, with a centroid WATCH.
+! Rounding expected
+RING: ILMATRIX, L=1000, NUX=20.28, NUY=18.31, BETAX=5, BETAY=5, NUX1M=2, NUY1M=2
+RF: RFCA, VOLT=6e6, FREQ=500e6, PHASE=170
+BB: BEAMBEAM, CHARGE=10e-9, XSIZE=70e-6, YSIZE=20e-6
+W: WATCH, FILENAME="%s.w", MODE="centroid"
+RC: RECIRC
+BL: LINE=(RC, RING, RF, BB, W)

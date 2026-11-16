@@ -1,0 +1,8 @@
+! TIME_PROFILE with TIME_OFFSET: the laser amplitude interpolated in time about t0, the beam's mean time at
+! the center (made from the device's values and summed on the host in elegant's order); the bunch is longer
+! than the profile, so its ends see no laser. Rounding expected.
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+LM: LSRMDLTR, L=0.4, PERIODS=10, BU=0.33, N_STEPS=600, ACCURACY=1e-6, LASER_PEAK_POWER=5e7, LASER_W0=3e-4, &
+    TIME_PROFILE="profile.sdds=t+A", TIME_OFFSET=1e-13
+BL: LINE=(Q1, D, LM, D)

@@ -26,7 +26,6 @@
 
 #ifdef HAVE_GPU
 #  include <gpu_base.h>
-#  include <gpu_matter.h>
 #endif
 
 double radiationLength(long Z, double A, double rho);
@@ -49,16 +48,9 @@ long track_through_matter(
   long hitsMatter;
 
 #ifdef HAVE_GPU
-  if (getElementOnGpu()) {
-    startGpuTimer();
-    ip = gpu_track_through_matter(np, iPass, matter, Po, accepted, z0);
-#  ifdef GPU_VERIFY
-    startCpuTimer();
-    track_through_matter(part, np, iPass, matter, Po, accepted, z0);
-    compareGpuCpu(np, "track_through_matter");
-#  endif /* GPU_VERIFY */
-    return ip;
-  }
+  /* the device, or this routine on the host for the cases it doesn't take (gpu_ports_host.h) */
+  if (getElementOnGpu())
+    return gpu_track_matter(part, np, iPass, matter, Po, accepted, z0);
 #endif /* HAVE_GPU */
 
   log_entry("track_through_matter");

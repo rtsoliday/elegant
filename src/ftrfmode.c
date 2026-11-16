@@ -543,9 +543,7 @@ void track_through_ftrfmode(
             Vxbin, Vybin, Vzbin);
       } else
 #endif
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+      GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
       for (ip = 0; ip < np; ip++) {
         if (pbin[ip] >= 0) {
           long particleBin = pbin[ip];
@@ -562,14 +560,13 @@ void track_through_ftrfmode(
           part[ip][5] = (P - Po) / Po;
           part[ip][4] = time[ip] * c_mks * P / sqrt(sqr(P) + 1);
         }
-      }
+      });
 
       if (nBuckets != 1) {
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+        GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
+        );
       }
     }
   }

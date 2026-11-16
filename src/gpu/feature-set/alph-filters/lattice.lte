@@ -1,0 +1,10 @@
+! An alpha magnet in two halves with a puck scraper and momentum slits on the first and position slits
+! on another: the matrices through track_particles() on the device, the filters as kernels with the
+! CPU's float limits and swap order. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+A1: ALPH, XMAX=0.1206, PART=1, XPUCK=0.12058, WIDTHPUCK=4e-5, DP1=-0.0015, DP2=0.002, ORDER=2
+A2: ALPH, XMAX=0.1206, PART=2, ORDER=2
+A3: ALPH, XMAX=0.1206, PART=1, XS1=0.12054, XS2=0.12065, ORDER=2
+A4: ALPH, XMAX=0.1206, PART=2, ORDER=2
+BL: LINE=(Q1, D, A1, A2, D, A3, A4, D)

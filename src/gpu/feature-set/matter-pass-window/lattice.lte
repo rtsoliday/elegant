@@ -1,0 +1,6 @@
+! MATTER on pass 1 only (START_PASS=1, END_PASS=1): an exact drift on the device on passes 0 and 2.
+! Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: MATTER, L=1e-3, XO=0.089, START_PASS=1, END_PASS=1
+BL: LINE=(Q1, D, E, D)

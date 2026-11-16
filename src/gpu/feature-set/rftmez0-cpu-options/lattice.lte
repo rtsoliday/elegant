@@ -1,0 +1,9 @@
+! METHOD="modified midpoint", which stays on the CPU, next to METHOD="non-adaptive runge-kutta" on
+! the device
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+C1: RFTMEZ0, L=0.3184, FREQUENCY=115e6, EZ_PEAK=3e6, PHASE=10, INPUTFILE="../data/rftmez0_ez.sdds", &
+    ZCOLUMN="z", EZCOLUMN="Ez", METHOD="modified midpoint", N_STEPS=50
+C2: RFTMEZ0, L=0.3184, FREQUENCY=115e6, EZ_PEAK=2e6, PHASE=-20, INPUTFILE="../data/rftmez0_ez.sdds", &
+    ZCOLUMN="z", EZCOLUMN="Ez", METHOD="non-adaptive runge-kutta", N_STEPS=50
+BL: LINE=(Q1, D, C1, D, C2, D)

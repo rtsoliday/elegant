@@ -1,0 +1,17 @@
+! Tune histories from the fused program: gpu_batched_tune_program_track() in gpu_stub.c.
+! Kick magnets with each MALIGN_METHOD, with and without offsets, and with DZ. The device kernel was
+! corrected for two of these on November 11, 2026: with a linear method (1 or 2) and no misalignment
+! the CPU transforms the particle at the entrance and not at the exit, and DZ's path is added to the
+! coordinate before the element's own. The verify build stops if any particle's history differs.
+D: DRIF,L=0.4
+QF: KQUAD,L=0.2,K1=1.5,N_SLICES=4,MALIGN_METHOD=2
+QD: KQUAD,L=0.2,K1=-1.5,N_SLICES=4,MALIGN_METHOD=1
+Q3: KQUAD,L=0.1,K1=0.2,N_SLICES=2,MALIGN_METHOD=3
+Q4: KQUAD,L=0.1,K1=-0.2,N_SLICES=2,MALIGN_METHOD=4,DX=1e-5,PITCH=1e-4
+QZ: KQUAD,L=0.1,K1=0.1,N_SLICES=2,DX=1e-5,DZ=1e-4
+QL: KQUAD,L=0.1,K1=-0.1,N_SLICES=2,MALIGN_METHOD=2,DY=1e-5,TILT=0.01
+SF: KSEXT,L=0.1,K2=5,N_SLICES=4,MALIGN_METHOD=2
+SD: KSEXT,L=0.1,K2=-3,N_SLICES=4,DZ=1e-4
+DQ: DQCOR,L=0.1,K1=0.3,N_SLICES=4,HKICK=1e-5,MALIGN_METHOD=1
+CELL: LINE=(D,QF,D,SF,D,QD,D,Q3,Q4,QZ,QL,SD,DQ)
+RING: LINE=(8*CELL)

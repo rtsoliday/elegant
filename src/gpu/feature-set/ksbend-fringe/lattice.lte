@@ -1,0 +1,7 @@
+! KSBEND bending the other way, with a fringe integral (tan(e - psi/(1+dp)) per particle, CUDA's),
+! second-order edges with curvature, radiation, ETILT and leap-frog integration. Identical here; CUDA's tan could differ by rounding
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+KB: KSBEND, L=0.5, ANGLE=-0.05, K1=0.4, K2=-3, NONLINEAR=1, E1=-0.02, E2=-0.03, H1=0.1, H2=-0.2, HGAP=0.01, FINT=0.5, &
+    EDGE1_EFFECTS=1, EDGE2_EFFECTS=1, EDGE_ORDER=2, SYNCH_RAD=1, ETILT=0.001, METHOD="leap-frog", N_KICKS=16
+BL: LINE=(Q1, D, KB, D)

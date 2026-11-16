@@ -1,0 +1,14 @@
+SDDS1
+&parameter name=ZCenter, units=m, type=double, fixed_value=0, &end
+&parameter name=XCenter, units=m, type=double, fixed_value=0, &end
+&parameter name=Superperiodicity, type=long, fixed_value=1, &end
+&column name=Z, units=m, type=double, &end
+&column name=X, units=m, type=double, &end
+&data mode=ascii, &end
+! page 1
+5
+0.5 4e-3
+1.0 4e-3
+1.0 1
+0.5 1
+0.5 4e-3

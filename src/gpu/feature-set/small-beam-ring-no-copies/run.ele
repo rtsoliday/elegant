@@ -1,0 +1,23 @@
+! 1,500 particles for 30 passes. A pass costs the CPU an estimated 135 us and the device 68 us, so
+! the thresholds come down. Charging each pass the first pass's copy to the device and one back
+! would put the device at 138 us and keep the beam on the CPU.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 1000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 30 &end
+&bunched_beam
+  n_particles_per_bunch = 1500,
+  emit_x = 1e-8, emit_y = 1e-8,
+  beta_x = 5, beta_y = 5,
+  sigma_dp = 1e-4, sigma_s = 1e-3,
+  distribution_type[0] = 3*"gaussian",
+  distribution_cutoff[0] = 3*3,
+&end
+&track &end

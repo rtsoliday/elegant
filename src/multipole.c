@@ -356,6 +356,24 @@ long fmultipole_tracking(
   long order[3] = {1, 0, 0};
   double KnL[3] = {0, 0, 0};
 
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    startGpuTimer();
+    i_part = gpu_fmultipole_tracking(n_part, multipole, p_error, Po,
+                                     accepted, z_start);
+#  ifdef GPU_VERIFY
+    /* If this is no longer set, a fallback or the loss path has already tracked these particles on the CPU */
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      fmultipole_tracking(particle, n_part, multipole, p_error, Po, accepted,
+                          z_start);
+      compareGpuCpu(n_part, "fmultipole_tracking");
+    }
+#  endif /* GPU_VERIFY */
+    return i_part;
+  }
+#endif /* HAVE_GPU */
+
   if (!particle)
     bombTracking("particle array is null (fmultipole_tracking)");
 
@@ -496,10 +514,13 @@ long multipole_tracking(
     i_part = gpu_multipole_tracking(n_part, multipole, p_error, Po,
                                     accepted, z_start);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    multipole_tracking(particle, n_part, multipole, p_error, Po, accepted,
-                       z_start);
-    compareGpuCpu(n_part, "multipole_tracking");
+    /* If this is no longer set, a fallback or the loss path has already tracked these particles on the CPU */
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      multipole_tracking(particle, n_part, multipole, p_error, Po, accepted,
+                         z_start);
+      compareGpuCpu(n_part, "multipole_tracking");
+    }
 #  endif /* GPU_VERIFY */
     return i_part;
   }
@@ -703,6 +724,120 @@ long multipole_tracking(
   return (i_top + 1);
 }
 
+/* These are shared with the GPU code, so that files are read and random errors drawn in the same order. */
+void setupKquadErrorMultipoles(KQUAD *kquad, double KnL) {
+  if (!kquad->multipolesInitialized) {
+    /* read the data files for the error multipoles */
+    readErrorMultipoleData(&(kquad->systematicMultipoleData),
+                           kquad->systematic_multipoles, 0);
+    readErrorMultipoleData(&(kquad->edgeMultipoleData),
+                           kquad->edge_multipoles, 0);
+    readErrorMultipoleData(&(kquad->randomMultipoleData),
+                           kquad->random_multipoles, 0);
+    readErrorMultipoleData(&(kquad->steeringMultipoleData),
+                           kquad->steering_multipoles, 1);
+    kquad->multipolesInitialized = 1;
+  }
+  if (!kquad->totalMultipolesComputed) {
+    computeTotalErrorMultipoleFields(&(kquad->totalMultipoleData),
+                                     &(kquad->systematicMultipoleData),
+                                     kquad->systematicMultipoleFactor,
+                                     &(kquad->edgeMultipoleData),
+                                     NULL,
+                                     &(kquad->randomMultipoleData),
+                                     kquad->randomMultipoleFactor,
+                                     &(kquad->steeringMultipoleData),
+                                     kquad->steeringMultipoleFactor,
+                                     KnL, 1, 1,
+                                     kquad->minMultipoleOrder, kquad->maxMultipoleOrder);
+    kquad->totalMultipolesComputed = 1;
+  }
+}
+
+void setupKsextErrorMultipoles(KSEXT *ksext, double KnL) {
+  if (!ksext->multipolesInitialized) {
+    /* read the data files for the error multipoles */
+    readErrorMultipoleData(&(ksext->systematicMultipoleData),
+                           ksext->systematic_multipoles, 0);
+    readErrorMultipoleData(&(ksext->edgeMultipoleData),
+                           ksext->edge_multipoles, 0);
+    readErrorMultipoleData(&(ksext->randomMultipoleData),
+                           ksext->random_multipoles, 0);
+    readErrorMultipoleData(&(ksext->steeringMultipoleData),
+                           ksext->steering_multipoles, 1);
+    ksext->multipolesInitialized = 1;
+  }
+  if (!ksext->totalMultipolesComputed) {
+    computeTotalErrorMultipoleFields(&(ksext->totalMultipoleData),
+                                     &(ksext->systematicMultipoleData),
+                                     ksext->systematicMultipoleFactor,
+                                     &(ksext->edgeMultipoleData),
+                                     NULL,
+                                     &(ksext->randomMultipoleData),
+                                     ksext->randomMultipoleFactor,
+                                     &(ksext->steeringMultipoleData),
+                                     ksext->steeringMultipoleFactor,
+                                     KnL, 2, 1,
+                                     ksext->minMultipoleOrder, ksext->maxMultipoleOrder);
+    ksext->totalMultipolesComputed = 1;
+  }
+}
+
+void setupDqcorErrorMultipoles(DQCOR *dqcor, double KnL) {
+  if (!dqcor->multipolesInitialized) {
+    readErrorMultipoleData(&(dqcor->quadrupoleSystematicMultipoleData),
+                           dqcor->quadrupoleSystematicMultipoles, 0);
+    readErrorMultipoleData(&(dqcor->quadrupoleRandomMultipoleData),
+                           dqcor->quadrupoleRandomMultipoles, 0);
+    readErrorMultipoleData(&(dqcor->dipoleSystematicMultipoleData),
+                           dqcor->dipoleSystematicMultipoles, 1);
+    dqcor->multipolesInitialized = 1;
+  }
+  if (!dqcor->totalMultipolesComputed) {
+    computeTotalErrorMultipoleFields(&(dqcor->totalMultipoleData),
+                                     &(dqcor->quadrupoleSystematicMultipoleData),
+                                     dqcor->quadrupoleSystematicMultipoleFactor,
+                                     NULL,
+                                     NULL,
+                                     &(dqcor->quadrupoleRandomMultipoleData),
+                                     dqcor->quadrupoleRandomMultipoleFactor,
+                                     &(dqcor->dipoleSystematicMultipoleData),
+                                     dqcor->dipoleSystematicMultipoleFactor,
+                                     KnL, 1, 1,
+                                     dqcor->minMultipoleOrder, dqcor->maxMultipoleOrder);
+    dqcor->totalMultipolesComputed = 1;
+  }
+}
+
+void setupKoctErrorMultipoles(KOCT *koct, double KnL) {
+  if (!koct->multipolesInitialized) {
+    /* read the data files for the error multipoles */
+    readErrorMultipoleData(&(koct->systematicMultipoleData),
+                           koct->systematic_multipoles, 0);
+    readErrorMultipoleData(&(koct->randomMultipoleData),
+                           koct->random_multipoles, 0);
+    koct->multipolesInitialized = 1;
+  }
+  if (!koct->totalMultipolesComputed) {
+    computeTotalErrorMultipoleFields(&(koct->totalMultipoleData),
+                                     &(koct->systematicMultipoleData),
+                                     1.0,
+                                     NULL,
+                                     NULL,
+                                     &(koct->randomMultipoleData),
+                                     1.0,
+                                     NULL,
+                                     1.0,
+                                     KnL, 3, 1,
+                                     NULL, NULL);
+    koct->totalMultipolesComputed = 1;
+  }
+}
+
+double *multipoleExpansionCoefficients(long order) {
+  return expansion_coefficients(order);
+}
+
 long multipole_tracking2(
   double **particle,  /* initial/final phase-space coordinates */
   int64_t n_part,        /* number of particles */
@@ -752,9 +887,12 @@ long multipole_tracking2(
     startGpuTimer();
     i_part = gpu_multipole_tracking2(n_part, elem, p_error, Po, accepted, z_start, maxamp, apcontour, apFileData, sigmaDelta2, iSlice);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    multipole_tracking2(particle, n_part, elem, p_error, Po, accepted, z_start, maxamp, apcontour, apFileData, sigmaDelta2, iSlice);
-    compareGpuCpu(n_part, "multipole_tracking2");
+    /* If this is no longer set, a fallback or the loss path has already tracked these particles on the CPU */
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      multipole_tracking2(particle, n_part, elem, p_error, Po, accepted, z_start, maxamp, apcontour, apFileData, sigmaDelta2, iSlice);
+      compareGpuCpu(n_part, "multipole_tracking2");
+    }
 #  endif /* GPU_VERIFY */
     return i_part;
   }
@@ -815,32 +953,7 @@ long multipole_tracking2(
       printWarningForTracking("Quadrupole with length < 1e-6 has SYNCH_RAD=0 and ISR=0 forced to avoid unphysical results.",
                               NULL);
     }
-    if (!kquad->multipolesInitialized) {
-      /* read the data files for the error multipoles */
-      readErrorMultipoleData(&(kquad->systematicMultipoleData),
-                             kquad->systematic_multipoles, 0);
-      readErrorMultipoleData(&(kquad->edgeMultipoleData),
-                             kquad->edge_multipoles, 0);
-      readErrorMultipoleData(&(kquad->randomMultipoleData),
-                             kquad->random_multipoles, 0);
-      readErrorMultipoleData(&(kquad->steeringMultipoleData),
-                             kquad->steering_multipoles, 1);
-      kquad->multipolesInitialized = 1;
-    }
-    if (!kquad->totalMultipolesComputed) {
-      computeTotalErrorMultipoleFields(&(kquad->totalMultipoleData),
-                                       &(kquad->systematicMultipoleData),
-                                       kquad->systematicMultipoleFactor,
-                                       &(kquad->edgeMultipoleData),
-                                       NULL,
-                                       &(kquad->randomMultipoleData),
-                                       kquad->randomMultipoleFactor,
-                                       &(kquad->steeringMultipoleData),
-                                       kquad->steeringMultipoleFactor,
-                                       KnL[0], 1, 1,
-                                       kquad->minMultipoleOrder, kquad->maxMultipoleOrder);
-      kquad->totalMultipolesComputed = 1;
-    }
+    setupKquadErrorMultipoles(kquad, KnL[0]);
     multData = &(kquad->totalMultipoleData);
     edgeMultData = &(kquad->edgeMultipoleData);
     steeringMultData = &(kquad->steeringMultipoleData);
@@ -891,32 +1004,7 @@ long multipole_tracking2(
       printWarningForTracking("Sextupole with length < 1e-6 has SYNCH_RAD=0 and ISR=0 forced to avoid unphysical results.",
                               NULL);
     }
-    if (!ksext->multipolesInitialized) {
-      /* read the data files for the error multipoles */
-      readErrorMultipoleData(&(ksext->systematicMultipoleData),
-                             ksext->systematic_multipoles, 0);
-      readErrorMultipoleData(&(ksext->edgeMultipoleData),
-                             ksext->edge_multipoles, 0);
-      readErrorMultipoleData(&(ksext->randomMultipoleData),
-                             ksext->random_multipoles, 0);
-      readErrorMultipoleData(&(ksext->steeringMultipoleData),
-                             ksext->steering_multipoles, 1);
-      ksext->multipolesInitialized = 1;
-    }
-    if (!ksext->totalMultipolesComputed) {
-      computeTotalErrorMultipoleFields(&(ksext->totalMultipoleData),
-                                       &(ksext->systematicMultipoleData),
-                                       ksext->systematicMultipoleFactor,
-                                       &(ksext->edgeMultipoleData),
-                                       NULL,
-                                       &(ksext->randomMultipoleData),
-                                       ksext->randomMultipoleFactor,
-                                       &(ksext->steeringMultipoleData),
-                                       ksext->steeringMultipoleFactor,
-                                       KnL[0], 2, 1,
-                                       ksext->minMultipoleOrder, ksext->maxMultipoleOrder);
-      ksext->totalMultipolesComputed = 1;
-    }
+    setupKsextErrorMultipoles(ksext, KnL[0]);
     multData = &(ksext->totalMultipoleData);
     edgeMultData = &(ksext->edgeMultipoleData);
     steeringMultData = &(ksext->steeringMultipoleData);
@@ -952,28 +1040,7 @@ long multipole_tracking2(
       printWarningForTracking("Octupole with length < 1e-6 has SYNCH_RAD=0 and ISR=0 forced to avoid unphysical results.",
                               NULL);
     }
-    if (!koct->multipolesInitialized) {
-      /* read the data files for the error multipoles */
-      readErrorMultipoleData(&(koct->systematicMultipoleData),
-                             koct->systematic_multipoles, 0);
-      readErrorMultipoleData(&(koct->randomMultipoleData),
-                             koct->random_multipoles, 0);
-      koct->multipolesInitialized = 1;
-    }
-    if (!koct->totalMultipolesComputed) {
-      computeTotalErrorMultipoleFields(&(koct->totalMultipoleData),
-                                       &(koct->systematicMultipoleData),
-                                       1.0,
-                                       NULL,
-                                       NULL,
-                                       &(koct->randomMultipoleData),
-                                       1.0,
-                                       NULL,
-                                       1.0,
-                                       KnL[0], 3, 1,
-                                       NULL, NULL);
-      koct->totalMultipolesComputed = 1;
-    }
+    setupKoctErrorMultipoles(koct, KnL[0]);
     multData = &(koct->totalMultipoleData);
     break;
   case T_KQUSE:
@@ -1043,29 +1110,7 @@ long multipole_tracking2(
       printWarningForTracking("DQCOR with length < 1e-6 has SYNCH_RAD=0 and ISR=0 forced to avoid unphysical results.",
                               NULL);
     }
-    if (!dqcor->multipolesInitialized) {
-      readErrorMultipoleData(&(dqcor->quadrupoleSystematicMultipoleData),
-                             dqcor->quadrupoleSystematicMultipoles, 0);
-      readErrorMultipoleData(&(dqcor->quadrupoleRandomMultipoleData),
-                             dqcor->quadrupoleRandomMultipoles, 0);
-      readErrorMultipoleData(&(dqcor->dipoleSystematicMultipoleData),
-                             dqcor->dipoleSystematicMultipoles, 1);
-      dqcor->multipolesInitialized = 1;
-    }
-    if (!dqcor->totalMultipolesComputed) {
-      computeTotalErrorMultipoleFields(&(dqcor->totalMultipoleData),
-                                       &(dqcor->quadrupoleSystematicMultipoleData),
-				       dqcor->quadrupoleSystematicMultipoleFactor,
-				       NULL,
-                                       NULL,
-                                       &(dqcor->quadrupoleRandomMultipoleData),
-				       dqcor->quadrupoleRandomMultipoleFactor,
-                                       &(dqcor->dipoleSystematicMultipoleData),
-				       dqcor->dipoleSystematicMultipoleFactor,
-                                       KnL[0], 1, 1,
-                                       dqcor->minMultipoleOrder, dqcor->maxMultipoleOrder);
-      dqcor->totalMultipolesComputed = 1;
-    }
+    setupDqcorErrorMultipoles(dqcor, KnL[0]);
     multData = &(dqcor->totalMultipoleData);
     edgeMultData = NULL;
     steeringMultData = &(dqcor->dipoleSystematicMultipoleData);
@@ -1170,7 +1215,7 @@ long multipole_tracking2(
       particle[i_part][4] = z_start + ompWorkspace->lossOffset[i_part];
       particle[i_part][5] = Po * (1 + particle[i_part][5]);
     }
-    i_top = gpuStableCompactParticles(
+    i_top = gpuCompactParticlesInCpuOrder(
       particle, i_top + 1, ompWorkspace->survived) - 1;
   } else
 #endif

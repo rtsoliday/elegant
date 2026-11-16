@@ -1,0 +1,5 @@
+! DISTRIBUTION="parabolic": ellipsoidalBeamKick()'s parabolic density, inside and outside. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BB: BEAMBEAM, CHARGE=5e-9, XSIZE=100e-6, YSIZE=40e-6, YCENTER=-5e-6, DISTRIBUTION="parabolic"
+BL: LINE=(Q1, D, BB, D)

@@ -1,0 +1,35 @@
+! A batched &tune_footprint: the momentum scan and the x-y grid, each with two intervals for the
+! diffusion, are tracked by the fused program, and its files are the CPU's bit for bit.
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_passes = 64
+&end
+
+&twiss_output
+    matched = 1
+&end
+
+&tune_footprint
+    delta_output = "%s.dtf",
+    xy_output = "%s.xyf",
+    delta_min = -0.002,
+    delta_max = 0.002,
+    ndelta = 81,
+    xmin = 1e-6,
+    xmax = 0.002,
+    ymin = 1e-6,
+    ymax = 0.002,
+    nx = 9,
+    ny = 9,
+    immediate = 1,
+    filtered_output = 0,
+    quadratic_spacing = 0,
+    verbosity = 0
+&end

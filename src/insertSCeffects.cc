@@ -180,7 +180,10 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
 #  endif
     if (gpu_scmult_compute_centroid_sigma(np0, Po,
                                           sc.bunchData[0].center,
-                                          sc.bunchData[0].sigma)) {
+                                          sc.bunchData[0].sigma) &&
+        gpu_scmult_kick_supported(sc.nonlinear, sc.bunchData[0].sigma,
+                                  sc.horizontal, sc.vertical,
+                                  eptr->twiss->betax, eptr->twiss->betay)) {
       totalCharge = np0 * charge->macroParticleCharge;
       if (!(iPass == 0 || sc.averagingFactor == 1)) {
         for (int j = 0; j < 3; j++)
@@ -212,7 +215,7 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
                                         eptr->twiss->betay);
 #  ifdef GPU_VERIFY
 #    if defined(_OPENMP)
-#      pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np0))
+#      pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpLightLoopRequested(np0))
 #    endif
       for (i = 0; i < np0; i++) {
         applySCKick(part0[i], eptr, sc.bunchData[0].center,
@@ -271,13 +274,11 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
           pbin = (long *)trealloc(pbin, sizeof(*pbin) * np);
           max_np = np;
         }
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+        GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
         for (ip=0; ip < np; ip++) {
           time[ip] = time0[ipBucket[iBucket][ip]];
           memcpy(part[ip], part0[ipBucket[iBucket][ip]], sizeof(double) * totalPropertiesPerParticle);
-        }
+        });
       }
 	
       tmax = -(tmin = DBL_MAX);
@@ -323,12 +324,15 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
 		((SCMULT *)eptr->p_elem)->lastSigma[j] = sc.bunchData[iBucket].sigma[j];
 #ifdef HAVE_GPU
 	      scmultOnGpu = 0;
-	      if (gpu_scmult_linear_supported(np, nBuckets, sc.nonlinear,
-	                                      sc.sliceDuration, sc.horizontal,
-	                                      sc.vertical) ||
-	          gpu_scmult_nonlinear_supported(np, nBuckets, sc.nonlinear,
-	                                         sc.sliceDuration, sc.horizontal,
-	                                         sc.vertical)) {
+	      if ((gpu_scmult_linear_supported(np, nBuckets, sc.nonlinear,
+	                                       sc.sliceDuration, sc.horizontal,
+	                                       sc.vertical) ||
+	           gpu_scmult_nonlinear_supported(np, nBuckets, sc.nonlinear,
+	                                          sc.sliceDuration, sc.horizontal,
+	                                          sc.vertical)) &&
+	          gpu_scmult_kick_supported(sc.nonlinear, sc.bunchData[iBucket].sigma,
+	                                    sc.horizontal, sc.vertical,
+	                                    eptr->twiss->betax, eptr->twiss->betay)) {
 		if (sc.nonlinear)
 		  gpu_track_through_scmult_nonlinear(np, totalCharge, sc.c1,
 		                                   sc.horizontal, sc.vertical,
@@ -351,7 +355,7 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
 		                                eptr->twiss->betay);
 #  ifdef GPU_VERIFY
 #    if defined(_OPENMP)
-#      pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
+#      pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpLightLoopRequested(np))
 #    endif
 		for (i = 0; i < np; i++) {
 		  applySCKick(part[i], eptr, sc.bunchData[iBucket].center,
@@ -367,13 +371,11 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
 #endif
 		if (sc.sliceDuration<=0) {
 		  /* compute kicks using unsliced method */
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+		  GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
 		  for (i = 0; i < np; i++) {
 		    applySCKick(part[i], eptr, sc.bunchData[iBucket].center,
 				sc.bunchData[iBucket].sigma, totalCharge, iBucket);
-		  }
+		  });
 		} else {
 		  /* compute kicks using sliced method */
 		  long nSlices, iSlice;
@@ -426,9 +428,7 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
 		    }
 		    QTime[iSlice] *= charge->macroParticleCharge;
 		  }
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+		  GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
 		  for (i = 0; i < np; i++) {
 		    double centroid[3], sigma[3], sliceCharge;
 		    long particleSlice = pbin[i];
@@ -469,7 +469,7 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
 		    }
 		    applySCKick(particleCoord, eptr, centroid, sigma,
 				sliceCharge, iBucket);
-		  }
+		  });
 		  free(QTime);
 		  free(xyCentroidTime[0]);
 		  free(xyCentroidTime[1]);
@@ -482,11 +482,10 @@ void trackThroughSCMULT(double **part0, int64_t np0, double Po, long iPass, ELEM
 
       if (nBuckets != 1) {
 	/* Move data back to input array */
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+        GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
+        );
       }
       sc.bunchData[iBucket].dmux = sc.bunchData[iBucket].dmuy = 0.0; /* reset space charge strength */
     }

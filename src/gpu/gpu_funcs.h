@@ -10,6 +10,8 @@ extern "C" {
 void gpu_offset_beam(long nToTrack, MALIGN *offset, double P_central);
 void gpu_do_match_energy(long np, double *P_central, long change_beam);
 void gpu_set_central_momentum(long np, double P_new, double *P_central);
+void gpu_particle_times(long np, double pCentral, double *times);
+void gpu_rampp_rescale(long np, double oldP, double newP);
 void gpu_center_beam(CENTER *center, long np, long iPass, double p0);
 void gpu_collect_trajectory_data(double *centroid, long n_part);
 void gpu_compute_centroids(double *centroid, long n_part);

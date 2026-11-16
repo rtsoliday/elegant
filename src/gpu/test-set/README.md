@@ -64,6 +64,19 @@ a `1e-15` absolute floor and `1e-9` relative envelope to screen expected GPU
 numerical variation.  Ordinary `elegantTestSet` comparisons retain the stricter
 global defaults.
 
+Each case's `run.ele` is its workload.  Other decks in a case folder check
+fallbacks, loss handling and smaller variants.  The harness runs them only when
+asked, each as a test named `CASE__DECK`: add `--include-extra-decks
+--correctness-only` to a `baseline` command, or name one after its options.
+They are not timing workloads.  `extra_deck_exclusions` in `suite.json` leaves
+out `mode2.ele`, which serial CPU `elegant` cannot run.
+
+`gpu_activity_exempt_tests` in `suite.json` lists tests that need not show GPU
+activity: `frequency-map-batched-heavy` and the `*-fallback` extra decks.
+`comparison.txt` still names each exempt test that showed none.
+
+Small feature and fallback checks are in `../feature-set`.
+
 `scmult-nonlinear-heavy` is the targeted case for the deterministic, unsliced,
 single-bunch nonlinear SCMULT path.  It deliberately uses unequal horizontal
 and vertical beam sizes so the benchmark exercises the complex-error-function
@@ -89,9 +102,12 @@ smaller direct-convolution CWAKE case.
 turns through the high-order POLYNOMIALSERIES map.  The grid points are
 independent particles with persistent particle IDs, allowing the complete grid
 to be tracked together while the original per-particle coordinate histories
-and output row order are retained.  `run-aps-fallback.ele` verifies that an APS
-beamline outside the currently validated subset retains point-by-point CPU
-tracking rather than accepting amplified tune differences.
+and output row order are retained.  `run-aps-fallback.ele` is a 3-by-3 map
+through an APS lattice of kick quadrupoles, kick sextupoles and matrix bends:
+nine points are below the batch threshold, so it stays on point-by-point CPU
+tracking.  Since November 11, 2026 a larger grid through that lattice is
+tracked on the device by the fused program, with output identical to the
+CPU's (elegantTestSet `fmap3`).
 
 `frequency-map-resident-magnets-heavy` extends the batched frequency-map path
 to deterministic GPU-supported magnet lattices and enables
@@ -101,8 +117,18 @@ enter the second interval, with results scattered back into stable grid order.
 For non-MPI `gpu-elegant`, `-ompThreads=N` explicitly enables experimental
 OpenMP particle tracking in the loss-sensitive batched CPU fallback used by
 frequency-map and momentum-aperture searches.  The default is one tracking
-thread.  Batched momentum searches prefer the checked CUDA LGBEND path even
-though standalone LGBEND tracking remains opt-in; this keeps the search
+thread.  Since November 12, 2026 the environment variable `OMP_NUM_THREADS`
+means exactly the same as `-ompThreads`: there is one count of host threads
+for the tracking loops, the host thread pool, the tune analysis, the
+batched-search switch, OpenMP's own default and MKL (unless `MKL_NUM_THREADS`
+is set).  The command line wins over the environment, so `-ompThreads=1`
+forces one thread; with neither, gpu-elegant uses one.  A start-up line on
+stderr reports the count and where it came from when it is more than one.
+Loops that do only a few operations a particle (wake and cavity-mode kicks,
+time coordinates) use threads from 100,000 particles;
+`ELEGANT_GPU_OMP_LIGHT_LOOP_MIN_PARTICLES=64` lowers that so the tests' small
+beams run them.  Batched momentum searches use the checked CUDA LGBEND path even with
+`ELEGANT_GPU_ENABLE_LGBEND=0`; this keeps the search
 ensemble resident and avoids repeated CPU-island synchronization.  OpenMP is
 used only when an element or option still requires CPU tracking.  The OpenMP
 path keeps element setup and sticky aperture state serial,
@@ -172,9 +198,11 @@ and tune sensitivity.
 footprints through a high-order POLYNOMIALSERIES map.  The directory also
 contains `run-linear.ele` for the lower-order map and
 `run-small-fallback.ele` for below-threshold CPU-fallback verification.  Only
-`run.ele` is included in the timed suite.  Batched history analysis uses up to
-16 independent CPU workers after the resident GPU tracking pass; the NAFF
-implementation is thread-local and produces deterministic per-grid results.
+`run.ele` is included in the timed suite.  Batched history analysis uses the
+16 CPU workers the suite asks for with `ELEGANT_GPU_BATCHED_TUNE_THREADS`.
+Without that setting it uses one thread unless the run sets `OMP_NUM_THREADS`
+or `-ompThreads` (before November 11, 2026 it started up to 16 by itself).  The
+NAFF implementation is thread-local and produces deterministic per-grid results.
 The suite uses a 32-particle magnet threshold so point-at-a-time and small-grid
 POLYNOMIALSERIES tracking remains on the CPU, while each main batched grid is
 large enough to exercise the CUDA path.
@@ -190,9 +218,12 @@ particle-count threshold.
 generalized-gradient field table using the non-symplectic predictor-corrector
 integrator.  The supported CUDA subset is a straight, aligned, normal-field
 BGGEXP with `SYNCH_RAD=ISR=0`, no particle-output file, and `Z_INTERVAL=1`.
+Since November 15, 2026 `SYMPLECTIC=1` also runs on the device, with any
+`Z_INTERVAL` and in a bend's frame (feature-set `bggexp-symplectic*` cases).
 The immutable generalized-gradient coefficients are uploaded once and reused.
-Companion inputs cover symplectic, ISR, particle-output, and below-threshold
-CPU fallbacks.
+Companion inputs cover ISR, particle-output, and below-threshold CPU
+fallbacks; the 4-particle symplectic companion now stays on the CPU by the
+particle threshold.
 
 `magnet-synchrad-heavy` tracks 16384 particles through repeated `KQUAD`,
 `CSBEND`, `KICKMAP`, and `UKICKMAP` elements with deterministic classical
@@ -205,10 +236,15 @@ map-loss behavior.
 `sreffects-deterministic-heavy` tracks 65536 particles through repeated
 deterministic `SREFFECTS` elements.  The main workload covers damping and
 average loss with and without dispersion offsets, damping-only behavior, and
-loss-only behavior while retaining the particle array on the GPU.  Companion
-inputs keep `QEXCITATION=1` and below-threshold workloads on the CPU.  The
+loss-only behavior while retaining the particle array on the GPU.  A companion
+input runs `QEXCITATION=1`, which also runs on the GPU above the threshold, and
+another keeps a below-threshold workload on the CPU.  The
 target seeds nonzero horizontal and vertical dispersion so the optional orbit
-offset branch is exercised with nonzero corrections.
+offset branch is exercised with nonzero corrections.  Its `SREFFECTS` numbers
+are made on the host, as `gauss_rn_lim()` makes them, which takes one thread
+unless the run asks for more, so `suite.json` sets
+`ELEGANT_GPU_ISR_REFERENCE_THREADS=8`.  On one thread the case was 1.67x faster
+than the CPU, under the 2x target; on 8 it was 7.3x.
 
 `bmxyz-fixed-step-heavy` tracks 1024 particles through six fixed-step `BMXYZ`
 elements using the shared double-precision Q98 field grid.  The supported CUDA
@@ -226,12 +262,13 @@ trajectory and path-length corrections computed during host optimization are
 applied on the GPU.  Companion inputs cover the below-threshold and soft-fringe
 CPU fallbacks.
 
-`lgbend-deterministic-heavy` explicitly enables the validated order-2 LGBEND
-CUDA subset for parity coverage.  The path remains opt-in through
-`ELEGANT_GPU_ENABLE_LGBEND=1`: crossover measurements at 32768, 65536, 131072,
-and 262144 particles on the reference RTX 3060 were only 0.98--1.02x versus
-the serial implementation, so production runs retain the faster CPU policy by
-default until the kernel is optimized.
+`lgbend-deterministic-heavy` covers the validated order-2 LGBEND CUDA subset,
+with a threshold of 64 particles rather than the default of 512.  The CUDA path
+runs the CPU's optimization on its reference particle before the first pass, so
+every pass runs on the device.  LGBEND has been on by default since November 6, 2026, when this deck
+ran 2.8 times faster than the CPU on an RTX PRO 4000 Blackwell.  An older test on
+an RTX 3060 showed 0.98--1.02x at 32768 to 262144 particles, so
+`ELEGANT_GPU_ENABLE_LGBEND=0` keeps LGBEND on the CPU.
 
 `bmapxy-fixed-step-heavy`, `nibend-fixed-step-heavy`, and
 `nisept-fixed-step-heavy` exercise the fixed-step Lorentz-family integrator.
@@ -263,7 +300,9 @@ a deterministic single-bunch transverse `TFBPICKUP`/`TFBDRIVER` pair.  CUDA
 performs the pickup coordinate reduction and the independent driver kicks,
 while the small filter and delay histories remain persistent on the host.
 Companion inputs cover pickup noise, frequency-dependent driver behavior, and
-the below-threshold CPU fallback.  Set `ELEGANT_GPU_ENABLE_TFEEDBACK=0` to
+the below-threshold CPU fallback.  Since 2026-11-07 the noise companion
+(`run-noise-fallback.ele`) uses the device too: the noise is drawn on the host
+after the device average, as on the CPU, so the name is historical.  Set `ELEGANT_GPU_ENABLE_TFEEDBACK=0` to
 disable the path explicitly; `ELEGANT_GPU_MIN_TFEEDBACK_PARTICLES` controls
 the crossover threshold.
 

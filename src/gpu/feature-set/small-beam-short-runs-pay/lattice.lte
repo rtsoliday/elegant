@@ -1,0 +1,13 @@
+! Ten kick quadrupoles, each alone between PFILTERs, which the device doesn't take, then a run of six
+! matrix elements: the lattice of small-beam-short-runs-stay, with short runs judged by what they cost.
+! A lone KQUAD of 16 slices is estimated at 415 ns a particle on the CPU, and 110 us on the device plus
+! two copies of the beam, so from a few hundred particles it is worth the trip.
+KQ: KQUAD,L=0.3,K1=0.3,N_SLICES=16
+Q1: QUAD,L=0.2,K1=0.5
+Q2: QUAD,L=0.2,K1=-0.5
+D: DRIF,L=0.3
+PF: PFILTER,DELTALIMIT=0.5
+! W's sums are the sign of where the beam was: the device adds them in its own order, so they differ
+! from the CPU's in the last digits, while the particles come out the same from either side.
+W: WATCH,FILENAME="%s.w1",MODE="parameter"
+BL: LINE=(10*(KQ,PF),Q1,D,Q2,W,D,Q1,D,PF)

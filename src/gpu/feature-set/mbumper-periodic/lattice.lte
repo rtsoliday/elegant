@@ -1,0 +1,7 @@
+! MBUMPER with a periodic waveform, firing from the second pass (drifts before it, kept on the device by
+! track_particles()), sextupole and octupole orders, and a tilt. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+MB: MBUMPER, L=0.3, STRENGTH=-500, ORDER=2, N_KICKS=12, PERIODIC=1, FIRE_ON_PASS=1, WAVEFORM="waveform.sdds=t+A"
+MB3: MBUMPER, L=0.2, STRENGTH=4e4, ORDER=3, PERIODIC=1, TILT=-0.1, WAVEFORM="waveform.sdds=t+A"
+BL: LINE=(Q1, D, MB, D, MB3, D)

@@ -1,0 +1,7 @@
+! A CSBEND whose focusing gives half a betatron period: a particle leaves at minus the x it entered
+! with, so many go outside the MAXAMP inside the bend and are back inside by its exit.  Only the check
+! at each step inside the bend loses them.
+MA: MAXAMP,X_MAX=1e-3,Y_MAX=1
+D: DRIF,L=0.05
+B1: CSBEND,L=1.0,ANGLE=0.01,K1=9.8696044010893586,N_KICKS=40,INTEGRATION_ORDER=4
+RING: LINE=(MA,D,B1,D)

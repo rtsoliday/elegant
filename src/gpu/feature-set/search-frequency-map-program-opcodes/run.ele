@@ -1,0 +1,28 @@
+! A 9 by 9 map through one of each operation the fused program claims the CPU's bits for; the outer points
+! are lost at the apertures. Two intervals of 16 turns. The file is the CPU's bit for bit.
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 32
+&end
+
+&frequency_map
+    output = "%s.fma",
+    ndelta = 1,
+    nx = 9,
+    ny = 9,
+    xmin = 1e-6,
+    xmax = 0.005,
+    ymin = 1e-6,
+    ymax = 0.004,
+    full_grid_output = 1,
+    include_changes = 1,
+    verbosity = 0
+&end

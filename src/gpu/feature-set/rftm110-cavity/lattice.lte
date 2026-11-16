@@ -1,0 +1,9 @@
+! RFTM110 with a tilt, a periodic voltage waveform, voltage and phase noise (drawn from random_3 on the
+! host, in the CPU's order) and a pass window on a second one: the device's particle loop with CUDA's sin
+! and cos, so it differs by rounding
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+TM: RFTM110, VOLTAGE=1e6, FREQUENCY=2.856e9, PHASE=30, TILT=0.2, VOLTAGE_WAVEFORM="voltage.sdds=t+V", VOLTAGE_PERIODIC=1, &
+    VOLTAGE_NOISE=0.01, PHASE_NOISE=0.5
+TW: RFTM110, VOLTAGE=5e5, FREQUENCY=2.856e9, PHASE=-60, START_PASS=1, END_PASS=2
+BL: LINE=(Q1, D, TM, D, TW, D)

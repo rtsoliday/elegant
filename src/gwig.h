@@ -73,6 +73,8 @@ struct gwig {
 double GWigPoleFactor(struct gwig *pWig, double Z);
 void GWigPass_2nd(struct gwig *pWig, double *X, double *sigmaDelta2, long singleStep);
 void GWigPass_4th(struct gwig *pWig, double *X, double *sigmaDelta2, long singleStep);
+long GWigCountRadiationKicks(struct gwig *pWig);
+void GWigAddToFieldOutput(CWIGGLER *cwiggler, double Z, double *X, double *B, double poleFactor);
 void GWigMap_2nd(struct gwig *pWig, double *X, double dl, double poleFactor);
 void GWigAx(struct gwig *pWig, double *Xvec, double *pax, double *paxpy, double poleFactor);
 void GWigAy(struct gwig *pWig, double *Xvec, double *pay, double *paypx, double poleFactor);

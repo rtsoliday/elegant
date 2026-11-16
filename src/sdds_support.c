@@ -1065,6 +1065,7 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
   long memoryUsed;
 #ifdef HAVE_GPU
   long useGpuParameters = 0;
+  double gpuSigma56 = 0;
 #endif
 #if USE_MPI
   int64_t particles_total, npCount_total = 0;
@@ -1167,16 +1168,17 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
   sums = allocateBeamSums(0, 1);
   zero_beam_sums(sums, 1);
   accumulate_beam_sums(sums, particle, particles, Po, mp_charge, NULL, 0.0, 0.0,
-                       watch->startPID, watch->endPID, BEAM_SUMS_SPARSE | BEAM_SUMS_NOMINMAX);
+                       watch->startPID, watch->endPID,
+                       BEAM_SUMS_SPARSE | BEAM_SUMS_NOMINMAX | BEAM_SUMS_ELEMENT_OUTPUT | BEAM_SUMS_WATCH_OUTPUT);
 #ifdef HAVE_GPU
   if (useGpuParameters &&
-      !gpu_watch_parameter_sums(particles, &npCount, &p_sum, &gamma_sum)) {
+      !gpu_watch_parameter_sums(particles, &npCount, &p_sum, &gamma_sum, &gpuSigma56)) {
     particle = copyParticlesToCpuReadOnly("WATCH parameter aggregate fallback");
     useGpuParameters = 0;
     zero_beam_sums(sums, 1);
     accumulate_beam_sums(sums, particle, particles, Po, mp_charge, NULL,
                          0.0, 0.0, watch->startPID, watch->endPID,
-                         BEAM_SUMS_SPARSE | BEAM_SUMS_NOMINMAX);
+                         BEAM_SUMS_SPARSE | BEAM_SUMS_NOMINMAX | BEAM_SUMS_ELEMENT_OUTPUT | BEAM_SUMS_WATCH_OUTPUT);
   }
 #endif
   if (isMaster) {
@@ -1281,11 +1283,14 @@ void dump_watch_parameters(WATCH *watch, long step, long pass, long n_passes, do
 #  endif
 #else
 #  ifdef HAVE_GPU
-  if (useGpuParameters)
+  if (useGpuParameters) {
     emittance_l = SAFE_SQRT(sums->beamSums2->sigma[6][6] *
                               sums->beamSums2->sigma[5][5] -
-                            sqr(sums->beamSums2->sigma[5][6]));
-  else
+                            sqr(gpuSigma56));
+#    ifdef GPU_VERIFY
+    gpu_verify_watch_el(particles, Po, watch->startPID, watch->endPID, emittance_l, sums);
+#    endif
+  } else
 #  endif
     emittance_l = rms_longitudinal_emittance(particle, particles, Po,
                                              watch->startPID, watch->endPID);

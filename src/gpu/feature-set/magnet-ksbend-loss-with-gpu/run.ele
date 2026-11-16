@@ -1,0 +1,27 @@
+! KSBEND, which runs on the CPU, stops particles at the slope limit, including the first row. The next GPU element must see the survivors in the right rows.
+&global_settings
+  slope_limit = 2.5e-5,
+&end
+
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 3000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 2 &end
+
+&bunched_beam
+  n_particles_per_bunch = 500,
+  emit_x = 1e-9, beta_x = 5, alpha_x = 0,
+  emit_y = 1e-9, beta_y = 5, alpha_y = 0,
+  sigma_dp = 1e-4, sigma_s = 1e-3,
+&end
+
+&track &end

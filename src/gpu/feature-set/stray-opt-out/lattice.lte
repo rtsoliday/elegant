@@ -1,0 +1,5 @@
+! ELEGANT_GPU_ENABLE_STRAY=0 (suite.json) keeps STRAY on the CPU
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+ST: STRAY, L=0.5, LBX=1e-5, LBY=2e-5
+BL: LINE=(Q1, D, ST, D)

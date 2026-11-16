@@ -377,6 +377,33 @@ long simple_rf_cavity(
   double P_central_input = *P_central;
 #  endif
 
+  if (gpuTuneOwnRfReference() && rfca && rfca->volt != 0 && np > 0 && !getElementOnGpu()) {
+    /* A batch of a frequency map: elegant would track these particles one at a time, one turn for
+     * each do_tracking() call, and with reset_rf_for_each_step that call deletes the phase references
+     * and clears fiducial_seen first.  So each particle is a beam of its own here and sets the
+     * reference again.  A particle the cavity removes is swapped to the end, as in any element. */
+    int64_t ip;
+
+    nLeft = np;
+    for (ip = 0; ip < nLeft; ip++) {
+      delete_phase_references();
+      rfca->fiducial_seen = 0;
+      if (trackRfCavityWithWakes(part + ip, 1, rfca, accepted ? accepted + ip : NULL, P_central, zEnd, 0,
+                                 NULL, NULL, NULL, NULL, NULL, 0) != 1) {
+        double *lost = part[ip];
+        part[ip] = part[nLeft - 1];
+        part[nLeft - 1] = lost;
+        if (accepted) {
+          lost = accepted[ip];
+          accepted[ip] = accepted[nLeft - 1];
+          accepted[nLeft - 1] = lost;
+        }
+        nLeft--;
+        ip--;
+      }
+    }
+    return nLeft;
+  }
   if (getElementOnGpu()) {
     startGpuTimer();
     nLeft = gpu_trackRfCavityWithWakes(np, rfca, accepted, P_central, zEnd, 0,
@@ -1181,13 +1208,16 @@ long track_through_rfcw(double **part, int64_t np, RFCW *rfcw, double **accepted
     nLeft = gpu_track_through_rfcw(np, rfcw, accepted, P_central, zEnd,
                                    run, i_pass, charge);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    track_through_rfcw(part, np, rfcw, accepted, &P_central_input, zEnd,
-                       run, i_pass, charge);
-    compareGpuCpu(np, "track_through_rfcw");
-    if (*P_central / P_central_input - 1 > 1e-12) {
-      printf("track_through_rfcw: Warning: GPU P_central=%le vs CPU=%le\n",
-             *P_central, P_central_input);
+    /* If this is no longer set, a fallback has already tracked these particles on the CPU */
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      track_through_rfcw(part, np, rfcw, accepted, &P_central_input, zEnd,
+                         run, i_pass, charge);
+      compareGpuCpu(np, "track_through_rfcw");
+      if (*P_central / P_central_input - 1 > 1e-12) {
+        printf("track_through_rfcw: Warning: GPU P_central=%le vs CPU=%le\n",
+               *P_central, P_central_input);
+      }
     }
 #  endif /* GPU_VERIFY */
     return nLeft;

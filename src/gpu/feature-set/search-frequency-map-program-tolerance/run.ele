@@ -1,0 +1,29 @@
+! A ring with a CCBEND and exact correctors the program doesn't claim the CPU's bits for (they call
+! exp() and trigonometric functions for each particle) and
+! ELEGANT_GPU_TUNE_HISTORY_TOLERANCE=1e-6, set by the suite: the program runs, the sampled histories
+! are within the tolerance, and the device's histories are used. One interval, since the changes
+! between two are the logarithm of a difference of tunes and would magnify any difference.
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 64
+&end
+
+&frequency_map
+    output = "%s.fma",
+    nx = 15,
+    ny = 15,
+    xmin = 1e-6,
+    xmax = 0.005,
+    ymin = 1e-6,
+    ymax = 0.005,
+    include_changes = 0,
+    verbosity = 0
+&end

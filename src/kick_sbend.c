@@ -298,7 +298,7 @@ long track_through_kick_sbend(double **part, int64_t n_part, KSBEND *ksbend, dou
         fflush(stdout);
         abort();
       }
-      SWAP_PTR(part[i_part], part[i_top]);
+      swapParticles(part[i_part], part[i_top]);
       if (accepted) {
         if (!accepted[i_top]) {
           printf(
@@ -307,7 +307,7 @@ long track_through_kick_sbend(double **part, int64_t n_part, KSBEND *ksbend, dou
           fflush(stdout);
           abort();
         }
-        SWAP_PTR(accepted[i_part], accepted[i_top]);
+        swapParticles(accepted[i_part], accepted[i_top]);
       }
       part[i_top][4] = z_start + s_lost;
       part[i_top][5] = Po * (1 + part[i_top][5]);

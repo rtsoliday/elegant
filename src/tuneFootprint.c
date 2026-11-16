@@ -411,14 +411,23 @@ static long batchTuneFootprintDelta(RUN *run, double *referenceCoord,
   double *firstTune, *secondTune, *firstAmplitude, *secondAmplitude;
   double *xAmplitude, *yAmplitude, *deltaOffset;
   long *firstValid, *secondValid;
-  long idelta;
+  long idelta, programBeamline = 0;
   double ddelta;
 
+  /* always_change_p0 rematches the central momentum to each particle, one at a time. A batch
+     shares one central momentum, so these runs have to use the unbatched path. */
   if (!ndelta || turns <= 1 || quadratic_spacing || !compute_diffusion ||
-      separate_xy_for_delta ||
-      !gpu_batched_tune_tracking_enabled(ndelta) ||
-      !gpu_batched_tune_beamline_supported(beamline))
+      separate_xy_for_delta || run->always_change_p0 ||
+      !gpu_batched_tune_tracking_enabled(ndelta))
     return 0;
+  /* A beamline the fused program takes is batched as well.  The device's element-by-element
+   * tracking is kept out of such a batch, as in a frequency map, so that what the program doesn't
+   * track the CPU does. */
+  if (!gpu_batched_tune_beamline_supported(beamline)) {
+    if (!gpu_batched_tune_program_beamline(beamline, run))
+      return 0;
+    programBeamline = 1;
+  }
   startingCoord = (double **)czarray_2d(
     sizeof(**startingCoord), ndelta, totalPropertiesPerParticle);
   endingCoord = (double **)czarray_2d(
@@ -466,6 +475,8 @@ static long batchTuneFootprintDelta(RUN *run, double *referenceCoord,
                     ((ndelta - 1) / 2.))) +
         delta_min;
   }
+  if (programBeamline)
+    gpu_batched_tune_tracking_set_cpu_only(1);
   computeTunesFromTrackingBatch(
     firstTune, firstAmplitude, beamline->matrix, beamline, run,
     startingCoord, xAmplitude, yAmplitude, deltaOffset, ndelta, turns, 0,
@@ -481,6 +492,8 @@ static long batchTuneFootprintDelta(RUN *run, double *referenceCoord,
       secondEndingCoord, secondValid, NULL, NULL, NULL, 1, 1,
       CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
   }
+  if (programBeamline)
+    gpu_batched_tune_tracking_set_cpu_only(0);
 
   for (idelta = 0; idelta < ndelta; idelta++) {
     deltaTfData[idelta].idelta = idelta;
@@ -538,14 +551,21 @@ static long batchTuneFootprintXy(RUN *run, double *referenceCoord,
   double *firstTune, *secondTune, *firstAmplitude, *secondAmplitude;
   double *xAmplitude, *yAmplitude, *deltaOffset;
   long *firstValid, *secondValid;
-  long ix, iy, ip, points;
+  long ix, iy, ip, points, programBeamline = 0;
   double dx = 0, dy = 0, x, y;
 
   points = nx * ny;
+  /* always_change_p0 rematches the central momentum to each particle, one at a time. A batch
+     shares one central momentum, so these runs have to use the unbatched path. */
   if (!points || turns <= 1 || quadratic_spacing || !compute_diffusion ||
-      !gpu_batched_tune_tracking_enabled(points) ||
-      !gpu_batched_tune_beamline_supported(beamline))
+      run->always_change_p0 ||
+      !gpu_batched_tune_tracking_enabled(points))
     return 0;
+  if (!gpu_batched_tune_beamline_supported(beamline)) {
+    if (!gpu_batched_tune_program_beamline(beamline, run))
+      return 0;
+    programBeamline = 1;
+  }
   startingCoord = (double **)czarray_2d(
     sizeof(**startingCoord), points, totalPropertiesPerParticle);
   endingCoord = (double **)czarray_2d(
@@ -599,6 +619,8 @@ static long batchTuneFootprintXy(RUN *run, double *referenceCoord,
       yAmplitude[ip] = y;
     }
   }
+  if (programBeamline)
+    gpu_batched_tune_tracking_set_cpu_only(1);
   computeTunesFromTrackingBatch(
     firstTune, firstAmplitude, beamline->matrix, beamline, run,
     startingCoord, xAmplitude, yAmplitude, deltaOffset, points, turns, 0,
@@ -613,6 +635,8 @@ static long batchTuneFootprintXy(RUN *run, double *referenceCoord,
       secondEndingCoord, secondValid, NULL, NULL, NULL, 1, 1,
       CTFT_INCLUDE_X | CTFT_INCLUDE_Y);
   }
+  if (programBeamline)
+    gpu_batched_tune_tracking_set_cpu_only(0);
 
   ip = 0;
   for (ix = 0; ix < nx; ix++) {

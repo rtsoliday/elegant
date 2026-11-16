@@ -19,6 +19,9 @@
 #include "pressureData.h"
 
 #include "poissonBuffer.h"
+#ifdef HAVE_GPU
+#  include <gpu_base.h>
+#endif
 
 #define ION_FIELD_GAUSSIAN 0
 #define ION_FIELD_BIGAUSSIAN 1
@@ -710,6 +713,33 @@ void completeIonEffectsSetup(RUN *run, LINE_LIST *beamline) {
 static double **speciesCentroid = NULL, *speciesCharge = NULL, **speciesSigma = NULL;
 static long *speciesCount = NULL;
 
+/* gpu-elegant: the Gaussian field's kicks to the electrons go to the device's beam while use is set
+ * (do_tracking.c), and the rows of the bunch being kicked */
+static short ionDeviceKicks = 0;
+#ifdef HAVE_GPU
+static int64_t *ionDeviceRows = NULL;
+#endif
+
+long ionEffectsUseDeviceKicks(long use) {
+  ionDeviceKicks = use && ionFieldMethod == ION_FIELD_GAUSSIAN && !conserve_momentum;
+  return ionDeviceKicks;
+}
+
+/* 1 when trackWithIonEffects() goes past its pass checks (and may change the particles) */
+long ionEffectsActiveOnPass(IONEFFECTS *ionEffects, long iPass) {
+  long startPass;
+
+  if (!ionsInitialized)
+    return 1;
+  if (ionEffects->disable || disable_until_pass > iPass)
+    return 0;
+  startPass = ionEffects->startPass < 0 ? 0 : ionEffects->startPass;
+  if (iPass < startPass || (ionEffects->endPass >= 0 && iPass > ionEffects->endPass) ||
+      (ionEffects->passInterval >= 1 && (iPass - startPass) % ionEffects->passInterval != 0))
+    return 0;
+  return 1;
+}
+
 void trackWithIonEffects(
                          double **part0,         /* part0[i][j] is the jth coordinate (x,x',y,y',t,delta) for the ith particle */
                          long np0,               /* number of particles (on this processor) */
@@ -881,6 +911,10 @@ void trackWithIonEffects(
 
     setIonEffectsIonParameterOutput(ionEffects, tNow, iPass, iBunch, nBunches, qIon, ionSigma, ionCentroid);
 
+#ifdef HAVE_GPU
+    /* (gpu-Pelegant's master has no particles and no bunch index) */
+    ionDeviceRows = ionDeviceKicks && nBunches != 1 && ipBunch ? ipBunch[iBunch] : NULL;
+#endif
     if (npTotal && nIonsTotal)
       applyIonKicksToElectronBunch(ionEffects, part, np, Po, iBunch, iPass, qBunch, bunchCentroid, bunchSigma,
                                    qIon, nIonsTotal, ionCentroid, ionSigma, dpSum, dTime);
@@ -3252,6 +3286,16 @@ void applyIonKicksToElectronBunch(
       if (qIon && ionSigma[0] > 0 && ionSigma[1] > 0 && nIonsTotal > 10 && iPass >= freeze_electrons_until_pass) {
         switch (ionEffects->ionFieldMethod) {
         case ION_FIELD_GAUSSIAN:
+#ifdef HAVE_GPU
+          if (ionDeviceKicks && np) {
+            /* the same kicks to the device's beam; dpSumBunch is only for conserve_momentum, which stays here.
+             * GPU_VERIFY kicks this host copy too and compares. */
+            gpu_ioneffects_kicks(ionDeviceRows, np, ionCentroid, ionSigma, qIon, Po);
+#  ifndef GPU_VERIFY
+            break;
+#  endif
+          }
+#endif
           for (ip = 0; ip < np; ip++) {
             kick[0] = kick[1] = 0;
 

@@ -1,0 +1,9 @@
+! RFTMEZ0 from an on-axis Ez table with its off-axis expansion, CHANGE_P0 and median-time fiducial, two
+! cavities, as elegantTestSet's ria1 has them. Rounding expected (CUDA's sin and cos)
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+C1: RFTMEZ0, L=0.3184, FREQUENCY=115e6, EZ_PEAK=3e6, PHASE=10, INPUTFILE="../data/rftmez0_ez.sdds", &
+    ZCOLUMN="z", EZCOLUMN="Ez", METHOD="non-adaptive", FIDUCIAL="t,median", CHANGE_P0=1, N_STEPS=50
+C2: RFTMEZ0, L=0.3184, FREQUENCY=115e6, EZ_PEAK=2e6, PHASE=-20, INPUTFILE="../data/rftmez0_ez.sdds", &
+    ZCOLUMN="z", EZCOLUMN="Ez", METHOD="non-adaptive", FIDUCIAL="t,average", N_STEPS=80, RADIAL_ORDER=0
+BL: LINE=(Q1, D, C1, D, C2, D)

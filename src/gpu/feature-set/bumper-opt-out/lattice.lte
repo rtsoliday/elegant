@@ -1,0 +1,6 @@
+! bumper-kicks-b2's BUMPER with ELEGANT_GPU_ENABLE_BUMPER=0 (suite.json): on the host. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+K1: BUMPER, L=0.3, ANGLE=0.003, N_KICKS=20, B2=2e3, WAVEFORM="../data/bumper_flat.sdds=t+W", PERIODIC=1, &
+    TILT=0.2, DX=1e-4, DY=-2e-4, DZ=0.01
+BL: LINE=(Q1, D, K1, D)

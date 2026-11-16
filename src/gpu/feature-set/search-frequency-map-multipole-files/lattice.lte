@@ -1,0 +1,7 @@
+D: DRIF,L=0.4
+QF: KQUAD,L=0.2,K1=1.5,N_SLICES=4,INTEGRATION_ORDER=4,SYSTEMATIC_MULTIPOLES="../data/mult_quad_systematic.sdds",RANDOM_MULTIPOLES="../data/mult_quad_random.sdds"
+QD: KQUAD,L=0.2,K1=-1.5,N_SLICES=4,INTEGRATION_ORDER=4,SYSTEMATIC_MULTIPOLES="../data/mult_quad_systematic.sdds"
+SF: KSEXT,L=0.1,K2=5,N_SLICES=4,INTEGRATION_ORDER=4,RANDOM_MULTIPOLES="../data/mult_sext_random.sdds"
+
+CELL: LINE=(D,QF,D,SF,D,QD,D)
+RING: LINE=(8*CELL)

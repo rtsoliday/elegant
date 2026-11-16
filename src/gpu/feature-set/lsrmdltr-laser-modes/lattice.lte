@@ -1,0 +1,9 @@
+! Higher laser modes: TEM31 at a tilt with a LASER_WAVELENGTH given, and TEM42 (the highest elegant has)
+! offset in x; the Hermite polynomials and their derivatives in each field component. Rounding expected.
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+LM1: LSRMDLTR, L=0.4, PERIODS=10, BU=0.33, N_STEPS=600, ACCURACY=1e-6, FIELD_EXPANSION="exact", &
+    LASER_PEAK_POWER=5e6, LASER_W0=3e-4, LASER_M=3, LASER_N=1, LASER_TILT=0.3, LASER_WAVELENGTH=4.9e-7
+LM2: LSRMDLTR, L=0.4, PERIODS=10, BU=0.33, N_STEPS=600, ACCURACY=1e-6, &
+    LASER_PEAK_POWER=5e6, LASER_W0=3e-4, LASER_M=4, LASER_N=2, LASER_X0=1e-4
+BL: LINE=(Q1, D, LM1, D, LM2, D)

@@ -1,0 +1,6 @@
+! SCATTER with Gaussian kicks to x, y' and delta on every particle: no decision, so particle i's numbers
+! start at a jump of 6i in random_2's sequence. Rounding expected (CUDA's log and sin)
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: SCATTER, X=1e-5, YP=2e-5, DP=1e-4
+BL: LINE=(Q1, D, E, D)

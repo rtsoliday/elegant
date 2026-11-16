@@ -1,0 +1,5 @@
+! HKPOLY removing the particles past coord_limit, in the CPU's swap order. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+HK: HKPOLY, L=0.2, K20=0.5, K02=-0.5, K30=30, D20=0.1, D02=0.1, N_REPEATS=2, DRIFT_TYPE=1, DX=3e-4
+BL: LINE=(Q1, D, HK, D)

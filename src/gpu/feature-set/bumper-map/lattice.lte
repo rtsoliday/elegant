@@ -1,0 +1,6 @@
+! BUMPER in 10 kicks scaled by a deflection map (bilinear in x and y) across the beam. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+K1: BUMPER, L=0.2, ANGLE=0.002, N_KICKS=10, DEFLECTION_MAP="../data/bumper_map.sdds", &
+    WAVEFORM="../data/bumper_flat.sdds=t+W"
+BL: LINE=(Q1, D, K1, D)

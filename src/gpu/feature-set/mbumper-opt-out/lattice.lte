@@ -1,0 +1,5 @@
+! ELEGANT_GPU_ENABLE_MBUMPER=0 (suite.json) keeps MBUMPER on the CPU
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+MB: MBUMPER, L=0.3, STRENGTH=3, ORDER=1, N_KICKS=8, WAVEFORM="waveform.sdds=t+A"
+BL: LINE=(Q1, D, MB, D)

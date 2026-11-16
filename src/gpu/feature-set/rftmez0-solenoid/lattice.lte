@@ -1,0 +1,12 @@
+! RFTMEZ0 with a solenoid: an on-axis Bz table (its derivative gives Br) and a map in r and z (Br, and Bz
+! made to grow with r), offset and tilted, and stray fields. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+C1: RFTMEZ0, L=0.3184, FREQUENCY=115e6, EZ_PEAK=3e6, PHASE=10, INPUTFILE="../data/rftmez0_ez.sdds", &
+    ZCOLUMN="z", EZCOLUMN="Ez", METHOD="non-adaptive", N_STEPS=60, SOLENOID_FILE="../data/rftmez0_solenoid_axis.sdds", &
+    SOLENOID_ZCOLUMN="z", SOLENOID_BZCOLUMN="Bz", SOLENOID_FACTOR=0.5, BX_STRAY=1e-4, BY_STRAY=-2e-4
+C2: RFTMEZ0, L=0.3184, FREQUENCY=115e6, EZ_PEAK=2e6, PHASE=-20, INPUTFILE="../data/rftmez0_ez.sdds", &
+    ZCOLUMN="z", EZCOLUMN="Ez", METHOD="non-adaptive", N_STEPS=60, SOLENOID_FILE="../data/rftmez0_solenoid_map.sdds", &
+    SOLENOID_ZCOLUMN="z", SOLENOID_RCOLUMN="r", SOLENOID_BZCOLUMN="Bz", SOLENOID_BRCOLUMN="Br", SOLENOID_FACTOR=-0.8, &
+    SOLENOID_DX=2e-4, SOLENOID_DY=-1e-4, SOLENOID_ETILT=0.01, SOLENOID_EYAW=1e-3
+BL: LINE=(Q1, D, C1, D, C2, D)

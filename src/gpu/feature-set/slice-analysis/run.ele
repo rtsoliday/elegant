@@ -1,0 +1,24 @@
+! Slice analysis after every element, with the beam on the device and no centroid or sigma file, so
+! the slice sums come from the device, in the CPU's particle order.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 3000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 2 &end
+&slice_analysis
+  output = "%s.slan",
+  n_slices = 8,
+&end
+&bunched_beam
+  n_particles_per_bunch = 5000,
+  emit_x = 2e-7, beta_x = 8, alpha_x = 0,
+  emit_y = 2e-7, beta_y = 8, alpha_y = 0,
+  sigma_dp = 5e-4, sigma_s = 1e-3, dp_s_coupling = 0.3,
+&end
+&track &end

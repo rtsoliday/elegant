@@ -1,0 +1,7 @@
+! CBSCAT (Klein-Nishina, exact recoil) on passes 0 and 2: tracked on a current host copy, then
+! x', y', s and delta go to the device. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: CBSCAT, LASER_WAVELENGTH=8e-7, PULSE_ENERGY=1e-3, SIGMA_X=2e-4, SIGMA_Y=2e-4, LASER_PULSE_LENGTH=1e-12, &
+    FACTOR=2e5, PASS_INTERVAL=2
+BL: LINE=(Q1, D, E, D)

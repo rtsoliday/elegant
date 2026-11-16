@@ -1,0 +1,7 @@
+! HKPOLY with a DRIFT_TYPE=2 drift polynomial whose terms depend on delta: polynomial_hamiltonian() on
+! the device. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+HK: HKPOLY, L=0.4, K20=0.5, K02=-0.5, K21=40, K03=-20, E200=0.2, E020=0.2, E201=-0.2, E021=-0.2, E202=0.3, &
+    E400=0.1, E110=0.02, N_REPEATS=3, DRIFT_TYPE=2, TILT=-0.04, DY=2e-4
+BL: LINE=(Q1, D, HK, D)

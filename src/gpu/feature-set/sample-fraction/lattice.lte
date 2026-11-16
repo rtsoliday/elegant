@@ -1,0 +1,6 @@
+! SAMPLE keeping a random 70%: random_2 drawn on the host in the CPU's order. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+SA: SAMPLE, FRACTION=0.7
+BL: LINE=(Q1, D, SA, D)

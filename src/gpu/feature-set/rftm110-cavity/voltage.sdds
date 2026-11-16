@@ -1,0 +1,15 @@
+SDDS1
+&column name=t, units=s, type=double &end
+&column name=V, type=double &end
+&data mode=ascii, no_row_counts=1 &end
+0.000e+00 1.0000
+1.000e-09 0.9500
+2.000e-09 0.8500
+3.000e-09 0.7000
+4.000e-09 0.6000
+5.000e-09 0.6500
+6.000e-09 0.8000
+7.000e-09 0.9000
+8.000e-09 1.0000
+9.000e-09 1.0500
+1.000e-08 1.0000

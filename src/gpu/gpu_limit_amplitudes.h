@@ -22,6 +22,8 @@ long gpu_beam_scraper(void *scraper, long np, double **accepted,
                       double z, double Po, void *eptr);
 long gpu_imposeApertureData(long np, double **accepted, double z, double Po,
                             void *apData, void *eptr);
+long gpu_track_through_apcontour(void *apcontour, long np, double **accepted, double z, double Po,
+                                 void *eptr);
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,7 @@
+! DSCATTER with ONCEPERPARTICLE=1, which the device doesn't take: the CPU tracks it. Must be
+! identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: DSCATTER, PLANE="y", FILENAME="../data/dscatter_cdf.sdds", VALUENAME="z", CDFNAME="cdf", FACTOR=1e-5, &
+    ONCEPERPARTICLE=1, PROBABILITY=0.5
+BL: LINE=(Q1, D, E, D)

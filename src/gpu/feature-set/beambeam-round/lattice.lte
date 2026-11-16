@@ -1,0 +1,5 @@
+! A round opposing beam (XSIZE = YSIZE): roundGaussianBeamKick(). Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BB: BEAMBEAM, CHARGE=5e-9, XSIZE=60e-6, YSIZE=60e-6
+BL: LINE=(Q1, D, BB, D)

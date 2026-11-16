@@ -1,0 +1,6 @@
+! SCATTER with uniform kicks to x' and delta on every particle on passes 0 and 1, idle on
+! pass 2. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: SCATTER, XP=1e-4, DP=2e-4, DISTRIBUTION="uniform", ENDONPASS=1
+BL: LINE=(Q1, D, E, D)

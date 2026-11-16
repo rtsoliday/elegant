@@ -1,0 +1,9 @@
+! Tune histories from the fused program: gpu_batched_tune_program_track() in gpu_stub.c.
+! A FODO ring whose kick quadrupoles have SYNCH_RAD=1. The program's multipole operation has no
+! radiation, so the program is not built and the CPU tracks.
+D: DRIF,L=0.4
+QF: KQUAD,L=0.2,K1=1.5,N_SLICES=4,SYNCH_RAD=1
+QD: KQUAD,L=0.2,K1=-1.5,N_SLICES=4,SYNCH_RAD=1
+SF: KSEXT,L=0.1,K2=5,N_SLICES=4
+CELL: LINE=(D,QF,D,SF,D,QD,D)
+RING: LINE=(8*CELL)

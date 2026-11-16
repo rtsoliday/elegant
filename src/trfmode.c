@@ -520,9 +520,7 @@ void track_through_trfmode(
               trfmode->n_cavities, Vxbin, Vybin, Vzbin);
         } else
 #endif
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+        GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
         for (ip = 0; ip < np; ip++) {
           double Vx, Vy, Vz;
           if (pbin[ip] >= 0) {
@@ -567,15 +565,14 @@ void track_through_trfmode(
             part[ip][5] = (P - Po) / Po;
             part[ip][4] = time[ip] * c_mks * P / sqrt(sqr(P) + 1);
           }
-        }
+        });
       }
 
       if (nBuckets != 1) {
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+        GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
+        );
       }
 
 #if USE_MPI

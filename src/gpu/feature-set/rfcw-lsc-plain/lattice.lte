@@ -1,0 +1,7 @@
+! Ten short RFCW cells with longitudinal space charge and CHANGE_P0.
+! Expected energy gain is 10 x 3 MeV = 30 MeV, from about 130 to about 160 MeV.
+Q: CHARGE,TOTAL=200e-12
+CAV: RFCW,L=0.1,CELL_LENGTH=0.1,VOLT=3e6,FREQ=1.3e9,PHASE=90,CHANGE_P0=1,N_KICKS=0, &
+  LSC=1,LSC_BINS=100,END1_FOCUS=1,END2_FOCUS=1
+D: DRIFT,L=0.5
+BL: LINE=(Q,D,10*CAV,D)

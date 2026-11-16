@@ -1,0 +1,21 @@
+! ILMATRIX on the device with three orders of chromaticity and momentum compaction, dispersion and its
+! slope with momentum, and beta and alpha that vary with momentum. Only `output` is requested, so the
+! particles must be the CPU's to the last bit (the sines and cosines come from the host).
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 20 &end
+&bunched_beam
+  n_particles_per_bunch = 5000,
+  emit_x = 5e-11, beta_x = 7, alpha_x = 0.3,
+  emit_y = 5e-12, beta_y = 2.5, alpha_y = -0.2,
+  sigma_dp = 1e-3, sigma_s = 4e-3,
+&end
+&track &end

@@ -7,12 +7,14 @@ extern "C" {
 
 long gpu_batched_search_tracking_enabled(long particles);
 long gpu_batched_search_beamline_supported(void *beamline);
+long gpu_batched_aperture_search_worthwhile(void *beamline, long trials);
 long gpu_run_batched_aperture_search(
   void *beamline, double pCentral, long lines, long nx, long nSplits,
   double splitFraction, long nPasses, double xmax, double ymax,
   const double *orbit, const double *dxFactor, const double *dyFactor,
   double *xLimit, double *yLimit, double *xLost, double *yLost,
-  double *sLost, long *lossPass, long *lossElement, long *originStable);
+  double *sLost, long *lossPass, long *lossElement, double *lossX0,
+  double *lossY0, long *originStable);
 void gpuSetTrackingSuppressed(long suppressed);
 long gpuGetTrackingSuppressed(void);
 long gpu_momentum_search_beamline_supported(void *beamline, const char **reason);

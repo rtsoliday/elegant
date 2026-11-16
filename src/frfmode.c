@@ -448,16 +448,14 @@ void track_through_frfmode(
               firstBin, lastBin, 0, rfmode->n_cavities, Vbin);
         } else
 #endif
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+        GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
         for (ip = 0; ip < np; ip++) {
           if (pbin[ip] >= 0) {
             /* compute new momentum and momentum offset for this particle */
             double particleDgamma = rfmode->n_cavities * Vbin[pbin[ip]] / (1e6 * particleMassMV * particleRelSign);
             add_to_particle_energy(part[ip], time[ip], Po, particleDgamma);
           }
-        }
+        });
       }
 
       if (rfmode->outputFile && iBucket == (nBuckets - 1)) {
@@ -477,11 +475,10 @@ void track_through_frfmode(
       }
 
       if (nBuckets != 1) {
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+        GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
+        );
       }
     }
 #if USE_MPI

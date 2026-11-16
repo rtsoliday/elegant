@@ -40,9 +40,11 @@ long rectangular_collimator(
     ip = gpu_rectangular_collimator(rcol, np, accepted, z, Po, eptr);
 #  ifdef GPU_VERIFY
     if (getElementOnGpu()) {
+      long cpuRemaining;
+
       startCpuTimer();
-      rectangular_collimator(initial, rcol, np, accepted, z, Po, eptr);
-      compareGpuCpu(np, "rectangular_collimator");
+      cpuRemaining = rectangular_collimator(initial, rcol, np, accepted, z, Po, eptr);
+      compareGpuCpuApertureResult(ip, cpuRemaining, np, 0, "rectangular_collimator");
     }
 #  endif /* GPU_VERIFY */
     return ip;
@@ -207,10 +209,12 @@ long limit_amplitudes(
                               extrapolate_z, openCode, eptr);
 #  ifdef GPU_VERIFY
     if (getElementOnGpu()) {
+      long cpuRemaining;
+
       startCpuTimer();
-      limit_amplitudes(coord, xmax, ymax, np, accepted, z, Po,
-                       extrapolate_z, openCode, eptr);
-      compareGpuCpu(np, "limit_amplitudes");
+      cpuRemaining = limit_amplitudes(coord, xmax, ymax, np, accepted, z, Po,
+                                      extrapolate_z, openCode, eptr);
+      compareGpuCpuApertureResult(ip, cpuRemaining, np, 0, "limit_amplitudes");
     }
 #  endif /* GPU_VERIFY */
     return ip;
@@ -300,9 +304,11 @@ long removeInvalidParticles(
     ip = gpu_removeInvalidParticles(np, accepted, z, Po);
 #  ifdef GPU_VERIFY
     if (getElementOnGpu()) {
+      long cpuRemaining;
+
       startCpuTimer();
-      removeInvalidParticles(coord, np, accepted, z, Po);
-      compareGpuCpu(np, "removeInvalidParticles");
+      cpuRemaining = removeInvalidParticles(coord, np, accepted, z, Po);
+      compareGpuCpuApertureResult(ip, cpuRemaining, np, 0, "removeInvalidParticles");
     }
 #  endif /* GPU_VERIFY */
     return ip;
@@ -358,9 +364,11 @@ long elliptical_collimator(
     ip = gpu_elliptical_collimator(ecol, np, accepted, z, Po, eptr);
 #  ifdef GPU_VERIFY
     if (getElementOnGpu()) {
+      long cpuRemaining;
+
       startCpuTimer();
-      elliptical_collimator(initial, ecol, np, accepted, z, Po, eptr);
-      compareGpuCpu(np, "elliptical_collimator");
+      cpuRemaining = elliptical_collimator(initial, ecol, np, accepted, z, Po, eptr);
+      compareGpuCpuApertureResult(ip, cpuRemaining, np, 0, "elliptical_collimator");
     }
 #  endif /* GPU_VERIFY */
     return ip;
@@ -518,10 +526,12 @@ long elimit_amplitudes(
                                extrapolate_z, openCode, exponent, yexponent, eptr);
 #  ifdef GPU_VERIFY
     if (getElementOnGpu()) {
+      long cpuRemaining;
+
       startCpuTimer();
-      elimit_amplitudes(coord, xmax, ymax, np, accepted, z, Po,
-                        extrapolate_z, openCode, exponent, yexponent, eptr);
-      compareGpuCpu(np, "elimit_amplitudes");
+      cpuRemaining = elimit_amplitudes(coord, xmax, ymax, np, accepted, z, Po,
+                                       extrapolate_z, openCode, exponent, yexponent, eptr);
+      compareGpuCpuApertureResult(ip, cpuRemaining, np, 0, "elimit_amplitudes");
     }
 #  endif /* GPU_VERIFY */
     return ip;
@@ -648,9 +658,12 @@ long elimit_amplitudes(
       ip = gpu_beam_scraper(scraper, np, accepted, z, Po, eptr);
 #  ifdef GPU_VERIFY
       if (getElementOnGpu()) {
+        long cpuRemaining;
+
         startCpuTimer();
-        beam_scraper(initial, scraper, np, accepted, z, Po, eptr);
-        compareGpuCpu(np, "beam_scraper");
+        cpuRemaining = beam_scraper(initial, scraper, np, accepted, z, Po, eptr);
+        /* the device leaves the CPU's order, entrance round then exit round */
+        compareGpuCpuApertureResult(ip, cpuRemaining, np, 0, "beam_scraper");
       }
 #  endif /* GPU_VERIFY */
       return ip;
@@ -1252,9 +1265,11 @@ long elimit_amplitudes(
       ip = gpu_imposeApertureData(np, accepted, z, Po, apData, eptr);
 #  ifdef GPU_VERIFY
       if (getElementOnGpu()) {
+        long cpuRemaining;
+
         startCpuTimer();
-        imposeApertureData(initial, np, accepted, z, Po, apData, eptr);
-        compareGpuCpu(np, "imposeApertureData");
+        cpuRemaining = imposeApertureData(initial, np, accepted, z, Po, apData, eptr);
+        compareGpuCpuApertureResult(ip, cpuRemaining, np, 0, "imposeApertureData");
       }
 #  endif /* GPU_VERIFY */
       return ip;
@@ -1472,7 +1487,7 @@ long elimit_amplitudes(
     return (np);
   }
 
-  long trackThroughApContour(double **coord, APCONTOUR *apcontour, int64_t np, double **accepted, double z,
+  static long trackThroughApContourOnCpu(double **coord, APCONTOUR *apcontour, int64_t np, double **accepted, double z,
                              double Po, ELEMENT_LIST *eptr) {
     int64_t ip, i_top;
     long ic;
@@ -1605,6 +1620,29 @@ long elimit_amplitudes(
     return i_top + 1;
   }
 
+  long trackThroughApContour(double **coord, APCONTOUR *apcontour, int64_t np, double **accepted, double z,
+                             double Po, ELEMENT_LIST *eptr) {
+#ifdef HAVE_GPU
+    if (getElementOnGpu()) {
+      long remaining;
+
+      startGpuTimer();
+      remaining = gpu_track_through_apcontour(apcontour, np, accepted, z, Po, eptr);
+#  ifdef GPU_VERIFY
+      if (getElementOnGpu()) {
+        long cpuRemaining;
+
+        startCpuTimer();
+        cpuRemaining = trackThroughApContourOnCpu(coord, apcontour, np, accepted, z, Po, eptr);
+        compareGpuCpuApertureResult(remaining, cpuRemaining, np, 0, "trackThroughApContour");
+      }
+#  endif /* GPU_VERIFY */
+      return remaining;
+    }
+#endif /* HAVE_GPU */
+    return trackThroughApContourOnCpu(coord, apcontour, np, accepted, z, Po, eptr);
+  }
+
   /* Just impose the aperture contour, ignoring the length. Useful for STICKY=1 case when other elements
    * need to impose the aperture
    */
@@ -1629,7 +1667,7 @@ long elimit_amplitudes(
     coord[0][2] = y;
     memcpy(&apc, apcontour, sizeof(apc));
     apc.length = 0;
-    return trackThroughApContour(coord, &apc, 1, NULL, 0, 1, eptr);
+    return trackThroughApContourOnCpu(coord, &apc, 1, NULL, 0, 1, eptr);
   }
 
   long trackThroughTaperApCirc(double **initial, TAPERAPC *taperApC, int64_t np, double **accepted, double z,

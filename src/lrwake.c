@@ -11,6 +11,9 @@
 #include "track.h"
 #include "table.h"
 #include "fftpackC.h"
+#ifdef HAVE_GPU
+#  include "gpu_impedance.h"
+#endif
 
 void set_up_lrwake(LRWAKE *wakeData, RUN *run, long pass, long particles, CHARGE *charge, long nBunches);
 
@@ -233,6 +236,96 @@ void index_bunch_assignments(double **part, int64_t np, long idSlotsPerBunch, do
 #endif
 }
 
+/* From the bunch sums (QBunch holding particle counts) to the wake at each bunch: the bunch means, the history
+ * moved back and this pass's bunches added, and the sums over earlier bunches.  gpu-elegant calls this too. */
+void lrwakeBunchVoltages(LRWAKE *wakeData, CHARGE *charge, long nBunches, double *tBunch, double *xBunch,
+                         double *yBunch, double *QBunch, double *VxBunch, double *VyBunch, double *VzBunch,
+                         double *QxBunch, double *QyBunch) {
+  long ib;
+
+  /* Compute mean time and space position of particles within bunches, multiplied by charge */
+  for (ib = 0; ib < nBunches; ib++) {
+    if (QBunch[ib]) {
+      /* QBunch[ib] holds particle count at this point */
+      tBunch[ib] /= QBunch[ib];
+      /* index_bunch_assignments() returns register-reduced time; add the per-step
+         macro offset so bunch times stored in tHistory carry true absolute time.
+         The wake lookup below uses tBunch-tHistory differences, which must span
+         the macro inter-step gap; tBunch is never written back to coord[4].
+         Zero unless step_frequency is in use, so legacy behavior is unchanged. */
+      tBunch[ib] += trackingClockOffset();
+      xBunch[ib] /= QBunch[ib];
+      yBunch[ib] /= QBunch[ib];
+      /* multiply by macro-particle charge so QBunch means what it says */
+      QBunch[ib] *= charge->macroParticleCharge;
+    }
+  }
+
+#ifdef MPI_DEBUG
+  printf("Moving history data back\n");
+  fflush(stdout);
+#endif
+
+  /* Move the existing history data back */
+  memmove(wakeData->tHistory, wakeData->tHistory + nBunches, sizeof(*(wakeData->tHistory)) * (wakeData->nHistory - nBunches));
+  memmove(wakeData->QHistory, wakeData->QHistory + nBunches, sizeof(*(wakeData->QHistory)) * (wakeData->nHistory - nBunches));
+  memmove(wakeData->xHistory, wakeData->xHistory + nBunches, sizeof(*(wakeData->xHistory)) * (wakeData->nHistory - nBunches));
+  memmove(wakeData->yHistory, wakeData->yHistory + nBunches, sizeof(*(wakeData->yHistory)) * (wakeData->nHistory - nBunches));
+
+#ifdef MPI_DEBUG
+  printf("Moving new data into buffer\n");
+  fflush(stdout);
+#endif
+  /* Move the new history data into the buffer */
+  memmove(wakeData->tHistory + wakeData->nHistory - nBunches, tBunch, sizeof(*tBunch) * nBunches);
+  memmove(wakeData->QHistory + wakeData->nHistory - nBunches, QBunch, sizeof(*QBunch) * nBunches);
+  memmove(wakeData->xHistory + wakeData->nHistory - nBunches, xBunch, sizeof(*xBunch) * nBunches);
+  memmove(wakeData->yHistory + wakeData->nHistory - nBunches, yBunch, sizeof(*yBunch) * nBunches);
+
+
+#ifdef MPI_DEBUG
+  printf("Computing wake function at each new bunch\n");
+  fflush(stdout);
+#endif
+  /* Compute the wake function at each new bunch */
+  for (ib = 0; ib < nBunches; ib++) {
+    long ibh;
+    VxBunch[ib] = VyBunch[ib] = VzBunch[ib] = QxBunch[ib] = QyBunch[ib] = 0;
+#ifdef DEBUG
+    printf("bin %ld: summing from %ld to %ld\n", ib, 0L, (wakeData->nHistory - nBunches + ib) - 1);
+#endif
+    for (ibh = 0; ibh < wakeData->nHistory - nBunches + ib; ibh++) {
+      if (wakeData->QHistory[ibh]) {
+        long it;
+        double dt;
+        dt = tBunch[ib] - wakeData->tHistory[ibh];
+        /* interpolate wake functions */
+        it = find_nearby_array_entry(wakeData->W[0], wakeData->wakePoints, dt);
+        /*
+#ifdef DEBUG
+	printf("ib=%ld, ibh=%ld, dt=%le, it=%ld\n", ib, ibh, dt, it);
+#endif
+	*/
+        if (wakeData->W[1])
+          VxBunch[ib] += wakeData->xHistory[ibh] * wakeData->xFactor * wakeData->QHistory[ibh] *
+                         linear_interpolation(wakeData->W[1], wakeData->W[0], wakeData->wakePoints, dt, it);
+        if (wakeData->W[2])
+          VyBunch[ib] += wakeData->yHistory[ibh] * wakeData->yFactor * wakeData->QHistory[ibh] *
+                         linear_interpolation(wakeData->W[2], wakeData->W[0], wakeData->wakePoints, dt, it);
+        if (wakeData->W[3])
+          VzBunch[ib] += wakeData->zFactor * wakeData->QHistory[ibh] *
+                         linear_interpolation(wakeData->W[3], wakeData->W[0], wakeData->wakePoints, dt, it);
+        if (wakeData->W[4])
+          QxBunch[ib] += wakeData->qxFactor * wakeData->QHistory[ibh] *
+                         linear_interpolation(wakeData->W[4], wakeData->W[0], wakeData->wakePoints, dt, it);
+        if (wakeData->W[5])
+          QyBunch[ib] += wakeData->qyFactor * wakeData->QHistory[ibh] *
+                         linear_interpolation(wakeData->W[5], wakeData->W[0], wakeData->wakePoints, dt, it);
+      }
+    }
+  }
+}
+
 void track_through_lrwake(double **part, int64_t np, LRWAKE *wakeData, double *P0Input,
                           RUN *run, long i_pass, CHARGE *charge) {
   double *tBunch = NULL; /* array for <t> for bunches */
@@ -250,6 +343,9 @@ void track_through_lrwake(double **part, int64_t np, LRWAKE *wakeData, double *P
   long *ibParticle = NULL;
 #if USE_MPI
   double *buffer = NULL;
+#endif
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  long lrwakeGpuTracked = 0;
 #endif
 
 #ifdef DEBUG
@@ -289,6 +385,20 @@ void track_through_lrwake(double **part, int64_t np, LRWAKE *wakeData, double *P
 #endif
 
     P0 = *P0Input;
+#ifdef HAVE_GPU
+    if (getElementOnGpu()) {
+      if (gpu_track_through_lrwake(np, wakeData, P0, run, i_pass, charge, &lastNBunches)) {
+#  ifdef GPU_VERIFY
+        /* gpu_track_through_lrwake() left the history as it was, for the CPU to redo the element */
+        startCpuTimer();
+        lrwakeGpuTracked = 1;
+#  else
+        return;
+#  endif
+      } else
+        part = forceParticlesToCpu("LRWAKE CPU fallback");
+    }
+#endif
     index_bunch_assignments(part, np, charge ? charge->idSlotsPerBunch : 0, P0, &time, &ibParticle, NULL, NULL, &nBunches, lastNBunches);
     lastNBunches = nBunches;
 
@@ -356,45 +466,13 @@ void track_through_lrwake(double **part, int64_t np, LRWAKE *wakeData, double *P
 #  endif
 #endif
 
-    /* Compute mean time and space position of particles within bunches, multiplied by charge */
-    for (ib = 0; ib < nBunches; ib++) {
-      if (QBunch[ib]) {
-        /* QBunch[ib] holds particle count at this point */
-        tBunch[ib] /= QBunch[ib];
-        /* index_bunch_assignments() returns register-reduced time; add the per-step
-           macro offset so bunch times stored in tHistory carry true absolute time.
-           The wake lookup below uses tBunch-tHistory differences, which must span
-           the macro inter-step gap; tBunch is never written back to coord[4].
-           Zero unless step_frequency is in use, so legacy behavior is unchanged. */
-        tBunch[ib] += trackingClockOffset();
-        xBunch[ib] /= QBunch[ib];
-        yBunch[ib] /= QBunch[ib];
-        /* multiply by macro-particle charge so QBunch means what it says */
-        QBunch[ib] *= charge->macroParticleCharge;
-      }
-    }
-
-#ifdef MPI_DEBUG
-    printf("Moving history data back\n");
-    fflush(stdout);
-#endif
-
-    /* Move the existing history data back */
-    memmove(wakeData->tHistory, wakeData->tHistory + nBunches, sizeof(*(wakeData->tHistory)) * (wakeData->nHistory - nBunches));
-    memmove(wakeData->QHistory, wakeData->QHistory + nBunches, sizeof(*(wakeData->QHistory)) * (wakeData->nHistory - nBunches));
-    memmove(wakeData->xHistory, wakeData->xHistory + nBunches, sizeof(*(wakeData->xHistory)) * (wakeData->nHistory - nBunches));
-    memmove(wakeData->yHistory, wakeData->yHistory + nBunches, sizeof(*(wakeData->yHistory)) * (wakeData->nHistory - nBunches));
-
-#ifdef MPI_DEBUG
-    printf("Moving new data into buffer\n");
-    fflush(stdout);
-#endif
-    /* Move the new history data into the buffer */
-    memmove(wakeData->tHistory + wakeData->nHistory - nBunches, tBunch, sizeof(*tBunch) * nBunches);
-    memmove(wakeData->QHistory + wakeData->nHistory - nBunches, QBunch, sizeof(*QBunch) * nBunches);
-    memmove(wakeData->xHistory + wakeData->nHistory - nBunches, xBunch, sizeof(*xBunch) * nBunches);
-    memmove(wakeData->yHistory + wakeData->nHistory - nBunches, yBunch, sizeof(*yBunch) * nBunches);
-
+    VxBunch = tmalloc(sizeof(*VxBunch) * nBunches);
+    VyBunch = tmalloc(sizeof(*VyBunch) * nBunches);
+    QxBunch = tmalloc(sizeof(*QxBunch) * nBunches);
+    QyBunch = tmalloc(sizeof(*QyBunch) * nBunches);
+    VzBunch = tmalloc(sizeof(*VzBunch) * nBunches);
+    lrwakeBunchVoltages(wakeData, charge, nBunches, tBunch, xBunch, yBunch, QBunch, VxBunch, VyBunch, VzBunch,
+                        QxBunch, QyBunch);
 #ifdef DEBUG
 #  if DEBUG > 1
     fprintf(fph, "%ld\n", i_pass);
@@ -404,53 +482,6 @@ void track_through_lrwake(double **part, int64_t np, LRWAKE *wakeData, double *P
     fflush(fph);
 #  endif
 #endif
-
-#ifdef MPI_DEBUG
-    printf("Computing wake function at each new bunch\n");
-    fflush(stdout);
-#endif
-    /* Compute the wake function at each new bunch */
-    VxBunch = tmalloc(sizeof(*VxBunch) * nBunches);
-    VyBunch = tmalloc(sizeof(*VyBunch) * nBunches);
-    QxBunch = tmalloc(sizeof(*QxBunch) * nBunches);
-    QyBunch = tmalloc(sizeof(*QyBunch) * nBunches);
-    VzBunch = tmalloc(sizeof(*VzBunch) * nBunches);
-    for (ib = 0; ib < nBunches; ib++) {
-      long ibh;
-      VxBunch[ib] = VyBunch[ib] = VzBunch[ib] = QxBunch[ib] = QyBunch[ib] = 0;
-#ifdef DEBUG
-      printf("bin %ld: summing from %ld to %ld\n", ib, 0L, (wakeData->nHistory - nBunches + ib) - 1);
-#endif
-      for (ibh = 0; ibh < wakeData->nHistory - nBunches + ib; ibh++) {
-        if (wakeData->QHistory[ibh]) {
-          long it;
-          double dt;
-          dt = tBunch[ib] - wakeData->tHistory[ibh];
-          /* interpolate wake functions */
-          it = find_nearby_array_entry(wakeData->W[0], wakeData->wakePoints, dt);
-          /*
-#ifdef DEBUG
-	printf("ib=%ld, ibh=%ld, dt=%le, it=%ld\n", ib, ibh, dt, it);
-#endif
-	*/
-          if (wakeData->W[1])
-            VxBunch[ib] += wakeData->xHistory[ibh] * wakeData->xFactor * wakeData->QHistory[ibh] *
-                           linear_interpolation(wakeData->W[1], wakeData->W[0], wakeData->wakePoints, dt, it);
-          if (wakeData->W[2])
-            VyBunch[ib] += wakeData->yHistory[ibh] * wakeData->yFactor * wakeData->QHistory[ibh] *
-                           linear_interpolation(wakeData->W[2], wakeData->W[0], wakeData->wakePoints, dt, it);
-          if (wakeData->W[3])
-            VzBunch[ib] += wakeData->zFactor * wakeData->QHistory[ibh] *
-                           linear_interpolation(wakeData->W[3], wakeData->W[0], wakeData->wakePoints, dt, it);
-          if (wakeData->W[4])
-            QxBunch[ib] += wakeData->qxFactor * wakeData->QHistory[ibh] *
-                           linear_interpolation(wakeData->W[4], wakeData->W[0], wakeData->wakePoints, dt, it);
-          if (wakeData->W[5])
-            QyBunch[ib] += wakeData->qyFactor * wakeData->QHistory[ibh] *
-                           linear_interpolation(wakeData->W[5], wakeData->W[0], wakeData->wakePoints, dt, it);
-        }
-      }
-    }
 
 #ifdef DEBUG
 #  if DEBUG > 1
@@ -498,6 +529,10 @@ void track_through_lrwake(double **part, int64_t np, LRWAKE *wakeData, double *P
     if (QyBunch)
       free(QyBunch);
     free_bunch_index_memory(time, ibParticle, NULL, NULL, nBunches);
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+    if (lrwakeGpuTracked)
+      compareGpuCpu(np, "track_through_lrwake");
+#endif
   }
 
 #if USE_MPI

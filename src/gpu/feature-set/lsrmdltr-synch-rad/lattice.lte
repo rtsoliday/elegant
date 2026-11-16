@@ -1,0 +1,6 @@
+! SYNCH_RAD=1 without ISR at 2 GeV: the classical energy loss after each Runge-Kutta step. Rounding expected.
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+LM: LSRMDLTR, L=0.5, PERIODS=10, BU=1.0, N_STEPS=800, ACCURACY=1e-6, FIELD_EXPANSION="exact", SYNCH_RAD=1, &
+    LASER_PEAK_POWER=1e6, LASER_W0=3e-4
+BL: LINE=(Q1, D, LM, D)

@@ -1,0 +1,11 @@
+SDDS1
+&column name=xHarm, type=long &end
+&column name=zHarm, type=long &end
+&column name=Cmn, type=double &end
+&column name=KxOverKw, type=double &end
+&column name=KyOverKw, type=double &end
+&column name=KzOverKw, type=double &end
+&data mode=ascii, no_row_counts=1 &end
+0 1 1 0 1 1
+1 1 0.10000000000000001 0.5 1.1180339887498949 1
+0 3 0.050000000000000003 0 3 3

@@ -1,0 +1,5 @@
+! MATTER with slots, which the device doesn't take: the CPU tracks it. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: MATTER, L=1e-3, XO=0.089, WIDTH=1e-4, SPACING=3e-4, N_SLOTS=3
+BL: LINE=(Q1, D, E, D)

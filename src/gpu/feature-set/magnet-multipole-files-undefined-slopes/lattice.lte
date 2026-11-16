@@ -1,0 +1,3 @@
+D: DRIF,L=0.2
+Q: KQUAD,L=0.2,K1=1.2,N_SLICES=4,INTEGRATION_ORDER=4,SYSTEMATIC_MULTIPOLES="../data/mult_strong_high_order.sdds"
+RING: LINE=(D,Q,D,Q,D,Q,D,Q)

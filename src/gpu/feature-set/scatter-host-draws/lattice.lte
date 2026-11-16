@@ -1,0 +1,6 @@
+! scatter-gaussian-every with ELEGANT_GPU_PORT_DEVICE_DRAWS=0 (suite.json): the host makes the numbers
+! with random_2 and gauss_rn(). Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: SCATTER, X=1e-5, YP=2e-5, DP=1e-4
+BL: LINE=(Q1, D, E, D)

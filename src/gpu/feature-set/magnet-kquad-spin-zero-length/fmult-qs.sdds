@@ -1,0 +1,8 @@
+SDDS1
+&column name=order, type=long,  &end
+&column name=KnL, type=double,  &end
+&column name=JnL, type=double,  &end
+&data mode=ascii, no_row_counts=1 &end
+1 4.0e-01 2.0e-02
+2 3.0e+00 -5.0e-01
+3 2.0e+01 0.0e+00

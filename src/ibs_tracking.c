@@ -11,6 +11,9 @@
 #include "track.h"
 #include "zibs.h"
 #include "SDDS.h"
+#ifdef HAVE_GPU
+#  include "gpu_impedance.h"
+#endif
 
 static double tmp_safe_sqrt;
 #define SAFE_SQRT(x) ((tmp_safe_sqrt = (x)) < 0 ? 0.0 : sqrt(tmp_safe_sqrt))
@@ -94,6 +97,49 @@ void track_IBS(double **part0, int64_t np0, ELEMENT_LIST *eptr, double Po,
     printf("Beginning IBSCATTER algorithm (tests passed)\n");
     fflush(stdout);
   }
+
+#ifdef HAVE_GPU
+  /* With SMOOTH=1 the device makes the slices, their sums and the inflation, and gpu_track_IBS() runs the
+   * rest of the bucket loop below with the same host routines; the output after it is this routine's */
+  if (getElementOnGpu()) {
+    if (gpu_ibs_bunched_mode_action(np0, IBS, charge) == GPU_BUNCHED_WAKE_UNSUPPORTED)
+      part0 = forceParticlesToCpu("IBSCATTER bunch layout CPU fallback");
+    else {
+#  ifdef GPU_VERIFY
+      /* forth_propagate_twiss() starts from twiss0, the last call's beam, and stores this call's there, and the
+       * slice loop reads the next slice's growth rate from the last call: the CPU's redo must find them as
+       * the device path found them */
+      long jslice;
+      TWISS *savedTwiss0 = tmalloc(sizeof(*savedTwiss0) * IBS->nslice);
+      double *savedRates = tmalloc(sizeof(*savedRates) * 3 * IBS->nslice);
+      for (jslice = 0; jslice < IBS->nslice; jslice++) {
+        savedTwiss0[jslice] = twiss0[jslice];
+        savedRates[3 * jslice] = IBS->xGrowthRate[jslice];
+        savedRates[3 * jslice + 1] = IBS->yGrowthRate[jslice];
+        savedRates[3 * jslice + 2] = IBS->zGrowthRate[jslice];
+      }
+#  endif
+      startGpuTimer();
+      gpu_track_IBS(np0, IBS, Po, run, charge);
+#  ifdef GPU_VERIFY
+      for (jslice = 0; jslice < IBS->nslice; jslice++) {
+        twiss0[jslice] = savedTwiss0[jslice];
+        IBS->xGrowthRate[jslice] = savedRates[3 * jslice];
+        IBS->yGrowthRate[jslice] = savedRates[3 * jslice + 1];
+        IBS->zGrowthRate[jslice] = savedRates[3 * jslice + 2];
+      }
+      free(savedTwiss0);
+      free(savedRates);
+      startCpuTimer();
+      track_IBS(part0, np0, eptr, Po, element, charge, i_pass, n_passes, run);
+      compareGpuCpu(np0, "track_IBS");
+      return;
+#  else
+      goto ibsOutput;
+#  endif
+    }
+  }
+#endif
 
   if (isSlave || !distributedBeam) {
     eta[0] = IBS->etax[IBS->elements - 1];
@@ -609,6 +655,9 @@ void track_IBS(double **part0, int64_t np0, ELEMENT_LIST *eptr, double Po,
   MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
+#if defined(HAVE_GPU) && !defined(GPU_VERIFY)
+ibsOutput:
+#endif
   if (IBS->filename && isMaster) {
     if (!(IBS->isInit)) {
       SDDS_IBScatterSetup(&(IBS->outPage), IBS->filename, SDDS_BINARY, 1, "IBS scatter growth rate output",

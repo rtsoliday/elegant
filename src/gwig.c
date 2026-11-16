@@ -636,6 +636,43 @@ void GWigRadiationKicks(struct gwig *pWig, double *X, double *Bxy, double dl, do
   }
 }
 
+#ifdef HAVE_GPU
+/* How many ISR random numbers a particle uses, for the GPU's table. GWigRadiationKicks skips those
+ * where the field is exactly zero, which depends on z and the pole factors but not on x and y. */
+long GWigCountRadiationKicks(struct gwig *pWig) {
+  const double x1 = 1.3512071919596576340476878089715e0;
+  const double x0 = -1.7024143839193152680953756179429e0;
+  struct gwig wig = *pWig;
+  double X[6] = {0, 0, 0, 0, 0, 0}, B[2], dl;
+  long i, Nstep, count = 0;
+
+  Nstep = wig.PN * wig.Nw;
+  dl = wig.Lw / wig.PN;
+  wig.Zw = 0;
+  GWigB(&wig, X, B, wig.cwiggler->poleFactor[0]);
+  if (sqr(B[0]) + sqr(B[1]) != 0)
+    count++;
+  for (i = 1; i <= Nstep; i++) {
+    double pf = GWigPoleFactor(&wig, ((i - 1) * wig.cwiggler->length) / Nstep);
+    if (wig.Pmethod == 2) {
+      wig.Zw += 0.5 * dl;
+      wig.Zw += 0.5 * dl;
+    } else {
+      wig.Zw += 0.5 * (x1 * dl);
+      wig.Zw += 0.5 * (x1 * dl);
+      wig.Zw += 0.5 * (x0 * dl);
+      wig.Zw += 0.5 * (x0 * dl);
+      wig.Zw += 0.5 * (x1 * dl);
+      wig.Zw += 0.5 * (x1 * dl);
+    }
+    GWigB(&wig, X, B, pf);
+    if (sqr(B[0]) + sqr(B[1]) != 0)
+      count++;
+  }
+  return count;
+}
+#endif
+
 void GWigAddToFieldOutput(CWIGGLER *cwiggler, double Z, double *X, double *B, double pf) {
   SDDS_DATASET *SDDSout;
 

@@ -1,0 +1,8 @@
+! KPOLY in both planes with tilts, offsets, DZ, FACTOR and orders 3, 2 and 0: polynomial_kicks() on the
+! device, which must give elegant's particles to the bit (only the output file is asked for)
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+KX: KPOLY, COEFFICIENT=4e4, ORDER=3, PLANE="x", TILT=0.1, DX=1e-4, DY=-2e-4, DZ=0.01, FACTOR=1.5
+KY: KPOLY, COEFFICIENT=-300, ORDER=2, PLANE="y", TILT=-0.05, DY=5e-5
+K0: KPOLY, COEFFICIENT=1e-5, ORDER=0, PLANE="Y"
+BL: LINE=(Q1, D, KX, D, KY, D, K0)

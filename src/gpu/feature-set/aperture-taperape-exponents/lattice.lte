@@ -1,0 +1,9 @@
+! TAPERAPE super-ellipses: XEXPONENT=4 (2/4 is 0 in elegant's integer division, so a rectangle-like box),
+! YEXPONENT=1 (a diamond), and a zero-length one, which tests only its entrance. Identical to elegant.
+D: DRIF,L=0.10
+T4: TAPERAPE,L=0.05,ASTART=0.018,AEND=0.015,BSTART=0.013,BEND=0.011,XEXPONENT=4,YEXPONENT=4
+T1: TAPERAPE,L=0.05,ASTART=0.02,AEND=0.02,BSTART=0.016,BEND=0.014,XEXPONENT=1,YEXPONENT=2
+T0: TAPERAPE,L=0,ASTART=0.017,AEND=0.017,BSTART=0.012,BEND=0.012
+Q: QUAD,L=0.2,K1=0.5,ORDER=2
+CELL: LINE=(D,T4,D,Q,T1,D,T0,D)
+RING: LINE=(3*CELL)

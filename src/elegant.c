@@ -555,6 +555,9 @@ int main(int argc, char **argv)
   unsigned long pipeFlags = 0;
   double apertureReturn;
   char *rpnDefns = NULL, *configurationFile = NULL;
+#if HAVE_GPU && !USE_MPI
+  long ompThreadsOption = 0;
+#endif
 
   initializeThreadingDefaults();
 #if USE_MPI
@@ -795,12 +798,7 @@ int main(int argc, char **argv)
           if (!gpuSetOmpTrackingThreads(ompThreads))
             bombElegant("-ompThreads requires OpenMP support in gpu-elegant",
                         NULL);
-          if (ompThreads > 1)
-            fprintf(stderr,
-                    "gpu-elegant: experimental loss-sensitive CPU tracking "
-                    "enabled with %ld OpenMP threads. Use only on a GPU node "
-                    "whose requested CPU cores are not shared with other jobs.\n",
-                    ompThreads);
+          ompThreadsOption = ompThreads;
         }
         break;
 #endif
@@ -820,6 +818,30 @@ int main(int argc, char **argv)
       }
     }
   }
+
+#if HAVE_GPU && !USE_MPI
+  /* -ompThreads and OMP_NUM_THREADS mean the same thing: the one count of host threads for everything
+   * in gpu-elegant that uses them.  The command line wins over the environment; with neither, one. */
+  if (ompThreadsOption > 0) {
+#  if defined(_OPENMP)
+    omp_set_num_threads((int)ompThreadsOption);
+#  endif
+#  if defined(MKL)
+    {
+      const char *mklThreads = getenv("MKL_NUM_THREADS");
+      if (!mklThreads || !*mklThreads)
+        mkl_set_num_threads((int)ompThreadsOption);
+    }
+#  endif
+    gpuSetHostThreads(ompThreadsOption, "-ompThreads");
+  } else {
+#  if defined(_OPENMP)
+    const char *ompThreadsEnv = getenv("OMP_NUM_THREADS");
+    if (ompThreadsEnv && *ompThreadsEnv)
+      gpuSetHostThreads(omp_get_max_threads(), "OMP_NUM_THREADS");
+#  endif
+  }
+#endif
 
   if (!rpnDefns) {
     if (getenv("RPN_DEFNS")) {
@@ -2399,10 +2421,13 @@ int main(int argc, char **argv)
             bombElegant("run_setup must precede obstruction_data namelist", NULL);
           if (!do_floor_coordinates)
             bombElegant("floor_coordinate command required for obstruction_data to work", NULL);
-#if HAVE_GPU
-          bombElegant("The obstruction_data command is not implemented for the GPU version of elegant.", NULL);
-#endif
           readObstructionInput(&namelist_text, &run_conditions);
+#if HAVE_GPU
+          if (obstructionDataPresent()) {
+            printf("obstruction_data is not implemented in GPU code, so tracking will stay on the CPU.\n");
+            fflush(stdout);
+          }
+#endif
           break;
         case LINEAR_CHROMATIC_TRACKING_SETUP:
           beamline->flags |= BEAMLINE_MATRICES_NEEDED;

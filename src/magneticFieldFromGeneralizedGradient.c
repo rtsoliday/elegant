@@ -40,17 +40,21 @@ long computeGGEVectorPotential(double *Ax, double *dAx_dx, double *dAx_dy,
 #ifdef HAVE_GPU
 static long trackBGGExpansionOnGpu(int64_t np, BGGEXP *bgg, double pCentral,
                                    STORED_BGGEXP_DATA *bggData[2],
-                                   long igLimit[2]) {
+                                   long igLimit[2], double step,
+                                   double xEntry, double zEntry,
+                                   double xVertex, double zVertex,
+                                   double xExit, double zExit) {
   GPU_BGGEXP_DATA data;
   const double **Cmn = NULL, **dCmnDz = NULL;
-  double *coefficient = NULL, *multipoleFactor = NULL;
+  double *coefficient = NULL, *multipoleFactor = NULL, *potential = NULL;
   int *m = NULL, *gradient = NULL, *radialPower = NULL;
   long im, ig, iterm, termCount;
   unsigned long long tableSignature = 1469598103934665603ULL;
 
+  /* xMax/yMax only mark particles lost in the non-symplectic integrator; the symplectic one ignores them */
   if (!bggData[0] || bggData[1] || igLimit[0] <= 0 ||
       bggData[0]->nz <= 1 ||
-      bggData[0]->xMax > 0 || bggData[0]->yMax > 0)
+      (!bgg->symplectic && (bggData[0]->xMax > 0 || bggData[0]->yMax > 0)))
     return 0;
 
   termCount = bggData[0]->nm * igLimit[0];
@@ -61,10 +65,11 @@ static long trackBGGExpansionOnGpu(int64_t np, BGGEXP *bgg, double pCentral,
   radialPower = malloc(sizeof(*radialPower) * termCount);
   coefficient = malloc(sizeof(*coefficient) * termCount);
   multipoleFactor = malloc(sizeof(*multipoleFactor) * termCount);
+  potential = malloc(sizeof(*potential) * 3 * termCount);
   Cmn = malloc(sizeof(*Cmn) * termCount);
   dCmnDz = malloc(sizeof(*dCmnDz) * termCount);
   if (!m || !gradient || !radialPower || !coefficient ||
-      !multipoleFactor || !Cmn || !dCmnDz)
+      !multipoleFactor || !potential || !Cmn || !dCmnDz)
     bombElegant("memory allocation failure preparing BGGEXP CUDA data", NULL);
 
   for (im = iterm = 0; im < bggData[0]->nm; im++) {
@@ -87,6 +92,10 @@ static long trackBGGExpansionOnGpu(int64_t np, BGGEXP *bgg, double pCentral,
         ipow(-1, ig) * mfact /
         (ipow(2, 2 * ig) * factorial(ig) * factorial(ig + harmonic));
       multipoleFactor[iterm] = harmonicFactor;
+      /* computeGGEVectorPotential(): the same products, so the device's terms divide the same values */
+      potential[3 * iterm] = ipow(-1, ig) * mfact;
+      potential[3 * iterm + 1] = 2.0 * ipow(4, ig) * factorial(ig) * factorial(ig + harmonic + 1);
+      potential[3 * iterm + 2] = ipow(4, ig) * factorial(ig) * factorial(ig + harmonic);
       Cmn[iterm] = bggData[0]->Cmn[im][ig];
       dCmnDz[iterm] = bggData[0]->dCmn_dz[im][ig];
     }
@@ -98,6 +107,7 @@ static long trackBGGExpansionOnGpu(int64_t np, BGGEXP *bgg, double pCentral,
     free(radialPower);
     free(coefficient);
     free(multipoleFactor);
+    free(potential);
     free(Cmn);
     free(dCmnDz);
     return 0;
@@ -131,6 +141,32 @@ static long trackBGGExpansionOnGpu(int64_t np, BGGEXP *bgg, double pCentral,
   data.particleRelSign = particleRelSign;
   data.particleMass = particleMass;
   data.cMks = c_mks;
+  if (bgg->symplectic) {
+    double phi;
+    data.symplectic = 1;
+    data.isBend = bgg->isBend ? 1 : 0;
+    data.zInterval = bgg->zInterval;
+    data.potential = potential;
+    data.step = step;
+    data.scaleA = -bgg->strength * particleCharge * particleRelSign / (pCentral * particleMass * c_mks);
+    data.xEntry = xEntry;
+    data.zEntry = zEntry;
+    data.xExit = xExit;
+    data.zExit = zExit;
+    data.sinEntry = 0;
+    data.cosEntry = 1;
+    if (bgg->isBend) {
+      phi = atan2(xVertex - xEntry, zVertex - zEntry);
+      data.sinEntry = sin(phi);
+      data.cosEntry = cos(phi);
+      phi = atan2(xVertex - xExit, zExit - zVertex);
+      data.sinExit = sin(phi);
+      data.cosExit = cos(phi);
+    } else {
+      data.sinExit = 0;
+      data.cosExit = 1;
+    }
+  }
 
   gpu_track_bggexp(np, &data);
 
@@ -139,6 +175,7 @@ static long trackBGGExpansionOnGpu(int64_t np, BGGEXP *bgg, double pCentral,
   free(radialPower);
   free(coefficient);
   free(multipoleFactor);
+  free(potential);
   free(Cmn);
   free(dCmnDz);
   return 1;
@@ -517,7 +554,8 @@ long trackBGGExpansion(double **part, int64_t np, BGGEXP *bgg, double pCentral, 
 
 #ifdef HAVE_GPU
   if (getElementOnGpu()) {
-    if (trackBGGExpansionOnGpu(np, bgg, pCentral, bggData, igLimit)) {
+    if (trackBGGExpansionOnGpu(np, bgg, pCentral, bggData, igLimit, step,
+                               xEntry, zEntry, xVertex, zVertex, xExit, zExit)) {
 #  ifdef GPU_VERIFY
       startCpuTimer();
       gpuTracked = 1;

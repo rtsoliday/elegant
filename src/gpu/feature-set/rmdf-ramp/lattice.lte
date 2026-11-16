@@ -1,0 +1,6 @@
+! RMDF with a tilt, offsets, sections and a time offset: track_through_ramped_deflector() on the device,
+! its first particle's time from a read-only copy on the first call, at 5 MeV, over three passes. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+RM: RMDF, L=0.5, VOLTAGE=1e3, GAP=0.02, RAMP_TIME=1e-9, N_SECTIONS=12, TILT=0.3, DX=1e-4, DY=-1e-4, TIME_OFFSET=1e-12
+BL: LINE=(Q1, D, RM, D)

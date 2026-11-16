@@ -17,6 +17,9 @@ long gpu_scmult_single_bunch_supported(long nParticles, long idSlotsPerBunch,
                                         long nonlinear, double sliceDuration,
                                         long horizontal, long vertical);
 long gpu_scmult_can_initialize_on_gpu(long nParticles);
+long gpu_scmult_kick_supported(long nonlinear, const double *sigma,
+                               long horizontal, long vertical,
+                               double betax, double betay);
 long gpu_scmult_can_skip_cpu(long nParticles, long idSlotsPerBunch);
 long gpu_scmult_count_bunches(long nParticles, long idSlotsPerBunch,
                               long *nBuckets);

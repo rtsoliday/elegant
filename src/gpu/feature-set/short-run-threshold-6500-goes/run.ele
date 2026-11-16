@@ -1,0 +1,23 @@
+! 6,500 particles with the suite's thresholds of 64: the lattice of short-run-threshold-5000-stays past
+! the point where the rule changes sides (5,765 particles).  292 us on the CPU against 1.4 times
+! 200 us: the runs go to the device, and W's sums are the device's.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "BL",
+  p_central_mev = 1000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 1 &end
+&bunched_beam
+  n_particles_per_bunch = 6500,
+  emit_x = 1e-8, emit_y = 1e-8,
+  beta_x = 5, beta_y = 5,
+  sigma_dp = 1e-4, sigma_s = 1e-3,
+  distribution_type[0] = 3*"gaussian",
+  distribution_cutoff[0] = 3*3,
+&end
+&track &end

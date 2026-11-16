@@ -1,0 +1,13 @@
+SDDS1
+&column name=t, units=s, type=double &end
+&column name=HC1_1, type=double &end
+&column name=HC2_1, type=double &end
+&data mode=ascii, no_row_counts=1 &end
+0       0         0
+1e-7    1e-7     -2e-7
+2e-7    2e-7     -1e-7
+3e-7   -1e-7      1e-7
+4e-7   -2e-7      2e-7
+5e-7    0         0
+6e-7    1e-7     -1e-7
+7e-7    0         0

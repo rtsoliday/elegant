@@ -1,0 +1,9 @@
+! An optical stochastic cooling pickup and kicker with a drift and an RF cavity between them: the
+! pickup reads a copy of the beam, the kicker changes delta on the host's current copy and only that
+! column goes back. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+CP: CPICKUP, ID="OSC"
+CK: CKICKER, ID="OSC", STRENGTH=1e-6, LAMBDA_RAD=1e-6, NU=10, TRANSVERSE_MODE=0, INCOHERENT_MODE=0
+BL: LINE=(Q1, D, CP, D, R, D, CK, D)

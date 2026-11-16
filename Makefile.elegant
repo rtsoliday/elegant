@@ -32,6 +32,10 @@ ifeq ($(SWING_BUILD),1)
 else
   CUDA_ARCH ?= sm_86
 endif
+# Architectures for the optional "make gpu-elegant-all-sm" target, which installs
+# one gpu-elegant-<sm> per entry.  sm_80 code also runs on sm_86/sm_89 devices,
+# sm_100 on sm_103, and sm_120 on sm_121.
+CUDA_ARCH_LIST ?= sm_75 sm_80 sm_86 sm_89 sm_90 sm_100 sm_120
 
 # Preserve the existing numerical/debug optimization choices for CPU and CUDA hosts.
 ifeq ($(OS),Windows)

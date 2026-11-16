@@ -1,0 +1,24 @@
+! 1,500 particles, short runs judged by their element count alone. The estimate has to leave out the
+! ten lone kick quadrupoles, as tracking would, and the six matrix elements alone don't pay for their
+! two copies, so the thresholds stay and the output is the CPU's bit for bit. Counting the quadrupoles
+! would lower the thresholds and send the six to the device.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "BL",
+  p_central_mev = 1000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 1 &end
+&bunched_beam
+  n_particles_per_bunch = 1500,
+  emit_x = 1e-8, emit_y = 1e-8,
+  beta_x = 5, beta_y = 5,
+  sigma_dp = 1e-4, sigma_s = 1e-3,
+  distribution_type[0] = 3*"gaussian",
+  distribution_cutoff[0] = 3*3,
+&end
+&track &end

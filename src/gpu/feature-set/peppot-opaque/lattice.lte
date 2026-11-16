@@ -1,0 +1,8 @@
+! PEPPOT of zero length with three holes and no transmission. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: PEPPOT, RADII=2e-4, TRANSMISSION=0, N_HOLES=3
+0 0
+4e-4 0
+0 4e-4
+BL: LINE=(Q1, D, E, D)

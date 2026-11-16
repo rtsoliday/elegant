@@ -1,0 +1,27 @@
+! Tune histories from the fused program: gpu_batched_tune_program_track() in gpu_stub.c tracks the whole
+! grid on the device, one kernel launch a turn, and computeTunesFromTrackingBatch() in twiss.cc uses its
+! histories only if the CPU, tracking a sample of the particles itself, gets the same bits.
+! The same ring with a CSBEND for one of the matrix bends, whose edges have a fringe angle (HGAP and
+! FINT). With one, the edge takes tan(e - psi/(1+delta)) for each particle, from the device's library
+! where the CPU calls the host's, so the program doesn't claim the CPU's bits for this bend. (Until
+! 2026-11-11 no CSBEND was claimed, because its drift called sin, cos and asin for each particle; a
+! plain one is now in search-frequency-map-program-csbend.)
+MAL: MALIGN
+MA0: MALIGN,ON_PASS=0,DX=1e-4,DP=1e-4
+MA1: MALIGN,ON_PASS=1,DYP=1e-5
+CH: CHARGE,TOTAL=1e-9
+W: WATCH,FILENAME="%s.w1",MODE="centroid"
+MX: MAXAMP,X_MAX=0.006,Y_MAX=0.006
+D: DRIF,L=0.4
+DE: EDRIFT,L=0.1
+QF: KQUAD,L=0.2,K1=1.5,N_SLICES=4
+QD: KQUAD,L=0.2,K1=-1.5,N_SLICES=4
+QM: QUAD,L=0.1,K1=0.2
+SX: SEXT,L=0.1,K2=3
+SF: KSEXT,L=0.1,K2=5,N_SLICES=4
+AP: RCOL,X_MAX=0.004,Y_MAX=0.004
+BM: SBEN,L=0.3,ANGLE=0.02
+BC: CSBEND,L=0.3,ANGLE=0.02,E1=0.01,E2=0.01,HGAP=0.01,FINT=0.5,N_SLICES=4
+CELL: LINE=(D,QF,D,SF,DE,QD,D,QM,BM,SX)
+CELLB: LINE=(D,QF,D,SF,DE,QD,D,QM,BC,SX)
+RING: LINE=(MAL,MA0,MA1,CH,MX,4*CELL,AP,W,3*CELL,CELLB)

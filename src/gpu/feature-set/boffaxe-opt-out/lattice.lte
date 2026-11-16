@@ -1,0 +1,5 @@
+! ELEGANT_GPU_ENABLE_BOFFAXE=0 (suite.json) keeps BOFFAXE on the CPU
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BX: BOFFAXE, L=0.25, FILENAME="../data/boffaxe_gradient.sdds", FIELD_COLUMN="Gradient", Z_COLUMN="z", ORDER=1, STRENGTH=0.01
+BL: LINE=(Q1, D, BX, D)

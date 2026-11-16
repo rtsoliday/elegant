@@ -1,0 +1,7 @@
+! MATTER 5e-5 m thick: elegant's single-scattering sections (PLIMIT=0.02), with energy decay and
+! straggling; the host draws each section's numbers and the device replays the sections. Must be
+! identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: MATTER, L=5e-5, Z=13, A=26.98, XO=0.089, RHO=2700, PLIMIT=0.02, ENERGY_DECAY=1, ENERGY_STRAGGLE=1
+BL: LINE=(Q1, D, E, D)

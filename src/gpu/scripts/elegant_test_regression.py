@@ -95,6 +95,7 @@ DEPENDENCY_PATTERN = re.compile(rb"\.\./([A-Za-z0-9_.-]+)")
 CSH_SHEBANG_PATTERN = re.compile(r"^#!\s*\S*/(?:t?csh)(?:\s|$)")
 SCRIPT_TEMP_PATTERN = re.compile(r"^tmp\d+\.\d+\.(?:in|out)$")
 LOCAL_FINGERPRINT_EXCLUDED_FILES = {"README.md"}
+EXTRA_DECK_SEPARATOR = "__"
 SDDS_FLOAT_TYPES = {"float", "double", "longdouble"}
 SDDS_VALUE_OPTIONS = {
     "column": "-columns",
@@ -405,6 +406,19 @@ def local_suite_configuration(test_set: Path) -> dict[str, Any]:
             "suite gpu_environment must map ELEGANT_GPU_* names to string values: "
             f"{configuration_path}"
         )
+    gpu_environment_by_test = configuration.get("gpu_environment_by_test", {})
+    if not isinstance(gpu_environment_by_test, dict) or any(
+        not isinstance(settings, dict)
+        or any(
+            not key.startswith("ELEGANT_GPU_") or not isinstance(value, str)
+            for key, value in settings.items()
+        )
+        for settings in gpu_environment_by_test.values()
+    ):
+        raise RegressionError(
+            "suite gpu_environment_by_test must map test names to ELEGANT_GPU_* "
+            f"settings: {configuration_path}"
+        )
     for setting in (
         "gpu_noise_absolute_tolerance",
         "gpu_noise_relative_tolerance",
@@ -413,6 +427,14 @@ def local_suite_configuration(test_set: Path) -> dict[str, Any]:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
             raise RegressionError(
                 f"suite {setting} must be nonnegative: {configuration_path}"
+            )
+    for setting in ("gpu_activity_exempt_tests", "extra_deck_exclusions"):
+        value = configuration.get(setting, [])
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) for item in value
+        ):
+            raise RegressionError(
+                f"suite {setting} must be a list of strings: {configuration_path}"
             )
     return configuration
 
@@ -488,12 +510,46 @@ def validate_suite_run_settings(metadata: dict[str, Any], jobs: int, *, correctn
         )
 
 
-def suite_environment(metadata: dict[str, Any]) -> dict[str, str]:
+def suite_environment(
+    metadata: dict[str, Any], settings: Iterable[str] = ()
+) -> dict[str, str]:
+    """Return the suite's GPU settings with any NAME=VALUE command-line settings."""
     suite = metadata.get("suite", {})
-    if not isinstance(suite, dict):
-        return {}
-    environment = suite.get("gpu_environment", {})
-    return dict(environment) if isinstance(environment, dict) else {}
+    environment = suite.get("gpu_environment", {}) if isinstance(suite, dict) else {}
+    overrides = dict(environment) if isinstance(environment, dict) else {}
+    for setting in settings:
+        name, separator, value = setting.partition("=")
+        if not separator or not name:
+            raise RegressionError(f"--environment needs NAME=VALUE, got {setting!r}")
+        overrides[name] = value
+    return overrides
+
+
+def suite_test_environments(
+    metadata: dict[str, Any], settings: Iterable[str] = ()
+) -> dict[str, dict[str, str]]:
+    """Return the suite's per-test settings, less any names set on the command line."""
+    suite = metadata.get("suite", {})
+    by_test = suite.get("gpu_environment_by_test", {}) if isinstance(suite, dict) else {}
+    command_line = {setting.partition("=")[0] for setting in settings}
+    return {
+        pattern: {
+            name: value for name, value in environment.items() if name not in command_line
+        }
+        for pattern, environment in by_test.items()
+    }
+
+
+def environment_for_test(
+    environment_overrides: dict[str, str],
+    test_environments: dict[str, dict[str, str]] | None,
+    name: str,
+) -> dict[str, str]:
+    environment = dict(environment_overrides)
+    for pattern, settings in (test_environments or {}).items():
+        if fnmatch.fnmatchcase(name, pattern):
+            environment.update(settings)
+    return environment
 
 
 def is_gpu_performance_suite(metadata: dict[str, Any]) -> bool:
@@ -589,17 +645,44 @@ def is_runner_directory(path: Path) -> bool:
     return any(path.glob("run*.ele"))
 
 
+def extra_deck_source(test_set: Path, name: str) -> tuple[str, str | None]:
+    """Return a test's directory and, for CASE__DECK names, the deck it runs."""
+    case, separator, deck = name.partition(EXTRA_DECK_SEPARATOR)
+    if not separator or (test_set / name).is_dir():
+        return name, None
+    return case, f"{deck}.ele"
+
+
+def discover_extra_decks(test_set: Path, exclusions: Iterable[str]) -> list[str]:
+    """Name the decks that a folder's run.ele keeps prepare_commands from running."""
+    excluded = set(exclusions)
+    names = []
+    for case in test_set.iterdir():
+        if not case.is_dir() or not (case / "run.ele").is_file():
+            continue
+        for deck in case.glob("*.ele"):
+            if deck.name != "run.ele" and f"{case.name}/{deck.name}" not in excluded:
+                names.append(f"{case.name}{EXTRA_DECK_SEPARATOR}{deck.stem}")
+    return sorted(names)
+
+
 def select_tests(
-    test_set: Path, requested: list[str], *, include_excluded: bool = False
+    test_set: Path, requested: list[str], *, include_excluded: bool = False,
+    reference_directory: str = "reference",
 ) -> tuple[list[str], list[str]]:
     if requested:
         names = sorted(set(requested))
         for name in names:
             if Path(name).name != name or name in {".", ".."}:
                 raise RegressionError(f"invalid test name: {name!r}")
-            path = test_set / name
+            case, deck = extra_deck_source(test_set, name)
+            path = test_set / case
             if not path.is_dir():
                 raise RegressionError(f"test directory not found: {path}")
+            if deck is not None:
+                if not (path / deck).is_file():
+                    raise RegressionError(f"deck not found: {path / deck}")
+                continue
             if not is_runner_directory(path):
                 raise RegressionError(f"no runnable input found in test: {name}")
         # Explicitly naming a test is an intentional override for diagnosing
@@ -612,7 +695,7 @@ def select_tests(
         if path.is_dir() and is_runner_directory(path)
     ]
     reference_tests = [
-        name for name in runnable if (test_set / name / "reference").is_dir()
+        name for name in runnable if (test_set / name / reference_directory).is_dir()
     ]
     # Preserve elegantTestSet's reference-backed discovery. Standalone local
     # suites such as src/gpu/test-set intentionally have no reference directories.
@@ -708,6 +791,16 @@ def export_test_source(source: Path, destination: Path, source_kind: str) -> Non
     if source_kind != "local":
         raise RegressionError(f"unsupported test-set source type: {source_kind!r}")
     shutil.copytree(source, destination)
+
+
+def export_named_test(
+    test_set: Path, name: str, destination: Path, source_kind: str
+) -> None:
+    case, extra_deck = extra_deck_source(test_set, name)
+    export_test_source(test_set / case, destination, source_kind)
+    if extra_deck is not None:
+        # prepare_commands runs run.ele, so the extra deck takes its place.
+        (destination / extra_deck).replace(destination / "run.ele")
 
 
 def run_process(
@@ -835,14 +928,19 @@ def translate_supported_csh_helpers(root: Path) -> tuple[list[str], list[str]]:
 
 
 def prepare_commands(
-    test_dir: Path, executable: Path, executable_arguments: list[str]
+    test_dir: Path, executable: Path, executable_arguments: list[str],
+    launcher: list[str] | None = None,
 ) -> tuple[list[list[str]], bool, str]:
+    launcher = launcher or []
     run_template = test_dir / "runTemplate"
     run_script = test_dir / "runScript"
+    # With a launcher (Pelegant), runTemplate and runScript get the whole command as their elegant command;
+    # the scripts use it unquoted, so the shell splits it into words.  elegantTestSet's regressionTest
+    # skips them for parallel runs, which leaves their earlier steps, such as making a beam, undone.
+    executable_command = shlex.join([*launcher, str(executable), *executable_arguments])
     if run_template.is_file():
         run_job = test_dir / "runJob"
         template = run_template.read_text(errors="surrogateescape")
-        executable_command = shlex.join([str(executable), *executable_arguments])
         run_job.write_text(
             template.replace("<executable>", executable_command),
             errors="surrogateescape",
@@ -859,21 +957,22 @@ def prepare_commands(
         if "cat done > run.done" in script and not (test_dir / "done").exists():
             (test_dir / "done").touch()
         command, runner_mode = prepare_runner_command(
-            run_script, [str(executable), *executable_arguments]
+            run_script,
+            [executable_command] if launcher else [str(executable), *executable_arguments],
         )
         return [command], True, runner_mode
     run_file = test_dir / "run.ele"
     if run_file.is_file():
         return [
-            [str(executable), run_file.name, *executable_arguments]
-        ], False, "direct"
+            [*launcher, str(executable), run_file.name, *executable_arguments]
+        ], False, "mpi" if launcher else "direct"
     inputs = sorted(test_dir.glob("run*.ele"))
     if not inputs:
         raise RegressionError(f"no runnable input found in {test_dir.name}")
     return [
-        [str(executable), path.name, *executable_arguments]
+        [*launcher, str(executable), path.name, *executable_arguments]
         for path in inputs
-    ], False, "direct"
+    ], False, "mpi" if launcher else "direct"
 
 
 def installed_oag_top_dir(environment: dict[str, str], test_set: Path) -> Path | None:
@@ -1032,6 +1131,7 @@ def run_test(
     timeout: float,
     keep_work: bool,
     environment_overrides: dict[str, str],
+    launcher: list[str] | None = None,
 ) -> dict[str, Any]:
     check_cancellation()
     started = time.monotonic()
@@ -1066,7 +1166,7 @@ def run_test(
     log_chunks: list[bytes] = []
     try:
         test_dir = work_root / name
-        export_test_source(test_set / name, test_dir, source_kind)
+        export_named_test(test_set, name, test_dir, source_kind)
         dependencies = discover_dependencies(test_dir, test_set, name)
         result["dependencies"] = dependencies
         for dependency in dependencies:
@@ -1075,7 +1175,7 @@ def run_test(
             )
 
         commands, require_done, runner_mode = prepare_commands(
-            test_dir, executable, executable_arguments
+            test_dir, executable, executable_arguments, launcher
         )
         result["runner_mode"] = runner_mode
         translated_helpers, unsupported_helpers = translate_supported_csh_helpers(
@@ -1208,6 +1308,7 @@ def run_test_repeated(
     warmup_runs: int,
     repetitions: int,
     extend_noisy_samples: bool,
+    launcher: list[str] | None = None,
 ) -> dict[str, Any]:
     check_cancellation()
     run_roots: list[Path] = []
@@ -1231,6 +1332,7 @@ def run_test_repeated(
             timeout=timeout,
             keep_work=keep_work,
             environment_overrides=environment_overrides,
+            launcher=launcher,
         )
 
     def publish(
@@ -1395,6 +1497,8 @@ def run_tests(
     warmup_runs: int,
     repetitions: int,
     extend_noisy_samples: bool,
+    test_environments: dict[str, dict[str, str]] | None = None,
+    launcher: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     if not 1 <= jobs <= MAX_PARALLEL_TESTS:
         raise RegressionError(
@@ -1413,10 +1517,13 @@ def run_tests(
                 artifact_root=artifact_root,
                 timeout=timeout,
                 keep_work=keep_work,
-                environment_overrides=environment_overrides,
+                environment_overrides=environment_for_test(
+                    environment_overrides, test_environments, name
+                ),
                 warmup_runs=warmup_runs,
                 repetitions=repetitions,
                 extend_noisy_samples=extend_noisy_samples,
+                launcher=launcher,
             ): name
             for name in names
         }
@@ -1548,7 +1655,7 @@ def baseline_command(args: argparse.Namespace) -> int:
     test_set = Path(args.test_set).expanduser().resolve()
     source_metadata = test_set_metadata(test_set)
     validate_suite_run_settings(source_metadata, args.jobs, correctness_only=args.correctness_only)
-    environment_overrides = suite_environment(source_metadata)
+    environment_overrides = suite_environment(source_metadata, args.environment)
     warmup_runs, repetitions, extend_noisy_samples = timing_run_options(
         source_metadata, args.warmup_runs, args.repetitions
     )
@@ -1556,8 +1663,25 @@ def baseline_command(args: argparse.Namespace) -> int:
         warmup_runs, repetitions, extend_noisy_samples = 0, 1, False
     executable = resolve_executable(args.elegant)
     names, excluded = select_tests(
-        test_set, args.tests, include_excluded=args.include_excluded
+        test_set, args.tests, include_excluded=args.include_excluded,
+        reference_directory=args.reference_directory,
     )
+    if args.include_extra_decks:
+        if not args.correctness_only:
+            raise RegressionError(
+                "extra decks are not timing workloads; add --correctness-only"
+            )
+        if test_set_kind(source_metadata) != "local":
+            raise RegressionError("extra decks need a local suite")
+        names = sorted(
+            {
+                *names,
+                *discover_extra_decks(
+                    test_set,
+                    source_metadata["suite"].get("extra_deck_exclusions", []),
+                ),
+            }
+        )
     output = Path(args.output).expanduser().resolve()
     create_artifact_root(output)
     if excluded:
@@ -1584,6 +1708,8 @@ def baseline_command(args: argparse.Namespace) -> int:
         warmup_runs=warmup_runs,
         repetitions=repetitions,
         extend_noisy_samples=extend_noisy_samples,
+        test_environments=suite_test_environments(source_metadata, args.environment),
+        launcher=shlex.split(args.launcher) if args.launcher else None,
     )
     check_cancellation()
     timed_out = write_timeout_report(output, results, args.timeout)
@@ -1600,6 +1726,8 @@ def baseline_command(args: argparse.Namespace) -> int:
             "correctness_only": args.correctness_only,
             "timeout_seconds": args.timeout,
             "executable_arguments": args.elegant_argument,
+            "launcher": shlex.split(args.launcher) if args.launcher else [],
+            "reference_directory": args.reference_directory,
             "timing_metric": "execution_seconds",
             "warmup_runs": warmup_runs,
             "repetitions": repetitions,
@@ -2465,6 +2593,13 @@ def performance_policy(
     return enabled, minimum_speedup, require_gpu_activity
 
 
+def gpu_activity_exempt(baseline_manifest: dict[str, Any], name: str) -> bool:
+    test_set = baseline_manifest.get("test_set", {})
+    suite = test_set.get("suite", {}) if isinstance(test_set, dict) else {}
+    patterns = suite.get("gpu_activity_exempt_tests", []) if isinstance(suite, dict) else []
+    return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
+
+
 def gpu_noise_policy(
     baseline_manifest: dict[str, Any],
     requested_absolute_tolerance: float | None,
@@ -2569,7 +2704,11 @@ def assess_runtime_performance(
                     f"non-target slowdown {slowdown * 100:.3f}% exceeds the "
                     f"{non_target_regression_limit * 100:.3f}% limit"
                 )
-        if require_gpu_activity and gpu_elements <= 0:
+        if (
+            require_gpu_activity
+            and gpu_elements <= 0
+            and not gpu_activity_exempt(baseline_manifest, name)
+        ):
             reasons.append("candidate log did not report any GPU-tracked elements")
         rows.append(
             {
@@ -2816,7 +2955,7 @@ def compare_command(args: argparse.Namespace) -> int:
     test_set = Path(args.test_set).expanduser().resolve()
     source_metadata = test_set_metadata(test_set)
     validate_suite_run_settings(source_metadata, args.jobs, correctness_only=args.correctness_only)
-    environment_overrides = suite_environment(source_metadata)
+    environment_overrides = suite_environment(source_metadata, args.environment)
     warmup_runs, repetitions, extend_noisy_samples = timing_run_options(
         source_metadata, args.warmup_runs, args.repetitions
     )
@@ -2845,6 +2984,8 @@ def compare_command(args: argparse.Namespace) -> int:
         warmup_runs=warmup_runs,
         repetitions=repetitions,
         extend_noisy_samples=extend_noisy_samples,
+        test_environments=suite_test_environments(source_metadata, args.environment),
+        launcher=shlex.split(args.launcher) if args.launcher else None,
     )
     timed_out = write_timeout_report(output, results, args.timeout)
     ignored, ignored_columns = comparison_ignore_lists(args, baseline)
@@ -2872,6 +3013,8 @@ def compare_command(args: argparse.Namespace) -> int:
             "correctness_only": args.correctness_only,
             "timeout_seconds": args.timeout,
             "executable_arguments": args.elegant_argument,
+            "launcher": shlex.split(args.launcher) if args.launcher else [],
+            "reference_directory": args.reference_directory,
             "timing_metric": "execution_seconds",
             "warmup_runs": warmup_runs,
             "repetitions": repetitions,
@@ -2979,20 +3122,30 @@ def compare_existing_command(args: argparse.Namespace) -> int:
         for run in (baseline, candidate)
     )
     missing_activity: list[str] = []
+    exempt_activity: list[str] = []
     if correctness_only:
         if args.minimum_speedup is not None or pre_change is not None:
             raise RegressionError("correctness-only runs cannot support timing gates")
         performance_enabled = False
         report.extend(["", "Runtime performance was not assessed: correctness-only run."])
         if require_gpu_activity:
-            missing_activity = [
+            inactive = [
                 item["name"] for item in candidate["tests"]
                 if (item.get("gpu_usage") or {}).get("total_elements", 0) <= 0
             ]
+            exempt_activity = [
+                name for name in inactive if gpu_activity_exempt(baseline, name)
+            ]
+            missing_activity = [name for name in inactive if name not in exempt_activity]
             if missing_activity:
                 report.append("CUDA coverage failed (no activity): " + ", ".join(missing_activity))
+            elif exempt_activity:
+                report.append("CUDA activity confirmed in every other candidate test.")
             else:
                 report.append("CUDA activity confirmed in every candidate test.")
+            if exempt_activity:
+                # An exemption keeps the exit status clean, not the limitation hidden.
+                report.append("No CUDA activity, exempt by suite: " + ", ".join(exempt_activity))
     performance = None
     if performance_enabled:
         performance = assess_runtime_performance(
@@ -3064,6 +3217,7 @@ def compare_existing_command(args: argparse.Namespace) -> int:
         "comparisons": comparisons,
     }
     manifest["missing_cuda_activity"] = missing_activity
+    manifest["exempt_without_cuda_activity"] = exempt_activity
     if performance is not None:
         manifest["performance_comparison"] = performance
     write_manifest(output / "manifest.json", manifest)
@@ -3161,6 +3315,13 @@ def add_run_options(parser: argparse.ArgumentParser) -> None:
         help="one run per test, allow parallel tests, and exclude timing gates",
     )
     parser.add_argument(
+        "--environment", action="append", default=[], metavar="NAME=VALUE",
+        help=(
+            "set a variable for each test, overriding the suite's value; repeat "
+            "as needed. Recorded in the manifest"
+        ),
+    )
+    parser.add_argument(
         "--test-set",
         default=os.environ.get("ELEGANT_TEST_SET", "elegantTestSet"),
         help=(
@@ -3169,6 +3330,24 @@ def add_run_options(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument("--elegant", required=True, help="elegant executable to run")
+    parser.add_argument(
+        "--launcher",
+        help=(
+            "command that runs elegant, such as \"mpiexec -np 8\" for Pelegant; "
+            "runTemplate and runScript get it with the executable as their "
+            "elegant command. Recorded in the manifest"
+        ),
+    )
+    parser.add_argument(
+        "--reference-directory",
+        choices=sorted(REFERENCE_DIRECTORIES),
+        default="reference",
+        help=(
+            "discover the elegantTestSet tests that have this directory: "
+            "reference (serial), preference (Pelegant) or greference "
+            "(default: %(default)s)"
+        ),
+    )
     parser.add_argument(
         "--elegant-argument",
         action="append",
@@ -3789,6 +3968,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             f"include the {len(DEFAULT_EXCLUDED_TESTS)} known-problem tests that "
             "are skipped by default"
+        ),
+    )
+    baseline.add_argument(
+        "--include-extra-decks",
+        action="store_true",
+        help=(
+            "also run each local suite case's other *.ele decks, as CASE__DECK; "
+            "requires --correctness-only"
         ),
     )
     baseline.add_argument(

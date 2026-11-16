@@ -1,0 +1,7 @@
+! RFTMEZ0 offset, tilted, yawed and pitched: rotate3() of the particle and of the fields. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+C1: RFTMEZ0, L=0.3184, FREQUENCY=115e6, EZ_PEAK=3e6, PHASE=10, INPUTFILE="../data/rftmez0_ez.sdds", &
+    ZCOLUMN="z", EZCOLUMN="Ez", METHOD="non-adaptive", N_STEPS=50, DX=3e-4, DY=-2e-4, DZ=1e-3, ETILT=0.02, &
+    EPITCH=1e-3, EYAW=-2e-3, CHANGE_P0=1
+BL: LINE=(Q1, D, C1, D)

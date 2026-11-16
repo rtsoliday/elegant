@@ -1,0 +1,8 @@
+! DSCATTER in delta from an integrated PDF with random signs, a probability and limits per pass
+! and in total over four passes: the first call reads the file without tracking, then the host draws
+! the numbers and the device adds them. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: DSCATTER, PLANE="dp", FILENAME="../data/dscatter_pdf.sdds", VALUENAME="z", PDFNAME="g", FACTOR=1e-4, &
+    RANDOMSIGN=1, PROBABILITY=0.4, LIMITPERPASS=60, LIMITTOTAL=150
+BL: LINE=(Q1, D, E, D)

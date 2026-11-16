@@ -1,0 +1,7 @@
+! DSCATTER from a CDF covering 0.2 to 0.9 only, at a probability of 0.5: interp() fails for the other
+! draws, and the host prints elegant's warnings in its order. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: DSCATTER, PLANE="x", FILENAME="../data/dscatter_cdf_gap.sdds", VALUENAME="z", CDFNAME="cdf", &
+    FACTOR=1e-5, PROBABILITY=0.5
+BL: LINE=(Q1, D, E, D)

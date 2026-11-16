@@ -1,0 +1,9 @@
+! Each magnet is half a betatron period long, with no drift between them, so each hands the next
+! the beam it received, mirrored.  The aperture file is narrowest at the magnet centers (s = 0.5,
+! 1.5, 2.5 and 3.5 m) and wide at their ends.  KQUSE comes first, while y is small: every magnet
+! focuses x, so y grows about twelve times in each.
+Q1: KQUAD,L=1.0,K1=9.8696044010893586,N_KICKS=40,INTEGRATION_ORDER=4,DX=1e-4,TILT=0.05
+S1: KSEXT,L=1.0,K1=9.8696044010893586,K2=1,N_KICKS=40,INTEGRATION_ORDER=4
+U1: KQUSE,L=1.0,K1=9.8696044010893586,K2=1,N_KICKS=40,INTEGRATION_ORDER=4,DX=-1e-4
+C1: DQCOR,L=1.0,K1=9.8696044010893586,N_SLICES=10,INTEGRATION_ORDER=4
+RING: LINE=(U1,Q1,S1,C1)

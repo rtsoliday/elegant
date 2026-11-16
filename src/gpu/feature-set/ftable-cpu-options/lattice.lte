@@ -1,0 +1,5 @@
+! FTABLE with VERBOSE=1, which writes elegant's phase-space file: on the host. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+FQ: FTABLE, L=0.2, INPUT_FILE="../data/ftable_quad.sdds", N_KICKS=20, SIMPLE_INPUT=1, VERBOSE=1
+BL: LINE=(Q1, D, FQ, D)

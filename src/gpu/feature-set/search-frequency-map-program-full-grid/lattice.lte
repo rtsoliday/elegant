@@ -1,0 +1,26 @@
+! Tune histories from the fused program: gpu_batched_tune_program_track() in gpu_stub.c tracks the whole
+! grid on the device, one kernel launch a turn, and computeTunesFromTrackingBatch() in twiss.cc uses its
+! histories only if the CPU, tracking a sample of the particles itself, gets the same bits.
+! Every element here is one whose device arithmetic is the CPU's: matrices (DRIF, QUAD, SBEN, SEXT), an
+! exact drift, kick quadrupoles and sextupoles, MALIGNs that act on the first pass, the second pass and
+! every pass, one on pass 40 that puts points which had a first tune onto the collimator in the second
+! interval, a collimator that takes the outer grid points, a MAXAMP, and a WATCH and a CHARGE, which do
+! nothing in this tracking.
+MAL: MALIGN
+MA0: MALIGN,ON_PASS=0,DX=1e-4,DP=1e-4
+MA1: MALIGN,ON_PASS=1,DYP=1e-5
+MA2: MALIGN,ON_PASS=40,DX=1.5e-3
+CH: CHARGE,TOTAL=1e-9
+W: WATCH,FILENAME="%s.w1",MODE="centroid"
+MX: MAXAMP,X_MAX=0.006,Y_MAX=0.006
+D: DRIF,L=0.4
+DE: EDRIFT,L=0.1
+QF: KQUAD,L=0.2,K1=1.5,N_SLICES=4
+QD: KQUAD,L=0.2,K1=-1.5,N_SLICES=4
+QM: QUAD,L=0.1,K1=0.2
+SX: SEXT,L=0.1,K2=3
+SF: KSEXT,L=0.1,K2=5,N_SLICES=4
+AP: RCOL,X_MAX=0.004,Y_MAX=0.004
+BM: SBEN,L=0.3,ANGLE=0.02
+CELL: LINE=(D,QF,D,SF,DE,QD,D,QM,BM,SX)
+RING: LINE=(MAL,MA0,MA1,MA2,CH,MX,4*CELL,AP,W,4*CELL)

@@ -1,0 +1,25 @@
+! Deterministic batched tune-footprint workload using the high-order map.
+&run_setup
+    lattice = "lattice.lte",
+    p_central = 880,
+    always_change_p0 = 1,
+    semaphore_file = %s.done
+&end
+
+&run_control
+    n_passes = 64
+&end
+
+&tune_footprint
+    delta_output = "%s.dtf",
+    xy_output = "%s.xyf",
+    delta_min = -0.005,
+    delta_max = 0.005,
+    ndelta = 81,
+    nx = 9,
+    ny = 9,
+    immediate = 1,
+    filtered_output = 0,
+    quadratic_spacing = 0,
+    verbosity = 0
+&end

@@ -1,0 +1,6 @@
+! Each bend is half a betatron period long, with no drift between them.  The aperture file is
+! narrowest at the bend centers (s = 0.5 and 1.5 m) and wide at their ends.  B2 bends the other way,
+! so its TILT gains PI.
+B1: CSBEND,L=1.0,ANGLE=0.01,K1=9.8696044010893586,N_KICKS=40,INTEGRATION_ORDER=4
+B2: CSBEND,L=1.0,ANGLE=-0.01,K1=9.8696044010893586,N_KICKS=40,INTEGRATION_ORDER=4,TILT=0.05,DX=1e-4
+RING: LINE=(B1,B2)

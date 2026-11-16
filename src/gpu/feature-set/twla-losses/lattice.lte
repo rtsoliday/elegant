@@ -1,0 +1,8 @@
+! TWLA with a radial aperture that loses most of the beam, CHANGE_P0 and a losses file: the device marks
+! the particles, its rows hold motion()'s loss records, motion()'s swaps give the order, and the central
+! momentum is matched to all the particles as motion() does, the lost ones included. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+L1: TWLA, L=0.314908044117647, PHASE="pi -2 /", EZ=-19e6, X_MAX=0.0012, Y_MAX=0.0012, METHOD="non-adaptive", &
+    FIDUCIAL="t,ave", N_STEPS=300, CHANGE_P0=1, ACCURACY=1e-9
+BL: LINE=(Q1, D, 3*L1, D)

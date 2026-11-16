@@ -1,0 +1,7 @@
+! TWLA whose aperture is smaller than the beam at the entrance, no CHANGE_P0: losses before the
+! integration (motion()'s first test) and inside it. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+L1: TWLA, L=0.314908044117647, PHASE="pi -2 /", EZ=-19e6, X_MAX=0.0004, Y_MAX=0.0004, METHOD="non-adaptive", &
+    FIDUCIAL="t,ave", N_STEPS=300, ACCURACY=1e-9, DX=1e-4
+BL: LINE=(Q1, D, 2*L1, D)

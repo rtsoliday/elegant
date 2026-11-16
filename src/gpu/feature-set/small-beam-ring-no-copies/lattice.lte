@@ -1,0 +1,9 @@
+! A FODO ring of six matrix elements, all of which the device takes, so after the first pass the beam
+! is never copied.
+Q1: QUAD,L=0.2,K1=0.5
+Q2: QUAD,L=0.2,K1=-0.5
+D: DRIF,L=0.3
+! W's sums are the sign of where the beam was: the device adds them in its own order, so they differ
+! from the CPU's in the last digits, while the particles come out the same from either side.
+W: WATCH,FILENAME="%s.w1",MODE="parameter"
+RING: LINE=(Q1,D,D,Q2,D,D,W)

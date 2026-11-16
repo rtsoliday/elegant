@@ -75,9 +75,10 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
   long *activeSecondValid = NULL, *secondIndex = NULL;
   long idelta, ix, iy, ip, points, row, secondParticles = 0, secondSlot;
 
+  /* always_change_p0 rematches the central momentum to each particle, one at a time. A batch
+     shares one central momentum, so these runs have to use the unbatched path. */
   points = ndelta * nx * ny;
-  if (turns <= 1 || quadratic_spacing ||
-      !full_grid_output ||
+  if (turns <= 1 || quadratic_spacing || run->always_change_p0 ||
       !gpu_batched_tune_tracking_enabled(points) ||
       !gpu_batched_frequency_map_beamline_supported(beamline))
     return 0;
@@ -136,6 +137,7 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
     }
   }
   gpu_batched_tune_tracking_set_cpu_only(cpuTracking);
+  gpu_batched_tune_own_rf_reference(beamline);
   if (run->showElementTiming)
     resetElementTiming();
 #if defined(_OPENMP)
@@ -212,12 +214,15 @@ static long doFrequencyMapBatched(RUN *run, VARY *control,
       }
     }
   }
+  gpu_batched_tune_own_rf_reference(NULL);
   gpu_batched_tune_tracking_set_cpu_only(0);
   if (run->showElementTiming)
     reportElementTiming();
 
   for (ip = row = 0; ip < points; ip++) {
-    if (!firstValid[ip] && !full_grid_output)
+    /* without full_grid_output a point has a row only if both of its tunes were found, as in the
+     * point-by-point loop of doFrequencyMap() */
+    if (!full_grid_output && (!firstValid[ip] || (include_changes && !secondValid[ip])))
       continue;
     if (!SDDS_SetRowValues(
           &SDDS_fmap, SDDS_SET_BY_INDEX | SDDS_PASS_BY_VALUE, row,

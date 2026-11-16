@@ -1,0 +1,7 @@
+! GFWIGGLER with three field harmonics, third-order end poles, phases, tilt and offsets:
+! APPLE_Track() on the device with CUDA's sin, cos and exp, so it differs by rounding
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+GW: GFWIGGLER, L=1.0, PERIODS=20, B_MAX=0.5, ORDER=3, END_POLE=1, STEP=1, INPUT_FILE="../data/gfwiggler_harmonics.sdds", &
+    PHASE_2=0.4, PHASE_3=-0.2, TILT=0.05, DX=1e-4, DZ=0.002
+BL: LINE=(Q1, D, GW, D)

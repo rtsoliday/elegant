@@ -10,6 +10,9 @@
 #include "mdb.h"
 #include "track.h"
 #include "SDDS.h"
+#ifdef HAVE_GPU
+#  include "gpu/gpu_base.h"
+#endif
 
 #define SLICE_PARAMETERS 6
 static SDDS_DEFINITION slice_parameter[SLICE_PARAMETERS] = {
@@ -104,6 +107,168 @@ void SDDS_SlicePointSetup(SLICE_POINT *slicePoint, char *command_file, char *lat
 //static double tmp_safe_sqrt;
 //#define SAFE_SQRT(x) ((tmp_safe_sqrt=(x))<0?(double)0.0:sqrt(tmp_safe_sqrt))
 
+#if defined(HAVE_GPU) && !USE_MPI
+/* gpu-elegant only.  dump_slice_analysis() below calls accumulate_beam_sums() once per slice, and each
+ * call goes through the whole beam several dozen times to find the slice's few particles: 50 slices of a
+ * 480,000-particle beam took 0.17 s a call, 58% of a ring run with six SLICE elements.  Here each slice's
+ * particles are found once, in particle order, and accumulate_beam_sums() is given only those, with the
+ * same limits.  It tests them again with the same comparisons and adds them in the same order, so the
+ * sums are the same to the last bit.  ELEGANT_GPU_SLICE_SINGLE_PASS=0 uses the loop over the whole beam.
+ */
+typedef struct {
+  long *start;      /* slice k's members are member[start[k]] ... member[start[k+1]-1] */
+  double **coord;   /* the members' coordinates, slice after slice */
+  double *time;     /* and their times */
+  double *t0;       /* each slice's lower limit, as the loop below finds it by repeated addition */
+} SLICE_MEMBERS;
+
+static long sliceSinglePassEnabled(void) {
+  static long setting = -1;
+
+  if (setting < 0) {
+    const char *value = getenv("ELEGANT_GPU_SLICE_SINGLE_PASS");
+    setting = !(value && *value == '0');
+  }
+  return setting;
+}
+
+/* The slices particle ip is in: those with t0[k] <= t <= t0[k] + dt0, the test accumulate_beam_sums()
+ * makes.  Both limits never decrease with k, so the slices are first..last (none if first > last). */
+static void sliceRange(double t, const double *t0, double dt0, long nSlices, long *first, long *last) {
+  long low, high;
+
+  /* first slice whose upper limit is at or above t */
+  low = 0;
+  high = nSlices;
+  while (low < high) {
+    long middle = low + (high - low) / 2;
+    if (t0[middle] + dt0 >= t)
+      high = middle;
+    else
+      low = middle + 1;
+  }
+  *first = low;
+  /* last slice whose lower limit is at or below t */
+  low = -1;
+  high = nSlices - 1;
+  while (low < high) {
+    long middle = low + (high - low + 1) / 2;
+    if (t0[middle] <= t)
+      low = middle;
+    else
+      high = middle - 1;
+  }
+  *last = low;
+}
+
+/* Returns 0 if the slices can't be told apart this way, and the caller then uses the whole beam */
+static long findSliceMembers(SLICE_MEMBERS *members, SLICE_POINT *slicePoint, double **particle,
+                             long particles, const double *timeCoord, double tMin, double dt0) {
+  long nSlices = slicePoint->nSlices, iSlice, ip, first, last, pass;
+  long allPIDs = slicePoint->startPID < 0 && slicePoint->endPID < 0;
+  long *filled;
+  double t0;
+
+  memset(members, 0, sizeof(*members));
+  if (nSlices < 1 || particles < 1 || !(dt0 > 0))
+    return 0;
+  members->t0 = tmalloc(sizeof(*members->t0) * nSlices);
+  for (iSlice = 0, t0 = tMin; iSlice < nSlices; iSlice++, t0 += dt0) {
+    members->t0[iSlice] = t0;
+    /* accumulate_beam_sums() takes every particle when the limits don't differ */
+    if (!(t0 < t0 + dt0)) {
+      free(members->t0);
+      members->t0 = NULL;
+      return 0;
+    }
+  }
+  members->start = tmalloc(sizeof(*members->start) * (nSlices + 1));
+  filled = tmalloc(sizeof(*filled) * nSlices);
+  for (pass = 0; pass < 2; pass++) {
+    /* first the number in each slice, then the members in particle order */
+    for (iSlice = 0; iSlice < nSlices; iSlice++)
+      filled[iSlice] = 0;
+    for (ip = 0; ip < particles; ip++) {
+      double t = timeCoord[ip];
+      if (!(allPIDs || (particle[ip][6] >= slicePoint->startPID && particle[ip][6] <= slicePoint->endPID)))
+        continue;
+      if (!(t == t))
+        continue;
+      sliceRange(t, members->t0, dt0, nSlices, &first, &last);
+      for (iSlice = first; iSlice <= last; iSlice++) {
+        if (pass) {
+          long place = members->start[iSlice] + filled[iSlice];
+          members->coord[place] = particle[ip];
+          members->time[place] = t;
+        }
+        filled[iSlice]++;
+      }
+    }
+    if (!pass) {
+      long total = 0;
+      for (iSlice = 0; iSlice < nSlices; iSlice++) {
+        members->start[iSlice] = total;
+        total += filled[iSlice];
+      }
+      members->start[nSlices] = total;
+      members->coord = tmalloc(sizeof(*members->coord) * (total + 1));
+      members->time = tmalloc(sizeof(*members->time) * (total + 1));
+    }
+  }
+  free(filled);
+  return 1;
+}
+
+/* With SLICE on the device: the slice's sums from the device's (gpu_slice_point_sums()), put together as
+ * accumulate_beam_sums() puts its own together for a beam of at least one particle with BEAM_SUMS_SPARSE and
+ * BEAM_SUMS_NOMINMAX.  Its spin sums and exactNormalizedEmittance's moments aren't output here. */
+static void sliceSumsFromDevice(BEAM_SUMS *sums, long iSlice, const long *count, const double *columnSum,
+                                const double *sigmaSum, double Po, double mp_charge) {
+  static const int pair[GPU_SLICE_SIGMA_PAIRS][2] = GPU_SLICE_SIGMA_PAIR_LIST;
+  int64_t npCount = count[iSlice];
+  long i, j, k;
+  double Sij;
+
+  if (!sums->n_part)
+    sums->p0 = Po;
+  for (i = 0; i < 7; i++)
+    if (npCount)
+      sums->centroid[i] = (sums->centroid[i] * sums->n_part + columnSum[iSlice * GPU_SLICE_COLUMNS + i]) /
+        (sums->n_part + npCount);
+  for (i = 0; i < 7; i++)
+    for (j = i; j < 7; j++)
+      sums->beamSums2->sigma[j][i] = sums->beamSums2->sigma[i][j] = 0;
+  for (k = 0; k < GPU_SLICE_SIGMA_PAIRS; k++) {
+    i = pair[k][0];
+    j = pair[k][1];
+    Sij = sigmaSum[iSlice * GPU_SLICE_SIGMA_PAIRS + k];
+    sums->beamSums2->sigma[j][i] = (sums->beamSums2->sigma[i][j] = (sums->beamSums2->sigma[i][j] * sums->n_part + Sij) /
+                                    (sums->n_part + npCount));
+  }
+  sums->charge = mp_charge * npCount;
+  sums->n_part += npCount;
+}
+
+#  ifdef GPU_VERIFY
+static void compareSliceValue(double gpu, double cpu, const char *label) {
+  if (!(gpu == cpu || (isnan(gpu) && isnan(cpu))))
+    compareGpuCpuValue(gpu, cpu, 0.0, label);
+}
+#  endif
+
+static void freeSliceMembers(SLICE_MEMBERS *members) {
+  if (members->start)
+    free(members->start);
+  if (members->coord)
+    free(members->coord);
+  if (members->time)
+    free(members->time);
+  if (members->t0)
+    free(members->t0);
+  memset(members, 0, sizeof(*members));
+}
+#endif
+
 void dump_slice_analysis(SLICE_POINT *slicePoint, long step, long pass, long n_passes,
                          double **particle, long particles, double Po,
                          double revolutionLength, double z, double mp_charge) {
@@ -114,6 +279,17 @@ void dump_slice_analysis(SLICE_POINT *slicePoint, long step, long pass, long n_p
   long Cx_index = 0, Sx_index = 0, ex_index = 0;
   double t0, dt0, dt;
   BEAM_SUMS *sums;
+#if defined(HAVE_GPU) && !USE_MPI
+  SLICE_MEMBERS members;
+  long membersFound = 0;
+  /* SLICE on the device: its numbers from there (deviceSlices), or a read-only host copy */
+  long deviceSlices = 0, hostCopy = 0, savedElementOnGpu = 0, hostTimes = 1, *deviceCount = NULL;
+  double *deviceT0 = NULL, *deviceColumnSum = NULL, *deviceSigmaSum = NULL;
+#  ifdef GPU_VERIFY
+  double deviceTMin = 0, deviceTMax = 0;
+  BEAM_SUMS *cpuSums = NULL;
+#  endif
+#endif
 #if USE_MPI
   long particles_total;
 
@@ -161,7 +337,48 @@ void dump_slice_analysis(SLICE_POINT *slicePoint, long step, long pass, long n_p
       bombElegant("NULL coordinate pointer passed to dump_slice_analysis", NULL);
   }
 
+#if defined(HAVE_GPU) && !USE_MPI
+  if (getElementOnGpu()) {
+    if (slicePoint->nSlices > 0 &&
+        gpu_slice_point_times(particles, Po, trackingClockOffset(), slicePoint->startPID, slicePoint->endPID,
+                              &tMin, &tMax)) {
+      /* the slices' lower limits as the loop below makes them; equal limits (every particle in the slice) are left
+       * to the host, as findSliceMembers() leaves them */
+      double t0Next = tMin, dt0Device = (tMax - tMin) / slicePoint->nSlices;
+      long ok = dt0Device > 0;
+      deviceT0 = tmalloc(sizeof(*deviceT0) * slicePoint->nSlices);
+      for (iSlice = 0; ok && iSlice < slicePoint->nSlices; iSlice++, t0Next += dt0Device) {
+        deviceT0[iSlice] = t0Next;
+        ok = t0Next < t0Next + dt0Device;
+      }
+      if (ok) {
+        deviceCount = tmalloc(sizeof(*deviceCount) * slicePoint->nSlices);
+        deviceColumnSum = tmalloc(sizeof(*deviceColumnSum) * slicePoint->nSlices * GPU_SLICE_COLUMNS);
+        deviceSigmaSum = tmalloc(sizeof(*deviceSigmaSum) * slicePoint->nSlices * GPU_SLICE_SIGMA_PAIRS);
+        deviceSlices = gpu_slice_point_sums(particles, slicePoint->startPID, slicePoint->endPID, slicePoint->nSlices,
+                                            deviceT0, dt0Device, deviceCount, deviceColumnSum, deviceSigmaSum);
+      }
+    }
+#  ifdef GPU_VERIFY
+    deviceTMin = tMin;
+    deviceTMax = tMax;
+#  endif
+    if (!deviceSlices
+#  ifdef GPU_VERIFY
+        || 1 /* the CPU's numbers too, to compare */
+#  endif
+    ) {
+      particle = copyParticlesToCpuReadOnly(deviceSlices ? "SLICE verification" : "SLICE the device can't slice");
+      savedElementOnGpu = gpu_port_host_begin();
+      hostCopy = 1;
+    }
+    hostTimes = !deviceSlices || hostCopy;
+  }
+#endif
   timeCoord = tmalloc(sizeof(*timeCoord) * particles);
+#if defined(HAVE_GPU) && !USE_MPI
+  if (hostTimes) {
+#endif
   tMax = -(tMin = DBL_MAX);
   for (i = 0; i < particles; i++) {
     double p, gamma, beta;
@@ -186,6 +403,15 @@ void dump_slice_analysis(SLICE_POINT *slicePoint, long step, long pass, long n_p
       timeCoord[i] = -DBL_MAX;
     }
   }
+#if defined(HAVE_GPU) && !USE_MPI
+  }
+#  ifdef GPU_VERIFY
+  if (deviceSlices) {
+    compareSliceValue(deviceTMin, tMin, "SLICE earliest time");
+    compareSliceValue(deviceTMax, tMax, "SLICE latest time");
+  }
+#  endif
+#endif
 #if USE_MPI
   find_global_min_max(&tMin, &tMax, particles, MPI_COMM_WORLD);
 #endif
@@ -210,6 +436,14 @@ void dump_slice_analysis(SLICE_POINT *slicePoint, long step, long pass, long n_p
 #endif
 
   sums = allocateBeamSums(0, 1);
+#if defined(HAVE_GPU) && !USE_MPI
+  if (!deviceSlices && sliceSinglePassEnabled() && !getElementOnGpu())
+    membersFound = findSliceMembers(&members, slicePoint, particle, particles, timeCoord, tMin, dt0);
+#  ifdef GPU_VERIFY
+  if (deviceSlices)
+    cpuSums = allocateBeamSums(0, 1);
+#  endif
+#endif
   for (iSlice = 0; iSlice < slicePoint->nSlices; iSlice++, t0 += dt0) {
 #ifdef DEBUG
     printf("iSlice = %ld, t:[%le, %le]\n", iSlice, t0, t0 + dt0);
@@ -217,6 +451,39 @@ void dump_slice_analysis(SLICE_POINT *slicePoint, long step, long pass, long n_p
 #endif
     /* compute centroids, sigmas, and emittances for x, y, and s */
     zero_beam_sums(sums, 1);
+#if defined(HAVE_GPU) && !USE_MPI
+    if (deviceSlices) {
+      sliceSumsFromDevice(sums, iSlice, deviceCount, deviceColumnSum, deviceSigmaSum, Po, mp_charge);
+#  ifdef GPU_VERIFY
+      {
+        long ic, jc;
+        zero_beam_sums(cpuSums, 1);
+        accumulate_beam_sums(cpuSums, particle, particles, Po, mp_charge, timeCoord, t0, t0 + dt0,
+                             slicePoint->startPID, slicePoint->endPID, BEAM_SUMS_SPARSE | BEAM_SUMS_NOMINMAX);
+        compareSliceValue((double)sums->n_part, (double)cpuSums->n_part, "SLICE particles in a slice");
+        compareSliceValue(sums->charge, cpuSums->charge, "SLICE charge");
+        for (ic = 0; ic < 7; ic++) {
+          compareSliceValue(sums->centroid[ic], cpuSums->centroid[ic], "SLICE centroid");
+          for (jc = 0; jc < 7; jc++)
+            compareSliceValue(sums->beamSums2->sigma[ic][jc], cpuSums->beamSums2->sigma[ic][jc], "SLICE sigma matrix");
+        }
+      }
+#  endif
+    } else if (membersFound) {
+      long count = members.start[iSlice + 1] - members.start[iSlice];
+      if (count)
+        accumulate_beam_sums(sums, members.coord + members.start[iSlice], count, Po, mp_charge,
+                             members.time + members.start[iSlice], t0, t0 + dt0,
+                             slicePoint->startPID, slicePoint->endPID, BEAM_SUMS_SPARSE | BEAM_SUMS_NOMINMAX);
+      else {
+        /* An empty slice still goes through the sums, which leave 0/0 in the sigma matrix: one particle
+         * with a time below every slice does the same */
+        double noTime = -DBL_MAX;
+        accumulate_beam_sums(sums, particle, 1, Po, mp_charge, &noTime, t0, t0 + dt0,
+                             slicePoint->startPID, slicePoint->endPID, BEAM_SUMS_SPARSE | BEAM_SUMS_NOMINMAX);
+      }
+    } else
+#endif
     accumulate_beam_sums(sums, particle, particles, Po, mp_charge,
                          timeCoord, t0, t0 + dt0,
                          slicePoint->startPID, slicePoint->endPID, BEAM_SUMS_SPARSE | BEAM_SUMS_NOMINMAX);
@@ -279,6 +546,24 @@ void dump_slice_analysis(SLICE_POINT *slicePoint, long step, long pass, long n_p
     }
   }
   freeBeamSums(sums, 1);
+#if defined(HAVE_GPU) && !USE_MPI
+  if (membersFound)
+    freeSliceMembers(&members);
+#  ifdef GPU_VERIFY
+  if (cpuSums)
+    freeBeamSums(cpuSums, 1);
+#  endif
+  if (deviceT0)
+    free(deviceT0);
+  if (deviceCount)
+    free(deviceCount);
+  if (deviceColumnSum)
+    free(deviceColumnSum);
+  if (deviceSigmaSum)
+    free(deviceSigmaSum);
+  if (hostCopy)
+    gpu_port_host_end(savedElementOnGpu);
+#endif
 
   if (isMaster) {
 #ifdef DEBUG

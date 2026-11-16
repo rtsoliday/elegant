@@ -1,0 +1,6 @@
+! BOFFAXE read as a sextupole, every derivative, every third z point: the device. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BX: BOFFAXE, L=0.25, FILENAME="../data/boffaxe_sextupole.sdds", FIELD_COLUMN="Gradient", Z_COLUMN="z", ORDER=2, &
+    EXPANSION_ORDER=0, STRENGTH=5, Z_INTERVAL=3
+BL: LINE=(Q1, D, BX, D)

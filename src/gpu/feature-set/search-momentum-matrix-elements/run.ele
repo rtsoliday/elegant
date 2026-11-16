@@ -1,0 +1,30 @@
+! The independent (non-fiducial) batched &momentum_aperture through QUAD, SBEN, RBEN, SEXT, MONI, HMON, VMON, KICKER and EKICKER:
+! 32 locations, 64 trials at a time
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+&end
+
+&run_control
+  n_passes = 16,
+&end
+
+&momentum_aperture
+  output = "%s.mmap",
+  x_initial = 1e-6,
+  y_initial = 1e-6,
+  delta_negative_limit = -0.04,
+  delta_positive_limit = 0.04,
+  delta_step_size = 0.002,
+  steps_back = 1,
+  split_step_divisor = 10,
+  splits = 1,
+  process_elements = 32,
+  include_name_pattern = "B*",
+  fiducialize = 0,
+  soft_failure = 1,
+&end

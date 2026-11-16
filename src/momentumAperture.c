@@ -49,7 +49,10 @@ typedef struct BATCHED_MOMENTUM_TASK {
   long candidates;
   long done;
   double interval;
+  double start;
   double deltaLost;
+  long noSurvivor;
+  long noLoss;
 } BATCHED_MOMENTUM_TASK;
 
 static ELEMENT_LIST **batchedMomentumTargetElement = NULL;
@@ -191,10 +194,15 @@ static long doMomentumApertureSearchBatched(
   ELEMENT_LIST **targetElement = NULL;
   long tasks, itask, ie, side, split, total, id, ip, nLeft;
   long initialParticles = 0, outputRow, maxInitialPerTask = 0;
+  long suppressed, mismatch = 0;
   double pCentral, start, limit, interval, delta;
 
+  /* The independent search takes what it can.  Searches with too few lanes for
+   * it are faster on the scalar search than here, where every candidate of a
+   * split is tracked for every turn. */
   if (!fiducialize || forbid_resonance_crossing || allow_watch_file_output ||
       output_mode > 1 || nElem <= 0 || split_step_divisor <= 0 ||
+      !gpu_batched_search_tracking_enabled(2 * nElem) ||
       !gpu_batched_search_beamline_supported(beamline))
     return -1;
   for (side = 0; side < 2; side++) {
@@ -271,6 +279,7 @@ static long doMomentumApertureSearchBatched(
           start = 0;
       }
       interval = task[itask].interval;
+      task[itask].start = start;
       for (delta = start; fabs(delta) <= fabs(limit); delta += interval)
         count++;
       task[itask].firstCandidate = total;
@@ -300,15 +309,8 @@ static long doMomentumApertureSearchBatched(
     for (itask = 0; itask < tasks; itask++) {
       if (!task[itask].candidates)
         continue;
-      side = task[itask].side;
-      if (split == 0)
-        start = side == 0 ? delta_negative_start : delta_positive_start;
-      else
-        start = deltaSurvived[task[itask].slot][task[itask].row] -
-                steps_back * (task[itask].interval * split_step_divisor) +
-                task[itask].interval;
-      if ((start < 0 && side == 1) || (start > 0 && side == 0))
-        start = 0;
+      /* Step as the scalar search does, so each trial has its exact delta. */
+      delta = task[itask].start;
       for (ip = 0; ip < task[itask].candidates; ip++) {
         id = task[itask].firstCandidate + ip;
         if (startingCoord)
@@ -316,8 +318,9 @@ static long doMomentumApertureSearchBatched(
         else
           memset(coord[id], 0, 6 * sizeof(**coord));
         coord[id][particleIDIndex] = id + 1;
-        candidateDelta[id] = start + ip * task[itask].interval;
+        candidateDelta[id] = delta;
         candidateTarget[id] = task[itask].elementIndex;
+        delta += task[itask].interval;
       }
     }
 
@@ -413,6 +416,7 @@ static long doMomentumApertureSearchBatched(
           deltaSurvived[task[itask].slot][task[itask].row] = 0;
           survivorFound[task[itask].slot][task[itask].row] = 1;
           task[itask].done = 1;
+          task[itask].noSurvivor = 1;
         }
         if (!foundLoss) {
           if (!soft_failure)
@@ -420,6 +424,7 @@ static long doMomentumApertureSearchBatched(
                         NULL);
           loserFound[task[itask].slot][task[itask].row] = 1;
           task[itask].done = 1;
+          task[itask].noLoss = 1;
         }
       }
     }
@@ -452,7 +457,10 @@ static long doMomentumApertureSearchBatched(
    * roundoff.  Confirm only the final surviving point for each independent
    * task with the CPU formulas.  This is O(tasks), compared with the
    * O(tasks*candidates) search that remains batched on the GPU, and it keeps
-   * the long-standing momentum-aperture tune columns reproducible. */
+   * the long-standing momentum-aperture tune columns reproducible.  The first
+   * loss is tracked again too: both must agree with the batch, and the loss
+   * columns then take the CPU's values.  Otherwise the scalar search reruns. */
+  suppressed = gpuGetTrackingSuppressed();
   gpuSetTrackingSuppressed(1);
   coord = (double **)czarray_2d(sizeof(**coord), 1,
                                 totalPropertiesPerParticle);
@@ -480,6 +488,10 @@ static long doMomentumApertureSearchBatched(
         INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
       control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
     setTrackingWedgeFunction(NULL, NULL);
+    if (!code && !task[itask].noSurvivor) {
+      mismatch = 1;
+      break;
+    }
     if (code && turnsStored > 2 &&
         determineTunesFromTrackingData(tune, turnByTurnCoord,
                                        turnsStored,
@@ -490,12 +502,44 @@ static long doMomentumApertureSearchBatched(
       xTuneSurvived[slot][row] = -1;
       yTuneSurvived[slot][row] = -1;
     }
+    if (!loserFound[slot][row] || task[itask].noLoss)
+      continue;
+    if (startingCoord)
+      memcpy(coord[0], startingCoord, 6 * sizeof(**coord));
+    else
+      memset(coord[0], 0, 6 * sizeof(**coord));
+    coord[0][particleIDIndex] = 1;
+    momentumOffsetValue = task[itask].deltaLost;
+    turnsStored = 0;
+    setTrackingWedgeFunction(momentumOffsetFunction,
+                             targetElement[task[itask].elementIndex]);
+    pCentral = run->p_central;
+    code = do_tracking(
+      NULL, coord, 1, NULL, beamline, &pCentral,
+      NULL, NULL, NULL, NULL, run, control->i_step,
+      FIDUCIAL_BEAM_SEEN + FIRST_BEAM_IS_FIDUCIAL + SILENT_RUNNING +
+        INHIBIT_FILE_OUTPUT + MOMENTUM_APERTURE_TRACKING_FLAGS,
+      control->n_passes, 0, NULL, NULL, NULL, NULL, NULL);
+    setTrackingWedgeFunction(NULL, NULL);
+    if (code) {
+      mismatch = 1;
+      break;
+    }
+    lostOnPass[slot][row] = coord[0][lossPassIndex];
+    xLost[slot][row] = coord[0][0];
+    yLost[slot][row] = coord[0][2];
+    sLost[slot][row] = coord[0][4];
+    deltaWhenLost[slot][row] = (coord[0][5] - pCentral) / pCentral;
   }
   free_czarray_2d((void **)coord, 1, totalPropertiesPerParticle);
   coord = NULL;
-  gpuSetTrackingSuppressed(0);
+  gpuSetTrackingSuppressed(suppressed);
   free(task);
   free(targetElement);
+  if (mismatch) {
+    fprintf(stderr, "elegant CUDA: batched momentum search disagreed with the CPU; rerunning the scalar search.\n");
+    return -1;
+  }
   return outputRow;
 }
 #endif

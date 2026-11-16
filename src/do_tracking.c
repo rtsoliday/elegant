@@ -68,6 +68,7 @@ static int elegant_MPI_Recv_doubles(void *buf, int64_t count, int source, int ta
 #  include <gpu_funcs.h>
 #  include <gpu_ftable.h>
 #  include <gpu_kickmap.h>
+#  include <gpu_ilmatrix.h>
 #  include <gpu_limit_amplitudes.h>
 #  include <gpu_lorentz.h>
 #  include <gpu_polynomial_series.h>
@@ -76,6 +77,17 @@ static int elegant_MPI_Recv_doubles(void *buf, int64_t count, int source, int ta
 
 void flushTransverseFeedbackDriverFiles(TFBDRIVER *tfbd);
 void transformEmittances(double **coord, int64_t np, double pCentral, EMITTANCEELEMENT *ee);
+#ifdef HAVE_GPU
+/* The host's beam, made current read-only when the element is on the device; between GPU_HOST_BEGIN and
+ * GPU_HOST_END a CPU routine given that copy keeps its own helpers on the CPU */
+#  define GPU_HOST_COORD(coord, reason) (getElementOnGpu() ? copyParticlesToCpuReadOnly(reason) : (coord))
+#  define GPU_HOST_BEGIN { long gpuHostSaved = gpu_port_host_begin();
+#  define GPU_HOST_END gpu_port_host_end(gpuHostSaved); }
+#else
+#  define GPU_HOST_COORD(coord, reason) (coord)
+#  define GPU_HOST_BEGIN {
+#  define GPU_HOST_END }
+#endif
 void checkRFCAChangeTConflicts(LINE_LIST *beamline);
 
 ELEMENT_LIST *findBeamlineMatrixElement(ELEMENT_LIST *eptr);
@@ -296,6 +308,9 @@ long do_tracking(
   long watch_pt_seen, feedbackDriverSeen;
   double sum, x_max, y_max;
   long elliptical;
+#ifdef HAVE_GPU
+  long gpuElementHooks;
+#endif
 #if !SDDS_MPI_IO
   double et1, et2 = 0;
 #endif
@@ -496,18 +511,26 @@ long do_tracking(
   eptr = beamline->elem;
 
 #ifdef HAVE_GPU
+  /* The lost rows go to the host for a losses file, and for slice analysis after each element, which
+   * elegant makes before it drops the particles an element just lost */
   gpuBaseInit(coord, nOriginal, accepted, NULL, isMaster,
               (flags & LOSS_COORDINATES_NEEDED) ||
                 (run && run->losses && run->losses[0] &&
-                 !(flags & INHIBIT_FILE_OUTPUT)),
+                 !(flags & INHIBIT_FILE_OUTPUT)) ||
+                (!(flags & TEST_PARTICLES) && sliceAnalysis && sliceAnalysis->active &&
+                 !sliceAnalysis->finalValuesOnly),
               gpuOrderSensitiveOutputRequested(beamline, run, flags),
               gpuReductionOutputRequested(run, flags),
               run && run->always_change_p0,
               run && run->backtrack);
+  gpuSetBunchAssignments(coord, nOriginal, beam ? beam->id_slots_per_bunch : 0);
 #  if USE_MPI
   if (distributedBeam && run->load_balancing_on == 1)
     gpuDisableForRun("Pelegant load_balancing_on=1 CUDA redistribution is deferred");
 #  endif
+  if (obstructionDataPresent())
+    gpuDisableForRun("obstruction_data is not implemented in GPU code");
+  gpuElementHooks = gpuElementHooksNeeded();
 #endif
 
   flags |= beamline->fiducial_flag;
@@ -595,6 +618,9 @@ long do_tracking(
     rpn_store(sMaxTransmittedMonitor, NULL, sMaxTransmittedMonitorMemory);
 
     for (i_pass = passOffset; i_pass < n_passes + passOffset; i_pass++) {
+#ifdef HAVE_GPU
+      gpuSetTrackingPass(i_pass, passOffset);
+#endif
 #ifdef DEBUG_CRASH
       printMessageAndTime(stdout, "do_tracking checkpoint 0.35, ");
       printf("pass = %ld\n", i_pass);
@@ -699,6 +725,13 @@ long do_tracking(
         eptr = beamline->elem_recirc;
       else
         eptr = beamline->elem;
+
+#ifdef HAVE_GPU
+      /* here, not beside gpuBaseInit(): with concat_order the elements tracked are the concatenated
+       * ones, which exist only now */
+      if (i_pass == passOffset)
+        gpuChooseSmallBeamThresholds(beamline, eptr, nToTrack, n_passes);
+#endif
 
       if (i_pass == passOffset) {
         if (flags & LINEAR_CHROMATIC_MATRIX) {
@@ -1005,10 +1038,14 @@ long do_tracking(
           log_entry("do_tracking.2.2.1");
 
 #ifdef HAVE_GPU
-          setElementGpuData((void *)eptr, nToTrack);
+          if (gpuElementHooks) {
+            gpuSetAfterElementAperture((x_max || y_max) && !(flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES)) &&
+                                       !(entity_description[eptr->type].flags & NO_APERTURE));
+            setElementGpuData((void *)eptr, nToTrack);
 #  ifndef GPU_VERIFY
-          coord = getGpuBase()->coord;
+            coord = getGpuBase()->coord;
 #  endif
+          }
 #endif
 
 #ifdef SORT
@@ -1046,7 +1083,7 @@ long do_tracking(
 #endif
             accumulate_beam_sums(*sums_vs_z + i_sums, coord, nToTrack, *P_central,
                                  charge ? charge->macroParticleCharge : 0.0,
-                                 NULL, 0.0, 0.0, -1, -1, 0);
+                                 NULL, 0.0, 0.0, -1, -1, BEAM_SUMS_ELEMENT_OUTPUT);
             (*sums_vs_z)[i_sums].z = z;
             (*sums_vs_z)[i_sums].pass = i_pass;
             /*
@@ -1503,54 +1540,121 @@ long do_tracking(
                     exactDrift(coord, nToTrack, ((RFDF *)eptr->p_elem)->length);
                   break;
                 case T_MRFDF:
-                  if (!(flags & TIME_DEPENDENCE_OFF))
+                  if (!(flags & TIME_DEPENDENCE_OFF)) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      if (gpu_track_mrfdf(coord, nToTrack, eptr->p_elem, *P_central, i_pass))
+                        break;
+                      coord = forceParticlesToCpu("MRFDF CUDA fallback");
+                    }
+#endif
                     track_through_multipole_deflector(coord, (MRFDF *)eptr->p_elem,
                                                       coord, nToTrack, *P_central, i_pass);
+                  }
                   break;
                 case T_SHRFDF:
-                  if (!(flags & TIME_DEPENDENCE_OFF))
+                  if (!(flags & TIME_DEPENDENCE_OFF)) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      if (gpu_track_shrfdf(coord, nToTrack, eptr->p_elem, *P_central))
+                        break;
+                      coord = forceParticlesToCpu("SHRFDF CUDA fallback");
+                    }
+#endif
                     track_through_space_harmonic_deflector(coord, (SHRFDF *)eptr->p_elem,
                                                            coord, nToTrack, *P_central);
+                  }
                   break;
                 case T_RFTM110:
-                  if (!(flags & TIME_DEPENDENCE_OFF))
+                  if (!(flags & TIME_DEPENDENCE_OFF)) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      if (gpu_track_rftm110(coord, nToTrack, eptr->p_elem, *P_central,
+                                            beamline->revolution_length, z, i_pass))
+                        break;
+                      coord = forceParticlesToCpu("RFTM110 CUDA fallback");
+                    }
+#endif
                     track_through_rftm110_deflector(coord, (RFTM110 *)eptr->p_elem,
                                                     coord, nToTrack, *P_central,
                                                     beamline->revolution_length, z,
                                                     i_pass);
+                  }
                   break;
                 case T_RMDF:
-                  if (!(flags & TIME_DEPENDENCE_OFF))
+                  if (!(flags & TIME_DEPENDENCE_OFF)) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      if (gpu_track_rmdf(coord, nToTrack, eptr->p_elem, *P_central))
+                        break;
+                      coord = forceParticlesToCpu("RMDF CUDA fallback");
+                    }
+#endif
                     track_through_ramped_deflector(coord, (RMDF *)eptr->p_elem,
                                                    coord, nToTrack, *P_central);
-                  else
+                  } else
                     drift_beam(coord, nToTrack, ((RMDF *)eptr->p_elem)->length, run->default_order);
-                  break;
-                case T_RFTMEZ0:
-                  nLeft = motion(coord, nToTrack, eptr->p_elem, eptr->type, P_central,
-                                 &dgamma, dP, accepted, last_z);
-                  /* show_dE = 1; */
                   break;
                 case T_TMCF:
                 case T_CEPL:
                 case T_TWPL:
-                  if (!(flags & TIME_DEPENDENCE_OFF)) {
-                    nLeft = motion(coord, nToTrack, eptr->p_elem, eptr->type, P_central,
-                                   &dgamma, dP, accepted, last_z);
-                    /* show_dE = 1; */
-                  } else
+                  if (flags & TIME_DEPENDENCE_OFF) {
                     drift_beam(coord, nToTrack, ((TW_LINAC *)eptr->p_elem)->length, run->default_order);
-                  break;
+                    break;
+                  }
+                  /* fall through: motion() as for the others */
+                case T_RFTMEZ0:
                 case T_MAPSOLENOID:
-                  nLeft = motion(coord, nToTrack, eptr->p_elem, eptr->type, P_central,
-                                 &dgamma, dP, accepted, last_z);
-                  break;
                 case T_TWLA:
-                case T_TWMTA:
+                case T_TWMTA: {
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                  long motionGpuTracked = 0, motionGpuChangeP0 = 0;
+                  double motionPCentral = *P_central;
+                  /* motion()'s set-up keeps state in the element (the fiducial particle, and TWLA's ponderomotive
+                   * factor from that particle's energy on the call that selects it), so the CPU's motion() below
+                   * starts from the element as the device's set-up found it */
+                  void *motionElementBefore = NULL;
+                  if (getElementOnGpu()) {
+                    motionElementBefore = tmalloc(entity_description[eptr->type].structure_size);
+                    memcpy(motionElementBefore, eptr->p_elem, entity_description[eptr->type].structure_size);
+                  }
+#endif
+#ifdef HAVE_GPU
+                  if (getElementOnGpu()) {
+                    long motionChangeP0 = 0;
+                    long motionLeft = gpu_track_motion(coord, accepted, nToTrack, eptr->p_elem, eptr->type,
+                                                       P_central, last_z, &motionChangeP0);
+                    if (motionLeft >= 0) {
+                      nLeft = motionLeft;
+#  ifdef GPU_VERIFY
+                      motionGpuTracked = 1;
+                      motionGpuChangeP0 = motionChangeP0;
+                      memcpy(eptr->p_elem, motionElementBefore, entity_description[eptr->type].structure_size);
+                      startCpuTimer();
+#  else
+                      /* gpu_track_motion() has matched the central momentum as motion() does */
+                      break;
+#  endif
+                    } else {
+                      coord = forceParticlesToCpu("motion() CUDA fallback");
+                    }
+                  }
+#endif
                   nLeft = motion(coord, nToTrack, eptr->p_elem, eptr->type, P_central,
                                  &dgamma, dP, accepted, last_z);
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                  if (motionGpuTracked) {
+                    /* the CPU's motion() has matched the host's momenta; the device's are matched here */
+                    if (motionGpuChangeP0 && nToTrack)
+                      gpu_do_match_energy(nToTrack, &motionPCentral, 0);
+                    compareGpuCpu(nLeft, "motion() tracking");
+                  }
+                  if (motionElementBefore)
+                    free(motionElementBefore);
+#endif
                   /* show_dE = 1; */
                   break;
+                }
                 case T_RCOL:
                   if (flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES))
                     drift_beam(coord, nToTrack, ((RCOL *)eptr->p_elem)->length, run->default_order);
@@ -1609,6 +1713,12 @@ long do_tracking(
                   if (flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES))
                     drift_beam(coord, nToTrack, taperape->length, run->default_order);
                   else {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu())
+                      nLeft = gpu_track_through_taper_aperture(
+                        nToTrack, eptr, *P_central, accepted, last_z);
+                    else
+#endif
                     nLeft = trackThroughTaperApElliptical(coord, taperape, nToTrack, accepted, last_z, *P_central, eptr);
                     if (taperape->sticky) {
                       maxamp = &maxampBuf; /* needed by KQUAD, CSBEND, etc */
@@ -1649,9 +1759,16 @@ long do_tracking(
                   }
                   break;
                 case T_CLEAN:
-                  if (!(flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES)))
+                  if (!(flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES))) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      nLeft = gpu_track_clean(coord, eptr->p_elem, nToTrack, accepted, z, *P_central);
+                      break;
+                    }
+#endif
                     nLeft = remove_outlier_particles(coord, (CLEAN *)eptr->p_elem,
                                                      nToTrack, accepted, z, *P_central);
+                  }
                   break;
                 case T_SCRAPER:
                   if (!(flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES))) {
@@ -1694,14 +1811,25 @@ long do_tracking(
                   }
                   break;
                 case T_PFILTER:
-                  if (!(flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES)))
+                  if (!(flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES))) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      nLeft = gpu_track_pfilter(coord, eptr->p_elem, nToTrack, accepted, z, *P_central);
+                      break;
+                    }
+#endif
                     nLeft = track_through_pfilter(coord, (PFILTER *)eptr->p_elem, nToTrack,
                                                   accepted, z, *P_central);
+                  }
                   break;
                 case T_CENTER:
                   center_beam(coord, (CENTER *)eptr->p_elem, nToTrack, i_pass, *P_central);
                   break;
                 case T_REMCOR:
+#ifdef HAVE_GPU
+                  if (getElementOnGpu() && gpu_track_remcor(coord, eptr->p_elem, nToTrack))
+                    break;
+#endif
                   remove_correlations(coord, (REMCOR *)eptr->p_elem, nToTrack);
                   break;
                 case T_RFCA:
@@ -1970,6 +2098,13 @@ long do_tracking(
                   trackBGGExpansion(coord, nToTrack, (BGGEXP *)eptr->p_elem, *P_central, accepted, NULL);
                   break;
                 case T_BOFFAXE:
+#ifdef HAVE_GPU
+                  if (getElementOnGpu()) {
+                    if (gpu_track_boffaxe(coord, nToTrack, eptr->p_elem, *P_central))
+                      break;
+                    coord = forceParticlesToCpu("BOFFAXE CUDA fallback");
+                  }
+#endif
                   trackMagneticFieldOffAxisExpansion(coord, nToTrack, (BOFFAXE *)eptr->p_elem, *P_central, accepted, NULL);
                   break;
                 case T_ROTATE:
@@ -2003,6 +2138,12 @@ long do_tracking(
 		    polarizeBeam(coord, nToTrack, (POLAR*)eptr->p_elem);
 		  break;
                 case T_PEPPOT:
+#ifdef HAVE_GPU
+                  if (getElementOnGpu()) {
+                    nLeft = gpu_track_peppot(coord, eptr->p_elem, nToTrack, accepted);
+                    break;
+                  }
+#endif
                   nLeft = pepper_pot_plate(coord, (PEPPOT *)eptr->p_elem, nToTrack, accepted);
                   break;
                 case T_ENERGY:
@@ -2049,6 +2190,12 @@ long do_tracking(
                 case T_ALPH:
                   if (!eptr->matrix && !(eptr->matrix = compute_matrix(eptr, run, NULL)))
                     bombElegant("no matrix for alpha magnet", NULL);
+#ifdef HAVE_GPU
+                  if (getElementOnGpu()) {
+                    nLeft = gpu_track_alph(coord, eptr->matrix, eptr->p_elem, nToTrack, accepted, *P_central, z);
+                    break;
+                  }
+#endif
                   nLeft = alpha_magnet_tracking(coord, eptr->matrix, (ALPH *)eptr->p_elem, nToTrack,
                                                 accepted, *P_central, z);
                   break;
@@ -2092,11 +2239,14 @@ long do_tracking(
                     nLeft = gpu_polynomial_series_tracking(
                       nToTrack, eptr->p_elem, 0.0, *P_central, accepted, z);
 #  ifdef GPU_VERIFY
-                    startCpuTimer();
-                    polynomialSeries_tracking(
-                      coord, nToTrack, (POLYNOMIALSERIES *)eptr->p_elem, 0.0,
-                      *P_central, accepted, z);
-                    compareGpuCpu(nLeft, "polynomialSeries_tracking");
+                    /* If this is no longer set, a fallback has already tracked these particles on the CPU */
+                    if (getElementOnGpu()) {
+                      startCpuTimer();
+                      polynomialSeries_tracking(
+                        coord, nToTrack, (POLYNOMIALSERIES *)eptr->p_elem, 0.0,
+                        *P_central, accepted, z);
+                      compareGpuCpu(nLeft, "polynomialSeries_tracking");
+                    }
 #  endif
                   } else
 #endif
@@ -2107,16 +2257,38 @@ long do_tracking(
                 case T_KICKER:
                   if (flags & TIME_DEPENDENCE_OFF)
                     drift_beam(coord, nToTrack, ((KICKER *)eptr->p_elem)->length, run->default_order);
-                  else
+                  else {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      if (gpu_track_kicker(coord, nToTrack, eptr->p_elem, *P_central, i_pass, run->default_order))
+                        break;
+                      coord = forceParticlesToCpu("BUMPER CUDA fallback");
+                    }
+#endif
                     track_through_kicker(coord, nToTrack, (KICKER *)eptr->p_elem, *P_central, i_pass, run->default_order);
+                  }
                   break;
                 case T_MKICKER:
                   if (flags & TIME_DEPENDENCE_OFF)
                     drift_beam(coord, nToTrack, ((MKICKER *)eptr->p_elem)->length, run->default_order);
-                  else
+                  else {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      if (gpu_track_mbumper(coord, nToTrack, eptr->p_elem, *P_central, i_pass, run->default_order))
+                        break;
+                      coord = forceParticlesToCpu("MBUMPER CUDA fallback");
+                    }
+#endif
                     track_through_mkicker(coord, nToTrack, (MKICKER *)eptr->p_elem, *P_central, i_pass, run->default_order);
+                  }
                   break;
                 case T_KSBEND:
+#ifdef HAVE_GPU
+                  if (getElementOnGpu()) {
+                    nLeft = gpu_track_ksbend(coord, nToTrack, eptr->p_elem, *P_central, accepted, z);
+                    break;
+                  }
+#endif
                   nLeft = track_through_kick_sbend(coord, nToTrack, (KSBEND *)eptr->p_elem, 0.0,
                                                    *P_central, accepted, z);
                   break;
@@ -2259,20 +2431,60 @@ long do_tracking(
                   }
                   break;
                 case T_SAMPLE:
-                  if (!(flags & TEST_PARTICLES))
+                  if (!(flags & TEST_PARTICLES)) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      nLeft = gpu_track_sample(coord, eptr->p_elem, nToTrack, accepted, z, *P_central);
+                      break;
+                    }
+#endif
                     nLeft = sample_particles(coord, (SAMPLE *)eptr->p_elem, nToTrack, accepted, z, *P_central);
+                  }
                   break;
                 case T_SCATTER:
-                  if (!(flags & TEST_PARTICLES))
+                  if (!(flags & TEST_PARTICLES)) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      gpu_track_scatter(coord, nToTrack, *P_central, eptr->p_elem, i_pass);
+                      break;
+                    }
+#endif
                     scatter_ele(coord, nToTrack, *P_central, (SCATTER *)eptr->p_elem, i_pass);
+                  }
                   break;
                 case T_CBSCAT:
-                  if (!(flags & TEST_PARTICLES))
-                    track_CBScat(coord, nToTrack, *P_central, (CBSCAT *)eptr->p_elem, i_pass, eptr->occurence);
+                  if (!(flags & TEST_PARTICLES)) {
+                    CBSCAT *cbscat = (CBSCAT *)eptr->p_elem;
+                    /* tracks on a current host copy on the passes it acts on; then x', y', s and delta to the
+                     * device */
+                    if (cbscat->passInterval < 1 || i_pass < cbscat->startOnPass ||
+                        (cbscat->endOnPass >= 0 && i_pass > cbscat->endOnPass) ||
+                        (cbscat->passInterval > 1 && (i_pass - cbscat->startOnPass) % cbscat->passInterval != 0))
+                      track_CBScat(coord, nToTrack, *P_central, cbscat, i_pass, eptr->occurence);
+                    else {
+                      double **cbscatCoord = GPU_HOST_COORD(coord, "CBSCAT");
+                      GPU_HOST_BEGIN
+                      track_CBScat(cbscatCoord, nToTrack, *P_central, cbscat, i_pass, eptr->occurence);
+                      GPU_HOST_END
+#ifdef HAVE_GPU
+                      if (getElementOnGpu()) {
+                        static const long cbscatColumns[4] = {1, 3, 4, 5};
+                        gpu_port_upload_columns(nToTrack, cbscatColumns, 4);
+                      }
+#endif
+                    }
+                  }
                   break;
                 case T_DSCATTER:
-                  if (!(flags & TEST_PARTICLES))
+                  if (!(flags & TEST_PARTICLES)) {
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      gpu_track_dscatter(coord, nToTrack, *P_central, eptr->p_elem, i_pass);
+                      break;
+                    }
+#endif
                     distributionScatter(coord, nToTrack, *P_central, (DSCATTER *)eptr->p_elem, i_pass);
+                  }
                   break;
                 case T_TSCATTER:
                   break;
@@ -2308,33 +2520,32 @@ long do_tracking(
                 }
                 case T_BMAPXYZ: {
 #if defined(HAVE_GPU) && defined(GPU_VERIFY)
-                  long bmxyzGpuTracked = 0;
+                  long bmxyzGpuLeft = -1;
 #endif
 #ifdef HAVE_GPU
-                  if (getElementOnGpu() && !maxamp && !apcontour &&
-                      !run->apertureData.initialized) {
-                    if (gpu_track_bmxyz(nToTrack, (BMAPXYZ *)eptr->p_elem,
-                                        *P_central)) {
-                      nLeft = nToTrack;
+                  if (getElementOnGpu()) {
+                    long gpuLeft = gpu_track_bmxyz(nToTrack, (BMAPXYZ *)eptr->p_elem, *P_central,
+                                                   maxamp, apcontour, &(run->apertureData), last_z,
+                                                   accepted, eptr);
+                    if (gpuLeft >= 0) {
+                      nLeft = gpuLeft;
 #  ifdef GPU_VERIFY
                       startCpuTimer();
-                      bmxyzGpuTracked = 1;
+                      bmxyzGpuLeft = gpuLeft;
 #  else
                       break;
 #  endif
                     } else {
                       coord = forceParticlesToCpu("BMXYZ CUDA trajectory fallback");
                     }
-                  } else if (getElementOnGpu()) {
-                    coord = forceParticlesToCpu("BMXYZ aperture fallback");
                   }
 #endif
                   nLeft = lorentz(coord, nToTrack, (BMAPXYZ *)eptr->p_elem,
                                   T_BMAPXYZ, *P_central, accepted,
                                   maxamp, apcontour, &(run->apertureData));
 #if defined(HAVE_GPU) && defined(GPU_VERIFY)
-                  if (bmxyzGpuTracked)
-                    compareGpuCpu(nLeft, "BMXYZ fixed-step tracking");
+                  if (bmxyzGpuLeft >= 0)
+                    compareGpuCpuApertureResult(bmxyzGpuLeft, nLeft, nToTrack, 0, "BMXYZ fixed-step tracking");
 #endif
                   break;
                 }
@@ -2343,10 +2554,22 @@ long do_tracking(
                   /* printf("%ld particles left after BRAT %s\n", nLeft, eptr->name); */
                   break;
                 case T_KPOLY:
+#ifdef HAVE_GPU
+                  if (getElementOnGpu()) {
+                    nLeft = gpu_track_kpoly(coord, nToTrack, eptr->p_elem, *P_central, accepted, z);
+                    break;
+                  }
+#endif
                   nLeft = polynomial_kicks(coord, nToTrack, (KPOLY *)eptr->p_elem, 0.0,
                                            *P_central, accepted, z);
                   break;
                 case T_HKPOLY:
+#ifdef HAVE_GPU
+                  if (getElementOnGpu()) {
+                    nLeft = gpu_track_hkpoly(coord, nToTrack, eptr->p_elem, *P_central, accepted, z);
+                    break;
+                  }
+#endif
                   nLeft = polynomial_hamiltonian(coord, nToTrack, (HKPOLY *)eptr->p_elem, 0.0, *P_central, accepted, z);
                   break;
                 case T_RAMPRF:
@@ -2451,13 +2674,65 @@ long do_tracking(
                                         charge);
                   break;
                 case T_IONEFFECTS:
-                  if (!(flags & TEST_PARTICLES))
-                    trackWithIonEffects(coord, nToTrack, (IONEFFECTS *)eptr->p_elem, *P_central, i_pass, n_passes, charge);
+                  if (!(flags & TEST_PARTICLES)) {
+                    IONEFFECTS *ionEffects = (IONEFFECTS *)eptr->p_elem;
+                    double **ionCoord = coord;
+#ifdef HAVE_GPU
+                    /* on the device, on the passes it acts on: the ions on a current host copy; the Gaussian
+                     * field's kicks to the electrons on the device, other fields' kicks on the copy with x' and y'
+                     * sent back */
+                    long ionHostCopy = 0, ionDeviceKicks = 0;
+                    if (getElementOnGpu() && ionEffectsActiveOnPass(ionEffects, i_pass)) {
+                      ionHostCopy = 1;
+                      ionCoord = copyParticlesToCpuReadOnly("IONEFFECTS");
+                      ionDeviceKicks = ionEffectsUseDeviceKicks(1);
+                    }
+#endif
+                    GPU_HOST_BEGIN
+                    trackWithIonEffects(ionCoord, nToTrack, ionEffects, *P_central, i_pass, n_passes, charge);
+                    GPU_HOST_END
+#ifdef HAVE_GPU
+                    if (ionHostCopy) {
+                      ionEffectsUseDeviceKicks(0);
+                      if (ionDeviceKicks) {
+                        gpu_port_device_changed(nToTrack);
+#  ifdef GPU_VERIFY
+                        compareGpuCpu(nToTrack, "IONEFFECTS kicks");
+#  endif
+                      } else {
+                        static const long ionColumns[2] = {1, 3};
+                        gpu_port_upload_columns(nToTrack, ionColumns, 2);
+                      }
+                    }
+#endif
+                  }
                   nLeft = nToTrack;
                   break;
                 case T_BEAMBEAM:
-                  if (!(flags & TEST_PARTICLES))
+                  if (!(flags & TEST_PARTICLES)) {
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                    long beambeamGpuTracked = 0;
+#endif
+#ifdef HAVE_GPU
+                    if (getElementOnGpu()) {
+                      if (gpu_track_beambeam(nToTrack, eptr->p_elem, *P_central)) {
+#  ifdef GPU_VERIFY
+                        startCpuTimer();
+                        beambeamGpuTracked = 1;
+#  else
+                        break;
+#  endif
+                      } else {
+                        coord = forceParticlesToCpu("BEAMBEAM CUDA fallback");
+                      }
+                    }
+#endif
                     applyBeamBeamKicks(coord, nToTrack, (BEAMBEAM *)eptr->p_elem, *P_central);
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                    if (beambeamGpuTracked)
+                      compareGpuCpu(nToTrack, "BEAMBEAM kicks");
+#endif
+                  }
                   break;
                 case T_CORGPIPE:
                   nLeft = elimit_amplitudes(coord, ((CORGPIPE *)eptr->p_elem)->radius, ((CORGPIPE *)eptr->p_elem)->radius,
@@ -2544,7 +2819,14 @@ long do_tracking(
                   break;
                 case T_CPICKUP:
                   if (!(flags & TEST_PARTICLES))
-                    coolerPickup((CPICKUP *)eptr->p_elem, coord, nToTrack, i_pass, *P_central, beam ? beam->id_slots_per_bunch : 0);
+                    /* the pickup only reads the beam: a read-only copy keeps it on the device */
+                  {
+                    double **pickupCoord = GPU_HOST_COORD(coord, "CPICKUP");
+                    GPU_HOST_BEGIN
+                    coolerPickup((CPICKUP *)eptr->p_elem, pickupCoord, nToTrack, i_pass, *P_central,
+                                 beam ? beam->id_slots_per_bunch : 0);
+                    GPU_HOST_END
+                  }
                   break;
                 case T_STRAY:
                   if (eptr->matrix) {
@@ -2571,15 +2853,47 @@ long do_tracking(
 #endif
                   break;
                 case T_CKICKER:
-                  if (!(flags & TEST_PARTICLES))
-                    coolerKicker((CKICKER *)eptr->p_elem, coord, nToTrack, beamline, i_pass, n_passes,
-                                 run->rootname, *P_central, beam ? beam->id_slots_per_bunch : 0);
+                  if (!(flags & TEST_PARTICLES)) {
+                    /* the kicker changes delta only: on a current host copy, then that column to the device */
+                    double **kickerCoord = GPU_HOST_COORD(coord, "CKICKER");
+                    GPU_HOST_BEGIN
+                    coolerKicker((CKICKER *)eptr->p_elem, kickerCoord, nToTrack, beamline, i_pass,
+                                 n_passes, run->rootname, *P_central, beam ? beam->id_slots_per_bunch : 0);
+                    GPU_HOST_END
+#ifdef HAVE_GPU
+                    if (getElementOnGpu())
+                      gpu_port_upload_column(nToTrack, 5);
+#endif
+                  }
                   break;
-                case T_LSRMDLTR:
+                case T_LSRMDLTR: {
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                  long lsrmdltrGpuTracked = 0;
+#endif
+#ifdef HAVE_GPU
+                  if (getElementOnGpu()) {
+                    if (gpu_track_lsrmdltr(nToTrack, eptr->p_elem, *P_central)) {
+                      nLeft = nToTrack;
+#  ifdef GPU_VERIFY
+                      startCpuTimer();
+                      lsrmdltrGpuTracked = 1;
+#  else
+                      break;
+#  endif
+                    } else {
+                      coord = forceParticlesToCpu("LSRMDLTR CUDA trajectory fallback");
+                    }
+                  }
+#endif
                   nLeft = motion(coord, nToTrack, eptr->p_elem, eptr->type, P_central,
                                  &dgamma, dP, accepted, last_z);
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                  if (lsrmdltrGpuTracked)
+                    compareGpuCpu(nLeft, "LSRMDLTR tracking");
+#endif
                   /* show_dE = 1; */
                   break;
+                }
                 case T_CWIGGLER:
                   if (flags & TEST_PARTICLES) {
                     saveISR = ((CWIGGLER *)eptr->p_elem)->isr;
@@ -2594,7 +2908,12 @@ long do_tracking(
                     saveISR = ((APPLE *)eptr->p_elem)->isr;
                     ((APPLE *)eptr->p_elem)->isr = 0;
                   }
-                  APPLE_Track(coord, nToTrack, *P_central, (APPLE *)eptr->p_elem);
+#ifdef HAVE_GPU
+                  if (getElementOnGpu() && gpu_track_apple(coord, nToTrack, eptr->p_elem, *P_central))
+                    ;
+                  else
+#endif
+                    APPLE_Track(coord, nToTrack, *P_central, (APPLE *)eptr->p_elem);
                   if (flags & TEST_PARTICLES)
                     ((APPLE *)eptr->p_elem)->isr = saveISR;
                   break;
@@ -2650,7 +2969,12 @@ long do_tracking(
                             printf("*** Error: too few particles (%" PRId64 ") for computation of twiss parameters from beam\n", nToTrack);
                             exitElegant(1);
                           }
-                          computeBeamTwissParameters(&beamTwiss, coord, nToTrack);
+                          {
+                            double **twissCoord = GPU_HOST_COORD(coord, "TWISS beam parameters");
+                            GPU_HOST_BEGIN
+                            computeBeamTwissParameters(&beamTwiss, twissCoord, nToTrack);
+                            GPU_HOST_END
+                          }
                           if (eptr->matrix) {
                             free_matrices(eptr->matrix);
                             free(eptr->matrix);
@@ -2684,7 +3008,12 @@ long do_tracking(
                       if (((TWISSELEMENT *)eptr->p_elem)->verbose) {
                         TWISS beamTwiss;
                         printf("* Applying twiss parameter transformation matrix (%s at z=%e m) to beam.\n", eptr->name, z);
-                        computeBeamTwissParameters(&beamTwiss, coord, nToTrack);
+                        {
+                            double **twissCoord = GPU_HOST_COORD(coord, "TWISS beam parameters");
+                            GPU_HOST_BEGIN
+                            computeBeamTwissParameters(&beamTwiss, twissCoord, nToTrack);
+                            GPU_HOST_END
+                          }
                         printf("  * Initial twiss parameters:\n");
                         printf("  betax = %le  alphax = %le  etax = %le, etaxp = %le\n",
                                beamTwiss.betax, beamTwiss.alphax, beamTwiss.etax, beamTwiss.etapx);
@@ -2695,7 +3024,12 @@ long do_tracking(
                       track_particles(coord, eptr->matrix, coord, nToTrack);
                       if (((TWISSELEMENT *)eptr->p_elem)->verbose) {
                         TWISS beamTwiss;
-                        computeBeamTwissParameters(&beamTwiss, coord, nToTrack);
+                        {
+                            double **twissCoord = GPU_HOST_COORD(coord, "TWISS beam parameters");
+                            GPU_HOST_BEGIN
+                            computeBeamTwissParameters(&beamTwiss, twissCoord, nToTrack);
+                            GPU_HOST_END
+                          }
                         printf("  * Final twiss parameters:\n");
                         printf("  betax = %le  alphax = %le  etax = %le, etaxp = %le\n",
                                beamTwiss.betax, beamTwiss.alphax, beamTwiss.etax, beamTwiss.etapx);
@@ -2706,6 +3040,10 @@ long do_tracking(
                     }
                     break;
                   case T_EMITTANCE:
+#ifdef HAVE_GPU
+                    if (getElementOnGpu() && gpu_track_emittance(coord, nToTrack, *P_central, eptr->p_elem))
+                      break;
+#endif
                     transformEmittances(coord, nToTrack, *P_central, (EMITTANCEELEMENT *)eptr->p_elem);
                     break;
                   case T_MRADINTEGRALS:
@@ -2777,6 +3115,9 @@ long do_tracking(
               if ((!USE_MPI || !distributedBeam) || (USE_MPI && active)) {
                 if (!(flags & TEST_PARTICLES && !(flags & TEST_PARTICLE_LOSSES)) && !(classFlags & NO_APERTURE)) {
                   if (x_max || y_max) {
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                    gpuVerifyResumeElementOnGpu();
+#endif
                     if (!elliptical)
                       nLeft = limit_amplitudes(coord, x_max, y_max, nLeft, accepted, z, *P_central,
                                                eptr->type == T_DRIF || eptr->type == T_STRAY,
@@ -2786,13 +3127,16 @@ long do_tracking(
                                                 eptr->type == T_DRIF || eptr->type == T_STRAY,
                                                 maxampOpenCode, maxampExponent, maxampYExponent, eptr);
                   }
-                  if (run->apertureData.initialized)
+                  if (run->apertureData.initialized) {
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                    gpuVerifyResumeElementOnGpu();
+#endif
                     nLeft = imposeApertureData(coord, nLeft, accepted, z, *P_central,
                                                &(run->apertureData), eptr);
+                  }
                   if (apcontour && !(eptr->type == T_APCONTOUR && apcontour->holdOff)) {
-#ifdef HAVE_GPU
-                    if (getElementOnGpu())
-                      coord = forceParticlesToCpu("sticky APCONTOUR");
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+                    gpuVerifyResumeElementOnGpu();
 #endif
                     nLeft = imposeApContour(coord, apcontour, nLeft, accepted, z, *P_central, eptr);
                   }
@@ -2901,7 +3245,9 @@ long do_tracking(
               }
 #endif
 #ifdef HAVE_GPU
-              coord = copyParticlesToCpuReadOnly("performSliceAnalysisOutput");
+              /* performSliceAnalysis() takes its sums from the device when only the device has the beam */
+              if (!gpu_slice_moments_available(nToTrack))
+                coord = copyParticlesToCpuReadOnly("performSliceAnalysisOutput");
 #endif
               performSliceAnalysisOutput(sliceAnalysis, coord, nToTrack,
                                          !sliceAnDone, step,
@@ -2952,9 +3298,7 @@ long do_tracking(
 #endif
             if ((!USE_MPI || !distributedBeam) || (USE_MPI && active)) {
               nLeft = limit_amplitudes(coord, DBL_MAX, DBL_MAX, nLeft, accepted, z, *P_central, 0, 0, eptr);
-#ifndef HAVE_GPU /* Obstructions are not implemented in GPU code */
               nLeft = filterParticlesWithObstructions(coord, nLeft, accepted, z, *P_central);
-#endif
               if (eptr->type != T_SCRIPT) { /* For the SCRIPT element, the lost particle coordinate will be recorded inside the element */
                 if (nLeft != nToTrack)
                   recordLostParticles(beam, coord, nLeft, nToTrack, i_pass);
@@ -3078,7 +3422,9 @@ long do_tracking(
             }
 #endif
 #ifdef HAVE_GPU
-            coord = copyParticlesToCpuReadOnly("performSliceAnalysisOutput");
+            /* performSliceAnalysis() takes its sums from the device when only the device has the beam */
+            if (!gpu_slice_moments_available(nToTrack))
+              coord = copyParticlesToCpuReadOnly("performSliceAnalysisOutput");
 #endif
             performSliceAnalysisOutput(sliceAnalysis, coord, nToTrack,
                                        !sliceAnDone, step,
@@ -3219,7 +3565,7 @@ long do_tracking(
 #endif
             accumulate_beam_sums(*sums_vs_z + i_sums, coord, nToTrack, *P_central,
                                  charge ? charge->macroParticleCharge : 0.0,
-                                 NULL, 0.0, 0.0, -1, -1, 0);
+                                 NULL, 0.0, 0.0, -1, -1, BEAM_SUMS_ELEMENT_OUTPUT);
             (*sums_vs_z)[i_sums].z = z;
             (*sums_vs_z)[i_sums].pass = i_pass;
 #if defined(BEAM_SUMS_DEBUG)
@@ -3310,6 +3656,9 @@ long do_tracking(
           if (outputFiles->particleTunes.initialized) {
 #if USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
+#endif
+#ifdef HAVE_GPU
+            coord = copyParticlesToCpuReadOnly("accumulateParticleTuneData");
 #endif
             accumulateParticleTuneData(coord, nLeft, i_pass, &(outputFiles->particleTunes));
           }
@@ -3683,9 +4032,12 @@ long do_tracking(
           startGpuTimer();
           gpu_do_match_energy(np, P_central, change_beam);
 #  ifdef GPU_VERIFY
-          startCpuTimer();
-          do_match_energy(coord, np, &P_central_init, change_beam);
-          compareGpuCpu(np, "do_match_energy");
+          /* If this is no longer set, a fallback has already changed these particles on the CPU */
+          if (getElementOnGpu()) {
+            startCpuTimer();
+            do_match_energy(coord, np, &P_central_init, change_beam);
+            compareGpuCpu(np, "do_match_energy");
+          }
 #  endif /* GPU_VERIFY */
           return;
         }
@@ -4520,6 +4872,88 @@ long do_tracking(
         static VMATRIX *M1 = NULL;
         double det;
 
+#ifdef HAVE_GPU
+        if (getElementOnGpu() && ilmat && !twiss && eptr && eptr->type == T_ILMATRIX) {
+          GPU_ILMATRIX_DATA gpuData;
+          long remaining;
+
+          memset(&gpuData, 0, sizeof(gpuData));
+          for (i = 0; i < 6; i++)
+            gpuData.C[i] = eptr->matrix && eptr->matrix->C ? eptr->matrix->C[i] : 0;
+          gpuData.length = eptr->matrix && eptr->matrix->C ? eptr->matrix->C[4] : ilmat->length;
+          for (i = 0; i < 2; i++) {
+            gpuData.tune[i] = tune0[i];
+            gpuData.chrom[i] = chrom[i];
+            gpuData.chrom2[i] = chrom2[i];
+            gpuData.chrom3[i] = chrom3[i];
+            gpuData.tswax[i] = ilmat->tswax[i];
+            gpuData.tsway[i] = ilmat->tsway[i];
+            gpuData.tswax2[i] = ilmat->tswax2[i];
+            gpuData.tsway2[i] = ilmat->tsway2[i];
+            gpuData.tswaxay[i] = ilmat->tswaxay[i];
+            gpuData.beta[i] = ilmat->beta[i];
+            gpuData.beta1[i] = dbeta_dPoP[i];
+            gpuData.alpha[i] = ilmat->alpha[i];
+            gpuData.alpha1[i] = dalpha_dPoP[i];
+            gpuData.dsdA[i] = ilmat->dsdA[i];
+            gpuData.dsdA2[i] = ilmat->dsdA2[i];
+            gpuData.tuneTwice[i] = (long)(2 * tune0[i]);
+          }
+          for (i = 0; i < 4; i++) {
+            gpuData.eta[i] = ilmat->eta[i];
+            gpuData.eta1[i] = eta2[i];
+          }
+          for (i = 0; i < 3; i++)
+            gpuData.alphac[i] = alphac[i];
+          gpuData.dsdAxAy = ilmat->dsdAxAy;
+          gpuData.z = z;
+          gpuData.pCentral = Po;
+          gpuData.allowResonanceCrossing = ilmat->allowResonanceCrossing ? 1 : 0;
+          if (ilmat->tilt && !(fabs(fabs(ilmat->tilt) - PIx2) < 1e-12)) {
+            /* The cosine and sine rotateBeamCoordinatesForMisalignment() uses, from that function
+             * itself: it takes (1, 0) to (cos, -sin) and (0, 1) to (sin, cos) */
+            double unit[2][MAX_PROPERTIES_PER_PARTICLE], *unitPointer;
+            long sign;
+
+            for (sign = 0; sign < 2; sign++) {
+              double angle = sign ? -ilmat->tilt : ilmat->tilt, cosine, sine;
+
+              memset(unit, 0, sizeof(unit));
+              unit[0][0] = 1;
+              unit[1][2] = 1;
+              unitPointer = unit[0];
+              rotateBeamCoordinatesForMisalignment(&unitPointer, 1, angle);
+              cosine = unit[0][0];
+              unitPointer = unit[1];
+              rotateBeamCoordinatesForMisalignment(&unitPointer, 1, angle);
+              sine = unit[1][0];
+              if (sign) {
+                gpuData.rotateOut = 1;
+                gpuData.cosOut = cosine;
+                gpuData.sinOut = sine;
+              } else {
+                gpuData.rotateIn = 1;
+                gpuData.cosIn = cosine;
+                gpuData.sinIn = sine;
+              }
+            }
+          }
+          remaining = gpu_track_ilmatrix(particles, accepted, &gpuData);
+#  ifdef GPU_VERIFY
+          if (getElementOnGpu()) {
+            long cpuRemaining;
+
+            startCpuTimer();
+            cpuRemaining = trackWithIndividualizedLinearMatrix(particle, particles, accepted, Po, z, eptr, twiss,
+                                                               tune0, chrom, chrom2, chrom3, dbeta_dPoP,
+                                                               dalpha_dPoP, alphac, eta2, ilmat);
+            compareGpuCpuApertureResult(remaining, cpuRemaining, particles, 0, "ILMATRIX");
+          }
+#  endif
+          return remaining;
+        }
+#endif
+
         if (ilmat)
           allowResonanceCrossing = ilmat->allowResonanceCrossing;
 
@@ -4699,11 +5133,21 @@ long do_tracking(
 #ifdef HAVE_GPU
         if (getElementOnGpu()) {
           if (gpu_matrix_supported(M)) {
+#  ifdef GPU_VERIFY
+            short firstCall = matr && !matr->fiducialSeen;
+#  endif /* GPU_VERIFY */
             startGpuTimer();
             gpu_matr_element_tracking(M, matr, np, z);
 #  ifdef GPU_VERIFY
             startCpuTimer();
-            matr_element_tracking(coord, M, matr, np, z);
+            if (firstCall) {
+              /* The CPU finds its own reference time, rather than reusing the device's */
+              double gpuSReference = matr->sReference;
+              matr->fiducialSeen = 0;
+              matr_element_tracking(coord, M, matr, np, z);
+              compareGpuCpuValue(gpuSReference, matr->sReference, 0, "MATR reference time");
+            } else
+              matr_element_tracking(coord, M, matr, np, z);
             compareGpuCpu(np, "matr_element_tracking");
 #  endif /* GPU_VERIFY */
             return;
@@ -4761,12 +5205,20 @@ long do_tracking(
           if (gpu_matrix_supported(M)) {
 #  ifdef GPU_VERIFY
             double P_central_init = *P_central;
+            short firstCall = matr && !matr->fiducialSeen;
 #  endif /* GPU_VERIFY */
             startGpuTimer();
             gpu_ematrix_element_tracking(M, matr, np, z, P_central);
 #  ifdef GPU_VERIFY
             startCpuTimer();
-            ematrix_element_tracking(coord, M, matr, np, z, &P_central_init);
+            if (firstCall) {
+              /* The CPU finds its own reference time, rather than reusing the device's */
+              double gpuSReference = matr->sReference;
+              matr->fiducialSeen = 0;
+              ematrix_element_tracking(coord, M, matr, np, z, &P_central_init);
+              compareGpuCpuValue(gpuSReference, matr->sReference, 0, "EMATRIX reference time");
+            } else
+              ematrix_element_tracking(coord, M, matr, np, z, &P_central_init);
             compareGpuCpu(np, "ematr_element_tracking");
 #  endif /* GPU_VERIFY */
             return;
@@ -5522,6 +5974,12 @@ long do_tracking(
         }
         MPI_Bcast(round, 1, MPI_DOUBLE, root, MPI_COMM_WORLD);
 
+#  ifdef HAVE_GPU
+        /* The master may have just allocated its array, and scatterParticles() and the next gather
+         * take the array from the CUDA layer, which would otherwise still hold the old one */
+        gpuSetCpuParticleArray(*coord, *nToTrack);
+#  endif
+
         /*
           report_stats(stdout, "Finished gathering particles to master:");
         */
@@ -5801,7 +6259,10 @@ long do_tracking(
         mhist_table_paraValue[10] = (void *)(&entity_name[eptr->pred->type]);
         mhist_table_paraValue[11] = (void *)(&mhist->normalize);
 
-        findMinMax(coord, np, Min, Max, c0, Po);
+#ifdef HAVE_GPU
+        if (!gpu_mhist_minmax(np, Po, Min, Max, c0))
+#endif
+          findMinMax(coord, np, Min, Max, c0, Po);
         Min[4] -= c0[4];
         Max[4] -= c0[4];
 
@@ -5819,6 +6280,10 @@ long do_tracking(
         if (mhist->file6d)
           mhist->full6d = chbookn(Name, Units, 6, Min, Max, mhist->bins6d, 0);
 
+#ifdef HAVE_GPU
+        if (!gpu_mhist_fill(np, Po, c0[4], mhist->x1d, mhist->bins1d, mhist->x2d, mhist->y2d, mhist->z2d,
+                            mhist->Tr4d, mhist->full6d))
+#endif
         for (i = 0; i < np; i++) {
           for (j = 0; j < 6; j++) {
             if (j == 4) {

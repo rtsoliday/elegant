@@ -1,0 +1,5 @@
+! A gaussian opposing beam taller than wide: gaussianBeamKick() swaps the planes. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BB: BEAMBEAM, CHARGE=-3e-9, XSIZE=20e-6, YSIZE=80e-6, XCENTER=-4e-6, YCENTER=2e-6
+BL: LINE=(Q1, D, BB, D)

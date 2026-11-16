@@ -1,0 +1,27 @@
+! As search-frequency-map-rfca-reference with two cavities, one thin and one long with three kicks and its own
+! frequency, each with its own reference. Batched, and must be identical to the CPU.
+
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 32
+&end
+
+&frequency_map
+    output = "%s.fma",
+    nx = 16,
+    ny = 8,
+    xmin = -1.5e-3,
+    xmax = 1.5e-3,
+    ymin = 1e-6,
+    ymax = 1.5e-3,
+    include_changes = 1,
+    verbosity = 0
+&end

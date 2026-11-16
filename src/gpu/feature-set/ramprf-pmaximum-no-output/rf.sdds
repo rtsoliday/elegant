@@ -1,0 +1,10 @@
+SDDS1
+&column name=t, units=s, type=double, &end
+&column name=Voltage, type=double, &end
+&data mode=ascii, no_row_counts=1, &end
+0.0e+00 1.00
+1.0e-07 1.10
+2.0e-07 1.25
+3.0e-07 1.35
+4.0e-07 1.40
+6.0e-07 1.50

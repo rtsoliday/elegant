@@ -1,0 +1,9 @@
+! First-order quadrupoles, each alone between PFILTERs, which the device doesn't take.
+Q1: QUAD,L=0.2,K1=0.5,ORDER=1
+Q2: QUAD,L=0.2,K1=-0.5,ORDER=1
+D: DRIF,L=0.3,ORDER=1
+PF: PFILTER,DELTALIMIT=0.5
+! W's sums are the sign of where the beam was: the device adds them in its own order, so they differ
+! from the CPU's in the last digits, while the particles come out the same from either side.
+W: WATCH,FILENAME="%s.w1",MODE="parameter"
+BL: LINE=(5*(Q1,PF,Q2,PF),Q1,W,PF)

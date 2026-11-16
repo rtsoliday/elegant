@@ -1,0 +1,13 @@
+! Ten kick quadrupoles, each alone between PFILTERs, which the device doesn't take, then a run of six
+! matrix elements. With the count rule alone (ELEGANT_GPU_SHORT_GPU_ISLAND_BY_COST=0, which the suite
+! sets for this case) tracking keeps a run as short as one magnet on the CPU, so only the six could go
+! on the device.
+KQ: KQUAD,L=0.3,K1=0.3,N_SLICES=16
+Q1: QUAD,L=0.2,K1=0.5
+Q2: QUAD,L=0.2,K1=-0.5
+D: DRIF,L=0.3
+PF: PFILTER,DELTALIMIT=0.5
+! W's sums are the sign of where the beam was: the device adds them in its own order, so they differ
+! from the CPU's in the last digits, while the particles come out the same from either side.
+W: WATCH,FILENAME="%s.w1",MODE="parameter"
+BL: LINE=(10*(KQ,PF),Q1,D,Q2,W,D,Q1,D,PF)

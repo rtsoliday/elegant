@@ -426,6 +426,123 @@ long motion(
 
 void *field_global;
 
+static void copyRotate3Matrix(double *destination, MATRIX *R) {
+  long i, j;
+  for (i = 0; i < 3; i++)
+    for (j = 0; j < 3; j++)
+      destination[3 * i + j] = R ? R->a[i][j] : (i == j ? 1 : 0);
+}
+
+/* motion()'s statements before its particle loop, then the values that loop uses */
+long motionGpuSetup(double **part, int64_t n_part, void *field, long field_type, double pCentral,
+                    double z_start, MOTION_GPU_SETUP *setup) {
+  double kscale, tau_start, tolerance;
+  long n_steps;
+
+  if (!setup || (field_type != T_RFTMEZ0 && field_type != T_TWLA && field_type != T_MAPSOLENOID &&
+                 field_type != T_TMCF && field_type != T_CEPL && field_type != T_TWPL && field_type != T_TWMTA))
+    return 0;
+  change_p0 = 0;
+  P_central = pCentral;
+  gamma_central = sqrt(sqr(P_central) + 1);
+  radCoef = sqr(particleCharge) * pow3(P_central) / (6 * PI * epsilon_o * sqr(c_mks) * particleMass);
+  isrCoef = particleRadius * sqrt(55.0 / (24 * sqrt(3.0)) * pow5(P_central) * 137.0359895);
+  X_aperture_center = Y_aperture_center = 0;
+  X_limit = Y_limit = 0;
+  X_offset = Y_offset = 0;
+  radial_limit = 0;
+  input_impulse = output_impulse = NULL;
+  derivatives = set_up_derivatives(field, field_type, &kscale, z_start, &Z_end,
+                                   &tau_start, part, n_part, P_central,
+                                   &X_limit, &Y_limit, &tolerance, &n_steps);
+  stochasticEffects = set_up_stochastic_effects(field_type);
+  if (n_steps < 2)
+    bombElegant((char *)"too few steps for integration", NULL);
+  memset(setup, 0, sizeof(*setup));
+  setup->kscale = kscale;
+  setup->Zend = Z_end;
+  setup->tauStart = tau_start;
+  setup->Xlimit = X_limit;
+  setup->Ylimit = Y_limit;
+  setup->tolerance = tolerance;
+  setup->XapertureCenter = X_aperture_center;
+  setup->YapertureCenter = Y_aperture_center;
+  setup->Xoffset = X_offset;
+  setup->Yoffset = Y_offset;
+  setup->Xcenter = X_center;
+  setup->Ycenter = Y_center;
+  setup->Zcenter = Z_center;
+  setup->Xcenter1 = X_center1;
+  setup->Ycenter1 = Y_center1;
+  setup->Zcenter1 = Z_center1;
+  copyRotate3Matrix(setup->partRot, partRot);
+  copyRotate3Matrix(setup->fieldRot, fieldRot);
+  copyRotate3Matrix(setup->partRot1, partRot1);
+  copyRotate3Matrix(setup->fieldRot1, fieldRot1);
+  setup->nSteps = n_steps;
+  setup->integratorCode = integratorCode;
+  setup->radialLimit = radial_limit;
+  setup->changeP0 = change_p0;
+  setup->impulses = input_impulse || output_impulse;
+  return 1;
+}
+
+/* LSRMDLTR's derived quantities and time profile, everything set_up_derivatives() needs but the
+ * reference time t0, which reads the beam. gpu-elegant calls this too. */
+void setupLaserModulator(LSRMDLTR *lsrMdltr, double P_central_inner_scope, long nonAdaptiveRungeKutta) {
+  double gamma, beta, Ku, omega;
+
+  lsrMdltr->ku = 2 * PI / (lsrMdltr->length / lsrMdltr->periods);
+  gamma = sqrt(sqr(P_central_inner_scope) + 1);
+  beta = P_central_inner_scope / gamma;
+  Ku = lsrMdltr->Bu * particleCharge / (particleMass * c_mks) / (beta * lsrMdltr->ku);
+  if ((lsrMdltr->fieldCode = match_string(lsrMdltr->fieldExpansion,
+                                          lsrMdltrFieldExpansion, N_LSRMDLTR_FIELD_EXPANSIONS, 0)),
+      0) {
+    long i;
+    fputs((char *)"Error: field expansion for LSRMDLTR elements must be one of:\n", stdout);
+    for (i = 0; i < N_LSRMDLTR_FIELD_EXPANSIONS; i++)
+      printf((char *)"    %s\n", lsrMdltrFieldExpansion[i]);
+    exitElegant(1);
+  }
+  if (lsrMdltr->fieldCode != 1 && lsrMdltr->tguGradient != 0)
+    bombElegant("non-zero TGU_GRADIENT is only supported for LSRMDLTR with \"exact\" field model", NULL);
+  if (lsrMdltr->isr && !nonAdaptiveRungeKutta)
+    bombElegant((char *)"LSRMDLTR with ISR must use non-adaptive runge-kutta integration", NULL);
+  if (lsrMdltr->usersLaserWavelength)
+    lsrMdltr->laserWavelength = lsrMdltr->usersLaserWavelength;
+  else
+    lsrMdltr->laserWavelength = lsrMdltr->length / lsrMdltr->periods / (2 * sqr(gamma)) * (1 + sqr(Ku) / 2);
+  lsrMdltr->k = PIx2 / lsrMdltr->laserWavelength;
+  lsrMdltr->ZRayleigh = lsrMdltr->k / 2 * sqr(lsrMdltr->laserW0);
+  lsrMdltr->omega = omega = lsrMdltr->k * c_mks;
+  lsrMdltr->Escale = particleCharge / (particleMass * omega * c_mks);
+  lsrMdltr->Bscale = particleCharge / (particleMass * omega);
+  if (lsrMdltr->laserM < 0 || lsrMdltr->laserN < 0)
+    bombElegant((char *)"M and N must be non-negative for LSRMDLTR", NULL);
+  lsrMdltr->Ef0Laser = 2 / lsrMdltr->laserW0 *
+    sqrt(lsrMdltr->laserPeakPower / (ipow(2, lsrMdltr->laserM + lsrMdltr->laserN) * PI * factorial(lsrMdltr->laserM) * factorial(lsrMdltr->laserN) * epsilon_o * c_mks));
+  lsrMdltr->t0 = 0;
+  if (lsrMdltr->timeProfileFile) {
+    long i;
+    TABLE data;
+    if (!getTableFromSearchPath(&data, lsrMdltr->timeProfileFile, 1, 0))
+      bombElegant((char *)"unable to read data for LSRMDLTR time profile", NULL);
+    if (data.n_data <= 1)
+      bombElegant((char *)"LSRMDLTR time profile contains less than 2 points", NULL);
+    lsrMdltr->timeValue = data.c1;
+    lsrMdltr->amplitudeValue = data.c2;
+    lsrMdltr->tProfilePoints = data.n_data;
+    for (i = 1; i < data.n_data; i++)
+      if (data.c1[i - 1] > data.c1[i])
+        bombElegant((char *)"time values not monotonically increasing in LSRMDLTR time profile", NULL);
+    tfree(data.xlab);
+    tfree(data.ylab);
+    tfree(data.title);
+    tfree(data.topline);
+  }
+}
+
 void (*set_up_derivatives(
                           void *field,
                           long field_type,
@@ -451,7 +568,7 @@ void (*set_up_derivatives(
   LSRMDLTR *lsrMdltr;
 
   double *fiducial, gamma, Po, Pz, gamma_w, omega;
-  double Escale, Bscale, Ku, beta;
+  double Escale, Bscale;
 
   field_global = field;
 
@@ -487,36 +604,8 @@ void (*set_up_derivatives(
     select_integrator(lsrMdltr->method);
     *accuracy = lsrMdltr->accuracy;
     *n_steps = lsrMdltr->nSteps;
-    lsrMdltr->ku = 2 * PI / (lsrMdltr->length / lsrMdltr->periods);
-    gamma = sqrt(sqr(P_central_inner_scope) + 1);
-    beta = P_central_inner_scope / gamma;
-    Ku = lsrMdltr->Bu * particleCharge / (particleMass * c_mks) / (beta * lsrMdltr->ku);
-    if ((lsrMdltr->fieldCode = match_string(lsrMdltr->fieldExpansion,
-                                            lsrMdltrFieldExpansion, N_LSRMDLTR_FIELD_EXPANSIONS, 0)),
-        0) {
-      long i;
-      fputs((char *)"Error: field expansion for LSRMDLTR elements must be one of:\n", stdout);
-      for (i = 0; i < N_LSRMDLTR_FIELD_EXPANSIONS; i++)
-        printf((char *)"    %s\n", lsrMdltrFieldExpansion[i]);
-      exitElegant(1);
-    }
-    if (lsrMdltr->fieldCode != 1 && lsrMdltr->tguGradient != 0)
-      bombElegant("non-zero TGU_GRADIENT is only supported for LSRMDLTR with \"exact\" field model", NULL);
-    if (lsrMdltr->isr && integratorCode != NA_RUNGE_KUTTA)
-      bombElegant((char *)"LSRMDLTR with ISR must use non-adaptive runge-kutta integration", NULL);
-    if (lsrMdltr->usersLaserWavelength)
-      lsrMdltr->laserWavelength = lsrMdltr->usersLaserWavelength;
-    else
-      lsrMdltr->laserWavelength = lsrMdltr->length / lsrMdltr->periods / (2 * sqr(gamma)) * (1 + sqr(Ku) / 2);
-    lsrMdltr->k = *kscale = PIx2 / lsrMdltr->laserWavelength;
-    lsrMdltr->ZRayleigh = lsrMdltr->k / 2 * sqr(lsrMdltr->laserW0);
-    lsrMdltr->omega = omega = *kscale * c_mks;
-    lsrMdltr->Escale = particleCharge / (particleMass * omega * c_mks);
-    lsrMdltr->Bscale = particleCharge / (particleMass * omega);
-    if (lsrMdltr->laserM < 0 || lsrMdltr->laserN < 0)
-      bombElegant((char *)"M and N must be non-negative for LSRMDLTR", NULL);
-    lsrMdltr->Ef0Laser = 2 / lsrMdltr->laserW0 *
-      sqrt(lsrMdltr->laserPeakPower / (ipow(2, lsrMdltr->laserM + lsrMdltr->laserN) * PI * factorial(lsrMdltr->laserM) * factorial(lsrMdltr->laserN) * epsilon_o * c_mks));
+    setupLaserModulator(lsrMdltr, P_central_inner_scope, integratorCode == NA_RUNGE_KUTTA);
+    *kscale = lsrMdltr->k;
     X_offset = 0;
     X_aperture_center = X_center = 0;
     Y_aperture_center = Y_center = 0;
@@ -524,25 +613,6 @@ void (*set_up_derivatives(
     *Z_end_inner_scope = lsrMdltr->length * (*kscale);
     Z_center = lsrMdltr->length / 2 * (*kscale);
     *X_limit_inner_scope = *Y_limit_inner_scope = 1e300;
-    lsrMdltr->t0 = 0;
-    if (lsrMdltr->timeProfileFile) {
-      long i;
-      TABLE data;
-      if (!getTableFromSearchPath(&data, lsrMdltr->timeProfileFile, 1, 0))
-        bombElegant((char *)"unable to read data for LSRMDLTR time profile", NULL);
-      if (data.n_data <= 1)
-        bombElegant((char *)"LSRMDLTR time profile contains less than 2 points", NULL);
-      lsrMdltr->timeValue = data.c1;
-      lsrMdltr->amplitudeValue = data.c2;
-      lsrMdltr->tProfilePoints = data.n_data;
-      for (i = 1; i < data.n_data; i++)
-        if (data.c1[i - 1] > data.c1[i])
-          bombElegant((char *)"time values not monotonically increasing in LSRMDLTR time profile", NULL);
-      tfree(data.xlab);
-      tfree(data.ylab);
-      tfree(data.title);
-      tfree(data.topline);
-    }
     lsrMdltr->t0 = findFiducialTime(part, n_part, 0, lsrMdltr->length / 2, P_central_inner_scope, FID_MODE_TMEAN) + lsrMdltr->timeProfileOffset;
     return (derivatives_laserModulator);
   case T_RFTMEZ0:

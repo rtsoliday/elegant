@@ -1,0 +1,23 @@
+! resident-floor-ring with only a final file and no WATCH, so no beam sums read the beam back
+! before the 1,000 floor, and the next element has to bring it to the CPU itself.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 1000,
+  default_order = 2,
+  rootname = "run",
+  final = "%s.fin",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&twiss_output matched = 1 &end
+&run_control n_passes = 26 &end
+&bunched_beam
+  n_particles_per_bunch = 12000,
+  emit_x = 1e-7, emit_y = 1e-7,
+  sigma_dp = 1e-3, sigma_s = 1e-3,
+  matched_to_cell = "RING",
+  distribution_type[0] = 3*"gaussian",
+  distribution_cutoff[0] = 3*3,
+&end
+&track &end

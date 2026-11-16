@@ -1,0 +1,4 @@
+! RF cavity with nonzero DELTA_PHASE on the GPU RF paths (N_KICKS=4).
+D1: DRIFT, L=1.0
+RF: RFCA, L=1.0, VOLT=2e6, PHASE=80, DELTA_PHASE=7, FREQ=352e6, N_KICKS=4
+BL: LINE=(D1,RF,D1)

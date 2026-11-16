@@ -1,0 +1,6 @@
+! FTABLE with a quadrupole-and-sextupole field table in 100 kicks. Rounding expected (CUDA's sin, cos and
+! acos in each kick)
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+FQ: FTABLE, L=0.2, INPUT_FILE="../data/ftable_quad.sdds", N_KICKS=100, SIMPLE_INPUT=1
+BL: LINE=(Q1, D, FQ, D)

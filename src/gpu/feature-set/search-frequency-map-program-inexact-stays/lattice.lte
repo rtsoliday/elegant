@@ -1,0 +1,9 @@
+! Tune histories from the fused program: gpu_batched_tune_program_track() in gpu_stub.c.
+! A FODO ring the fused program could track, but with a MULT that has length, whose device arithmetic
+! differs from the CPU's by 3e-14, so the program is not run.
+D: DRIF,L=0.4
+QF: KQUAD,L=0.2,K1=1.5,N_SLICES=4
+QD: KQUAD,L=0.2,K1=-1.5,N_SLICES=4
+MU: MULT,L=0.1,ORDER=2,KNL=2e-4,N_KICKS=4
+CELL: LINE=(D,QF,D,MU,D,QD,D)
+RING: LINE=(8*CELL)

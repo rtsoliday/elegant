@@ -1,0 +1,30 @@
+! IBSCATTER with ISRING=0 and NSLICE=3, at the end of every cell of a line tracked once: after the inflation the host copies the rows down again for the slice emittances that ISRING=0 writes to the IBS file. Only an output file, so the particles must be elegant's.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "LINAC",
+  p_central = 11742,
+  default_order = 2,
+  rootname = run,
+  output = "%s.out",
+  semaphore_file = "%s.done",
+  random_number_seed = 987654321,
+  tracking_updates = 0,
+  show_element_timing = 1,
+  load_balancing_on = 0,
+&end
+
+&run_control
+  n_passes = 1,
+&end
+
+&twiss_output matched = 0, beta_x = 5, beta_y = 5, radiation_integrals = 1 &end
+
+&bunched_beam
+  n_particles_per_bunch = 4000,
+  emit_x = 1e-10, emit_y = 1e-11, beta_x = 5, beta_y = 5,
+  sigma_dp = 1e-3, sigma_s = 1e-3,
+  distribution_type[0] = 3*"gaussian", distribution_cutoff[0] = 3*3,
+&end
+
+&track
+&end

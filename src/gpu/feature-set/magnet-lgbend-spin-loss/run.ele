@@ -1,0 +1,23 @@
+! LGBEND spin where the aperture stops part of the beam, so survivors and their spins are compacted on the device.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+  spin_tracking = 1,
+&end
+&run_control n_passes = 2 &end
+
+&bunched_beam
+  n_particles_per_bunch = 1000,
+  emit_x = 2e-6, beta_x = 4, alpha_x = 0,
+  emit_y = 2e-6, beta_y = 4, alpha_y = 0,
+  sigma_dp = 5e-4, sigma_s = 1e-3,
+&end
+
+&track &end

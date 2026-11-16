@@ -1,0 +1,7 @@
+! BGGEXP with SYMPLECTIC=1 every fourth plane of a two-multipole generalized-gradient table, with a uniform
+! BX: the implicit midpoint rule on the vector potential. Rounding expected (CUDA's sin, cos and atan2)
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BG: BGGEXP, L=0.24, LFIELD=0.24, FILENAME="../data/bggexp_small.ggrad", SYMPLECTIC=1, Z_INTERVAL=4, &
+    BX=1e-3
+BL: LINE=(Q1, D, BG, D)

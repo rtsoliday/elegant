@@ -1,0 +1,8 @@
+! RAMPRF on the device: voltage, phase and frequency waveforms, with RAMPP and KQUADs.
+D: DRIF,L=0.5
+QF: KQUAD,L=0.3,K1=1.0,N_SLICES=4
+QD: KQUAD,L=0.3,K1=-1.0,N_SLICES=4
+RF: RAMPRF,L=0.2,VOLT=2e6,PHASE=170,FREQ="c_mks 2.3 / 3 *",VOLT_WAVEFORM="rf.sdds=t+Voltage",&
+    PHASE_WAVEFORM="rf.sdds=t+Phase",FREQ_WAVEFORM="rf.sdds=t+Frequency"
+RP: RAMPP,WAVEFORM="rf.sdds=t+Ratio"
+RING: LINE=(QF,D,QD,D,RF,RP,D)

@@ -176,6 +176,10 @@ void track_SReffects(double **coord, int64_t np, SREFFECTS *SReffects0, double P
       gpuData.etapx = twiss->etapx;
       gpuData.etay = twiss->etay;
       gpuData.etapy = twiss->etapy;
+      gpuData.Srxp = Srxp;
+      gpuData.Sryp = Sryp;
+      gpuData.Srdelta = Srdelta;
+      gpuData.cutoff = cutoff;
       gpu_track_sreffects(np, &gpuData);
 #  ifdef GPU_VERIFY
       startCpuTimer();

@@ -1,0 +1,37 @@
+! Tune histories from the fused program: gpu_batched_tune_program_track() in gpu_stub.c tracks the whole
+! grid on the device, one kernel launch a turn, and computeTunesFromTrackingBatch() in twiss.cc uses its
+! histories only if the CPU, tracking a sample of the particles itself, gets the same bits.
+! The first ring with a CCBEND in every cell, five kinds. The device's CCBEND wasn't the CPU's bit for
+! bit until 2026-11-11: the CPU divides qx and qy by 1+delta and multiplies them back after every slice,
+! radiation or not, which moves a momentum by a unit in the last place in a few particles in a
+! thousand. The device now does the same, and the program claims the CPU's bits for a CCBEND.
+MAL: MALIGN
+MA0: MALIGN,ON_PASS=0,DX=1e-4,DP=1e-4
+MA1: MALIGN,ON_PASS=1,DYP=1e-5
+CH: CHARGE,TOTAL=1e-9
+W: WATCH,FILENAME="%s.w1",MODE="centroid"
+MX: MAXAMP,X_MAX=0.006,Y_MAX=0.006
+D: DRIF,L=0.4
+DE: EDRIFT,L=0.1
+QF: KQUAD,L=0.2,K1=1.5,N_SLICES=4
+QD: KQUAD,L=0.2,K1=-1.5,N_SLICES=4
+QM: QUAD,L=0.1,K1=0.2
+SX: SEXT,L=0.1,K2=3
+SF: KSEXT,L=0.1,K2=5,N_SLICES=4
+AP: RCOL,X_MAX=0.004,Y_MAX=0.004
+! the defaults: order 4, the edge kick, FSE and DX optimized
+B1: CCBEND,L=0.3,ANGLE=0.02,N_SLICES=4
+! order 6, the fringe with its integrals from HGAP and FINT, K1 to K3
+B2: CCBEND,L=0.3,ANGLE=0.02,K1=0.2,K2=1.0,K3=5,N_SLICES=4,INTEGRATION_ORDER=6,FRINGEMODEL=1,EDGE_ORDER=2,HGAP=0.02,FINT1=0.5,FINT2=0.3
+! order 2 with no fringe, which has a kernel of its own
+B3: CCBEND,L=0.3,ANGLE=0.02,N_SLICES=8,INTEGRATION_ORDER=2,FRINGEMODEL=-1
+! a negative angle, tilted, yawed and misaligned with a linear method
+B4: CCBEND,L=0.3,ANGLE=-0.02,K1=-0.1,N_SLICES=4,TILT=0.002,YAW=1e-4,DX=2e-5,DY=-1e-5,DZ=1e-5,ETILT=1e-4,EPITCH=1e-5,EYAW=-1e-5,MALIGN_METHOD=2
+! classical radiation, and an exact misalignment
+B5: CCBEND,L=0.3,ANGLE=0.02,K1=0.1,N_SLICES=4,SYNCH_RAD=1,DX=-1e-5,DZ=2e-5,MALIGN_METHOD=4
+C1: LINE=(D,QF,D,SF,DE,QD,D,QM,B1,SX)
+C2: LINE=(D,QF,D,SF,DE,QD,D,QM,B2,SX)
+C3: LINE=(D,QF,D,SF,DE,QD,D,QM,B3,SX)
+C4: LINE=(D,QF,D,SF,DE,QD,D,QM,B4,SX)
+C5: LINE=(D,QF,D,SF,DE,QD,D,QM,B5,SX)
+RING: LINE=(MAL,MA0,MA1,CH,MX,C1,C2,C3,C4,AP,W,C5,C1,C2,C3)

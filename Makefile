@@ -154,7 +154,19 @@ elegantTools: src
 sddsbrightness: elegantTools
 	$(MAKE) -C $@
 
-clean:
+# Optional, not part of "all": one gpu-elegant per architecture in
+# CUDA_ARCH_LIST, installed as bin/$(OS)-$(ARCH)-gpu/gpu-elegant-<sm>.
+GPU_ARCH_TARGETS = $(addprefix gpu-elegant-,$(CUDA_ARCH_LIST))
+GPU_ARCH_CLEAN_TARGETS = $(addprefix clean-gpu-elegant-,$(CUDA_ARCH_LIST))
+.PHONY: gpu-elegant-all-sm $(GPU_ARCH_TARGETS) $(GPU_ARCH_CLEAN_TARGETS)
+gpu-elegant-all-sm: $(GPU_ARCH_TARGETS)
+$(GPU_ARCH_TARGETS): gpu-elegant-%: xraylib
+	$(MAKE) $(DEBUGOPTIONS) -C src HAVE_CUDA=1 NVCC="$(CUDA_AUTO_NVCC)" CUDA_ARCH=$* GPU_ARCH_VARIANT=1
+$(GPU_ARCH_CLEAN_TARGETS): clean-gpu-elegant-%:
+	$(MAKE) -C src HAVE_CUDA=1 CUDA_ARCH=$* GPU_ARCH_VARIANT=1 clean
+	$(MAKE) -C src HAVE_CUDA=1 GPU_VERIFY=1 CUDA_ARCH=$* GPU_ARCH_VARIANT=1 clean
+
+clean: $(GPU_ARCH_CLEAN_TARGETS)
 	$(MAKE) -C physics clean
 	$(MAKE) -C xraylib clean
 	$(MAKE) -C src clean
@@ -170,6 +182,8 @@ distclean: clean
 	rm -rf bin/$(OS)-$(ARCH)
 	rm -rf bin/$(OS)-$(ARCH)-gpu
 	rm -rf bin/$(OS)-$(ARCH)-gpu-verify
+	rm -rf bin/$(OS)-$(ARCH)-gpu-coverage
 	rm -rf lib/$(OS)-$(ARCH)
 	rm -rf lib/$(OS)-$(ARCH)-gpu
 	rm -rf lib/$(OS)-$(ARCH)-gpu-verify
+	rm -rf lib/$(OS)-$(ARCH)-gpu-coverage

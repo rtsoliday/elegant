@@ -1,0 +1,10 @@
+! TAPERAPE on the device: tapered semi-axes, DX, DY and TILT, losses at the entrance and part-way along (the
+! bisection to RESOLUTION), STICKY holding the end ellipse for the QUAD after it, a losses file with global
+! coordinates. The device's atan2, cos, sin and pow decide each test; one within a hair of the boundary would
+! send the call to the CPU. Identical to elegant.
+D: DRIF,L=0.10
+TE: TAPERAPE,L=0.04,ASTART=0.02,AEND=0.016,BSTART=0.014,BEND=0.011,DX=4e-4,DY=-3e-4,TILT=0.05,STICKY=1
+TF: TAPERAPE,L=0.06,ASTART=0.017,AEND=0.017,BSTART=0.012,BEND=0.009,RESOLUTION=1e-8
+Q: QUAD,L=0.2,K1=0.5,ORDER=2
+CELL: LINE=(D,TE,D,Q,TF,D)
+RING: LINE=(3*CELL)

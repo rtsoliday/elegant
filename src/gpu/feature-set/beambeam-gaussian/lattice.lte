@@ -1,0 +1,6 @@
+! BEAMBEAM's default gaussian opposing beam, wider than tall and off axis: gaussianBeamKick() with
+! Faddeeva::w on the device. Rounding expected (CUDA's exp, sin and cos)
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BB: BEAMBEAM, CHARGE=5e-9, XSIZE=80e-6, YSIZE=20e-6, XCENTER=5e-6, YCENTER=-3e-6
+BL: LINE=(Q1, D, BB, D)

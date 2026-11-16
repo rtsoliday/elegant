@@ -1,0 +1,7 @@
+! BGGEXP with SYMPLECTIC=1 in a bend's frame (IS_BEND with vertex, entry and exit points), every second
+! plane, with an expansion offset. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BG: BGGEXP, L=0.24, LFIELD=0.24, FILENAME="../data/bggexp_small.ggrad", SYMPLECTIC=1, Z_INTERVAL=2, &
+    IS_BEND=1, XVERTEX=0.002, ZVERTEX=0, XENTRY=0, ZENTRY=-0.12, XEXIT=0, ZEXIT=0.12, DXEXPANSION=1e-4
+BL: LINE=(Q1, D, BG, D)

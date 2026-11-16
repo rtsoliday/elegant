@@ -1,0 +1,7 @@
+! DSCATTER in y' with random signs and a total limit of 300 over four passes: no decision draws, so the
+! first particles up to the limit scatter, each taking two numbers. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: DSCATTER, PLANE="yp", FILENAME="../data/dscatter_cdf.sdds", VALUENAME="z", CDFNAME="cdf", FACTOR=1e-5, &
+    RANDOMSIGN=1, LIMITTOTAL=300
+BL: LINE=(Q1, D, E, D)

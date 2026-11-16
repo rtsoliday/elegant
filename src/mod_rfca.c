@@ -15,6 +15,9 @@
 #include "mdb.h"
 #include "track.h"
 #include "SDDS.h"
+#ifdef HAVE_GPU
+#  include "gpu_simple_rfca.h"
+#endif
 
 long modulated_rf_cavity(double **part, int64_t np, MODRF *modrf, double P_central, double zEnd,
 			 long pass, long nPasses) {
@@ -31,6 +34,9 @@ long modulated_rf_cavity(double **part, int64_t np, MODRF *modrf, double P_centr
 #endif
 #ifdef USE_KAHAN
   double error = 0.0, t1 = 0.0;
+#endif
+#ifdef HAVE_GPU
+  long onGpu = getElementOnGpu();
 #endif
 
   log_entry("modulated_rf_cavity");
@@ -100,6 +106,17 @@ long modulated_rf_cavity(double **part, int64_t np, MODRF *modrf, double P_centr
   length = modrf->length;
 
   if (modrf->volt == 0) {
+#ifdef HAVE_GPU
+    if (onGpu) {
+      gpu_modulated_rf_cavity(np, P_central, length, 0, 0, 0, 0, 1);
+#  ifndef GPU_VERIFY
+      log_exit("modulated_rf_cavity");
+      return (np);
+#  else
+      startCpuTimer();
+#  endif
+    }
+#endif
     if (length) {
       if (isSlave || !distributedBeam) {
         for (ip = 0; ip < np; ip++) {
@@ -110,6 +127,10 @@ long modulated_rf_cavity(double **part, int64_t np, MODRF *modrf, double P_centr
         }
       }
     }
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+    if (onGpu)
+      compareGpuCpu(np, "modulated_rf_cavity");
+#endif
     log_exit("modulated_rf_cavity");
     return (np);
   }
@@ -132,7 +153,12 @@ long modulated_rf_cavity(double **part, int64_t np, MODRF *modrf, double P_centr
       unsigned long mode;
       if (!(mode = parseFiducialMode(modrf->fiducial)))
         bombElegant("invalid fiducial mode for MODRF element", NULL);
-      t0 = findFiducialTime(part, np, zEnd - length, length / 2, P_central, mode);
+#ifdef HAVE_GPU
+      if (onGpu)
+        t0 = gpu_findFiducialTime(np, zEnd - length, length / 2, P_central, mode);
+      else
+#endif
+        t0 = findFiducialTime(part, np, zEnd - length, length / 2, P_central, mode);
       modrf->phase_fiducial = -omega0 * t0;
       modrf->fiducial_seen = 1;
     }
@@ -144,6 +170,19 @@ long modulated_rf_cavity(double **part, int64_t np, MODRF *modrf, double P_centr
   }
 
   t0 = -modrf->phase_fiducial / omega0;
+#ifdef HAVE_GPU
+  if (onGpu) {
+    /* the device's times, added on the host in particle order */
+    const double *tValue = gpu_rf_particle_times(np, P_central);
+    for (ip = tAve = 0; ip < np; ip++) {
+#  ifndef USE_KAHAN
+      tAve += tValue[ip];
+#  else
+      tAve = KahanPlus(tAve, tValue[ip], &error);
+#  endif
+    }
+  } else
+#endif
   if (isSlave || !distributedBeam) {
     for (ip = tAve = 0; ip < np; ip++) {
 #ifndef USE_KAHAN
@@ -239,6 +278,17 @@ long modulated_rf_cavity(double **part, int64_t np, MODRF *modrf, double P_centr
   if ((tau = modrf->Q / omega0))
     volt *= sqrt(1 - exp(-dt / tau));
   
+#ifdef HAVE_GPU
+  if (onGpu) {
+    gpu_modulated_rf_cavity(np, P_central, length, volt, omega, phase, tAve, 0);
+#  ifndef GPU_VERIFY
+    log_exit("modulated_rf_cavity");
+    return (np);
+#  else
+    startCpuTimer();
+#  endif
+  }
+#endif
   if (isSlave || !distributedBeam) {
     for (ip = 0; ip < np; ip++) {
       coord = part[ip];
@@ -278,6 +328,10 @@ long modulated_rf_cavity(double **part, int64_t np, MODRF *modrf, double P_centr
 #endif
     }
   }
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  if (onGpu)
+    compareGpuCpu(np, "modulated_rf_cavity");
+#endif
   log_exit("modulated_rf_cavity");
   return (np);
 }

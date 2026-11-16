@@ -1,0 +1,8 @@
+! CENTER with ONCE_ONLY=1 on S and T together (S is moved before the time mean is taken, as on the CPU), then
+! the stored offsets on later passes, and X. Only an output file, so the particles must be elegant's.
+D: DRIF, L=0.5
+K: KICKER, HKICK=2e-4, VKICK=-1e-4
+Q1: QUAD, L=0.2, K1=0.5
+Q2: QUAD, L=0.2, K1=-0.5
+CEN: CENTER, X=1, S=1, T=1, ONCE_ONLY=1
+BL: LINE=(K, D, Q1, D, CEN, Q2, D)

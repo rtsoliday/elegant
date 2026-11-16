@@ -1,0 +1,34 @@
+! Manual fixed-grid output_mode=2 parity case. Set the batch limit below the complete grid
+! size to exercise stable particle-ID accounting across multiple batches.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run-mode2",
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+  load_balancing_on = 0,
+&end
+
+&run_control
+  n_passes = 32,
+&end
+
+&momentum_aperture
+  output = "%s.mmap",
+  x_initial = 1e-6,
+  y_initial = 1e-6,
+  ! These decimal values exercise integer-ratio roundoff: the combined span
+  ! is mathematically 28 steps, but may evaluate just below 28 in binary.
+  delta_negative_limit = -0.045,
+  delta_positive_limit = 0.045,
+  delta_negative_start = -0.01,
+  delta_positive_start = 0.01,
+  delta_step_size = 0.0025,
+  process_elements = 4,
+  include_name_pattern = "B1",
+  output_mode = 2,
+  soft_failure = 1,
+  verbosity = 1,
+&end

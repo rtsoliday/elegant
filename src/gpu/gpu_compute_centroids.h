@@ -12,6 +12,7 @@ void gpu_accumulate_beam_sums(void *sums, long n_part, double p_central, double 
                               double *timeValue, double tMin, double tMax,
                               int64_t startPID, int64_t endPID, unsigned long flags);
 long gpu_reductions_enabled(long nParticles);
+long gpu_beam_sums_enabled(long nParticles, unsigned long flags);
 
 #ifdef __cplusplus
 }

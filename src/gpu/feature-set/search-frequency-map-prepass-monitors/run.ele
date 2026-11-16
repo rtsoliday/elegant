@@ -1,0 +1,31 @@
+! Batched frequency map through MONI, HMON and VMON with length. The verify build's fused prepass skipped
+! monitors, so it missed 3.5 m of drift and kept particles the CPU lost; it must track them as drift matrices.
+
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 32
+&end
+
+&frequency_map
+    output = "%s.fma",
+    ndelta = 1,
+    delta_min = 0,
+    delta_max = 0,
+    nx = 16,
+    ny = 8,
+    xmin = -14e-3,
+    xmax = 14e-3,
+    ymin = 1e-6,
+    ymax = 14e-3,
+    full_grid_output = 1,
+    include_changes = 1,
+    verbosity = 0
+&end

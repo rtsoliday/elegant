@@ -1,0 +1,10 @@
+SDDS1
+&column name=t, units=s, type=double &end
+&column name=A, type=double &end
+&data mode=ascii, no_row_counts=1 &end
+-4e-13 0
+-2e-13 0.5
+-5e-14 1
+1e-13 0.8
+3e-13 0.2
+5e-13 0

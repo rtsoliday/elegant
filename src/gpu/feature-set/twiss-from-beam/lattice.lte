@@ -1,0 +1,7 @@
+! TWISS computing its transformation from the beam on every pass: the beam's Twiss parameters from
+! a read-only copy, the matrix on the device. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+TW: TWISS, BETAX=10, ALPHAX=1, ETAX=0.01, BETAY=4, ALPHAY=-0.5, FROM_BEAM=1
+BL: LINE=(Q1, D, R, D, TW, D)

@@ -1,0 +1,7 @@
+! HKPOLY with kick terms and a DRIFT_TYPE=1 drift polynomial, N_REPEATS, FACTOR, tilt and offsets:
+! polynomial_hamiltonian() on the device. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+HK: HKPOLY, L=0.4, K20=0.8, K02=-0.8, K11=0.1, K30=50, K12=-150, K40=2e3, D20=0.2, D02=0.2, D11=0.01, D40=0.5, &
+    N_REPEATS=4, DRIFT_TYPE=1, FACTOR=1.2, TILT=0.07, DX=1e-4, DY=-1e-4, DZ=0.005
+BL: LINE=(Q1, D, HK, D)

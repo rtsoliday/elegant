@@ -1,0 +1,26 @@
+! The batched n-line &find_aperture through CSBENDs with K3 to K8, which the batched search used to refuse.
+! In auto mode, so the case has GPU activity only when the batch runs.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  semaphore_file = "%s.done",
+&end
+
+&run_control
+  n_passes = 64,
+&end
+
+&find_aperture
+  output = "%s.aper",
+  mode = "n-line",
+  n_lines = 11,
+  nx = 21,
+  n_splits = 2,
+  split_fraction = 0.5,
+  xmin = -0.03,
+  xmax = 0.03,
+  ymax = 0.02,
+  verbosity = 0,
+&end

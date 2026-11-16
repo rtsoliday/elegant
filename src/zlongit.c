@@ -30,6 +30,9 @@
 #include "track.h"
 #include "table.h"
 #include "fftpackC.h"
+#ifdef HAVE_GPU
+#  include "gpu_impedance.h"
+#endif
 
 #define WAKE_COLUMNS 3
 static SDDS_DEFINITION wake_column[WAKE_COLUMNS] = {
@@ -104,6 +107,26 @@ void track_through_zlongit(double **part0, int64_t np0, ZLONGIT *zlongit, double
   MPE_Describe_state(event1a, event1b, "Histogram", "red");
   MPE_Describe_state(event2a, event2b, "Compute", "yellow");
   MPE_Describe_state(event3a, event3b, "Kick", "orange");
+#endif
+
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    long action = gpu_zlongit_bunched_mode_action(np0, zlongit, charge);
+    if (action == GPU_BUNCHED_WAKE_UNSUPPORTED) {
+      part0 = forceParticlesToCpu("ZLONGIT bunch layout CPU fallback");
+    } else if (action == GPU_BUNCHED_WAKE_SKIP) {
+      return;
+    } else {
+      startGpuTimer();
+      gpu_track_through_zlongit(np0, zlongit, Po, run, i_pass, charge);
+#  ifdef GPU_VERIFY
+      startCpuTimer();
+      track_through_zlongit(part0, np0, zlongit, Po, run, i_pass, charge);
+      compareGpuCpu(np0, "track_through_zlongit");
+#  endif
+      return;
+    }
+  }
 #endif
 
   i_pass0 = i_pass;

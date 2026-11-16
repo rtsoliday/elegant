@@ -1,0 +1,6 @@
+! A gaussian opposing beam 1 mm from the beam: z = (x + i y)/sd is far out, where Faddeeva::w uses its
+! continued fraction, which uses no function, so the particles match elegant to the bit here
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BB: BEAMBEAM, CHARGE=5e-9, XSIZE=80e-6, YSIZE=20e-6, XCENTER=1e-3, YCENTER=2e-4
+BL: LINE=(Q1, D, BB, D)

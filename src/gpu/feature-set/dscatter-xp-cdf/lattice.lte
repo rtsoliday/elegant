@@ -1,0 +1,6 @@
+! DSCATTER in x' from a CDF on passes 1 and 2 of four. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: DSCATTER, PLANE="xp", FILENAME="../data/dscatter_cdf.sdds", VALUENAME="z", CDFNAME="cdf", FACTOR=1e-5, &
+    STARTONPASS=1, ENDONPASS=2
+BL: LINE=(Q1, D, E, D)

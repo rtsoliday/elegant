@@ -1,0 +1,25 @@
+! 12,000 particles for 2 passes, the default thresholds.  A second-order matrix costs the CPU 60 ns a
+! particle, 0.72 ms, against 0.29 ms for the trip to the device, so a lone one goes.  Its order is
+! known once its matrix exists, which is after its first tracking: the first pass stays on the CPU and
+! the second is on the device, where W's sums differ.  A build that takes every matrix for first
+! order never uses the device here.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "BL",
+  p_central_mev = 1000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 2 &end
+&bunched_beam
+  n_particles_per_bunch = 12000,
+  emit_x = 1e-8, emit_y = 1e-8,
+  beta_x = 5, beta_y = 5,
+  sigma_dp = 1e-4, sigma_s = 1e-3,
+  distribution_type[0] = 3*"gaussian",
+  distribution_cutoff[0] = 3*3,
+&end
+&track &end

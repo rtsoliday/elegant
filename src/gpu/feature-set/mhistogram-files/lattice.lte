@@ -1,0 +1,8 @@
+! MHISTOGRAM writing every kind of histogram: minima, maxima and counts on the device (integer
+! counts, exact), the time mean of a copied column on the host. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+MH: MHISTOGRAM, FILE1D="%s.mh1", FILE2DH="%s.mh2h", FILE2DV="%s.mh2v", FILE2DL="%s.mh2l", FILE4D="%s.mh4", &
+    FILE6D="%s.mh6", INPUT_BINS="../data/mhist_bins.sdds"
+BL: LINE=(Q1, D, R, D, MH, D)

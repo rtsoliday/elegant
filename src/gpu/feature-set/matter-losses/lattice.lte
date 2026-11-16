@@ -1,0 +1,7 @@
+! MATTER at 0.6 MeV, 0.0178 m of aluminum with energy decay and straggling: about a quarter of the
+! particles fall to gamma 1, so the host decides the losses in elegant's order and the device puts the
+! rows there, with z and delta of the lost rows set as elegant does. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: MATTER, L=0.0178, XO=0.089, ENERGY_DECAY=1, ENERGY_STRAGGLE=1
+BL: LINE=(Q1, D, E, D)

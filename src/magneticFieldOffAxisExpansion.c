@@ -608,3 +608,23 @@ void outputBOFFAXEDataOnGrid(BOFFAXE *boa)
     SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
   }
 }
+
+#ifdef HAVE_GPU
+/* The field table of a BOFFAXE that trackMagneticFieldOffAxisExpansion() has initialized, for
+ * gpu_track_boffaxe() (gpu/gpu_ports_host.h); 0 before that */
+long boffaxeFieldTable(BOFFAXE *boa, long *nz, long *nDz1, double *dz, double *zMin, double *zMax,
+                       double ***fieldData) {
+  STORED_BOFFAXE_DATA *data;
+
+  if (!boa || !boa->initialized || boa->dataIndex < 0 || boa->dataIndex >= nBOFFAXEDataSets)
+    return 0;
+  data = storedBOFFAXEData + boa->dataIndex;
+  *nz = data->nz;
+  *nDz1 = data->nDz1;
+  *dz = data->dz;
+  *zMin = data->zMin;
+  *zMax = data->zMax;
+  *fieldData = data->fieldData;
+  return 1;
+}
+#endif

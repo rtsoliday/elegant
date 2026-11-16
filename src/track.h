@@ -4368,6 +4368,10 @@ extern void zero_beam_sums(BEAM_SUMS *sums, long n);
 #define BEAM_SUMS_SPARSE   0x0001UL
 #define BEAM_SUMS_NOMINMAX 0x0002UL
 #define BEAM_SUMS_EXACTEMIT 0x0004UL
+/* Sums for centroid, sigma and WATCH parameter files, which don't steer anything */
+#define BEAM_SUMS_ELEMENT_OUTPUT 0x0008UL
+/* WATCH parameter sums, which feed only the WATCH file */
+#define BEAM_SUMS_WATCH_OUTPUT 0x0010UL
 extern void accumulate_beam_sums(BEAM_SUMS *sums, double **coords, int64_t n_part, double p_central, double mp_charge,
                                  double *timeValue, double tMin, double tMax,
 				 int64_t startPID, int64_t endPID, unsigned long flags);
@@ -4843,6 +4847,12 @@ long trackThroughApContour(double **initial, APCONTOUR *apcontour, int64_t np, d
 long imposeApContour(double **coord, APCONTOUR *apcontour, int64_t np, double **accepted, double z,
                      double Po, ELEMENT_LIST *eptr);
 long checkApContour(double x, double y, APCONTOUR *apcontour, ELEMENT_LIST *eptr);
+void ccbendSetupCentroidOutput(CCBEND *ccbend);
+long ccbendCentroidSumsEnabled(CCBEND *ccbend, int64_t iPart, long iFinalSlice);
+void ccbendWriteCentroidOutput(CCBEND *ccbend, ELEMENT_LIST *eptr, GLOBAL_BEAM_SUMS *beamSums, double Po);
+void lgbendSetupCentroidOutput(LGBEND *lgbend);
+long lgbendCentroidSumsEnabled(LGBEND *lgbend, int64_t iPart, long iFinalSlice);
+void lgbendWriteCentroidOutput(LGBEND *lgbend, ELEMENT_LIST *eptr, GLOBAL_BEAM_SUMS *beamSums, double Po, long nSegments);
 long trackThroughTaperApCirc(double **initial, TAPERAPC *taperApC, int64_t np, double **accepted, double z,
                              double Po, ELEMENT_LIST *eptr);
 long trackThroughTaperApElliptical(double **initial, TAPERAPE *taperApE, int64_t np, double **accepted, double zStartElem,
@@ -4890,6 +4900,11 @@ extern void misalign_matrix(VMATRIX *M, double dx, double dy, double dz,
                             short method);
 extern VMATRIX *misalignment_matrix(MALIGN *malign, long order);
 extern void offsetBeamCoordinatesForMisalignment(double **part, int64_t np, double dx, double dy, double dz);
+extern void getLinearizedMisalignmentMatrix(long mode, double dx, double dy, double dz, double ax, double ay, double az,
+                                            double thetaBend, double length, short face, double *C, double (*R)[6]);
+#define EXACT_MISALIGNMENT_FRAME_SIZE 31
+extern void getExactMisalignmentFrame(long mode, double dx, double dy, double dz, double ax, double ay, double az,
+                                      double thetaBend, double length, short face, double *frame);
 extern void offsetParticlesForMisalignment(long mode, double **coord, int64_t np, double dx, double dy, 
                                            double dz,  double ax, double ay, double az,
                                            double tilt, double thetaBend, double length,
@@ -4940,6 +4955,19 @@ extern void checkSymplecticity3rdOrder(VMATRIX *M, double meanMax[3][2]);
 /* prototypes for motion4.c: */
 extern long motion(double **part, int64_t n_part, void *field, long field_type, double *P_central, double *dgamma,
     double *dP, double **accepted, double z_start);
+extern void setupLaserModulator(LSRMDLTR *lsrMdltr, double P_central, long nonAdaptiveRungeKutta);
+/* motion()'s set-up for one call of RFTMEZ0, TWLA or MAPSOLENOID, done as motion() does it (the same
+ * globals, fiducial selection from part, files read once), and the values that its particle loop uses.
+ * gpu-elegant calls this to track the particles on the device. */
+typedef struct {
+  double kscale, Zend, tauStart, Xlimit, Ylimit, tolerance;
+  double XapertureCenter, YapertureCenter, Xoffset, Yoffset;
+  double Xcenter, Ycenter, Zcenter, Xcenter1, Ycenter1, Zcenter1;
+  double partRot[9], fieldRot[9], partRot1[9], fieldRot1[9];
+  long nSteps, integratorCode, radialLimit, changeP0, impulses;
+} MOTION_GPU_SETUP;
+extern long motionGpuSetup(double **part, int64_t n_part, void *field, long field_type, double pCentral,
+                           double z_start, MOTION_GPU_SETUP *setup);
  
 /* prototypes for multipole.c: */
 typedef struct {
@@ -5237,6 +5265,10 @@ void track_through_trwake(double **part, int64_t np, TRWAKE *wakeData, double Po
                           RUN *run, long i_pass, CHARGE *charge);
 void track_through_lrwake(double **part, int64_t np, LRWAKE *wakeData, double *Po,
 			  RUN *run, long i_pass, CHARGE *charge);
+void lrwakeBunchVoltages(LRWAKE *wakeData, CHARGE *charge, long nBunches, double *tBunch, double *xBunch,
+                         double *yBunch, double *QBunch, double *VxBunch, double *VyBunch, double *VzBunch,
+                         double *QxBunch, double *QyBunch);
+void set_up_lrwake(LRWAKE *wakeData, RUN *run, long pass, long particles, CHARGE *charge, long nBunches);
 void index_bunch_assignments(double **part, int64_t np, long idSlotsPerBunch, double P0, double **time, long **ibParticle, int64_t ***ipBucket, int64_t **npBucket, long *nBuckets,
                                   long lastNBuckets);
 void free_bunch_index_memory(double *time0, long *ibParticle, int64_t **ipBucket, int64_t *npBucket, long nBuckets);
@@ -5417,6 +5449,14 @@ extern void SDDS_CentroidOutputSetup(SDDS_TABLE *SDDS_table, char *filename, lon
 extern void SDDS_SigmaOutputSetup(SDDS_TABLE *SDDS_table, char *filename, long mode, long lines_per_row,
 				  char *command_file, char *lattice_file, char *caller, short coupledSigmaOutput);
 extern void readErrorMultipoleData(MULTIPOLE_DATA *multData, char *multFile, long steering);
+extern void setupKquadErrorMultipoles(KQUAD *kquad, double KnL);
+extern void setupKsextErrorMultipoles(KSEXT *ksext, double KnL);
+extern void setupKoctErrorMultipoles(KOCT *koct, double KnL);
+extern void setupDqcorErrorMultipoles(DQCOR *dqcor, double KnL);
+extern void setupCcbendErrorMultipoles(CCBEND *ccbend, ELEMENT_LIST *eptr, double referenceKnL, long angleSign);
+extern void optimizeCcbendForGpu(ELEMENT_LIST *eptr, CCBEND *ccbend, double Po);
+extern void optimizeLgbendForGpu(ELEMENT_LIST *eptr, LGBEND *lgbend, double Po);
+extern double *multipoleExpansionCoefficients(long order);
 extern void set_up_histogram(HISTOGRAM *histogram, RUN *run, long occurence, int64_t IDSlotsPerBunch);
 extern long track_through_tubend(double **part, int64_t n_part, TUBEND *tubend,
                           double p_error, double Po, double **accepted,
@@ -5623,6 +5663,8 @@ void histogram_sums(long nonEmptyBins, long firstBin, long *lastBin, long *his);
 extern void setupIonEffects(NAMELIST_TEXT *nltext, VARY *control, RUN *run);
 extern void completeIonEffectsSetup(RUN *run, LINE_LIST *beamline);
 extern void trackWithIonEffects(double **part0, long np0, IONEFFECTS *ionEffects, double Po, long iPass, long nPasses, CHARGE *charge);
+extern long ionEffectsActiveOnPass(IONEFFECTS *ionEffects, long iPass);
+extern long ionEffectsUseDeviceKicks(long use);
 extern void evaluateVoltageFromLorentzian(double *Eperp, double a, double b, double x, double y);
 extern void gaussianBeamKick(double *coord, double *center, double *sigma, long fromBeam, double kick[2], double charge, 
 		      double ionMass, double ionCharge);
@@ -5664,6 +5706,7 @@ extern void popWarningSuppression(void);
 extern void setObstructionsMode(long state) ;
 extern void resetObstructionData(OBSTRUCTION_DATASETS *obsData);
 extern void readObstructionInput(NAMELIST_TEXT *nltext, RUN *run);
+extern long obstructionDataPresent(void);
 extern long filterParticlesWithObstructions(double **coord, int64_t np, double **accepted, double z, double P_central);
 extern long insideObstruction(double *part, short mode, double dz, long segment, long nSegments);
 extern long insideObstruction_xyz(double x, double xp, double y, double yp, long particleID, double *lossCoordinates, 
@@ -5673,6 +5716,40 @@ extern long insideObstruction_XYZ(double X, double Y, double Z, double dXi, doub
 
 
 extern void processGlobalSettings(NAMELIST_TEXT *nltext);
+
+/* GPU builds run some particle loops on OpenMP tracking threads. The condition is tested in C, since an if
+ * clause on the pragma enters the OpenMP runtime at every call even when false, about 0.15 us, which slowed
+ * one-particle tracking through cheap elements by up to half. The loop is the second argument; other builds
+ * run it as written. */
+#if defined(HAVE_GPU) && defined(_OPENMP)
+#  define GPU_OMP_PARALLEL_FOR(condition, ...)                                                   \
+    do {                                                                                         \
+      if (condition) {                                                                           \
+        _Pragma("omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static)")     \
+        __VA_ARGS__                                                                              \
+      } else {                                                                                   \
+        __VA_ARGS__                                                                              \
+      }                                                                                          \
+    } while (0)
+#  define GPU_OMP_TASKLOOP(condition, ...)                                                       \
+    do {                                                                                         \
+      if (condition) {                                                                           \
+        _Pragma("omp taskloop num_tasks(gpuGetOmpTrackingThreads())")                            \
+        __VA_ARGS__                                                                              \
+      } else {                                                                                   \
+        __VA_ARGS__                                                                              \
+      }                                                                                          \
+    } while (0)
+#else
+#  define GPU_OMP_PARALLEL_FOR(condition, ...) \
+    do {                                       \
+      __VA_ARGS__                              \
+    } while (0)
+#  define GPU_OMP_TASKLOOP(condition, ...) \
+    do {                                   \
+      __VA_ARGS__                          \
+    } while (0)
+#endif
 
 // to indicate very unlikely conditions
 #define likely(x)	__builtin_expect(!!(x), 1)

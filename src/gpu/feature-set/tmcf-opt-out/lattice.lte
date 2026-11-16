@@ -1,0 +1,7 @@
+! tmcf-cavity's TMCF with ELEGANT_GPU_ENABLE_TMCF=0 (suite.json): elegant's motion() on the host. Must be
+! identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+TM: TMCF, L=0.1, FREQUENCY=2.856e9, PHASE=30, EZ=5e6, ER=2e5, BPHI=2e-3, TILT=0.1, DX=1e-4, DY=-1e-4, &
+    X_MAX=0.01, Y_MAX=0.01, METHOD="non-adaptive", N_STEPS=200, FIDUCIAL="t,median", ACCURACY=1e-9
+BL: LINE=(Q1, D, TM, D)

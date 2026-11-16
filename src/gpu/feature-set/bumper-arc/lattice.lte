@@ -1,0 +1,8 @@
+! BUMPER as an exact arc (N_KICKS=0) with a sine waveform across a long bunch, and a zero-length one that
+! kicks only, its waveform repeated (PERIODIC) for the particles past its end (TIME_OFFSET is subtracted
+! from a particle's time). Rounding expected (the arc's tan)
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+K1: BUMPER, L=0.3, ANGLE=0.004, WAVEFORM="../data/bumper_sine.sdds=t+A", TIME_OFFSET=-5e-10
+K2: BUMPER, L=0, ANGLE=-0.002, WAVEFORM="../data/bumper_sine.sdds=t+A", TIME_OFFSET=-1.9e-9, PERIODIC=1
+BL: LINE=(Q1, D, K1, D, K2, D)

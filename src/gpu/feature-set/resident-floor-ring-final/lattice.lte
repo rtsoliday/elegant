@@ -1,0 +1,13 @@
+! A ring where SREFFECTS takes the same energy from every particle each pass and an ECOL where there
+! is dispersion scrapes the beam a little more each pass: 12,000 particles, below the 10,000
+! thresholds after the first pass and below the 1,000 floor after about 22.
+D: DRIF,L=0.5
+QF: KQUAD,L=0.2,K1=1.2,N_SLICES=4
+QD: KQUAD,L=0.2,K1=-1.2,N_SLICES=4
+SF: KSEXT,L=0.1,K2=5,N_SLICES=2
+B: CSBEND,L=0.5,ANGLE=0.1,N_KICKS=8
+M1: MULT,L=0.1,KNL=2,ORDER=2,N_KICKS=2
+SR: SREFFECTS,PREF=1956.95,JX=1,JY=1,JDELTA=2,DDELTAREF=-1e-4,DAMPING=0,QEXCITATION=0,LOSSES=1
+EC: ECOL,X_MAX=4e-3,Y_MAX=4e-3
+CELL: LINE=(QF,D,B,D,QD,D,B,D)
+RING: LINE=(4*CELL,SF,M1,SR,EC)

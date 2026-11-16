@@ -1,0 +1,9 @@
+! Another integrator (METHOD="modified midpoint") keeps its element on the CPU; a non-adaptive one ("non-adaptive",
+! abbreviated, as elegantTestSet decks write it) in the same line runs on the device.
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+LA: LSRMDLTR, L=0.4, PERIODS=10, BU=0.33, N_STEPS=600, ACCURACY=1e-6, METHOD="modified midpoint", &
+    LASER_PEAK_POWER=5e6, LASER_W0=3e-4
+LN: LSRMDLTR, L=0.4, PERIODS=10, BU=0.33, N_STEPS=600, ACCURACY=1e-6, METHOD="non-adaptive", &
+    LASER_PEAK_POWER=5e6, LASER_W0=3e-4
+BL: LINE=(Q1, D, LA, D, LN, D)

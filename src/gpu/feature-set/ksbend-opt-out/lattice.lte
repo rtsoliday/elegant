@@ -1,0 +1,5 @@
+! ELEGANT_GPU_ENABLE_KSBEND=0 (suite.json) keeps KSBEND on the CPU
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+KB: KSBEND, L=0.5, ANGLE=0.05, K1=0.5, METHOD="modified-midpoint", N_KICKS=20
+BL: LINE=(Q1, D, KB, D)

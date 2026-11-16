@@ -1,0 +1,50 @@
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "FOFB_RING",
+  p_central = 880,
+  default_order = 2,
+  rootname = "run",
+  centroid = "%s.cen",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+
+&twiss_output matched = 1 &end
+&run_control n_steps = 4, n_passes = 3 &end
+
+&steering_element name = HC1, item = KICK, plane = h,
+  target = fofb, tweek = 1e-6 &end
+&steering_element name = HC2, item = KICK, plane = h,
+  target = fofb, tweek = 1e-6 &end
+&steering_element name = VC1, item = KICK, plane = v,
+  target = fofb, tweek = 1e-6 &end
+&steering_element name = VC2, item = KICK, plane = v,
+  target = fofb, tweek = 1e-6 &end
+
+&bunched_beam
+  n_particles_per_bunch = 1024,
+  emit_x = 1e-9, beta_x = 8, alpha_x = 0,
+  emit_y = 1e-9, beta_y = 8, alpha_y = 0,
+  sigma_dp = 1e-5, sigma_s = 1e-3,
+  centroid[0] = 1e-4,
+  centroid[2] = -1e-4,
+&end
+
+&fast_orbit_feedback
+  passes_between_updates = 3,
+  steering_Ki = 0.1,
+  rf_Ki = 0.001,
+  include_rf_frequency = 1,
+  corrector_limit = 1e-6,
+  rf_frequency_limit = 100,
+  anti_windup = 1,
+  bpm_noise = 1e-8,
+  bpm_noise_cutoff = 3,
+  bpm_noise_distribution = gaussian,
+  bpm_filter_file = "filter.sdds",
+  steering_filter_file = "filter.sdds",
+  rf_frequency_filter_file = "filter.sdds",
+  reset_filters_each_step = 1,
+  output = "%s.fofb",
+  verbosity = 0,
+&end

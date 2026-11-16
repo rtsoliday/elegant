@@ -1,0 +1,7 @@
+! EMITTANCE setting the horizontal geometric and the vertical normalized emittance of a beam with
+! dispersion: the beam sums of a read-only copy (the CPU's), the transformation on the device. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+EM: EMITTANCE, EMITX=2e-8, EMITNY=1e-4
+BL: LINE=(Q1, D, R, D, EM, D)

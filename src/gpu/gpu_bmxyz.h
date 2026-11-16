@@ -7,7 +7,9 @@
 extern "C" {
 #endif
 
-long gpu_track_bmxyz(long nParticles, BMAPXYZ *bmxyz, double pCentral);
+long gpu_track_bmxyz(long nParticles, BMAPXYZ *bmxyz, double pCentral, MAXAMP *maxamp,
+                     APCONTOUR *apcontour, APERTURE_DATA *apFileData, double zStart,
+                     double **accepted, ELEMENT_LIST *eptr);
 
 #ifdef __cplusplus
 }

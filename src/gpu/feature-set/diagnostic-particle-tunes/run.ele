@@ -1,0 +1,32 @@
+! &particle_tunes reads coordinates each pass. No other output syncs the beam to the host here.
+
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    tracking_updates = 0,
+    random_number_seed = 987654321,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_passes = 64
+&end
+
+&particle_tunes
+    filename = "%s.ptune",
+    start_pid = 1,
+    end_pid = 100
+&end
+
+&bunched_beam
+    n_particles_per_bunch = 3000,
+    emit_x = 1e-9, beta_x = 8, alpha_x = 0,
+    emit_y = 1e-9, beta_y = 8, alpha_y = 0,
+    sigma_dp = 1e-4, sigma_s = 1e-3,
+    centroid[0] = 1e-4,
+    centroid[2] = -1e-4,
+&end
+
+&track &end

@@ -1,0 +1,9 @@
+! LSRMDLTR on the device: a planar undulator with the default "leading terms" field and a TEM00 laser at the
+! resonant wavelength, with LASER_PHASE, offsets of the laser at the waist (LASER_X0, LASER_Y0) and a waist
+! moved from the center (LASER_Z0), non-adaptive Runge-Kutta. The device's sin, cos, exp and atan differ
+! from glibc's in the last bit, so rounding is expected; the mean time t0 is elegant's exactly.
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+LM: LSRMDLTR, L=0.4, PERIODS=10, BU=0.33, N_STEPS=600, ACCURACY=1e-6, LASER_PEAK_POWER=5e6, LASER_W0=3e-4, &
+    LASER_PHASE=0.3, LASER_X0=2e-5, LASER_Y0=-1e-5, LASER_Z0=0.05
+BL: LINE=(Q1, D, LM, D)

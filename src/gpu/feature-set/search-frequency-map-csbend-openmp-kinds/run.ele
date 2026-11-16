@@ -1,0 +1,33 @@
+! Batched frequency map tracked on the CPU through CSBENDs of the kinds the host threads take since November 12, 2026
+! (default, second-order and models 2 to 4 edges, MALIGN_METHOD=0 offsets, classical radiation, expanded
+! Hamiltonian). Run with --elegant-argument=-ompThreads=4 to use threads;
+! the result must be the one-thread result.
+
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 32
+&end
+
+&frequency_map
+    output = "%s.fma",
+    ndelta = 1,
+    delta_min = 0,
+    delta_max = 0,
+    nx = 16,
+    ny = 8,
+    xmin = -1.5e-3,
+    xmax = 1.5e-3,
+    ymin = 1e-6,
+    ymax = 1.5e-3,
+    full_grid_output = 1,
+    include_changes = 1,
+    verbosity = 0
+&end

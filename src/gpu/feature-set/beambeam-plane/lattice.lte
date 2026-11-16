@@ -1,0 +1,7 @@
+! A beam with no vertical size (emit_y = 0), so y is exactly 0 and Faddeeva::w takes its real-axis branch
+! (w_im's table, copied unchanged), and a second element 0.2 mm off in x. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BB: BEAMBEAM, CHARGE=5e-9, XSIZE=80e-6, YSIZE=20e-6
+BB2: BEAMBEAM, CHARGE=5e-9, XSIZE=80e-6, YSIZE=20e-6, XCENTER=2e-4
+BL: LINE=(Q1, D, BB, D, BB2, D)

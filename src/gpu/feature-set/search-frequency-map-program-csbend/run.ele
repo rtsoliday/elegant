@@ -1,0 +1,31 @@
+! A 15 by 15 map at three momentum offsets, two intervals of 32 turns, through a ring with eight kinds
+! of CSBEND. The program tracks both intervals with no tolerance set, and the file is the CPU's bit
+! for bit. The verify build stops if any particle's history differs from the CPU's. The offsets are
+! 5e-3 because the chance that q/(1+delta)*(1+delta) isn't q is about |delta|.
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 64
+&end
+
+&frequency_map
+    output = "%s.fma",
+    nx = 15,
+    ny = 15,
+    xmin = 1e-6,
+    xmax = 0.005,
+    ymin = 1e-6,
+    ymax = 0.005,
+    ndelta = 3,
+    delta_min = -5e-3,
+    delta_max = 5e-3,
+    include_changes = 1,
+    verbosity = 0
+&end

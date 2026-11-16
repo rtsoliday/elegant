@@ -1,0 +1,7 @@
+! Two particles exactly on a TAPERAPE's entrance boundary (x = ASTART on the x axis, y = -BSTART on the y axis),
+! where the test r2 >= re2 is decided by the last bit of atan2, cos and sin: the device counts the tests as
+! uncertain and the call goes to the CPU, so the result is elegant's. Identical.
+D: DRIF,L=0.10
+TB: TAPERAPE,L=0.05,ASTART=0.015,AEND=0.013,BSTART=0.01,BEND=0.009
+Q: QUAD,L=0.2,K1=0.5,ORDER=2
+RING: LINE=(D,TB,D,Q,D)

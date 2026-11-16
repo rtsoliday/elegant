@@ -10,6 +10,9 @@
 #include "mdb.h"
 #include "track.h"
 #include "sliceAnalysis.h"
+#ifdef HAVE_GPU
+#  include <gpu_base.h>
+#endif
 
 static double tmp_safe_sqrt;
 #define SAFE_SQRT(x) ((tmp_safe_sqrt = (x)) < 0 ? 0.0 : sqrt(tmp_safe_sqrt))
@@ -483,6 +486,40 @@ void performSliceAnalysisOutput(SLICE_OUTPUT *sliceOutput, double **particle, lo
     SDDS_PrintErrors(stderr, SDDS_VERBOSE_PrintErrors | SDDS_EXIT_PrintErrors);
 }
 
+/* The device's numbers for a slice when it has them (gpu_slice_moments()), else computeSliceMoments().
+ * They are the CPU's, which GPU_VERIFY checks by computing both */
+static long sliceMoments(long slice, double aveCoord[6], double S[6][6], double **particle, long particles,
+                         double tMin, double tMax, long onDevice, long *deviceCount, double *deviceC,
+                         double *deviceS) {
+  long count, j, k;
+
+  if (onDevice) {
+    for (j = 0; j < 6; j++) {
+      aveCoord[j] = deviceC[slice * 6 + j];
+      for (k = 0; k < 6; k++)
+        S[j][k] = deviceS[slice * 36 + j * 6 + k];
+    }
+    return deviceCount[slice];
+  }
+  count = computeSliceMoments(aveCoord, S, particle, particles, tMin, tMax);
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  if (deviceCount) {
+    long same = count == deviceCount[slice];
+    for (j = 0; j < 6 && same; j++) {
+      same = aveCoord[j] == deviceC[slice * 6 + j];
+      for (k = 0; k < 6 && same; k++)
+        same = S[j][k] == deviceS[slice * 36 + j * 6 + k];
+    }
+    if (!same) {
+      fprintf(stderr, "elegant CUDA VERIFY failed for slice analysis slice %ld: CPU count %ld, GPU count %ld\n",
+              slice, count, deviceCount[slice]);
+      exit(1);
+    }
+  }
+#endif
+  return count;
+}
+
 void performSliceAnalysis(SLICE_OUTPUT *sliceOutput, double **particle, long particles,
                           double Po, double charge, long timeGiven) {
   double *sSave = NULL;
@@ -490,6 +527,8 @@ void performSliceAnalysis(SLICE_OUTPUT *sliceOutput, double **particle, long par
   double tMinAll, tMaxAll, tMin, tMax;
   long count, slicesFound = 0;
   double aveCoord[6], S[6][6];
+  long onDevice = 0, *deviceCount = NULL;
+  double *deviceC = NULL, *deviceS = NULL, deviceTMin = 0, deviceTMax = 0;
 
 #if USE_MPI
   return;
@@ -513,7 +552,31 @@ void performSliceAnalysis(SLICE_OUTPUT *sliceOutput, double **particle, long par
     return;
   }
 
+#ifdef HAVE_GPU
   if (!timeGiven) {
+    long slices = sliceOutput->nSlices > 1 ? sliceOutput->nSlices + 1 : 1;
+
+    deviceCount = tmalloc(sizeof(*deviceCount) * slices);
+    deviceC = tmalloc(sizeof(*deviceC) * 6 * slices);
+    deviceS = tmalloc(sizeof(*deviceS) * 36 * slices);
+    if (!gpu_slice_moments(particles, Po, sliceOutput->nSlices, &deviceTMin, &deviceTMax,
+                           deviceCount, deviceC, deviceS)) {
+      free(deviceCount);
+      free(deviceC);
+      free(deviceS);
+      deviceCount = NULL;
+      deviceC = deviceS = NULL;
+    } else {
+#  ifdef GPU_VERIFY
+      particle = copyParticlesToCpuReadOnly("performSliceAnalysis GPU-VERIFY");
+#  else
+      onDevice = 1;
+#  endif
+    }
+  }
+#endif
+
+  if (!timeGiven && !onDevice) {
     /* compute the time coordinate and replace 's' with this value.
      * save s values in a new array
      */
@@ -525,7 +588,7 @@ void performSliceAnalysis(SLICE_OUTPUT *sliceOutput, double **particle, long par
   }
 
   /* compute normal values (over entire beam) */
-  computeSliceMoments(aveCoord, S, particle, particles, 0, 0);
+  sliceMoments(0, aveCoord, S, particle, particles, 0, 0, onDevice, deviceCount, deviceC, deviceS);
   sliceOutput->charge[0] = charge;
   sliceOutput->particles[0] = particles;
   sliceOutput->Cx[0] = aveCoord[0];
@@ -545,12 +608,24 @@ void performSliceAnalysis(SLICE_OUTPUT *sliceOutput, double **particle, long par
   sliceOutput->ecnx[0] = Po * (1 + aveCoord[5]) * correctedEmittance(S, sliceOutput->eta, 0, 1, &sliceOutput->betacx[0], &sliceOutput->alphacx[0]);
   sliceOutput->ecny[0] = Po * (1 + aveCoord[5]) * correctedEmittance(S, sliceOutput->eta, 2, 3, &sliceOutput->betacy[0], &sliceOutput->alphacy[0]);
   /* find total bunch duration */
-  tMaxAll = -(tMinAll = DBL_MAX);
-  for (i = 0; i < particles; i++) {
-    if (tMinAll > particle[i][4])
-      tMinAll = particle[i][4];
-    if (tMaxAll < particle[i][4])
-      tMaxAll = particle[i][4];
+  if (onDevice) {
+    tMinAll = deviceTMin;
+    tMaxAll = deviceTMax;
+  } else {
+    tMaxAll = -(tMinAll = DBL_MAX);
+    for (i = 0; i < particles; i++) {
+      if (tMinAll > particle[i][4])
+        tMinAll = particle[i][4];
+      if (tMaxAll < particle[i][4])
+        tMaxAll = particle[i][4];
+    }
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+    if (deviceCount && (tMinAll != deviceTMin || tMaxAll != deviceTMax)) {
+      fprintf(stderr, "elegant CUDA VERIFY failed for slice analysis time span: CPU %.17e %.17e GPU %.17e %.17e\n",
+              tMinAll, tMaxAll, deviceTMin, deviceTMax);
+      exit(1);
+    }
+#endif
   }
   sliceOutput->duration[0] = tMaxAll - tMinAll;
 
@@ -575,7 +650,8 @@ void performSliceAnalysis(SLICE_OUTPUT *sliceOutput, double **particle, long par
 
       sliceOutput->duration[slice] = tMax - tMin;
 
-      count = computeSliceMoments(aveCoord, S, particle, particles, tMin, tMax);
+      count = sliceMoments(slice, aveCoord, S, particle, particles, tMin, tMax, onDevice, deviceCount,
+                           deviceC, deviceS);
       sliceOutput->particles[slice] = count;
       if (count < 2)
         sliceOutput->sliceFound[slice] = 0;
@@ -643,11 +719,14 @@ void performSliceAnalysis(SLICE_OUTPUT *sliceOutput, double **particle, long par
     sliceOutput->Ct[nSlices + 1] /= slicesFound;
   }
 
-  if (!timeGiven) {
+  if (!timeGiven && !onDevice) {
     for (i = 0; i < particles; i++)
       SWAP_DOUBLE(sSave[i], particle[i][4]);
     free(sSave);
   }
+  free(deviceCount);
+  free(deviceC);
+  free(deviceS);
 }
 
 double correctedEmittance(double S[6][6], double eta[4], long i1, long i2,

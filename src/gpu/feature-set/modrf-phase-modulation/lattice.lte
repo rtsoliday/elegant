@@ -1,0 +1,51 @@
+! MODRF with decaying phase modulation in elegantTestSet's PAR ring (ringRF2), 32 turns: the mean time
+! from the device's particle times added on the host in particle order, RAMPRF's kick. Identical
+l1a: drift, l=0.2
+l1b: drift, l=1.531675
+s1h: sext, l=0.1, k2=0.0
+s1: line=(s1h,s1h)
+l2: drift, l=0.08
+lqb: drift, l=0.24
+q1: quadrupole, l=0.23, k1=1.786022448154
+b1: sben, l=0.8, angle=0.785398163397, e1=0.445, e2=0.445, &
+hgap=0.0225, fint=0.41
+b2: sben, l=0.8, angle=0.785398163397, e1=0.445, e2=0.445, &
+hgap=0.0225, fint=0.41
+q2: quadrupole, l=0.23, k1=2.295915530046
+l3: drift, l=1.47
+l3a: drif,l=0.568095770758662
+l3b: drif,l=0.551904229241338
+! LHK is half the effective length of a kicker
+lhk: drift, l=0.175
+l34a: drif,l=0.811087
+l34b: drif,l=0.308913
+! vertical chromaticity sextupole plus vertical steering magnet
+sdh: sextupole, l=0.1, k2=5.95873739969822, order=1
+sd: line=(sdh,sdh)
+l4: drift, l=0.08
+q3: quadrupole, l=0.23, k1=0.0
+q4: quadrupole, l=0.23, k1=2.270174600496
+l5: drift, l=0.325
+! horizontal chromaticity sextupole plus horizontal steering magnet
+sfh: sextupole, l=0.1, k2=-1.65546424863732, order=1
+sf: line=(sfh,sfh)
+! quadrant 1, less half of SF
+quadr1: line=(l1a,l1b,s1,l2,q1,lqb,b1,lqb,q2,l3a,lhk,&
+    lhk,l3b,sd,l4,q3,lqb,b2,lqb,q4,l5)
+! quadrant 2, less half of SF
+quadr2: line=(l1a,l1b,s1,l2,q1,lqb,b1,lqb,q2,l3a,lhk,&
+    lhk,l3b,sd,l4,q3,lqb,b2,lqb,q4,l5)
+! quadrant 3, less half of SF
+quadr3: line=(l1a,l1b,s1,l2,q1,lqb,b1,lqb,q2,l3,sd,l4,&
+    q3,lqb,b2,lqb,q4,l5)
+! quadrant 4, less half of SF
+quadr4: line=(l1a,l1b,s1,l2,q1,lqb,b1,lqb,q2,l34a,lhk,&
+    lhk,l34b,sd,l4,q3,lqb,b2,lqb,q4,l5)
+half: line=(quadr2,sf,-quadr2)
+rc: recirc
+mal: malign,dp=0,dx=1e-6,dy=1e-6
+ap: rcol,x_max=0.09
+rf: modrf,volt=40e3,freq="1104 36 /  880 beta.p c_mks * / rec",phase=180,&
+        pmfreq=1.856e4,pmmag=5,pmdecay=1.96e4
+par: line=(mal,rc,rf,2*half,ap)
+return

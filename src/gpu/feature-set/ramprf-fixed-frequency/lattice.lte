@@ -1,0 +1,10 @@
+! RAMPRF at a fixed frequency finds its fiducial from the beam: tmean, first, light,
+! and one with no voltage, which is the CPU's plain drift.
+D: DRIF,L=0.5
+QF: KQUAD,L=0.3,K1=1.0,N_SLICES=4
+QD: KQUAD,L=0.3,K1=-1.0,N_SLICES=4
+R1: RAMPRF,L=0.2,VOLT=2e6,PHASE=170,FREQ="c_mks 3.2 / 3 *",VOLT_WAVEFORM="rf.sdds=t+Voltage"
+R2: RAMPRF,L=0.15,VOLT=5e5,PHASE=175,FREQ="c_mks 3.2 / 6 *",VOLT_WAVEFORM="rf.sdds=t+Voltage",FIDUCIAL="first"
+R3: RAMPRF,L=0,VOLT=3e5,PHASE=178,FREQ="c_mks 3.2 / 3 *",VOLT_WAVEFORM="rf.sdds=t+Voltage",FIDUCIAL="light"
+R0: RAMPRF,L=0.25,VOLT=0
+RING: LINE=(QF,D,R1,QD,D,R2,R0,D,R3,D)

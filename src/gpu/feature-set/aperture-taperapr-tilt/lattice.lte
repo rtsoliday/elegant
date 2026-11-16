@@ -1,0 +1,9 @@
+! TAPERAPR with a large TILT: survivors drift in the tilted frame, as elegant's exactDrift() does there, so
+! their path length is elegant's to the bit (before November 14, 2026 the device took it from the slopes
+! rotated back, which differed in the last place now and then). Identical to elegant.
+D: DRIF,L=0.10
+TR: TAPERAPR,L=0.4,XSTART=0.018,XEND=0.016,YSTART=0.014,YEND=0.012,TILT=0.7
+TS: TAPERAPR,L=0.3,XSTART=0.02,XEND=0.015,YSTART=0.012,YEND=0.012,TILT=-1.1,DX=5e-4
+Q: QUAD,L=0.2,K1=0.5,ORDER=2
+CELL: LINE=(D,TR,D,Q,TS,D)
+RING: LINE=(3*CELL)

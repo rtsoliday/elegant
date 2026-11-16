@@ -1,0 +1,6 @@
+! BUMPER with FIRE_ON_PASS=2: a drift on passes 0 and 1, kicks from pass 2 on (elegant drifts while the pass
+! is below FIRE_ON_PASS). Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+K1: BUMPER, L=0.3, ANGLE=0.002, FIRE_ON_PASS=2, WAVEFORM="../data/bumper_flat.sdds=t+W"
+BL: LINE=(Q1, D, K1, D)

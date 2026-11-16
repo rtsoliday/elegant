@@ -1,0 +1,7 @@
+! RMDF at 6 GeV, far above the low energies its approximation is for: beta passes 1 and every particle's
+! coordinates become NaN, which do_tracking()'s limit_amplitudes() removes after the element. The device
+! counts them and lets that call remove them, in the CPU's order. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+RM: RMDF, L=0.5, VOLTAGE=1e5, GAP=0.02, RAMP_TIME=1e-9, N_SECTIONS=12, TILT=0.3, DX=1e-4, DY=-1e-4, TIME_OFFSET=1e-12
+BL: LINE=(Q1, D, RM, D)

@@ -1,0 +1,7 @@
+! ELEGANT_GPU_ENABLE_CENTER=0 (from suite.json) keeps CENTER on the CPU; the lattice is center-output's.
+D: DRIF, L=0.5
+K: KICKER, HKICK=2e-4, VKICK=-1e-4
+Q1: QUAD, L=0.2, K1=0.5
+Q2: QUAD, L=0.2, K1=-0.5
+CEN: CENTER, X=1, XP=1, Y=1, YP=1, DELTA=1, T=1
+BL: LINE=(K, D, Q1, D, CEN, Q2, D)

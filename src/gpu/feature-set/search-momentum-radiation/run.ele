@@ -1,0 +1,31 @@
+! A fiducial &momentum_aperture through CSBENDs and KQUADs with SYNCH_RAD: 32 locations, 64 trials. Fiducial
+! searches now go to the independent search first, which confirms every boundary on the CPU, so the output matches
+! the CPU exactly; the generic batched search, which used to take this one, publishes the GPU's results.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+&end
+
+&run_control
+  n_passes = 32,
+&end
+
+&momentum_aperture
+  output = "%s.mmap",
+  x_initial = 1e-6,
+  y_initial = 1e-6,
+  delta_negative_limit = -0.15,
+  delta_positive_limit = 0.15,
+  delta_step_size = 0.004,
+  steps_back = 1,
+  split_step_divisor = 10,
+  splits = 1,
+  process_elements = 32,
+  include_name_pattern = "*",
+  fiducialize = 1,
+  soft_failure = 1,
+&end

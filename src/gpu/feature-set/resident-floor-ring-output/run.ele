@@ -1,0 +1,26 @@
+! resident-floor-ring with output and a losses file, so the survivors' order and the lost rows must
+! match the CPU through the 10,000 thresholds and the 1,000 floor.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 1000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  losses = "%s.lost",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&twiss_output matched = 1 &end
+&run_control n_passes = 26 &end
+&bunched_beam
+  n_particles_per_bunch = 12000,
+  emit_x = 1e-7, emit_y = 1e-7,
+  sigma_dp = 1e-3, sigma_s = 1e-3,
+  matched_to_cell = "RING",
+  distribution_type[0] = 3*"gaussian",
+  distribution_cutoff[0] = 3*3,
+&end
+&track &end

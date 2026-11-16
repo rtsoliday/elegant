@@ -1,0 +1,6 @@
+! MATTER thick enough for the multiple-scattering formula (1e-3 m of aluminum), with energy decay
+! and straggling: four Gaussian numbers and the straggle per particle from the host. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: MATTER, L=1e-3, XO=0.089, ENERGY_DECAY=1, ENERGY_STRAGGLE=1
+BL: LINE=(Q1, D, E, D)

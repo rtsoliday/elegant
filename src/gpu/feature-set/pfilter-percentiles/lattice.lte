@@ -1,0 +1,7 @@
+! PFILTER removing the lowest 5% and highest 8% in delta, by the percentiles of a copied delta column,
+! in two passes on the device (the CPU's swap order each). Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+PF: PFILTER, LOWERFRACTION=0.05, UPPERFRACTION=0.08
+BL: LINE=(Q1, D, R, D, PF, D)

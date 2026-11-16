@@ -1,0 +1,374 @@
+{
+  "name": "elegant GPU feature suite",
+  "suite_type": "gpu-features",
+  "gpu_noise_absolute_tolerance": 1e-15,
+  "gpu_noise_relative_tolerance": 1e-09,
+  "require_gpu_activity": true,
+  "gpu_environment": {
+    "ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS": "0",
+    "ELEGANT_GPU_BATCHED_TUNE_THREADS": "16",
+    "ELEGANT_GPU_ENABLE_CSBEND_DRIFT": "1",
+    "ELEGANT_GPU_ENABLE_CSR_DRIFT": "1",
+    "ELEGANT_GPU_ENABLE_CSR_RESIDENT_DRIFT": "1",
+    "ELEGANT_GPU_ENABLE_LGBEND": "1",
+    "ELEGANT_GPU_ENABLE_LSC": "1",
+    "ELEGANT_GPU_ENABLE_RFCA_CHANGE_P0_DRIFT": "1",
+    "ELEGANT_GPU_ENABLE_RFCW_TRACKING_DRIFT": "1",
+    "ELEGANT_GPU_ENABLE_SLICE_SUMS": "1",
+    "ELEGANT_GPU_ENABLE_WAKE_TRACKING_DRIFT": "1",
+    "ELEGANT_GPU_MIN_BATCHED_SEARCH_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_BATCHED_TUNE_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_BGGEXP_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_BMXYZ_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_CCBEND_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_CSR_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_CWIGGLER_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_FTABLE_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_HELPER_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_HISTOGRAM_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_LGBEND_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_LORENTZ_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_LSC_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_MAGNET_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_MATRIX_DRIFT_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_RFDF_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_RFMODE_PARTICLES": "8192",
+    "ELEGANT_GPU_MIN_SCMULT_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_SREFFECTS_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_TFEEDBACK_PARTICLES": "64",
+    "ELEGANT_GPU_MIN_WAKE_PARTICLES": "64",
+    "ELEGANT_GPU_MODE": "required",
+    "ELEGANT_GPU_VERBOSE": "1"
+  },
+  "description": "Small CPU/GPU parity cases, one GPU feature or fallback each",
+  "gpu_activity_exempt_tests": [
+    "obstruction-data-*",
+    "search-frequency-map-always-change-p0",
+    "search-tune-footprint-always-change-p0",
+    "search-frequency-map-isr",
+    "small-beam-opt-out",
+    "small-beam-context-not-worth-it",
+    "small-beam-copies-cost-more",
+    "small-beam-concatenated-ring",
+    "small-beam-short-runs-stay",
+    "short-island-first-order-stays",
+    "short-run-threshold-5000-stays"
+  ],
+  "gpu_environment_by_test": {
+    "obstruction-data-*": {
+      "ELEGANT_GPU_MODE": "auto"
+    },
+    "magnet-*-cpu-keeps": {
+      "ELEGANT_GPU_TEST_MAGNET_LOSS_DISAGREEMENT": "1"
+    },
+    "isr-small-batches*": {
+      "ELEGANT_GPU_RECORDED_BATCH_BYTES": "4096"
+    },
+    "magnet-lgbend-isr-segments*": {
+      "ELEGANT_GPU_LGBEND_ISR_TABLE_DRAWS": "1024",
+      "ELEGANT_GPU_RECORDED_BATCH_BYTES": "4096"
+    },
+    "search-frequency-map-isr": {
+      "ELEGANT_GPU_MODE": "auto",
+      "ELEGANT_GPU_MIN_MAGNET_PARTICLES": "1000"
+    },
+    "search-momentum-*": {
+      "ELEGANT_GPU_MODE": "auto"
+    },
+    "search-aperture-csbend-high-order": {
+      "ELEGANT_GPU_MODE": "auto"
+    },
+    "search-aperture-radiation": {
+      "ELEGANT_GPU_MODE": "auto"
+    },
+    "resident-below-threshold": {
+      "ELEGANT_GPU_MODE": "auto",
+      "ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS": "",
+      "ELEGANT_GPU_MIN_PARTICLES": "",
+      "ELEGANT_GPU_MIN_HELPER_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MAGNET_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MATRIX_DRIFT_PARTICLES": "",
+      "ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES": ""
+    },
+    "watch-parameter-sums-output-files": {
+      "ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES": ""
+    },
+    "watch-parameter-sums-no-output-files": {
+      "ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES": ""
+    },
+    "matrix-helpers-ordered-output": {
+      "ELEGANT_GPU_MIN_HELPER_PARTICLES": ""
+    },
+    "resident-below-threshold-output": {
+      "ELEGANT_GPU_MODE": "auto",
+      "ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS": "",
+      "ELEGANT_GPU_MIN_PARTICLES": "",
+      "ELEGANT_GPU_MIN_HELPER_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MAGNET_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MATRIX_DRIFT_PARTICLES": "",
+      "ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES": ""
+    },
+    "matrix-energy-match-ordered-output": {
+      "ELEGANT_GPU_MIN_HELPER_PARTICLES": ""
+    },
+    "resident-floor-ring": {
+      "ELEGANT_GPU_MODE": "auto",
+      "ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS": "",
+      "ELEGANT_GPU_MIN_PARTICLES": "",
+      "ELEGANT_GPU_MIN_HELPER_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MAGNET_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MATRIX_DRIFT_PARTICLES": "",
+      "ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES": ""
+    },
+    "resident-floor-ring-output": {
+      "ELEGANT_GPU_MODE": "auto",
+      "ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS": "",
+      "ELEGANT_GPU_MIN_PARTICLES": "",
+      "ELEGANT_GPU_MIN_HELPER_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MAGNET_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MATRIX_DRIFT_PARTICLES": "",
+      "ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES": ""
+    },
+    "resident-floor-ring-final": {
+      "ELEGANT_GPU_MODE": "auto",
+      "ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS": "",
+      "ELEGANT_GPU_MIN_PARTICLES": "",
+      "ELEGANT_GPU_MIN_HELPER_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MAGNET_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MATRIX_DRIFT_PARTICLES": "",
+      "ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES": ""
+    },
+    "sreffects-host-threads": {
+      "ELEGANT_GPU_ISR_REFERENCE_THREADS": "4"
+    },
+    "rfca-host-threads": {
+      "ELEGANT_GPU_ISR_REFERENCE_THREADS": "4"
+    },
+    "small-beam-*": {
+      "ELEGANT_GPU_MODE": "auto",
+      "ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS": "",
+      "ELEGANT_GPU_MIN_PARTICLES": "",
+      "ELEGANT_GPU_MIN_HELPER_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MAGNET_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MATRIX_DRIFT_PARTICLES": "",
+      "ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES": ""
+    },
+    "small-beam-short-runs-stay": {
+      "ELEGANT_GPU_SHORT_GPU_ISLAND_BY_COST": "0",
+      "ELEGANT_GPU_ENABLE_PFILTER": "0"
+    },
+    "short-island-*": {
+      "ELEGANT_GPU_MODE": "auto",
+      "ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS": "",
+      "ELEGANT_GPU_MIN_PARTICLES": "",
+      "ELEGANT_GPU_MIN_HELPER_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MAGNET_PARTICLES": "",
+      "ELEGANT_GPU_MIN_MATRIX_DRIFT_PARTICLES": "",
+      "ELEGANT_GPU_MIN_OUTPUT_DRIFT_REDUCTION_PARTICLES": ""
+    },
+    "short-run-threshold-*": {
+      "ELEGANT_GPU_MODE": "auto",
+      "ELEGANT_GPU_AVOID_SHORT_GPU_ISLANDS": ""
+    },
+    "small-beam-opt-out": {
+      "ELEGANT_GPU_ENABLE_SMALL_BEAMS": "0"
+    },
+    "small-beam-context-not-worth-it": {
+      "ELEGANT_GPU_VERBOSE": ""
+    },
+    "search-frequency-map-program-tolerance": {
+      "ELEGANT_GPU_TUNE_HISTORY_TOLERANCE": "1e-6"
+    },
+    "search-frequency-map-program-fallback": {
+      "ELEGANT_GPU_TUNE_HISTORY_TOLERANCE": "1e-30"
+    },
+    "ilmatrix-device-math": {
+      "ELEGANT_GPU_ILMATRIX_REFERENCE_MATH": "0"
+    },
+    "zimpedance-opt-out": {
+      "ELEGANT_GPU_ENABLE_ZIMPEDANCE": "0"
+    },
+    "ibscatter-opt-out": {
+      "ELEGANT_GPU_ENABLE_IBSCATTER": "0"
+    },
+    "lsrmdltr-opt-out": {
+      "ELEGANT_GPU_ENABLE_LSRMDLTR": "0"
+    },
+    "lsrmdltr-isr-batches": {
+      "ELEGANT_GPU_LSRMDLTR_DRAW_BYTES": "801600"
+    },
+    "lrwake-opt-out": {
+      "ELEGANT_GPU_ENABLE_LRWAKE": "0"
+    },
+    "corrugated-opt-out": {
+      "ELEGANT_GPU_ENABLE_CORRUGATED": "0"
+    },
+    "aperture-taperape-opt-out": {
+      "ELEGANT_GPU_ENABLE_TAPERAPE": "0"
+    },
+    "center-opt-out": {
+      "ELEGANT_GPU_ENABLE_CENTER": "0"
+    },
+    "idle-pass-opt-out": {
+      "ELEGANT_GPU_ENABLE_IDLE_PASS": "0",
+      "ELEGANT_GPU_ENABLE_SCATTER": "0",
+      "ELEGANT_GPU_ENABLE_TWISS": "0"
+    },
+    "beambeam-opt-out": {
+      "ELEGANT_GPU_ENABLE_BEAMBEAM": "0"
+    },
+    "rftmez0-opt-out": {
+      "ELEGANT_GPU_ENABLE_RFTMEZ0": "0"
+    },
+    "twla-opt-out": {
+      "ELEGANT_GPU_ENABLE_TWLA": "0"
+    },
+    "mapsolenoid-opt-out": {
+      "ELEGANT_GPU_ENABLE_MAPSOLENOID": "0"
+    },
+    "modrf-opt-out": {
+      "ELEGANT_GPU_ENABLE_MODRF": "0"
+    },
+    "kpoly-opt-out": {
+      "ELEGANT_GPU_ENABLE_KPOLY": "0"
+    },
+    "hkpoly-opt-out": {
+      "ELEGANT_GPU_ENABLE_HKPOLY": "0"
+    },
+    "mbumper-opt-out": {
+      "ELEGANT_GPU_ENABLE_MBUMPER": "0"
+    },
+    "rmdf-opt-out": {
+      "ELEGANT_GPU_ENABLE_RMDF": "0"
+    },
+    "mrfdf-opt-out": {
+      "ELEGANT_GPU_ENABLE_MRFDF": "0"
+    },
+    "shrfdf-opt-out": {
+      "ELEGANT_GPU_ENABLE_SHRFDF": "0"
+    },
+    "rftm110-opt-out": {
+      "ELEGANT_GPU_ENABLE_RFTM110": "0"
+    },
+    "stray-opt-out": {
+      "ELEGANT_GPU_ENABLE_STRAY": "0"
+    },
+    "alph-opt-out": {
+      "ELEGANT_GPU_ENABLE_ALPH": "0"
+    },
+    "ksbend-opt-out": {
+      "ELEGANT_GPU_ENABLE_KSBEND": "0"
+    },
+    "boffaxe-opt-out": {
+      "ELEGANT_GPU_ENABLE_BOFFAXE": "0"
+    },
+    "gfwiggler-opt-out": {
+      "ELEGANT_GPU_ENABLE_GFWIGGLER": "0"
+    },
+    "pfilter-opt-out": {
+      "ELEGANT_GPU_ENABLE_PFILTER": "0"
+    },
+    "sample-opt-out": {
+      "ELEGANT_GPU_ENABLE_SAMPLE": "0"
+    },
+    "clean-opt-out": {
+      "ELEGANT_GPU_ENABLE_CLEAN": "0"
+    },
+    "emittance-opt-out": {
+      "ELEGANT_GPU_ENABLE_EMITTANCE": "0"
+    },
+    "twiss-opt-out": {
+      "ELEGANT_GPU_ENABLE_TWISS": "0"
+    },
+    "remcor-opt-out": {
+      "ELEGANT_GPU_ENABLE_REMCOR": "0"
+    },
+    "mhistogram-opt-out": {
+      "ELEGANT_GPU_ENABLE_MHISTOGRAM": "0"
+    },
+    "cooler-opt-out": {
+      "ELEGANT_GPU_ENABLE_COOLER": "0"
+    },
+    "scatter-opt-out": {
+      "ELEGANT_GPU_ENABLE_SCATTER": "0"
+    },
+    "dscatter-opt-out": {
+      "ELEGANT_GPU_ENABLE_DSCATTER": "0"
+    },
+    "matter-opt-out": {
+      "ELEGANT_GPU_ENABLE_MATTER": "0"
+    },
+    "peppot-opt-out": {
+      "ELEGANT_GPU_ENABLE_PEPPOT": "0"
+    },
+    "cbscat-opt-out": {
+      "ELEGANT_GPU_ENABLE_CBSCAT": "0"
+    },
+    "ioneffects-opt-out": {
+      "ELEGANT_GPU_ENABLE_IONEFFECTS": "0"
+    },
+    "short-island-first-order-stays": {
+      "ELEGANT_GPU_ENABLE_PFILTER": "0"
+    },
+    "short-run-threshold-6500-goes": {
+      "ELEGANT_GPU_ENABLE_PFILTER": "0"
+    },
+    "small-beam-returns-after-losses": {
+      "ELEGANT_GPU_ENABLE_PFILTER": "0"
+    },
+    "short-island-goes": {
+      "ELEGANT_GPU_ENABLE_PFILTER": "0"
+    },
+    "small-beam-short-runs-pay": {
+      "ELEGANT_GPU_ENABLE_PFILTER": "0"
+    },
+    "small-beam-copies-cost-more": {
+      "ELEGANT_GPU_ENABLE_PFILTER": "0"
+    },
+    "short-island-second-order-goes": {
+      "ELEGANT_GPU_ENABLE_PFILTER": "0"
+    },
+    "short-run-threshold-5000-stays": {
+      "ELEGANT_GPU_ENABLE_PFILTER": "0"
+    },
+    "small-beam-concatenated-ring": {
+      "ELEGANT_GPU_ENABLE_PFILTER": "0"
+    },
+    "idle-pass-elements": {
+      "ELEGANT_GPU_ENABLE_SCATTER": "0",
+      "ELEGANT_GPU_ENABLE_TWISS": "0"
+    },
+    "tmcf-opt-out": {
+      "ELEGANT_GPU_ENABLE_TMCF": "0"
+    },
+    "cepl-opt-out": {
+      "ELEGANT_GPU_ENABLE_CEPL": "0"
+    },
+    "twpl-opt-out": {
+      "ELEGANT_GPU_ENABLE_TWPL": "0"
+    },
+    "twmta-opt-out": {
+      "ELEGANT_GPU_ENABLE_TWMTA": "0"
+    },
+    "ftable-opt-out": {
+      "ELEGANT_GPU_ENABLE_FTABLE": "0"
+    },
+    "bumper-opt-out": {
+      "ELEGANT_GPU_ENABLE_BUMPER": "0"
+    },
+    "bggexp-symplectic-opt-out": {
+      "ELEGANT_GPU_ENABLE_BGGEXP_SYMPLECTIC": "0"
+    },
+    "scatter-host-draws": {
+      "ELEGANT_GPU_PORT_DEVICE_DRAWS": "0"
+    },
+    "matter-host-draws": {
+      "ELEGANT_GPU_PORT_DEVICE_DRAWS": "0"
+    },
+    "slice-opt-out": {
+      "ELEGANT_GPU_ENABLE_SLICE": "0"
+    }
+  }
+}

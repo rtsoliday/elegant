@@ -32,7 +32,7 @@ bin/Linux-x86_64-gpu/gpu-elegant
 bin/Linux-x86_64-gpu/gpu-Pelegant
 ```
 
-Use `make CUDA_AUTO=0 -j` for a CPU-only build, or force a specific CUDA compiler with `make HAVE_CUDA=1 NVCC=/usr/local/cuda-12.4/bin/nvcc -j`.  CUDA runtime controls and verification workflows are documented in [doc/CUDA_GPU_SUPPORT.md](doc/CUDA_GPU_SUPPORT.md).
+Use `make CUDA_AUTO=0 -j` for a CPU-only build, or force a specific CUDA compiler with `make HAVE_CUDA=1 NVCC=/usr/local/cuda-12.4/bin/nvcc -j`.  The CUDA executables target `CUDA_ARCH`, which defaults to `sm_86` (`sm_80` on Swing); set it to match the GPU, for example `make HAVE_CUDA=1 CUDA_ARCH=sm_120 -j`.  The optional `make gpu-elegant-all-sm -j` target builds one `gpu-elegant` for each architecture in `CUDA_ARCH_LIST` (default `sm_75 sm_80 sm_86 sm_89 sm_90 sm_100 sm_120`) and installs them as `bin/Linux-x86_64-gpu/gpu-elegant-<sm>`, for example `gpu-elegant-sm_120`; it is not part of the default build.  CUDA runtime controls and verification workflows are documented in [doc/CUDA_GPU_SUPPORT.md](doc/CUDA_GPU_SUPPORT.md).
 
 On Linux, bundled GSL headers are found in `SDDS/gsl`. If the normal library
 search does not find GSL, the build also checks `SDDS/lib/Linux-<architecture>`
@@ -109,6 +109,11 @@ performance limits and the GPU significance screen for a cycle. The raw
 SDDS comparison remains exact, and the suite defaults are unchanged. Reused
 artifacts must match the suite and cases; timed reuse also requires matching
 sampling settings and hardware identity.
+
+`src/gpu/feature-set` holds 305 small parity cases, one GPU feature or fallback
+each, with no timing role; see its `README.md`. Add `--include-extra-decks
+--correctness-only` to a `baseline` of `src/gpu/test-set` to also run the extra
+fallback and variant decks in its case folders.
 
 The comparison exits with status 0 only when every test runs successfully and
 the output file sets and contents match. SDDS data and schema are compared

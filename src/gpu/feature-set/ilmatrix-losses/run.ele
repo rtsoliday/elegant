@@ -1,0 +1,24 @@
+! ILMATRIX losing particles three ways: a horizontal beta function that reaches zero (low momentum),
+! the half-integer resonance (high momentum) and a vertical beta function that reaches zero (between).
+! An RF cavity keeps moving particles into the losses. The lost particles must come out in the CPU's
+! order: `losses` and `acceptance` files are requested as well as `output`.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+  losses = "%s.los",
+  acceptance = "%s.acc",
+&end
+&run_control n_passes = 30 &end
+&bunched_beam
+  n_particles_per_bunch = 5000,
+  emit_x = 5e-11, beta_x = 7, alpha_x = 0.3,
+  emit_y = 5e-12, beta_y = 2.5, alpha_y = -0.2,
+  sigma_dp = 2e-3, sigma_s = 4e-3,
+&end
+&track &end

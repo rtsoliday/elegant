@@ -15,6 +15,9 @@
 #include "mdb.h"
 #include "track.h"
 #include "table.h"
+#ifdef HAVE_GPU
+#  include "gpu_simple_rfca.h"
+#endif
 
 void set_up_ramped_rfca(RAMPRF *ramprf);
 
@@ -32,6 +35,9 @@ long ramped_rf_cavity(
 #endif
 #if USE_MPI
   long np_total, np_tmp;
+#endif
+#ifdef HAVE_GPU
+  long onGpu = getElementOnGpu();
 #endif
 
   log_entry("ramped_rf_cavity");
@@ -65,6 +71,17 @@ long ramped_rf_cavity(
   length = ramprf->length;
 
   if (ramprf->volt == 0) {
+#ifdef HAVE_GPU
+    if (onGpu) {
+      gpu_ramped_rf_cavity(np, P_central, length, 0, 0, 0, 1);
+#  ifndef GPU_VERIFY
+      log_exit("ramped_rf_cavity");
+      return (np);
+#  else
+      startCpuTimer();
+#  endif
+    }
+#endif
     if (isSlave || !distributedBeam) {
       if (ramprf->length) {
         for (ip = 0; ip < np; ip++) {
@@ -75,6 +92,10 @@ long ramped_rf_cavity(
         }
       }
     }
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+    if (onGpu)
+      compareGpuCpu(np, "ramped_rf_cavity");
+#endif
     log_exit("ramped_rf_cavity");
     return (np);
   }
@@ -129,6 +150,11 @@ long ramped_rf_cavity(
         unsigned long mode;
         if (!(mode = parseFiducialMode(ramprf->fiducial)))
           bombElegant("invalid fiducial mode for RAMPRF element", NULL);
+#ifdef HAVE_GPU
+        if (onGpu)
+          t0 = gpu_findFiducialTime(np, zEnd - length, length / 2, P_central, mode);
+        else
+#endif
         t0 = findFiducialTime(part, np, zEnd - length, length / 2, P_central, mode);
         ramprf->phase_fiducial = -omega * t0;
         ramprf->fiducial_seen = 1;
@@ -161,6 +187,17 @@ long ramped_rf_cavity(
         SDDS_DefineColumn(&debugTable, "RF", NULL, NULL, NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
         !SDDS_WriteLayout(&debugTable) || !SDDS_StartTable(&debugTable, debugLength = 1024))
       SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+  }
+#endif
+#ifdef HAVE_GPU
+  if (onGpu) {
+    gpu_ramped_rf_cavity(np, P_central, length, volt, omega, phase, 0);
+#  ifndef GPU_VERIFY
+    log_exit("ramped_rf_cavity");
+    return (np);
+#  else
+    startCpuTimer();
+#  endif
   }
 #endif
   if (isSlave || !distributedBeam) {
@@ -219,6 +256,10 @@ long ramped_rf_cavity(
 #endif
     }
   }
+#if defined(HAVE_GPU) && defined(GPU_VERIFY)
+  if (onGpu)
+    compareGpuCpu(np, "ramped_rf_cavity");
+#endif
 
   log_exit("ramped_rf_cavity");
   return (np);

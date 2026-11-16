@@ -1,0 +1,9 @@
+! BOFFAXE, a quadrupole from its on-axis gradient and seven derivatives, with z subdivisions, tilt,
+! offsets and classical radiation: the set-up (which reads the file) on the host with no particles, every call on
+! the device.
+! Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BX: BOFFAXE, L=0.25, FILENAME="../data/boffaxe_gradient.sdds", FIELD_COLUMN="Gradient", Z_COLUMN="z", ORDER=1, &
+    EXPANSION_ORDER=7, STRENGTH=0.01, Z_SUBDIVISIONS=2, TILT=0.1, DX=1e-4, DY=-5e-5, DZ=0.001, SYNCH_RAD=1
+BL: LINE=(Q1, D, BX, D)

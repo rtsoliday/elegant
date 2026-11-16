@@ -1,0 +1,6 @@
+! ELEGANT_GPU_ENABLE_CLEAN=0 (suite.json) keeps CLEAN on the CPU
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+CL: CLEAN, MODE="stdeviation", XLIMIT=2
+BL: LINE=(Q1, D, CL, D)

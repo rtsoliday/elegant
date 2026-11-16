@@ -1,0 +1,31 @@
+! Tune histories from the fused program: gpu_batched_tune_program_track() in gpu_stub.c tracks the whole
+! grid on the device, one kernel launch a turn, and computeTunesFromTrackingBatch() in twiss.cc uses its
+! histories only if the CPU, tracking a sample of the particles itself, gets the same bits.
+! The same ring with elements that take a function from the math library for each particle, from the
+! device's library where the CPU calls the host's: a CCBEND whose FRINGEMODEL=1 fringe has I1 and K5
+! integrals (exp()), and exact correctors with kicks (atan(), sin(), asin(), cos(), tan()). The two
+! libraries gave the same bits for every particle here, but nothing promises it, so the program doesn't
+! claim the CPU's bits for these and runs here only because the suite sets a tolerance. (A plain CCBEND
+! until 2026-11-11, when the device's became the CPU's bit for bit; search-frequency-map-program-ccbend
+! has that now.)
+MAL: MALIGN
+MA0: MALIGN,ON_PASS=0,DX=1e-4,DP=1e-4
+MA1: MALIGN,ON_PASS=1,DYP=1e-5
+CH: CHARGE,TOTAL=1e-9
+W: WATCH,FILENAME="%s.w1",MODE="centroid"
+MX: MAXAMP,X_MAX=0.006,Y_MAX=0.006
+D: DRIF,L=0.4
+DE: EDRIFT,L=0.1
+QF: KQUAD,L=0.2,K1=1.5,N_SLICES=4
+QD: KQUAD,L=0.2,K1=-1.5,N_SLICES=4
+QM: QUAD,L=0.1,K1=0.2
+SX: SEXT,L=0.1,K2=3
+SF: KSEXT,L=0.1,K2=5,N_SLICES=4
+AP: RCOL,X_MAX=0.004,Y_MAX=0.004
+BM: SBEN,L=0.3,ANGLE=0.02
+BC: CCBEND,L=0.3,ANGLE=0.02,N_SLICES=4,FRINGEMODEL=1,EDGE_ORDER=2,FRINGE1I1=2e-6,FRINGE2I1=1e-6,FRINGE1K5=2e-7,FRINGE2K5=1e-7
+CELL: LINE=(D,QF,D,SF,DE,QD,D,QM,BM,SX)
+EH: EHKICK,L=0.03,KICK=2e-5,CALIBRATION=0.97,TILT=0.02
+EV: EVKICK,L=0.03,KICK=-2e-5,CALIBRATION=1.03,TILT=-0.01
+CELLB: LINE=(D,QF,D,SF,DE,QD,EH,D,EV,QM,BC,SX)
+RING: LINE=(MAL,MA0,MA1,CH,MX,4*CELL,AP,W,3*CELL,CELLB)

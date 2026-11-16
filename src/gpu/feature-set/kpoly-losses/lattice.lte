@@ -1,0 +1,7 @@
+! KPOLY removing the particles past coord_limit: the CPU's swap order of the lost rows, their z and
+! momentum in the losses file, rebuilt on the host from the device's flags. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+KX: KPOLY, COEFFICIENT=20, ORDER=2, PLANE="x", DX=2e-4, DZ=0.02
+KY: KPOLY, COEFFICIENT=-30, ORDER=3, PLANE="y", TILT=0.3
+BL: LINE=(Q1, D, KX, D, KY, D)

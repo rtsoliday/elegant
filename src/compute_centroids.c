@@ -348,7 +348,7 @@ void accumulate_beam_sums(
 
 #  ifdef HAVE_GPU
   if (getElementOnGpu()) {
-    if (gpu_reductions_enabled(n_part)) {
+    if (gpu_beam_sums_enabled(n_part, flags)) {
 #    ifdef GPU_VERIFY
       BEAM_SUMS *gpusums = (BEAM_SUMS *)getGpuBeamSums(sums);
       startGpuTimer();
@@ -645,7 +645,7 @@ void accumulate_beam_sums1(
 
 #  ifdef HAVE_GPU
   if (getElementOnGpu()) {
-    if (gpu_reductions_enabled(n_part)) {
+    if (gpu_beam_sums_enabled(n_part, flags)) {
 #    ifdef GPU_VERIFY
       BEAM_SUMS *gpusums = (BEAM_SUMS *)getGpuBeamSums(sums);
       startGpuTimer();

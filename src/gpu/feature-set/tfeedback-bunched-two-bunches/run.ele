@@ -1,0 +1,27 @@
+! TFBPICKUP and TFBDRIVER in the default bunched beam mode with two bunches, which stay on the CPU and feed back on each bunch.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = run,
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  semaphore_file = "%s.done",
+  random_number_seed = 987654321,
+  tracking_updates = 0,
+  show_element_timing = 1,
+  load_balancing_on = 0,
+&end
+
+&run_control
+  n_passes = 40,
+&end
+
+&sdds_beam
+  input = "two_bunches.sdds",
+  use_bunched_mode = 1,
+&end
+
+&track
+&end

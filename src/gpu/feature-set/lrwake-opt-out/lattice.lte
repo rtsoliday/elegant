@@ -1,0 +1,12 @@
+! ELEGANT_GPU_ENABLE_LRWAKE=0 (from suite.json) keeps LRWAKE on the CPU; the lattice is lrwake-bunches-output's.
+! The particles must be elegant's.
+C: CHARGE, TOTAL=1e-9
+K: KICKER, HKICK=2e-4, VKICK=-1e-4
+D: DRIF, L=1
+Q1: QUAD, L=0.2, K1=0.5
+Q2: QUAD, L=0.2, K1=-0.5
+LR: LRWAKE, INPUTFILE="../data/lrwake.sdds", TCOLUMN="time", WXCOLUMN="WxDipole", WYCOLUMN="WyDipole", &
+    WZCOLUMN="Wz", QXCOLUMN="WxQuadrupole", QYCOLUMN="WyQuadrupole", TURNS_TO_KEEP=3, RAMP_PASSES=3, &
+    FACTOR=0.8, XFACTOR=1.2, YFACTOR=0.9, ZFACTOR=1.1, QXFACTOR=0.7, QYFACTOR=1.3
+MAKE: LINE=(D)
+BL: LINE=(C, K, D, Q1, D, LR, D, Q2, D)

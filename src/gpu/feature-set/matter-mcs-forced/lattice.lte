@@ -1,0 +1,6 @@
+! MATTER 1e-6 m thick with FORCE_MCS=1: the thin-scatterer multiple-scattering kick, two Gaussian
+! numbers per particle. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: MATTER, L=1e-6, Z=13, A=26.98, RHO=2700, FORCE_MCS=1
+BL: LINE=(Q1, D, E, D)

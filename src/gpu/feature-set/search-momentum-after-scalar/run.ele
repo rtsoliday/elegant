@@ -1,0 +1,58 @@
+! A single-particle non-fiducial &momentum_aperture search (one location, below the batch threshold), then a
+! batched one.  The first must not leave its tracking wedge installed, or the second stays on the CPU.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  semaphore_file = "%s.done",
+  tracking_updates = 0,
+&end
+
+&run_control
+  n_passes = 16,
+&end
+
+&momentum_aperture
+  output = "%s.mmap1",
+  x_initial = 1e-6,
+  y_initial = 1e-6,
+  delta_negative_limit = -0.04,
+  delta_positive_limit = 0.04,
+  delta_step_size = 0.002,
+  steps_back = 1,
+  split_step_divisor = 10,
+  splits = 1,
+  process_elements = 1,
+  include_name_pattern = "B*",
+  fiducialize = 0,
+  soft_failure = 1,
+&end
+
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  tracking_updates = 0,
+&end
+
+&run_control
+  n_passes = 16,
+&end
+
+&momentum_aperture
+  output = "%s.mmap2",
+  x_initial = 1e-6,
+  y_initial = 1e-6,
+  delta_negative_limit = -0.04,
+  delta_positive_limit = 0.04,
+  delta_step_size = 0.002,
+  steps_back = 1,
+  split_step_divisor = 10,
+  splits = 1,
+  process_elements = 32,
+  include_name_pattern = "B*",
+  fiducialize = 0,
+  soft_failure = 1,
+&end

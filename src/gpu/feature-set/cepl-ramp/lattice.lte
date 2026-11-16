@@ -1,0 +1,7 @@
+! CEPL plates ramping across the bunch, with a static voltage, a tilt and an aperture that keeps the beam,
+! twice. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+CE: CEPL, L=0.2, RAMP_TIME=2e-11, TIME_OFFSET=1e-11, VOLTAGE=5e4, GAP=0.02, STATIC_VOLTAGE=2e3, &
+    TILT=0.2, X_MAX=0.009, Y_MAX=0.009, METHOD="non-adaptive", N_STEPS=200, FIDUCIAL="t,median", ACCURACY=1e-9
+BL: LINE=(Q1, D, CE, D, CE)

@@ -1,0 +1,8 @@
+! CORGPIPE on the device: exactDrift(), the WAKE it builds and exactDrift() were already device paths; with
+! TMAX=0 and N_BINS=0 the table is sized from the beam's s range, now found on the device (the extremes are
+! the same in any order). INTERPOLATE=1, RAMP_PASSES, CHANGE_P0. Only an output file, so the particles must be
+! elegant's.
+C: CHARGE, TOTAL=1e-9
+D: DRIF, L=0.5
+CP: CORGPIPE, L=1.33, RADIUS=3e-3, DEPTH=450e-6, PERIOD=1e-3, GAP=750e-6, TMAX=0, INTERPOLATE=1, RAMP_PASSES=2, CHANGE_P0=1
+BL: LINE=(C, D, CP, D)

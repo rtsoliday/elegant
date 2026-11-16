@@ -1,0 +1,6 @@
+! dscatter-dp-pdf with ELEGANT_GPU_ENABLE_DSCATTER=0: DSCATTER on the CPU. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: DSCATTER, PLANE="dp", FILENAME="../data/dscatter_pdf.sdds", VALUENAME="z", PDFNAME="g", FACTOR=1e-4, &
+    RANDOMSIGN=1, PROBABILITY=0.4, LIMITPERPASS=60, LIMITTOTAL=150
+BL: LINE=(Q1, D, E, D)

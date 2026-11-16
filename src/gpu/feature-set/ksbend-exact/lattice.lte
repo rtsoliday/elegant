@@ -1,0 +1,7 @@
+! KSBEND, nonlinear, with edges but no fringe integral, offsets, tilt and FSE, modified-midpoint
+! integration: track_through_kick_sbend() on the device with the host's tangents. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+KB: KSBEND, L=0.5, ANGLE=0.05, K1=0.5, K2=2, K3=10, NONLINEAR=1, E1=0.025, E2=0.02, EDGE1_EFFECTS=1, EDGE2_EFFECTS=1, &
+    METHOD="modified-midpoint", N_KICKS=20, DX=1e-4, DY=-1e-4, DZ=0.001, TILT=0.05, FSE=0.001
+BL: LINE=(Q1, D, KB, D)

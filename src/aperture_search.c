@@ -1006,22 +1006,80 @@ static long gpuApertureSearchValueMatches(double expected, double actual) {
 }
 #  endif
 
+/* Tracks each line's last surviving trial, and the first loss the batched
+ * search reports, again on the CPU with the GPU off, as the scalar search
+ * tracks them.  When both agree, the loss columns take the CPU's values.
+ * Otherwise returns 0, and the caller reruns the scalar search. */
+static long confirmBatchedApertureLines(
+  RUN *run, VARY *control, LINE_LIST *beamline, long lines,
+  const double *orbit, const double *xLimit, const double *yLimit,
+  const double *lossX0, const double *lossY0, double *xLost, double *yLost,
+  double *sLost, long *lossPass) {
+  double **coord, pCentral;
+  long line, kind, ip, n = 0, left, effort = 0, suppressed, confirmed = 1;
+
+  coord = (double **)czarray_2d(sizeof(**coord), 2 * lines,
+                                totalPropertiesPerParticle);
+  for (line = 0; line < lines; line++)
+    for (kind = 0; kind < 2; kind++) {
+      if (kind && xLost[line] == DBL_MAX)
+        continue;
+      memset(coord[n], 0, totalPropertiesPerParticle * sizeof(**coord));
+      memcpy(coord[n], orbit, 6 * sizeof(**coord));
+      if (!slope_mode) {
+        coord[n][0] = (kind ? lossX0[line] : xLimit[line]) + orbit[0];
+        coord[n][2] = (kind ? lossY0[line] : yLimit[line]) + orbit[2];
+      } else {
+        coord[n][1] = (kind ? lossX0[line] : xLimit[line]) + orbit[1];
+        coord[n][3] = (kind ? lossY0[line] : yLimit[line]) + orbit[3];
+      }
+      coord[n][particleIDIndex] = 2 * line + kind + 1;
+      n++;
+    }
+  suppressed = gpuGetTrackingSuppressed();
+  gpuSetTrackingSuppressed(1);
+  pCentral = run->p_central;
+  left = do_tracking(NULL, coord, n, &effort, beamline, &pCentral,
+                     NULL, NULL, NULL, NULL, run, control->i_step,
+                     APERTURE_TRACKING_FLAGS, control->n_passes, 0,
+                     NULL, NULL, NULL, NULL, NULL);
+  gpuSetTrackingSuppressed(suppressed);
+  for (ip = 0; ip < n; ip++) {
+    long code = (long)coord[ip][particleIDIndex] - 1;
+    line = code / 2;
+    kind = code % 2;
+    if ((ip < left) == kind) {
+      fprintf(stderr, "elegant CUDA: batched aperture search line %ld: the CPU %s the %s trial.\n",
+              line, kind ? "kept" : "lost", kind ? "first lost" : "last surviving");
+      confirmed = 0;
+    } else if (kind) {
+      xLost[line] = coord[ip][0];
+      yLost[line] = coord[ip][2];
+      sLost[line] = coord[ip][4];
+      lossPass[line] = (long)coord[ip][lossPassIndex];
+    }
+  }
+  free_czarray_2d((void **)coord, 2 * lines, totalPropertiesPerParticle);
+  return confirmed;
+}
+
 static long do_aperture_search_line_batched(
   RUN *run, VARY *control, double *referenceCoord, LINE_LIST *beamline,
   long lines, double *returnValue) {
   double **coord;
   double *dxFactor, *dyFactor, *dx, *dy, *x0, *y0;
-  double *xLimit, *yLimit, *xLost, *yLost, *sLost;
+  double *xLimit, *yLimit, *xLost, *yLost, *sLost, *lossX0, *lossY0;
   double *trialXLost, *trialYLost, *trialSLost;
   long *trialLossPass, *lineLossPass, *lineLossElement;
   unsigned char *survived, *seen;
   double orbit[6] = {0, 0, 0, 0, 0, 0};
   double pCentral, area = 0, dtheta;
   long line, step, split, index, ip, id, nSteps, maxSteps;
-  long trials, nSurvived, effort = 0, originStable = 0;
+  long trials, nSurvived, effort = 0, originStable = 0, fallback = 0;
 #  ifdef GPU_VERIFY
   double *residentXLimit = NULL, *residentYLimit = NULL;
   double *residentXLost = NULL, *residentYLost = NULL, *residentSLost = NULL;
+  double *residentLossX0 = NULL, *residentLossY0 = NULL;
   long *residentLossPass = NULL, *residentLossElement = NULL;
   long residentOriginStable = 0, residentRan = 0;
 #  endif
@@ -1032,7 +1090,8 @@ static long do_aperture_search_line_batched(
   if (maxSteps < 1)
     maxSteps = 1;
   if (!gpu_batched_search_tracking_enabled(lines * nx) ||
-      !gpu_batched_search_beamline_supported(beamline))
+      !gpu_batched_search_beamline_supported(beamline) ||
+      !gpu_batched_aperture_search_worthwhile(beamline, lines * nx))
     return 0;
 
   coord = (double **)czarray_2d(sizeof(**coord), lines * maxSteps,
@@ -1048,6 +1107,8 @@ static long do_aperture_search_line_batched(
   xLost = (double *)tmalloc(sizeof(*xLost) * lines);
   yLost = (double *)tmalloc(sizeof(*yLost) * lines);
   sLost = (double *)tmalloc(sizeof(*sLost) * lines);
+  lossX0 = (double *)tmalloc(sizeof(*lossX0) * lines);
+  lossY0 = (double *)tmalloc(sizeof(*lossY0) * lines);
   survived = (unsigned char *)calloc((size_t)lines * maxSteps,
                                      sizeof(*survived));
   seen = (unsigned char *)calloc((size_t)lines * maxSteps, sizeof(*seen));
@@ -1062,7 +1123,7 @@ static long do_aperture_search_line_batched(
   lineLossPass = (long *)tmalloc((size_t)lines * sizeof(*lineLossPass));
   lineLossElement = (long *)tmalloc((size_t)lines * sizeof(*lineLossElement));
   if (!coord || !dxFactor || !dyFactor || !dx || !dy || !x0 || !y0 ||
-      !xLimit || !yLimit || !xLost || !yLost || !sLost || !survived ||
+      !xLimit || !yLimit || !xLost || !yLost || !sLost || !lossX0 || !lossY0 || !survived ||
       !seen || !trialXLost || !trialYLost || !trialSLost ||
       !trialLossPass || !lineLossPass || !lineLossElement)
     bombElegant("memory allocation failure (batched aperture search)", NULL);
@@ -1138,18 +1199,20 @@ static long do_aperture_search_line_batched(
     residentSLost = (double *)tmalloc((size_t)lines * sizeof(*residentSLost));
     residentLossPass = (long *)tmalloc((size_t)lines * sizeof(*residentLossPass));
     residentLossElement = (long *)tmalloc((size_t)lines * sizeof(*residentLossElement));
+    residentLossX0 = (double *)tmalloc((size_t)lines * sizeof(*residentLossX0));
+    residentLossY0 = (double *)tmalloc((size_t)lines * sizeof(*residentLossY0));
     residentRan = gpu_run_batched_aperture_search(
       beamline, pCentral, lines, nx, n_splits, split_fraction,
       control->n_passes, xmax, ymax, orbit, dxFactor, dyFactor,
       residentXLimit, residentYLimit, residentXLost, residentYLost,
       residentSLost, residentLossPass, residentLossElement,
-      &residentOriginStable);
+      residentLossX0, residentLossY0, &residentOriginStable);
 #  else
     if (gpu_run_batched_aperture_search(
           beamline, pCentral, lines, nx, n_splits, split_fraction,
           control->n_passes, xmax, ymax, orbit, dxFactor, dyFactor,
           xLimit, yLimit, xLost, yLost, sLost,
-          lineLossPass, lineLossElement, &originStable)) {
+          lineLossPass, lineLossElement, lossX0, lossY0, &originStable)) {
       if (!originStable) {
         *returnValue = 0;
         goto batchedApertureCleanup;
@@ -1260,6 +1323,8 @@ static long do_aperture_search_line_batched(
         yLost[line] = trialYLost[id];
         sLost[line] = trialSLost[id];
         lineLossPass[line] = trialLossPass[id];
+        lossX0[line] = x0[line] + firstLost * dx[line];
+        lossY0[line] = y0[line] + firstLost * dy[line];
       }
     }
   }
@@ -1274,7 +1339,10 @@ static long do_aperture_search_line_batched(
           !gpuApertureSearchValueMatches(xLost[line], residentXLost[line]) ||
           !gpuApertureSearchValueMatches(yLost[line], residentYLost[line]) ||
           !gpuApertureSearchValueMatches(sLost[line], residentSLost[line]) ||
-          lineLossPass[line] != residentLossPass[line]) {
+          lineLossPass[line] != residentLossPass[line] ||
+          (xLost[line] != DBL_MAX &&
+           (lossX0[line] != residentLossX0[line] ||
+            lossY0[line] != residentLossY0[line]))) {
         fprintf(stderr,
                 "GPU_VERIFY aperture line %ld mismatch: limit=(%.17g,%.17g)/(%.17g,%.17g) loss=(%.17g,%.17g,%.17g,%ld)/(%.17g,%.17g,%.17g,%ld)\n",
                 line, xLimit[line], yLimit[line],
@@ -1294,6 +1362,13 @@ static long do_aperture_search_line_batched(
 #  ifndef GPU_VERIFY
 batchedApertureFinalize:
 #  endif
+  if (!confirmBatchedApertureLines(run, control, beamline, lines, orbit,
+                                   xLimit, yLimit, lossX0, lossY0,
+                                   xLost, yLost, sLost, lineLossPass)) {
+    fprintf(stderr, "elegant CUDA: batched aperture search disagreed with the CPU; rerunning the scalar search.\n");
+    fallback = 1;
+    goto batchedApertureCleanup;
+  }
   if (output) {
     /* Preserve the legacy schema semantics: x/y are the raw search limits,
      * while xClipped/yClipped are populated only after island clipping. */
@@ -1343,6 +1418,8 @@ batchedApertureCleanup:
   free(xLost);
   free(yLost);
   free(sLost);
+  free(lossX0);
+  free(lossY0);
   free(survived);
   free(seen);
   free(trialXLost);
@@ -1359,8 +1436,10 @@ batchedApertureCleanup:
   free(residentSLost);
   free(residentLossPass);
   free(residentLossElement);
+  free(residentLossX0);
+  free(residentLossY0);
 #  endif
-  return 1;
+  return fallback ? 0 : 1;
 }
 #endif
 

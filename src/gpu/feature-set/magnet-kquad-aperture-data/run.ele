@@ -1,0 +1,27 @@
+! KQUAD, KSEXT, KQUSE and DQCOR inside an aperture_data file whose limits narrow, and move off center,
+! at each magnet's center.  Half a betatron period in each magnet takes many particles outside there
+! and back inside by the exit, so only the check inside the magnet, taken at its center, loses them.
+! No losses file, so the GPU compacts the survivors itself.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 1000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  centroid = "%s.cen",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&aperture_data
+  input = "aperture.sdds",
+&end
+&run_control n_passes = 1 &end
+&bunched_beam
+  n_particles_per_bunch = 4000,
+  emit_x = 6.3e-7, beta_x = 0.0637, alpha_x = 0,
+  emit_y = 1e-12, beta_y = 1, alpha_y = 0,
+  sigma_dp = 1e-4, sigma_s = 1e-3,
+  distribution_cutoff[0] = 3*3,
+&end
+&track &end

@@ -1,0 +1,22 @@
+! SLICE elements, which gpu-elegant fills in one pass over the beam instead of one per slice: the
+! whole beam, a range of particle IDs, one particle (no time spread, so the loop over the beam is
+! used), one slice, and 400 slices, most of them empty (their sigmas are 0/0). Every file must be
+! the CPU's to the last bit.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 3 &end
+&bunched_beam
+  n_particles_per_bunch = 6000,
+  emit_x = 5e-11, beta_x = 7, alpha_x = 0.3,
+  emit_y = 5e-12, beta_y = 2.5, alpha_y = -0.2,
+  sigma_dp = 1e-3, sigma_s = 4e-3,
+&end
+&track &end

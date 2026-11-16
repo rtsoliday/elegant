@@ -1,0 +1,49 @@
+! Tune histories from the fused program: gpu_batched_tune_program_track() in gpu_stub.c tracks the whole
+! grid on the device, one kernel launch a turn, and computeTunesFromTrackingBatch() in twiss.cc uses its
+! histories only if the CPU, tracking a sample of the particles itself, gets the same bits.
+! The first ring with a CSBEND in every cell, eight kinds. A CSBEND wasn't the CPU's bit for bit until
+! 2026-11-11. Its drift called asin, sin and cos for each particle, which the device's library and the
+! host's round differently now and then; elegant and gpu-elegant now both drift with the sine, cosine
+! and versine of the substep's angle, made once on the host, and no function per particle. And the CPU
+! divides QX and QY by 1+delta and multiplies them back after every kick, radiation or not, which the
+! device now does too. The program claims the CPU's bits for a CSBEND whose edges take no library
+! function for a particle; these are such.
+MAL: MALIGN
+MA0: MALIGN,ON_PASS=0,DX=1e-4,DP=1e-4
+MA1: MALIGN,ON_PASS=1,DYP=1e-5
+CH: CHARGE,TOTAL=1e-9
+W: WATCH,FILENAME="%s.w1",MODE="centroid"
+MX: MAXAMP,X_MAX=0.006,Y_MAX=0.006
+D: DRIF,L=0.4
+DE: EDRIFT,L=0.1
+QF: KQUAD,L=0.2,K1=1.5,N_SLICES=4
+QD: KQUAD,L=0.2,K1=-1.5,N_SLICES=4
+QM: QUAD,L=0.1,K1=0.2
+SX: SEXT,L=0.1,K2=3
+SF: KSEXT,L=0.1,K2=5,N_SLICES=4
+AP: RCOL,X_MAX=0.004,Y_MAX=0.004
+! the defaults: order 4, no edge angle
+B1: CSBEND,L=0.3,ANGLE=0.02,N_SLICES=4
+! order 6 with K1 to K3 and the default edges
+B2: CSBEND,L=0.3,ANGLE=0.02,K1=0.2,K2=1.0,K3=5,E1=0.01,E2=0.01,N_SLICES=4,INTEGRATION_ORDER=6
+! order 2 and second-order edges with pole-face curvature
+B3: CSBEND,L=0.3,ANGLE=0.02,E1=0.012,E2=0.008,H1=0.1,H2=-0.2,EDGE_ORDER=2,N_SLICES=8,INTEGRATION_ORDER=2
+! K. Hwang's fringe, which takes HGAP and FINT with no function per particle
+B4: CSBEND,L=0.3,ANGLE=0.02,E1=0.01,E2=0.01,EDGE1_EFFECTS=2,EDGE2_EFFECTS=2,HGAP=0.01,FINT=0.5,N_SLICES=4
+! a negative angle, tilted and misaligned with a linear method, with the simple symplectic edge kick
+B5: CSBEND,L=0.3,ANGLE=-0.02,K1=-0.1,E1=-0.01,E2=-0.01,EDGE1_EFFECTS=3,EDGE2_EFFECTS=3,N_SLICES=4,TILT=0.002,DX=2e-5,DY=-1e-5,DZ=1e-5,ETILT=1e-4,EPITCH=1e-5,EYAW=-1e-5,MALIGN_METHOD=2
+! classical radiation with edges, and an exact misalignment
+B6: CSBEND,L=0.3,ANGLE=0.02,K1=0.1,E1=0.01,E2=0.01,N_SLICES=4,SYNCH_RAD=1,DX=-1e-5,DZ=2e-5,MALIGN_METHOD=4
+! the expanded Hamiltonian
+B7: CSBEND,L=0.3,ANGLE=0.02,K1=0.1,N_SLICES=4,EXPAND_HAMILTONIAN=1
+! a weak bend, whose radius of 3e4 m is where the old drift lost digits
+B8: CSBEND,L=0.3,ANGLE=1e-5,N_SLICES=4
+C1: LINE=(D,QF,D,SF,DE,QD,D,QM,B1,SX)
+C2: LINE=(D,QF,D,SF,DE,QD,D,QM,B2,SX)
+C3: LINE=(D,QF,D,SF,DE,QD,D,QM,B3,SX)
+C4: LINE=(D,QF,D,SF,DE,QD,D,QM,B4,SX)
+C5: LINE=(D,QF,D,SF,DE,QD,D,QM,B5,SX)
+C6: LINE=(D,QF,D,SF,DE,QD,D,QM,B6,SX)
+C7: LINE=(D,QF,D,SF,DE,QD,D,QM,B7,SX)
+C8: LINE=(D,QF,D,SF,DE,QD,D,QM,B8,SX)
+RING: LINE=(MAL,MA0,MA1,CH,MX,C1,C2,C3,C4,AP,W,C5,C6,C7,C8)

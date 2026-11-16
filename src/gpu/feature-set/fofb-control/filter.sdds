@@ -1,0 +1,7 @@
+SDDS1
+&column name=numerator, type=double &end
+&column name=denominator, type=double &end
+&data mode=ascii &end
+2
+0.25 1
+0.25 -0.5

@@ -1,0 +1,6 @@
+! KSBEND losing particles inside, past coord_limit: their z from the integrator's position, in the
+! CPU's swap order. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+KB: KSBEND, L=0.5, ANGLE=0.05, K1=0.5, METHOD="modified-midpoint", N_KICKS=20, DX=3e-4
+BL: LINE=(Q1, D, KB, D)

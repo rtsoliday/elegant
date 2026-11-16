@@ -1,0 +1,21 @@
+! SLICE first in the line on a beam with no time or momentum spread: on pass 0 every particle has the same
+! time, the slices have no width and each takes the whole beam, which the device leaves to a read-only host
+! copy; on pass 1 the drifts' path lengths spread the times a little and the device slices them. Identical
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 2 &end
+&bunched_beam
+  n_particles_per_bunch = 3000,
+  emit_x = 5e-11, beta_x = 7, alpha_x = 0.3,
+  emit_y = 5e-12, beta_y = 2.5, alpha_y = -0.2,
+  sigma_dp = 0, sigma_s = 0,
+&end
+&track &end

@@ -1,0 +1,29 @@
+SDDS1
+&parameter name=referenceRadius, units=m, type=double, fixed_value=0.02, &end
+&column name=order, type=long, &end
+&column name=an, type=double, &end
+&column name=bn, type=double, &end
+&data mode=ascii, &end
+! page 1
+21
+0 1e-05 1e-05
+1 1e-05 1e-05
+2 1e-05 1e-05
+3 1e-05 1e-05
+4 1e-05 1e-05
+5 1e-05 1e-05
+6 1e-05 1e-05
+7 1e-05 1e-05
+8 1e-05 1e-05
+9 1e-05 1e-05
+10 1e-05 1e-05
+11 1e-05 1e-05
+12 1e-05 1e-05
+13 1e-05 1e-05
+14 1e-05 1e-05
+15 1e-05 1e-05
+16 1e-05 1e-05
+17 1e-05 1e-05
+18 1e-05 1e-05
+19 1e-05 1e-05
+20 1e-05 1e-05

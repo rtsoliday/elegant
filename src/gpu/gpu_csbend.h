@@ -37,7 +37,9 @@ long gpu_compute_csbend_csr_wake(double *dGamma, double *T1, double *T2,
                                  long diSlippage,
                                  long diSlippage4,
                                  long copyComponentArrays,
-                                 long copyDGammaArray);
+                                 long copyDGammaArray,
+                                 double t1Factor,
+                                 double t2Factor);
 long gpu_csr_csbend_resident_available(void *csbend, long nParticles,
                                        long nBins);
 long gpu_csr_csbend_resident_begin(double *beta0, long nParticles);
@@ -56,9 +58,18 @@ long gpu_compute_csbend_csr_histogram_device(double *ctHist,
 long gpu_apply_csbend_csr_kick_device(long nParticles, long nBins,
                                       double ctLower, double dct,
                                       double Po, double rho0);
+long gpu_csr_csbend_output_round_trip(long nParticles, double cosTtilt, double sinTtilt);
+long gpu_csr_drift_advance(long nParticles, double dz, double Po, long linearOptics, long toTime);
+long gpu_csr_drift_count_in_range(long nParticles, double ct0, double dct, long nBins);
+long gpu_csr_drift_kick(long nParticles, const double *dGamma, long nBins, long applyKick,
+                        double ct0, double dct, double Po, long useFactor, double factor);
+long gpu_csr_csbend_apertures_supported(void *apertureData);
 long gpu_track_csbend_csr_body_slice(void *csbend, long nParticles,
                                      double sliceLength, double rho0,
-                                     double rhoActual, double Po);
+                                     double rhoActual, double Po,
+                                     void *apertureData, double zSliceStart,
+                                     double cosTtilt, double sinTtilt,
+                                     double **accepted, long *nLeft);
 long gpu_track_csbend_csr_finalize_simple(long nParticles, double pCentral,
                                           double coordinateSign,
                                           long edge2Effect, double e2,

@@ -1,0 +1,26 @@
+! RAMPRF pmaximum fiducials on the device, with output so the kicks use the CPU's sin.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = run,
+  output = "%s.out",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  final = "%s.fin",
+  semaphore_file = "%s.done",
+  random_number_seed = 987654321,
+  tracking_updates = 0,
+&end
+
+&run_control
+  n_passes = 4,
+&end
+
+&sdds_beam
+  input = "first_highest.sdds",
+&end
+
+&track
+&end

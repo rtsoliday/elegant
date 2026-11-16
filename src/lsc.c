@@ -95,9 +95,12 @@ void track_through_lscdrift(double **part, int64_t np, LSCDRIFT *LSC, double Po,
     startGpuTimer();
     gpu_track_through_lscdrift(np, LSC, Po, charge);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    track_through_lscdrift(part, np, LSC, Po, charge);
-    compareGpuCpu(np, "track_through_lscdrift");
+    /* If this is no longer set, a fallback has already tracked these particles on the CPU */
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      track_through_lscdrift(part, np, LSC, Po, charge);
+      compareGpuCpu(np, "track_through_lscdrift");
+    }
 #  endif /* GPU_VERIFY */
     return;
   }

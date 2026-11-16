@@ -1,0 +1,12 @@
+SDDS1
+&column name=s, units=m, type=double &end
+&column name=xHalfAperture, units=m, type=double &end
+&column name=yHalfAperture, units=m, type=double &end
+&column name=xCenter, units=m, type=double &end
+&column name=yCenter, units=m, type=double &end
+&data mode=ascii, no_row_counts=1 &end
+0 6e-4 1 1e-4 0
+0.8 3e-3 1 0 0
+0.9 7e-4 1 -1e-4 0
+1.7 3e-3 1 0 0
+10 3e-3 1 0 0

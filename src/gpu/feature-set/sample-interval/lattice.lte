@@ -1,0 +1,7 @@
+! SAMPLE keeping every third particle looked at: the host runs sample_particles()' loop on an index
+! array, the device gathers the rows. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+SA: SAMPLE, INTERVAL=3
+BL: LINE=(Q1, D, SA, D)

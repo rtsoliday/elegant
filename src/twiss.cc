@@ -4263,6 +4263,53 @@ static long computeTunesFromHistory(double *tune, double *amp,
   return 1;
 }
 
+#if defined(HAVE_GPU) && !USE_MPI
+/* One tracking call for all turns of a batched tune history, which records the coordinates at the
+ * start of each pass, on the device while the beam is there.  Its passes are numbered as the
+ * per-turn calls number them. */
+static double *tuneHistory = NULL;
+static unsigned char *tuneHistorySeen = NULL;
+static long tuneHistoryParticles = 0, tuneHistoryTurns = 0, tuneHistoryPassOffset = 0;
+
+static void recordTuneHistoryTurn(double **coord, int64_t np, long turn) {
+  long block = tuneHistoryParticles * tuneHistoryTurns;
+  int64_t ip;
+  long id;
+
+  memset(tuneHistorySeen, 0, tuneHistoryParticles * sizeof(*tuneHistorySeen));
+  for (ip = 0; ip < np; ip++) {
+    id = (long)coord[ip][particleIDIndex] - 1;
+    if (id < 0 || id >= tuneHistoryParticles || tuneHistorySeen[id])
+      bombElegant((char *)"invalid or duplicate particle ID in batched "
+                  "tune tracking", NULL);
+    tuneHistorySeen[id] = 1;
+    tuneHistory[id * tuneHistoryTurns + turn] = coord[ip][0];
+    tuneHistory[block + id * tuneHistoryTurns + turn] = coord[ip][1];
+    tuneHistory[2 * block + id * tuneHistoryTurns + turn] = coord[ip][2];
+    tuneHistory[3 * block + id * tuneHistoryTurns + turn] = coord[ip][3];
+  }
+}
+
+static void tuneHistoryWedge(double **coord, int64_t np, long pass, long i_elem, long n_elem,
+                             ELEMENT_LIST *eptr, double *pCentral) {
+  (void)n_elem;
+  (void)eptr;
+  (void)pCentral;
+  if (i_elem == 0 && pass > tuneHistoryPassOffset)
+    recordTuneHistoryTurn(coord, np, pass - tuneHistoryPassOffset);
+}
+
+static long tuneHistoryWedgeGpu(int64_t np, long pass, long i_elem, long n_elem,
+                                ELEMENT_LIST *eptr, double *pCentral) {
+  (void)n_elem;
+  (void)eptr;
+  (void)pCentral;
+  if (i_elem != 0 || pass <= tuneHistoryPassOffset)
+    return 1;
+  return gpu_tune_history_record(np, pass - tuneHistoryPassOffset);
+}
+#endif
+
 long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
                                    LINE_LIST *beamline, RUN *run,
                                    double **startingCoord,
@@ -4276,13 +4323,11 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
                                    double *tuneUpperLimit, long allowLosses,
                                    long nPeriods, unsigned long flags) {
   double **particle = NULL;
-  double **trackingParticle = NULL;
   double *history = NULL, *x, *xp, *y, *yp;
-  double CSave[6], p;
+  double CSave[6];
   unsigned char *seen = NULL;
-  long *prepassSurvived = NULL;
-  long i, ip, id, nActive, nValid;
-  long fusedPrepass = 0;
+  long i, ip, nValid;
+  long programTracked;
 
   if (!tune || !beamline || !run || !valid || particles <= 0 || turns <= 1)
     return 0;
@@ -4326,103 +4371,247 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
     yp[ip * turns] = particle[ip][3];
   }
 
-  p = run->p_central;
-  nActive = particles;
-#if defined(HAVE_GPU) && !USE_MPI
-  if (!(flags & CTFT_USE_MATRIX) && allowLosses && nPeriods == 1) {
-    long prepassCount = 0;
+  /* Tracks rows on the CPU (or on the device, element by element, where the caller allows that) and
+   * fills their histories, valid and survived flags and ending coordinates.  The rows of one call
+   * are tracked together; a particle's result doesn't depend on which others are in the call. */
+  auto trackRows = [&](double **rows, long nRows, double *finalCoord) {
+    std::vector<unsigned char> inCall(particles, 0);
+    long active = nRows, turn, row, particleId;
+    double pCall = run->p_central;
 
-    prepassSurvived = (long *)calloc(
-      (size_t)particles, sizeof(*prepassSurvived));
-    if (!prepassSurvived)
-      bombElegant((char *)"memory allocation failure for fused tune "
-                  "prepass status", NULL);
-    fusedPrepass = gpu_batched_tune_loss_prepass(
-      beamline, p, particle[0], particles, totalPropertiesPerParticle,
-      turns, turnOffset, prepassSurvived, &prepassCount);
-    if (fusedPrepass) {
-      trackingParticle = (double **)calloc(
-        (size_t)(prepassCount > 0 ? prepassCount : 1),
-        sizeof(*trackingParticle));
-      if (!trackingParticle)
-        bombElegant((char *)"memory allocation failure for fused tune "
-                    "repair rows", NULL);
-      for (ip = nActive = 0; ip < particles; ip++) {
-        if (prepassSurvived[ip])
-          trackingParticle[nActive++] = particle[ip];
-        else {
-          valid[ip] = 0;
+    for (row = 0; row < nRows; row++)
+      inCall[(long)rows[row][particleIDIndex] - 1] = 1;
+#if defined(HAVE_GPU) && !USE_MPI
+    if (!(flags & CTFT_USE_MATRIX) && nPeriods == 1 && !trackingWedgeFunctionsActive()) {
+      tuneHistory = history;
+      tuneHistorySeen = seen;
+      tuneHistoryParticles = particles;
+      tuneHistoryTurns = turns;
+      tuneHistoryPassOffset = turnOffset;
+      gpu_tune_history_configure(particles, turns);
+      setTrackingOmniWedgeFunction(tuneHistoryWedge);
+      setTrackingOmniWedgeGpuFunction(tuneHistoryWedgeGpu);
+      if (active > 0)
+        active = do_tracking(
+          NULL, rows, active, NULL, beamline, &pCall,
+          (double **)NULL,
+          (BEAM_SUMS **)NULL, (long *)NULL, (TRAJECTORY *)NULL, run, 0,
+          TEST_PARTICLES + (allowLosses ? TEST_PARTICLE_LOSSES : 0) +
+            TIME_DEPENDENCE_OFF,
+          turns - 1, turnOffset, NULL, NULL, NULL, NULL, NULL);
+      setTrackingOmniWedgeGpuFunction(NULL);
+      setTrackingOmniWedgeFunction(NULL);
+      gpu_tune_history_fetch(history);
+      gpu_tune_history_clear();
+      if (active > 0)
+        recordTuneHistoryTurn(rows, active, turns - 1);
+      else
+        memset(seen, 0, particles * sizeof(*seen));
+      for (particleId = 0; particleId < particles; particleId++)
+        if (inCall[particleId] && valid[particleId] && !seen[particleId]) {
+          valid[particleId] = 0;
           if (survived)
-            survived[ip] = 0;
+            survived[particleId] = 0;
         }
+      tuneHistory = NULL;
+      tuneHistorySeen = NULL;
+    } else
+#endif
+    for (turn = 1; turn < turns && active > 0; turn++) {
+      if (flags & CTFT_USE_MATRIX) {
+        long period;
+        for (period = 0; period < nPeriods; period++)
+          track_particles(rows, M, rows, active);
+      } else {
+        active = do_tracking(
+          NULL, rows, active, NULL, beamline, &pCall,
+          (double **)NULL,
+          (BEAM_SUMS **)NULL, (long *)NULL, (TRAJECTORY *)NULL, run, 0,
+          TEST_PARTICLES + (allowLosses ? TEST_PARTICLE_LOSSES : 0) +
+            TIME_DEPENDENCE_OFF,
+          nPeriods, turn - 1 + turnOffset, NULL, NULL, NULL, NULL, NULL);
       }
-      if (nActive != prepassCount)
-        bombElegant((char *)"inconsistent fused tune prepass survivor "
-                    "count", NULL);
+      memset(seen, 0, particles * sizeof(*seen));
+      for (row = 0; row < active; row++) {
+        particleId = (long)rows[row][particleIDIndex] - 1;
+        if (particleId < 0 || particleId >= particles || seen[particleId])
+          bombElegant((char *)"invalid or duplicate particle ID in batched "
+                      "tune tracking", NULL);
+        seen[particleId] = 1;
+        x[particleId * turns + turn] = rows[row][0];
+        xp[particleId * turns + turn] = rows[row][1];
+        y[particleId * turns + turn] = rows[row][2];
+        yp[particleId * turns + turn] = rows[row][3];
+      }
+      for (particleId = 0; particleId < particles; particleId++)
+        if (inCall[particleId] && valid[particleId] && !seen[particleId]) {
+          valid[particleId] = 0;
+          if (survived)
+            survived[particleId] = 0;
+        }
     }
+    for (row = 0; row < active; row++) {
+      particleId = (long)rows[row][particleIDIndex] - 1;
+      if (particleId < 0 || particleId >= particles)
+        continue;
+      if (endingCoord && endingCoord[particleId])
+        memcpy(endingCoord[particleId], rows[row], 6 * sizeof(**endingCoord));
+      if (finalCoord)
+        memcpy(finalCoord + 6 * particleId, rows[row], 6 * sizeof(*finalCoord));
+    }
+  };
+
+  programTracked = 0;
+#if defined(HAVE_GPU) && !USE_MPI
+  /* The fused program tracks the whole batch on the device, one kernel launch a turn.  Its
+   * histories are used only if the CPU, tracking some of the particles itself, gets the same bits
+   * (or, with ELEGANT_GPU_TUNE_HISTORY_TOLERANCE set, histories within that): otherwise the CPU
+   * tracks the rest as well, as it always did.  A verify build has the CPU track them all. */
+  if (!(flags & CTFT_USE_MATRIX) && allowLosses && nPeriods == 1 && !trackingWedgeFunctionsActive()) {
+    long stride = totalPropertiesPerParticle, exact = 0, id;
+    double *deviceHistory = (double *)malloc(4 * (size_t)particles * turns * sizeof(*deviceHistory));
+    double *deviceEnding = (double *)malloc((size_t)particles * stride * sizeof(*deviceEnding));
+    double *cpuFinal = (double *)calloc(6 * (size_t)particles, sizeof(*cpuFinal));
+    long *deviceAlive = (long *)calloc(particles, sizeof(*deviceAlive));
+
+    if (!deviceHistory || !deviceEnding || !cpuFinal || !deviceAlive)
+      bombElegant((char *)"memory allocation failure for the fused tune program "
+                  "(computeTunesFromTrackingBatch)", NULL);
+    if (gpu_batched_tune_program_track(
+          beamline, run, run->p_central, particle[0], particles, stride, turns, turnOffset,
+          deviceHistory, deviceEnding, deviceAlive, &exact)) {
+      std::vector<unsigned char> check(particles, 0);
+      std::vector<double *> checkRows, otherRows;
+      long nCheck = 0, lossMismatches = 0, keptButLost = 0, differing = 0, signal, turn;
+      long scopeBefore;
+      double maxDifference = 0;
+
+#  ifdef GPU_VERIFY
+      for (id = 0; id < particles; id++)
+        check[id] = 1;
+#  else
+      {
+        /* eight of the survivors and eight of the lost, evenly spaced, and the survivors that
+         * started with the largest x, y and momentum offsets either way */
+        std::vector<long> group[2];
+        long extreme[6] = {-1, -1, -1, -1, -1, -1}, which, pick;
+        static const long coordinateIndex[3] = {0, 2, 5};
+
+        for (id = 0; id < particles; id++) {
+          group[deviceAlive[id] ? 0 : 1].push_back(id);
+          if (!deviceAlive[id])
+            continue;
+          for (which = 0; which < 3; which++) {
+            double value = particle[id][coordinateIndex[which]];
+            if (extreme[2 * which] < 0 || value > particle[extreme[2 * which]][coordinateIndex[which]])
+              extreme[2 * which] = id;
+            if (extreme[2 * which + 1] < 0 ||
+                value < particle[extreme[2 * which + 1]][coordinateIndex[which]])
+              extreme[2 * which + 1] = id;
+          }
+        }
+        for (which = 0; which < 2; which++) {
+          long members = (long)group[which].size();
+          for (pick = 0; pick < 8 && pick < members; pick++)
+            check[group[which][members <= 8 ? pick : pick * (members - 1) / 7]] = 1;
+        }
+        for (which = 0; which < 6; which++)
+          if (extreme[which] >= 0)
+            check[extreme[which]] = 1;
+      }
+#  endif
+      for (id = 0; id < particles; id++) {
+        if (check[id]) {
+          checkRows.push_back(particle[id]);
+          nCheck++;
+        } else
+          otherRows.push_back(particle[id]);
+      }
+      scopeBefore = gpu_batched_tune_cpu_scope(1);
+      trackRows(checkRows.data(), nCheck, cpuFinal);
+      gpu_batched_tune_cpu_scope(scopeBefore);
+
+      for (id = 0; id < particles; id++) {
+        long differs = 0;
+
+        if (!check[id])
+          continue;
+        if ((valid[id] ? 1 : 0) != (deviceAlive[id] ? 1 : 0)) {
+          lossMismatches++;
+          if (deviceAlive[id])
+            keptButLost++;
+          continue;
+        }
+        if (!valid[id])
+          continue;
+        for (signal = 0; signal < 4; signal++) {
+          const double *cpuSignal = history + signal * particles * turns + id * turns;
+          const double *deviceSignal = deviceHistory + signal * (size_t)particles * turns + id * turns;
+          double range = 0, difference = 0;
+
+          for (turn = 0; turn < turns; turn++) {
+            if (fabs(cpuSignal[turn]) > range)
+              range = fabs(cpuSignal[turn]);
+            if (cpuSignal[turn] != deviceSignal[turn]) {
+              differs = 1;
+              if (fabs(cpuSignal[turn] - deviceSignal[turn]) > difference)
+                difference = fabs(cpuSignal[turn] - deviceSignal[turn]);
+            }
+          }
+          if (difference > 0 && (range > 0 ? difference / range : 1) > maxDifference)
+            maxDifference = range > 0 ? difference / range : 1;
+        }
+        for (i = 0; i < 6; i++)
+          if (cpuFinal[6 * id + i] != deviceEnding[id * stride + i]) {
+            double scale = fabs(cpuFinal[6 * id + i]);
+            double difference = fabs(cpuFinal[6 * id + i] - deviceEnding[id * stride + i]);
+
+            differs = 1;
+            if ((scale > 0 ? difference / scale : 1) > maxDifference)
+              maxDifference = scale > 0 ? difference / scale : 1;
+          }
+        differing += differs;
+      }
+      if (gpu_batched_tune_program_checked(particles, nCheck, exact, lossMismatches, keptButLost,
+                                           differing, maxDifference)) {
+        for (id = 0; id < particles; id++) {
+          if (check[id])
+            continue;
+          if (!deviceAlive[id]) {
+            valid[id] = 0;
+            if (survived)
+              survived[id] = 0;
+            continue;
+          }
+          for (signal = 0; signal < 4; signal++)
+            memcpy(history + signal * particles * turns + id * turns + 1,
+                   deviceHistory + signal * (size_t)particles * turns + id * turns + 1,
+                   (turns - 1) * sizeof(*history));
+          if (endingCoord && endingCoord[id])
+            memcpy(endingCoord[id], deviceEnding + id * stride, 6 * sizeof(**endingCoord));
+        }
+      } else if (!otherRows.empty())
+        trackRows(otherRows.data(), (long)otherRows.size(), NULL);
+      programTracked = 1;
+    }
+    free(deviceHistory);
+    free(deviceEnding);
+    free(cpuFinal);
+    free(deviceAlive);
   }
 #endif
-  if (!trackingParticle)
-    trackingParticle = particle;
-  for (i = 1; i < turns && nActive > 0; i++) {
-    if (flags & CTFT_USE_MATRIX) {
-      long period;
-      for (period = 0; period < nPeriods; period++)
-        track_particles(trackingParticle, M, trackingParticle, nActive);
-    } else {
-      nActive = do_tracking(
-        NULL, trackingParticle, nActive, NULL, beamline, &p,
-        (double **)NULL,
-        (BEAM_SUMS **)NULL, (long *)NULL, (TRAJECTORY *)NULL, run, 0,
-        TEST_PARTICLES + (allowLosses ? TEST_PARTICLE_LOSSES : 0) +
-          TIME_DEPENDENCE_OFF,
-        nPeriods, i - 1 + turnOffset, NULL, NULL, NULL, NULL, NULL);
-    }
-    memset(seen, 0, particles * sizeof(*seen));
-    for (ip = 0; ip < nActive; ip++) {
-      id = (long)trackingParticle[ip][particleIDIndex] - 1;
-      if (id < 0 || id >= particles || seen[id])
-        bombElegant((char *)"invalid or duplicate particle ID in batched "
-                    "tune tracking", NULL);
-      seen[id] = 1;
-      x[id * turns + i] = trackingParticle[ip][0];
-      xp[id * turns + i] = trackingParticle[ip][1];
-      y[id * turns + i] = trackingParticle[ip][2];
-      yp[id * turns + i] = trackingParticle[ip][3];
-    }
-    for (id = 0; id < particles; id++)
-      if (valid[id] && !seen[id]) {
-        valid[id] = 0;
-        if (survived)
-          survived[id] = 0;
-      }
-  }
-
-  if (endingCoord) {
-    for (ip = 0; ip < nActive; ip++) {
-      id = (long)trackingParticle[ip][particleIDIndex] - 1;
-      if (id >= 0 && id < particles && endingCoord[id])
-        memcpy(endingCoord[id], trackingParticle[ip],
-               6 * sizeof(**endingCoord));
-    }
-  }
+  if (!programTracked)
+    trackRows(particle, particles, NULL);
 
   {
     std::atomic<long> nextParticle(0), validCount(0);
     std::vector<std::thread> workers;
-    unsigned long workerCount = std::thread::hardware_concurrency();
-    const char *threadSetting = getenv("ELEGANT_GPU_BATCHED_TUNE_THREADS");
+    /* one thread unless the run asked for more: see gpu_batched_tune_analysis_threads() */
+    unsigned long workerCount = 1;
 
-    if (threadSetting && threadSetting[0]) {
-      char *endptr = NULL;
-      unsigned long requested = strtoul(threadSetting, &endptr, 10);
-      if (endptr && !endptr[0] && requested)
-        workerCount = requested;
-    }
-    if (!workerCount)
-      workerCount = 1;
-    if (workerCount > 16)
-      workerCount = 16;
+#if defined(HAVE_GPU) && !USE_MPI
+    workerCount = (unsigned long)gpu_batched_tune_analysis_threads();
+#endif
     if ((long)workerCount > particles)
       workerCount = particles;
     if (particles < 32)
@@ -4457,9 +4646,6 @@ long computeTunesFromTrackingBatch(double *tune, double *amp, VMATRIX *M,
   if (flags & CTFT_USE_MATRIX)
     for (i = 0; i < 6; i++)
       M->C[i] = CSave[i];
-  if (fusedPrepass)
-    free(trackingParticle);
-  free(prepassSurvived);
   free(seen);
   free(history);
   free_czarray_2d((void **)particle, particles,

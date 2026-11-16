@@ -1,0 +1,113 @@
+SDDS1
+&description text="Transpose of matrix--input: run0.ele  lattice: par10h.lte", contents=matrix, &end
+&parameter name=Step, description="Simulation step", type=long, &end
+&parameter name=InputFile, description="Original matrix file", type=string, &end
+&parameter name=Coordinate, type=string, &end
+&parameter name=Filename, description="Name of file from which this page came", type=string, &end
+&parameter name=NumberCombined, description="Number of files combined to make this file", type=long, &end
+&column name=MatrixElementName, type=string,  &end
+&column name=Coefficient, type=double,  &end
+&column name=j, type=short,  &end
+&column name=Ix, type=short,  &end
+&column name=Iqx, type=short,  &end
+&column name=Iy, type=short,  &end
+&column name=Iqy, type=short,  &end
+&column name=Is, type=short,  &end
+&column name=Idelta, type=short,  &end
+&data mode=ascii, &end
+! page number 1
+0
+pipe
+delta
+run0.first
+1
+                   1
+R66  1.000000000000000e+00 6 0 0 0 0 0 1 
+! page number 2
+0
+pipe
+qx
+run0.first
+1
+                  12
+R21 -4.374513544541772e-01 1 1 0 0 0 0 0 
+R22  4.834046129500965e-01 2 0 1 0 0 0 0 
+R26  2.369223894162087e-03 6 0 0 0 0 0 1 
+T211 -2.540621807552284e+00 0 2 0 0 0 0 0 
+T221 -6.000546084295543e+00 0 1 1 0 0 0 0 
+T222 -3.572934946775789e+00 0 0 2 0 0 0 0 
+T233 -9.347372072585497e-01 0 0 0 2 0 0 0 
+T243 -1.013775035115646e+01 0 0 0 1 1 0 0 
+T244 -5.932611888765490e+01 0 0 0 0 2 0 0 
+T261 -7.818599765352027e+00 0 1 0 0 0 0 1 
+T262 -1.338391991338088e+00 0 0 1 0 0 0 1 
+T266 -5.689899493432288e+00 0 0 0 0 0 0 2 
+! page number 3
+0
+pipe
+qy
+run0.first
+1
+                   8
+R43 -9.981906716015310e-02 3 0 0 1 0 0 0 
+R44  2.061592815574267e-01 4 0 0 0 1 0 0 
+T431 -1.396515401271098e+00 0 1 0 1 0 0 0 
+T432 -1.649174032493792e+00 0 0 1 1 0 0 0 
+T441 -1.581558041395833e+01 0 1 0 0 1 0 0 
+T442 -1.440116381476945e+01 0 0 1 0 1 0 0 
+T463 -2.538089664430583e+00 0 0 0 1 0 0 1 
+T464 -2.491774123132417e+01 0 0 0 0 1 0 1 
+! page number 4
+0
+pipe
+s
+run0.first
+1
+                  13
+R51  2.369223894162387e-03 1 1 0 0 0 0 0 
+R52  2.797865687580253e-03 2 0 1 0 0 0 0 
+R55  1.000000000000000e+00 5 0 0 0 0 1 0 
+R56  7.560249733201212e+00 6 0 0 0 0 0 1 
+T511 -2.288247292733800e+00 0 2 0 0 0 0 0 
+T521 -1.381582766749236e+01 0 1 1 0 0 0 0 
+T522  6.103975018222376e+00 0 0 2 0 0 0 0 
+T533 -1.397892820716937e+00 0 0 0 2 0 0 0 
+T543 -1.874616192586254e+01 0 0 0 1 1 0 0 
+T544 -9.551951462816149e+01 0 0 0 0 2 0 0 
+T561 -1.139498891093360e+01 0 1 0 0 0 0 1 
+T562 -1.345378112746245e+01 0 0 1 0 0 0 1 
+T566 -4.470514929474551e+00 0 0 0 0 0 0 2 
+! page number 5
+0
+pipe
+x
+run0.first
+1
+                  12
+R11  4.834046129500951e-01 1 1 0 0 0 0 0 
+R12  1.751783306591267e+00 2 0 1 0 0 0 0 
+R16  2.797865687580337e-03 6 0 0 0 0 0 1 
+T111 -3.013331060527789e+00 0 2 0 0 0 0 0 
+T121 -7.057309990816494e+00 0 1 1 0 0 0 0 
+T122 -4.167061947706108e+00 0 0 2 0 0 0 0 
+T133 -8.882663903718707e-01 0 0 0 2 0 0 0 
+T143 -1.282414514173955e+01 0 0 0 1 1 0 0 
+T144 -9.041752442404521e+01 0 0 0 0 2 0 0 
+T161 -1.338250547637713e+00 0 1 0 0 0 0 1 
+T162 -2.835193233034530e+01 0 0 1 0 0 0 1 
+T166 -6.762078595125756e+00 0 0 0 0 0 0 2 
+! page number 6
+0
+pipe
+y
+run0.first
+1
+                   8
+R33  2.061592815574264e-01 3 0 0 1 0 0 0 
+R34  9.592339197995960e+00 4 0 0 0 1 0 0 
+T331 -1.394513314509954e+01 0 1 0 1 0 0 0 
+T332 -2.074388073348632e+01 0 0 1 1 0 0 0 
+T341 -7.273562361184239e+01 0 1 0 0 1 0 0 
+T342 -8.589500809578539e+01 0 0 1 0 1 0 0 
+T363 -2.492787151975848e+01 0 0 0 1 0 0 1 
+T364 -1.409558480446808e+02 0 0 0 0 1 0 1 

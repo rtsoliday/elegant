@@ -1,0 +1,15 @@
+! LRWAKE on the device: four bunches (use_bunched_mode, n_duplicates=3, 2 ns apart), all five wake columns with
+! their factors, RAMP_PASSES and TURNS_TO_KEEP over six passes, off axis after a kicker. The device makes each
+! particle's time and copies t, x, y and the bunch to the host, which adds them per bunch in particle order;
+! lrwakeBunchVoltages() (elegant's) moves the history and sums the wakes; the device kicks. Only an output
+! file, so the particles must be elegant's.
+C: CHARGE, TOTAL=1e-9
+K: KICKER, HKICK=2e-4, VKICK=-1e-4
+D: DRIF, L=1
+Q1: QUAD, L=0.2, K1=0.5
+Q2: QUAD, L=0.2, K1=-0.5
+LR: LRWAKE, INPUTFILE="../data/lrwake.sdds", TCOLUMN="time", WXCOLUMN="WxDipole", WYCOLUMN="WyDipole", &
+    WZCOLUMN="Wz", QXCOLUMN="WxQuadrupole", QYCOLUMN="WyQuadrupole", TURNS_TO_KEEP=3, RAMP_PASSES=3, &
+    FACTOR=0.8, XFACTOR=1.2, YFACTOR=0.9, ZFACTOR=1.1, QXFACTOR=0.7, QYFACTOR=1.3
+MAKE: LINE=(D)
+BL: LINE=(C, K, D, Q1, D, LR, D, Q2, D)

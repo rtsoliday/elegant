@@ -1,0 +1,5 @@
+! rmdf-ramp with ELEGANT_GPU_ENABLE_RMDF=0 (suite.json): RMDF on the CPU. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+RM: RMDF, L=0.5, VOLTAGE=1e3, GAP=0.02, RAMP_TIME=1e-9, N_SECTIONS=12, TILT=0.3, DX=1e-4, DY=-1e-4, TIME_OFFSET=1e-12
+BL: LINE=(Q1, D, RM, D)

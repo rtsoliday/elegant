@@ -5833,7 +5833,8 @@ This mode is also available in non-MPI \verb|gpu-elegant|, which processes the
 probe particles in bounded batches and prefers CUDA tracking.  If CUDA is
 unavailable or an element uses the CPU implementation, the batch may use the
 loss-sensitive CPU path; \verb|-ompThreads=N| enables OpenMP parallelism for
-supported CPU element loops.  Setting the environment variable
+supported CPU element loops.  The environment variable \verb|OMP_NUM_THREADS|
+does the same; if both are given, \verb|-ompThreads| is used.  Setting the environment variable
 \verb|ELEGANT_GPU_MOMENTUM_BOUNDARY_VERIFY=1| enables an additional,
 potentially expensive correctness check: after CUDA tracking, the fixed-grid
 boundary points are confirmed with CPU/OpenMP arithmetic and any disagreeing
@@ -5961,6 +5962,9 @@ sddssort input.sdds -parameter=Y
 
 \item \verb|y_limit| --- Allows specifying maximum limits on the vertical coordinate, beyond which particles are lost.
 \end{itemize}
+
+Obstructions are not implemented in GPU code, so in \verb|gpu-elegant| this command keeps tracking on the CPU.
+With \verb|ELEGANT_GPU_MODE=required|, the run stops with an error instead.
 
 %\begin{latexonly}
 \newpage

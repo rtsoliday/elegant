@@ -1,0 +1,23 @@
+! MAXAMP with OPEN_SIDE, rectangular and elliptical, with an acceptance file, so accepted coordinates must follow the survivors.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 7000,
+  default_order = 2,
+  rootname = "run",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  acceptance = "%s.acc",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 1 &end
+
+&bunched_beam
+  n_particles_per_bunch = 2000,
+  emit_x = 1e-6, beta_x = 4, alpha_x = 0,
+  emit_y = 1e-6, beta_y = 4, alpha_y = 0,
+  sigma_dp = 5e-4, sigma_s = 1e-3,
+&end
+
+&track &end

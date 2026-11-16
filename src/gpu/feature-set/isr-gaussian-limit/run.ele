@@ -1,0 +1,26 @@
+! ISR with SR_gaussian_limit=1, which rejects a third of the random numbers, so the generator must remove them in order. A CPU element with ISR follows.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 7000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&global_settings
+  SR_gaussian_limit = 1,
+&end
+&run_control n_passes = 2 &end
+
+&bunched_beam
+  n_particles_per_bunch = 300,
+  emit_x = 2e-7, beta_x = 8, alpha_x = 0,
+  emit_y = 2e-7, beta_y = 8, alpha_y = 0,
+  sigma_dp = 5e-4, sigma_s = 1e-3,
+&end
+
+&track &end

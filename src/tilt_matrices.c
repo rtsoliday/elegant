@@ -187,9 +187,7 @@ void rotateBeamCoordinatesForMisalignment(double **part, int64_t np, double angl
     sin_a = sin(angle);
   }
 
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp taskloop if(gpuOmpTrackingRequested(np) && omp_in_parallel() && !spinCoordOffset) num_tasks(gpuGetOmpTrackingThreads())
-#endif
+  GPU_OMP_TASKLOOP(gpuOmpTrackingRequested(np) && omp_in_parallel() && !spinCoordOffset,
   for (i = 0; i < np; i++) {
     coord = part[i];
     x = coord[0];
@@ -200,7 +198,7 @@ void rotateBeamCoordinatesForMisalignment(double **part, int64_t np, double angl
     coord[2] = -x * sin_a + y * cos_a;
     coord[1] = xp * cos_a + yp * sin_a;
     coord[3] = -xp * sin_a + yp * cos_a;
-  }
+  });
   if (spinCoordOffset) {
     double Sx, Sy;
     for (i = 0; i < np; i++) {

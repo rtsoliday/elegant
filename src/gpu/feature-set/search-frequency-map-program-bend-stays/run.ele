@@ -1,0 +1,26 @@
+! With a CSBEND in the ring that the program doesn't claim the CPU's bits for (its edges have a fringe
+! angle), the program isn't run: the CPU tracks, as before, and the file is the CPU's bit for bit.
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 64
+&end
+
+&frequency_map
+    output = "%s.fma",
+    nx = 15,
+    ny = 15,
+    xmin = 1e-6,
+    xmax = 0.005,
+    ymin = 1e-6,
+    ymax = 0.005,
+    include_changes = 1,
+    verbosity = 0
+&end

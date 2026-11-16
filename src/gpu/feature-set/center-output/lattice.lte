@@ -1,0 +1,10 @@
+! CENTER on the device: X, XP, Y, YP, DELTA and T on every pass after a kicker.  Each mean comes from that
+! column copied to the host and added in particle order, as center_beam() adds it; T from each particle's time
+! with the CPU's Kahan sum, after the other offsets, and the round trip through time on the device.  Only an
+! output file, so the particles must be elegant's.
+D: DRIF, L=0.5
+K: KICKER, HKICK=2e-4, VKICK=-1e-4
+Q1: QUAD, L=0.2, K1=0.5
+Q2: QUAD, L=0.2, K1=-0.5
+CEN: CENTER, X=1, XP=1, Y=1, YP=1, DELTA=1, T=1
+BL: LINE=(K, D, Q1, D, CEN, Q2, D)

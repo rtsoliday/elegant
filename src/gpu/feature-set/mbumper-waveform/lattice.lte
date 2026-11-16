@@ -1,0 +1,10 @@
+! MBUMPER, a quadrupole kicker whose waveform changes across the bunch (3 ps rms against a 20 ps
+! waveform; the tail past it gets no kick), with tilt, offsets, DZ, TIME_OFFSET and N_KICKS=8 (two parts of
+! the fourth-order integrator), and a sextupole one. The first call sets the fiducial on the CPU; with one
+! pass, the second element is the device's. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+MB: MBUMPER, L=0.3, STRENGTH=3, ORDER=1, N_KICKS=8, TILT=0.2, DX=1e-4, DY=2e-4, DZ=0.01, TIME_OFFSET=1e-12, &
+    WAVEFORM="waveform.sdds=t+A"
+MB2: MBUMPER, L=0.2, STRENGTH=-800, ORDER=2, N_KICKS=4, WAVEFORM="waveform.sdds=t+A"
+BL: LINE=(Q1, D, MB, D, MB2, D)

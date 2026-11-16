@@ -1,0 +1,29 @@
+! Obstructions reach particles inside magnets and drifts. They aren't implemented on the GPU, so the run stays on the CPU.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 1000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  centroid = "%s.cen",
+  losses = "%s.los",
+  losses_include_global_coordinates = 1,
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+
+&floor_coordinates filename = "%s.flr" &end
+
+&obstruction_data input = "obstruction.sdds" &end
+
+&run_control n_passes = 3 &end
+
+&bunched_beam
+  n_particles_per_bunch = 3000,
+  emit_x = 1e-8, beta_x = 8, alpha_x = 0,
+  emit_y = 1e-9, beta_y = 8, alpha_y = 0,
+  sigma_dp = 1e-4, sigma_s = 1e-3,
+&end
+
+&track &end

@@ -296,11 +296,10 @@ void track_through_wake(double **part0, int64_t np0, WAKE *wakeData, double *PoI
         fflush(stdout);
 #endif
 
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+        GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
         for (ip = 0; ip < np; ip++)
           memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
+        );
 
 #ifdef DEBUG
         printf("Done with bucket %ld\n", iBucket);
@@ -338,9 +337,7 @@ void applyLongitudinalWakeKicks(double **part, double *time, long *pbin, int64_t
   int64_t ip;
 
   /* change particle momentum offsets to reflect voltage in relevant bin */
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+  GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
   for (ip = 0; ip < np; ip++) {
     long ib;
     if ((ib = pbin[ip]) >= 0 && ib <= nb - 1) {
@@ -360,7 +357,7 @@ void applyLongitudinalWakeKicks(double **part, double *time, long *pbin, int64_t
         add_to_particle_energy(part[ip], time[ip], Po, -dgam);
       }
     }
-  }
+  });
 }
 
 typedef struct {
@@ -623,6 +620,12 @@ void track_through_corgpipe(double **part, int64_t np, CORGPIPE *corgpipe, doubl
       double result;
 #endif
       sMax = -(sMin = DBL_MAX);
+#ifdef HAVE_GPU
+      /* the extremes are the same in any order */
+      if (getElementOnGpu())
+        gpu_beam_s_range(np, &sMin, &sMax);
+      else
+#endif
       for (i = 0; i < np; i++) {
         if (part[i][4] > sMax)
           sMax = part[i][4];
@@ -759,6 +762,11 @@ void track_through_corgplates(double **part, int64_t np, CORGPLATES *corgplates,
     double result;
 #endif
     sMax = -(sMin = DBL_MAX);
+#ifdef HAVE_GPU
+    if (getElementOnGpu())
+      gpu_beam_s_range(np, &sMin, &sMax);
+    else
+#endif
     for (i = 0; i < np; i++) {
       if (part[i][4] > sMax)
         sMax = part[i][4];

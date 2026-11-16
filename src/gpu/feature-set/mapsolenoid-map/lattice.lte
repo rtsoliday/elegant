@@ -1,0 +1,7 @@
+! MAPSOLENOID from elegantTestSet's mapSolenoid1 map (Br and Bz in r and z): no function but sqrt, so the
+! particles must be elegant's to the bit
+RF: RFCA, L=0.01, VOLT=10e6, FREQ=2856e6, PHASE=90, CHANGE_P0=1
+S1: SOLE, L=0.14, B=-1.70450939
+S0: MAPSOLENOID, L=0.1991984, RCOLUMN="r", ZCOLUMN="z", BRCOLUMN="Br", BZCOLUMN="Bz", &
+    METHOD="non-adaptive runge-kutta", FACTOR=-1.70450939, N_STEPS=500, INPUTFILE="../data/mapsolenoid_map.sdds"
+BL: LINE=(RF, S0, S1)

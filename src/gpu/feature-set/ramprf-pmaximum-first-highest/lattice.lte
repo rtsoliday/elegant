@@ -1,0 +1,9 @@
+! RAMPRF with a pmaximum fiducial when the first particle has the most momentum, tied with
+! particle 701, which arrives 2 ps later.  Both must pick the first particle.
+D1: DRIF,L=0.14
+RT: RAMPRF,L=0,VOLT=1.1e6,PHASE=19,FREQ=5.0e8,FIDUCIAL="pmaximum",VOLT_WAVEFORM="rf.sdds=t+Voltage"
+RL: RAMPRF,L=0.30,VOLT=8.0e5,PHASE=-11,FREQ=5.0e8,FIDUCIAL="pmaximum",VOLT_WAVEFORM="rf.sdds=t+Voltage"
+RS: RAMPRF,L=0.34,VOLT=7.2e5,PHASE=14,FREQ=5.0e8,FIDUCIAL="pmaximum",VOLT_WAVEFORM="rf.sdds=t+Voltage"
+MON: MONI,L=0
+CELL: LINE=(D1,RT,D1,RL,D1,RS,D1,MON)
+RING: LINE=(2*CELL)

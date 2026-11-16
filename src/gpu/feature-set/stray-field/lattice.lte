@@ -1,0 +1,6 @@
+! STRAY with local and global components at second order: stray_field_matrix() on the host, the matrix
+! on the device through track_particles() (the global components need the floor coordinates). Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+ST: STRAY, L=0.5, LBX=1e-5, LBY=-2e-5, GBX=3e-5, GBY=1e-5, GBZ=2e-5, ORDER=2
+BL: LINE=(Q1, D, ST, D)

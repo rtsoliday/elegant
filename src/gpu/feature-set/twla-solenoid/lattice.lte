@@ -1,0 +1,8 @@
+! TWLA with B_SOLENOID (the entrance and exit impulses), ALPHA (field droop), SUM_BN2 (the ponderomotive
+! force), a beta_wave below 1, offsets, FOCUSSING=0 on one cell, and p maximum fiducial. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+L1: TWLA, L=0.3149, PHASE=-1.2, EZ=-15e6, B_SOLENOID=0.05, ALPHA=0.3, SUM_BN2=0.01, BETA_WAVE=0.999, &
+    METHOD="non-adaptive", FIDUCIAL="p,maximum", N_STEPS=400, ACCURACY=1e-9, DX=2e-4, DY=-1e-4
+L2: TWLA, L=0.3149, PHASE=-1.4, EZ=-15e6, FOCUSSING=0, METHOD="non-adaptive", N_STEPS=400, ACCURACY=1e-9
+BL: LINE=(Q1, D, L1, L2, D)

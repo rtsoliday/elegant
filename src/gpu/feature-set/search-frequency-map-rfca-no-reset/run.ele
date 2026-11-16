@@ -1,0 +1,29 @@
+! The same ring and map with reset_rf_for_each_step = 0: the cavity keeps the reference of the fiducial particle,
+! so a particle's result does not depend on the others and gpu-elegant batches the map.
+! Must be identical to the CPU.
+
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 32,
+    reset_rf_for_each_step = 0
+&end
+
+&frequency_map
+    output = "%s.fma",
+    nx = 16,
+    ny = 8,
+    xmin = -1.5e-3,
+    xmax = 1.5e-3,
+    ymin = 1e-6,
+    ymax = 1.5e-3,
+    include_changes = 1,
+    verbosity = 0
+&end

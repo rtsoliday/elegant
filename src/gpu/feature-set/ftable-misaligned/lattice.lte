@@ -1,0 +1,7 @@
+! FTABLE with offsets in x, y and z, a tilt and a field factor, in 40 kicks: the device's frame changes
+! around the kicks. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+FQ: FTABLE, L=0.2, INPUT_FILE="../data/ftable_quad.sdds", N_KICKS=40, SIMPLE_INPUT=1, DX=2e-4, &
+    DY=-1e-4, DZ=0.005, TILT=0.15, FACTOR=1.5
+BL: LINE=(Q1, D, FQ, D)

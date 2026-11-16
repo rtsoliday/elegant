@@ -13,6 +13,8 @@ long gpu_multipole_tracking2(long n_part, void *elem, double p_error,
                              double *sigmaDelta2, long iSlice);
 long gpu_multipole_tracking(long n_part, void *multipole, double p_error,
                             double Po, double **accepted, double z_start);
+long gpu_fmultipole_tracking(long n_part, void *fmult, double p_error,
+                             double Po, double **accepted, double z_start);
 
 #ifdef __cplusplus
 }

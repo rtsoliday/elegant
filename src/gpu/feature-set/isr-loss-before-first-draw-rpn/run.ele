@@ -1,0 +1,29 @@
+! KQUAD ISR where the first step's large kick stops every particle at the magnet's entrance, and a grnd in a modulate_elements expression then draws from random_2 before the next ISR magnet. The device used to take one number to read random_2's state, which RPN couldn't see, so the second step was one number off.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 7000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&rpn_expression expression = "12345 srnd" &end
+&modulate_elements
+  name = "H", item = KICK,
+  expression = "grnd 1e-6 *",
+  refresh_matrix = 1,
+  verbose = 0,
+&end
+&run_control n_indices = 1, n_passes = 1 &end
+&vary_element name = HK, item = KICK, initial = 1.2, final = 0, index_number = 0, index_limit = 2 &end
+&bunched_beam
+  n_particles_per_bunch = 256,
+  emit_x = 5e-9, beta_x = 4, alpha_x = 0,
+  emit_y = 5e-9, beta_y = 4, alpha_y = 0,
+  sigma_dp = 5e-4, sigma_s = 1e-3,
+&end
+&track &end

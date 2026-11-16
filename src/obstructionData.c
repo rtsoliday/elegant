@@ -521,8 +521,14 @@ long insideObstruction_XYZ
   return 0;
 }
 
+long obstructionDataPresent(void) {
+  return obstructionDataSets.initialized;
+}
+
 long filterParticlesWithObstructions(double **coord, int64_t np, double **accepted, double z, double Po) {
   int64_t ip, itop;
+  if (!obstructionDataSets.initialized)
+    return np;
   itop = np - 1;
   for (ip = 0; ip <= itop; ip++) {
     /* printf("filterParticlesWithObstructions: ip=%ld, itop=%ld\n", ip, itop); */

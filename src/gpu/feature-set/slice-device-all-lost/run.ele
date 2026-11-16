@@ -1,0 +1,20 @@
+! SLICE after a collimator that stops every particle: with no particles left it writes elegant's empty slices
+! (RUN_ZERO_PARTICLES), on the host. Identical
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 1 &end
+&bunched_beam
+  n_particles_per_bunch = 3000,
+  emit_x = 5e-11, beta_x = 7, alpha_x = 0.3,
+  emit_y = 5e-12, beta_y = 2.5, alpha_y = -0.2,
+  sigma_dp = 0.001, sigma_s = 0.004,
+&end
+&track &end

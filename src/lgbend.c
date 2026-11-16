@@ -46,6 +46,161 @@ void storeLGBendOptimizedFSEValues(LGBEND *lgbend);
 int retrieveLGBendOptimizedFSEValues(LGBEND *lgbend);
 void readLGBendApertureData(LGBEND *lgbend);
 
+void lgbendSetupCentroidOutput(LGBEND *lgbend) {
+  TRACKING_CONTEXT context;
+
+  getTrackingContext(&context);
+  lgbend->centroidsRequested = (lgbend->centroidOutputFile && strlen(lgbend->centroidOutputFile));
+  if (lgbend->centroidsRequested && !lgbend->SDDScen
+#if USE_MPI      
+      && myid==1 
+#endif
+      ) {
+    lgbend->SDDScen = tmalloc(sizeof(SDDS_DATASET));
+    char *filename;
+    filename = compose_filename(lgbend->centroidOutputFile, context.rootname);
+    if (!SDDS_InitializeOutputElegant(lgbend->SDDScen, SDDS_BINARY, 1, NULL, NULL, filename) ||
+          0 > SDDS_DefineParameter(lgbend->SDDScen, "SVNVersion", NULL, NULL, "SVN version number", NULL, SDDS_STRING, SVN_VERSION) ||
+          !SDDS_DefineSimpleParameter(lgbend->SDDScen, "Step", NULL, SDDS_LONG) ||
+          !SDDS_DefineSimpleParameter(lgbend->SDDScen, "Pass", NULL, SDDS_LONG) ||
+          !SDDS_DefineSimpleParameter(lgbend->SDDScen, "pCentral", "m$be$nc", SDDS_DOUBLE) ||
+          !SDDS_DefineSimpleParameter(lgbend->SDDScen, "ElementName", NULL, SDDS_STRING) ||
+          !SDDS_DefineSimpleParameter(lgbend->SDDScen, "ElementOccurence", NULL, SDDS_LONG) ||
+          SDDS_DefineColumn(lgbend->SDDScen, "Z", NULL, "m", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(lgbend->SDDScen, "Segment", NULL, NULL, NULL, NULL, SDDS_LONG, 0) < 0 ||
+          SDDS_DefineColumn(lgbend->SDDScen, "Slice", NULL, NULL, NULL, NULL, SDDS_LONG, 0) < 0 ||
+          SDDS_DefineColumn(lgbend->SDDScen, "CX", NULL, "m", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(lgbend->SDDScen, "theta", NULL, "", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(lgbend->SDDScen, "CY", NULL, "m", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(lgbend->SDDScen, "phi", NULL, "", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(lgbend->SDDScen, "Cdelta", NULL, "", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
+          SDDS_DefineColumn(lgbend->SDDScen, "Particles", NULL, "", NULL, NULL, SDDS_LONG, 0) < 0 ||
+          !SDDS_WriteLayout(lgbend->SDDScen)) {
+        SDDS_SetError("Problem setting up centroid output file for LGBEND");
+        SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+    }
+    free(filename);
+  }
+}
+
+long lgbendCentroidSumsEnabled(LGBEND *lgbend, int64_t iPart, long iFinalSlice) {
+  TRACKING_CONTEXT context;
+
+  getTrackingContext(&context);
+  return !(iPart>0 || iFinalSlice>0 || context.flags&TEST_PARTICLES || context.iPass<0 || lgbend->optimized!=1 ||
+           !lgbend->centroidOutputFile || !strlen(lgbend->centroidOutputFile));
+}
+
+void lgbendWriteCentroidOutput(LGBEND *lgbend, ELEMENT_LIST *eptr, GLOBAL_BEAM_SUMS *beamSums, double Po, long nSegments) {
+  long nSlices = lgbend->nSlices;
+  long iRow = 0, iSDDSRow = 0, iSegment;
+  TRACKING_CONTEXT context;
+
+  getTrackingContext(&context);
+  if (lgbend->SDDScen) {
+    if (!SDDS_StartPage(lgbend->SDDScen, nSegments*nSlices+1)) {
+      SDDS_SetError("Problem starting page for centroid output file for LGBEND");
+      SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+    }
+    if (!SDDS_SetParameters(lgbend->SDDScen, SDDS_SET_BY_NAME|SDDS_PASS_BY_VALUE,
+                            "Step", context.step, "Pass", context.iPass, "pCentral", Po,
+                            "ElementName", eptr->name, "ElementOccurence", eptr->occurence, NULL)) {
+      SDDS_SetError("Problem preparing parameter data for centroid output file for LGBEND");
+      SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+    }
+  }
+  for (iSegment=0; iSegment<lgbend->nSegments; iSegment++) {
+    for (int iSlice=0; iSlice<=lgbend->nSlices; iSlice++, iRow++) {
+      if (iSlice==lgbend->nSlices && iSegment!=(lgbend->nSegments-1))
+        continue;
+#if USE_MPI
+      MPI_Allreduce(MPI_IN_PLACE, &beamSums[iRow].n_part, 1, MPI_INT64_T, MPI_SUM, workers);
+      MPI_Allreduce(MPI_IN_PLACE, beamSums[iRow].centroid, 6, MPI_DOUBLE, MPI_SUM, workers);
+#endif
+      if (beamSums[iRow].n_part) {
+        for (int i=0; i<5; i++)
+          beamSums[iRow].centroid[i] /= beamSums[iRow].n_part;
+      }
+      if (lgbend->SDDScen &&
+          !SDDS_SetRowValues(lgbend->SDDScen, SDDS_SET_BY_INDEX|SDDS_PASS_BY_VALUE, iSDDSRow,
+                             0, beamSums[iRow].centroid[4],
+                             1, iSegment,
+                             2, iSlice,
+                             3, beamSums[iRow].centroid[0],
+                             4, beamSums[iRow].centroid[1],
+                             5, beamSums[iRow].centroid[2],
+                             6, beamSums[iRow].centroid[3],
+                             7, beamSums[iRow].centroid[5],
+                             8, beamSums[iRow].n_part,
+                             -1)) {
+        SDDS_SetError("Problem preparing column data for centroid output file for LGBEND");
+        SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+      }
+      iSDDSRow++;
+    }
+  }
+  if (lgbend->SDDScen && !SDDS_WritePage(lgbend->SDDScen)) {
+    SDDS_SetError("Problem writing page for centroid output file for LGBEND");
+    SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+  }
+}
+
+static void optimizeLgbendIfNeeded(ELEMENT_LIST *eptr, LGBEND *lgbend, double Po, int64_t iPart) {
+  if (lgbend->optimizeFse && !lgbend->optimized && lgbend->angle != 0) {
+    double acc;
+    double startValue[2], stepSize[2], lowerLimit[2], upperLimit[2];
+    short disable[2];
+
+    PoCopy = lastX = lastXp = 0;
+    if (iPart >= 0)
+      bombTracking("Programming error: oneStep mode is incompatible with optmization for LGBEND.");
+    if (!retrieveLGBendOptimizedFSEValues(lgbend)) {
+      startValue[0] = lgbend->fseOpt[0];
+      startValue[1] = lgbend->fseOpt[lgbend->nSegments - 1];
+      lgbend->optimized = -1; /* flag to indicate calls to track_through_lgbend will be for FSE optimization */
+      memcpy(&lgbendCopy, lgbend, sizeof(lgbendCopy));
+      eptrCopy = eptr;
+      lgbendCopy.fse = lgbendCopy.dx = lgbendCopy.dy = lgbendCopy.dz =
+        lgbendCopy.etilt = lgbendCopy.epitch = lgbendCopy.eyaw = lgbendCopy.tilt =
+          lgbendCopy.isr = lgbendCopy.synch_rad = lgbendCopy.isr1Particle = 0;
+      PoCopy = Po;
+      stepSize[0] = stepSize[1] = 1e-3;
+      lowerLimit[0] = lowerLimit[1] = -1;
+      upperLimit[0] = upperLimit[1] = 1;
+      disable[0] = disable[1] = 0;
+      if (simplexMin(&acc, startValue, stepSize, lowerLimit, upperLimit, disable, 2,
+                     fabs(1e-15 * lgbend->length), fabs(1e-16 * lgbend->length),
+                     lgbend_trajectory_error, NULL, 1500, 3, 12, 3.0, 1.0, 0) < 0) {
+        bombElegantVA("failed to find FSE and x offset to center trajectory for lgbend. accuracy acheived was %le.", acc);
+      }
+      lgbend->fseOpt[0] = startValue[0];
+      lgbend->fseOpt[lgbend->nSegments - 1] = startValue[1];
+      if (lgbend->compensateKn) {
+        lgbend->KnDelta[0] = -lgbend->fseOpt[0];
+        lgbend->KnDelta[lgbend->nSegments - 1] = -lgbend->fseOpt[lgbend->nSegments - 1];
+      }
+
+      lgbend->optimized = 1;
+      if (lgbend->verbose) {
+        printf("LGBEND %s#%ld optimized: FSE[0]=%le, FSE[%ld]=%le, accuracy=%le (%le, %le)\n",
+               eptr ? eptr->name : "?", eptr ? eptr->occurence : -1,
+               lgbend->fseOpt[0], lgbend->nSegments - 1, lgbend->fseOpt[lgbend->nSegments - 1], acc,
+	       lgBendTrajErrorFromOptim[0], lgBendTrajErrorFromOptim[1]);
+	
+        fflush(stdout);
+      }
+      storeLGBendOptimizedFSEValues(lgbend);
+    }
+  }
+}
+
+#ifdef HAVE_GPU
+/* The caller must have cleared the on-GPU flag, because this tracks its reference particle on the CPU */
+void optimizeLgbendForGpu(ELEMENT_LIST *eptr, LGBEND *lgbend, double Po) {
+  optimizeLgbendIfNeeded(eptr, lgbend, Po, -1);
+}
+#endif
+
 static long track_through_lgbend_impl(
   double **particle, /* initial/final phase-space coordinates */
   int64_t n_part,       /* number of particles */
@@ -81,7 +236,7 @@ static long track_through_lgbend_impl(
   double rho0, length, angle, angleSign, extraTilt;
   double entryAngle, exitAngle, entryPosition, exitPosition;
   MULT_APERTURE_DATA apertureData;
-  double lastRho1;
+  double lastRho1 = 0;
   GLOBAL_BEAM_SUMS *beamSums = NULL;
   short disableSums = 1;
   TRACKING_CONTEXT context;
@@ -123,11 +278,14 @@ static long track_through_lgbend_impl(
                                      apContour, apFileData, iPart,
                                      iFinalSlice);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    track_through_lgbend(particle, n_part, eptr, lgbend, Po, accepted,
-                         z_start, sigmaDelta2, rootname, maxamp, apContour,
-                         apFileData, iPart, iFinalSlice);
-    compareGpuCpu(n_part, "track_through_lgbend");
+    /* If this is no longer set, a fallback or the loss path has already tracked these particles on the CPU */
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      track_through_lgbend(particle, n_part, eptr, lgbend, Po, accepted,
+                           z_start, sigmaDelta2, rootname, maxamp, apContour,
+                           apFileData, iPart, iFinalSlice);
+      compareGpuCpu(n_part, "track_through_lgbend");
+    }
 #  endif
     return i_top;
   }
@@ -145,85 +303,10 @@ static long track_through_lgbend_impl(
   if (N_LGBEND_FRINGE_INT != 8)
     bombTracking("Coding error detected: number of fringe integrals for LGBEND is different than expected.");
 
-  lgbend->centroidsRequested = (lgbend->centroidOutputFile && strlen(lgbend->centroidOutputFile));
-  if (lgbend->centroidsRequested && !lgbend->SDDScen
-#if USE_MPI      
-      && myid==1 
-#endif
-      ) {
-    lgbend->SDDScen = tmalloc(sizeof(SDDS_DATASET));
-    char *filename;
-    filename = compose_filename(lgbend->centroidOutputFile, context.rootname);
-    if (!SDDS_InitializeOutputElegant(lgbend->SDDScen, SDDS_BINARY, 1, NULL, NULL, filename) ||
-          0 > SDDS_DefineParameter(lgbend->SDDScen, "SVNVersion", NULL, NULL, "SVN version number", NULL, SDDS_STRING, SVN_VERSION) ||
-          !SDDS_DefineSimpleParameter(lgbend->SDDScen, "Step", NULL, SDDS_LONG) ||
-          !SDDS_DefineSimpleParameter(lgbend->SDDScen, "Pass", NULL, SDDS_LONG) ||
-          !SDDS_DefineSimpleParameter(lgbend->SDDScen, "pCentral", "m$be$nc", SDDS_DOUBLE) ||
-          !SDDS_DefineSimpleParameter(lgbend->SDDScen, "ElementName", NULL, SDDS_STRING) ||
-          !SDDS_DefineSimpleParameter(lgbend->SDDScen, "ElementOccurence", NULL, SDDS_LONG) ||
-          SDDS_DefineColumn(lgbend->SDDScen, "Z", NULL, "m", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
-          SDDS_DefineColumn(lgbend->SDDScen, "Segment", NULL, NULL, NULL, NULL, SDDS_LONG, 0) < 0 ||
-          SDDS_DefineColumn(lgbend->SDDScen, "Slice", NULL, NULL, NULL, NULL, SDDS_LONG, 0) < 0 ||
-          SDDS_DefineColumn(lgbend->SDDScen, "CX", NULL, "m", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
-          SDDS_DefineColumn(lgbend->SDDScen, "theta", NULL, "", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
-          SDDS_DefineColumn(lgbend->SDDScen, "CY", NULL, "m", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
-          SDDS_DefineColumn(lgbend->SDDScen, "phi", NULL, "", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
-          SDDS_DefineColumn(lgbend->SDDScen, "Cdelta", NULL, "", NULL, NULL, SDDS_DOUBLE, 0) < 0 ||
-          SDDS_DefineColumn(lgbend->SDDScen, "Particles", NULL, "", NULL, NULL, SDDS_LONG, 0) < 0 ||
-          !SDDS_WriteLayout(lgbend->SDDScen)) {
-        SDDS_SetError("Problem setting up centroid output file for LGBEND");
-        SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
-    }
-    free(filename);
-  }
-  
-  if (lgbend->optimizeFse && !lgbend->optimized && lgbend->angle != 0) {
-    double acc;
-    double startValue[2], stepSize[2], lowerLimit[2], upperLimit[2];
-    short disable[2];
+  lgbendSetupCentroidOutput(lgbend);
 
-    PoCopy = lastRho1 = lastX = lastXp = 0;
-    if (iPart >= 0)
-      bombTracking("Programming error: oneStep mode is incompatible with optmization for LGBEND.");
-    if (!retrieveLGBendOptimizedFSEValues(lgbend)) {
-      startValue[0] = lgbend->fseOpt[0];
-      startValue[1] = lgbend->fseOpt[lgbend->nSegments - 1];
-      lgbend->optimized = -1; /* flag to indicate calls to track_through_lgbend will be for FSE optimization */
-      memcpy(&lgbendCopy, lgbend, sizeof(lgbendCopy));
-      eptrCopy = eptr;
-      lgbendCopy.fse = lgbendCopy.dx = lgbendCopy.dy = lgbendCopy.dz =
-        lgbendCopy.etilt = lgbendCopy.epitch = lgbendCopy.eyaw = lgbendCopy.tilt =
-          lgbendCopy.isr = lgbendCopy.synch_rad = lgbendCopy.isr1Particle = 0;
-      PoCopy = Po;
-      stepSize[0] = stepSize[1] = 1e-3;
-      lowerLimit[0] = lowerLimit[1] = -1;
-      upperLimit[0] = upperLimit[1] = 1;
-      disable[0] = disable[1] = 0;
-      if (simplexMin(&acc, startValue, stepSize, lowerLimit, upperLimit, disable, 2,
-                     fabs(1e-15 * lgbend->length), fabs(1e-16 * lgbend->length),
-                     lgbend_trajectory_error, NULL, 1500, 3, 12, 3.0, 1.0, 0) < 0) {
-        bombElegantVA("failed to find FSE and x offset to center trajectory for lgbend. accuracy acheived was %le.", acc);
-      }
-      lgbend->fseOpt[0] = startValue[0];
-      lgbend->fseOpt[lgbend->nSegments - 1] = startValue[1];
-      if (lgbend->compensateKn) {
-        lgbend->KnDelta[0] = -lgbend->fseOpt[0];
-        lgbend->KnDelta[lgbend->nSegments - 1] = -lgbend->fseOpt[lgbend->nSegments - 1];
-      }
+  optimizeLgbendIfNeeded(eptr, lgbend, Po, iPart);
 
-      lgbend->optimized = 1;
-      if (lgbend->verbose) {
-        printf("LGBEND %s#%ld optimized: FSE[0]=%le, FSE[%ld]=%le, accuracy=%le (%le, %le)\n",
-               eptr ? eptr->name : "?", eptr ? eptr->occurence : -1,
-               lgbend->fseOpt[0], lgbend->nSegments - 1, lgbend->fseOpt[lgbend->nSegments - 1], acc,
-	       lgBendTrajErrorFromOptim[0], lgBendTrajErrorFromOptim[1]);
-	
-        fflush(stdout);
-      }
-      storeLGBendOptimizedFSEValues(lgbend);
-    }
-  }
-  
   rad_coef = isr_coef = 0;
 
   if (lgbend->synch_rad)
@@ -297,8 +380,7 @@ static long track_through_lgbend_impl(
     *sigmaDelta2 = 0;
   i_top = n_part - 1;
 
-  if (iPart>0 || iFinalSlice>0 || context.flags&TEST_PARTICLES || context.iPass<0 || lgbend->optimized!=1 ||
-      !lgbend->centroidOutputFile || !strlen(lgbend->centroidOutputFile))
+  if (!lgbendCentroidSumsEnabled(lgbend, iPart, iFinalSlice))
     disableSums = 1;
   else {
     disableSums = 0;
@@ -468,7 +550,7 @@ static long track_through_lgbend_impl(
           ompWorkspace->lossOffset[i_part];
         particle[i_part][5] = Po * (1 + particle[i_part][5]);
       }
-      i_top = gpuStableCompactParticles(
+      i_top = gpuCompactParticlesInCpuOrder(
         particle, ompParticles, ompWorkspace->survived) - 1;
     } else
 #endif
@@ -594,56 +676,7 @@ static long track_through_lgbend_impl(
     *sigmaDelta2 /= i_top + 1;
   
   if (lgbend->centroidsRequested && !disableSums) {
-    long iRow = 0, iSDDSRow = 0;
-    /* printf("entryX = %le, entryAngle = %le, dzOffset0 = %le, predrift = %le\n",
-       lgbend->segment[0].entryX, lgbend->segment[0].entryAngle, dZOffset0, lgbend->predrift);
-    */
-    if (lgbend->SDDScen) {
-      if (!SDDS_StartPage(lgbend->SDDScen, nSegments*nSlices+1)) {
-	SDDS_SetError("Problem starting page for centroid output file for LGBEND");
-	SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
-      }
-      if (!SDDS_SetParameters(lgbend->SDDScen, SDDS_SET_BY_NAME|SDDS_PASS_BY_VALUE,
-			      "Step", context.step, "Pass", context.iPass, "pCentral", Po,
-			      "ElementName", eptr->name, "ElementOccurence", eptr->occurence, NULL)) {
-	SDDS_SetError("Problem preparing parameter data for centroid output file for LGBEND");
-	SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
-      }
-    }
-    for (iSegment=0; iSegment<lgbend->nSegments; iSegment++) {
-      for (int iSlice=0; iSlice<=lgbend->nSlices; iSlice++, iRow++) {
-	if (iSlice==lgbend->nSlices && iSegment!=(lgbend->nSegments-1))
-	  continue;
-#if USE_MPI
-	MPI_Allreduce(MPI_IN_PLACE, &beamSums[iRow].n_part, 1, MPI_INT64_T, MPI_SUM, workers);
-	MPI_Allreduce(MPI_IN_PLACE, beamSums[iRow].centroid, 6, MPI_DOUBLE, MPI_SUM, workers);
-#endif	  
-	if (beamSums[iRow].n_part) {
-	  for (int i=0; i<5; i++)
-	    beamSums[iRow].centroid[i] /= beamSums[iRow].n_part;
-	}
-	if (lgbend->SDDScen &&
-	    !SDDS_SetRowValues(lgbend->SDDScen, SDDS_SET_BY_INDEX|SDDS_PASS_BY_VALUE, iSDDSRow,
-			       0, beamSums[iRow].centroid[4],
-			       1, iSegment,
-			       2, iSlice,
-			       3, beamSums[iRow].centroid[0], 
-			       4, beamSums[iRow].centroid[1], 
-			       5, beamSums[iRow].centroid[2], 
-			       6, beamSums[iRow].centroid[3], 
-			       7, beamSums[iRow].centroid[5], 
-                               8, beamSums[iRow].n_part,
-			       -1)) {
-	  SDDS_SetError("Problem preparing column data for centroid output file for LGBEND");
-	  SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
-	}
-	iSDDSRow++;
-      }
-    }
-    if (lgbend->SDDScen && !SDDS_WritePage(lgbend->SDDScen)) {
-      SDDS_SetError("Problem writing page for centroid output file for LGBEND");
-      SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
-    }
+    lgbendWriteCentroidOutput(lgbend, eptr, beamSums, Po, nSegments);
     free(beamSums);
     beamSums = NULL;
   }
@@ -987,9 +1020,7 @@ void lgbendFringe(
   focX0 = -tant * intK5 - 0.5 * intI0 * (2.0 - tant * tant);
   focY0 = -tant * (invRhoPlus - invRhoMinus) + tant * sect * sect * intK5 + 0.5 * intI0 * (2.0 + tant * tant);
   focYd = sect3 * ((1.0 + sint * sint) * intK2 - intK7);
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp taskloop if(gpuOmpTrackingRequested(n_part) && omp_in_parallel() && !spinCoordOffset) num_tasks(gpuGetOmpTrackingThreads())
-#endif
+  GPU_OMP_TASKLOOP(gpuOmpTrackingRequested(n_part) && omp_in_parallel() && !spinCoordOffset,
   for (i = 0; i < n_part; i++) {
     x1 = particle[i][0];
     temp = sqrt(1.0 + sqr(particle[i][1]) + sqr(particle[i][3]));
@@ -1043,7 +1074,7 @@ void lgbendFringe(
     particle[i][1] = px2 / temp;
     particle[i][3] = py2 / temp;
     particle[i][4] = -tau2 + sint * x2;
-  }
+  });
 
   /* Spin precession from the integrated fringe field.  The body-bend
    * leakage term uses the current segment's rho (1/invRhoPlus for an
@@ -1078,17 +1109,13 @@ void switchLgbendPlane(double **particle, int64_t n_part, double dx, double alph
   sin_alpha = sin(alpha);
 
   if (exitPlane)
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp taskloop if(gpuOmpTrackingRequested(n_part) && omp_in_parallel()) num_tasks(gpuGetOmpTrackingThreads())
-#endif
+    GPU_OMP_TASKLOOP(gpuOmpTrackingRequested(n_part) && omp_in_parallel(),
     for (i = 0; i < n_part; i++) {
       coord = particle[i];
       coord[0] += dx;
-    }
+    });
 
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp taskloop if(gpuOmpTrackingRequested(n_part) && omp_in_parallel()) num_tasks(gpuGetOmpTrackingThreads())
-#endif
+  GPU_OMP_TASKLOOP(gpuOmpTrackingRequested(n_part) && omp_in_parallel(),
   for (i = 0; i < n_part; i++) {
     coord = particle[i];
     s = coord[0] * tan_alpha / (1 - coord[1] * tan_alpha);
@@ -1104,16 +1131,14 @@ void switchLgbendPlane(double **particle, int64_t n_part, double dx, double alph
     qz = -qx0 * sin_alpha + qz0 * cos_alpha;
     coord[1] = qx / qz;
     coord[3] = qy / qz;
-  }
+  });
 
   if (!exitPlane)
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp taskloop if(gpuOmpTrackingRequested(n_part) && omp_in_parallel()) num_tasks(gpuGetOmpTrackingThreads())
-#endif
+    GPU_OMP_TASKLOOP(gpuOmpTrackingRequested(n_part) && omp_in_parallel(),
     for (i = 0; i < n_part; i++) {
       coord = particle[i];
       coord[0] += dx;
-    }
+    });
 }
 
 double lgbend_trajectory_error(double *value, long *invalid) {

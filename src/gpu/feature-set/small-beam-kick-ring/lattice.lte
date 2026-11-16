@@ -1,0 +1,12 @@
+! A FODO ring of kick quadrupoles and sextupoles, where the device is several times faster than the
+! CPU even with 1,000 particles: gpuChooseSmallBeamThresholds() in gpu_stub.c. No bends: a CSBEND's
+! rounding against the CPU, about 1e-10 after 10 turns, would put the case past the suite's screen.
+QF: KQUAD,L=0.3,K1=1.2,N_SLICES=16
+QD: KQUAD,L=0.3,K1=-1.2,N_SLICES=16
+SF: KSEXT,L=0.2,K2=5,N_SLICES=8
+D: DRIF,L=0.5
+CELL: LINE=(QF,D,QD,D,SF,D)
+! W's sums are the sign of where the beam was: the device adds them in its own order, so they differ
+! from the CPU's in the last digits, while the particles come out the same from either side.
+W: WATCH,FILENAME="%s.w1",MODE="parameter"
+RING: LINE=(8*CELL,W)

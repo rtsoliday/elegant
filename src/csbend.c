@@ -47,6 +47,8 @@ VT double **refTrajectoryData = NULL;
 #ifdef HAVE_GPU
 static long csrGpuCsbendInnerCall = 0;
 static long csrGpuCsbendDeviceEntryRequested = 0;
+/* nonzero while track_through_driftCSR() runs with its particle loops on the CUDA device */
+static long csrGpuDriftResident = 0;
 #endif
 
 #define VTS static
@@ -200,13 +202,22 @@ typedef struct {
   double e2;
   double cosTilt;
   double sinTilt;
+  /* as track_through_csbend() has them */
+  double n, he1, he2, psi1, psi2;
+  double e1KickLimit, e2KickLimit;
+  double dxi, dyi, dzi, dxf, dyf, dzf;
+  double dcoordEtilt[6];
 } CSBEND_OMP_TRACK_DATA;
 
 /*
- * Deterministic, full-element CSBEND particle tracking for the batched tune
- * path. Beam-wide setup and misalignment transforms remain in
- * track_through_csbend(). Losses are flagged here and compacted in original
- * particle order after the parallel region.
+ * One particle through the whole CSBEND, for the host threads of the batched
+ * tune and search paths: the body of the particle loop of
+ * track_through_csbend() for a full element (iSlice<0) with no spin, no
+ * sigmaDelta2 and no random numbers, statement for statement, so any number
+ * of threads gives that loop's results. Beam-wide setup and the
+ * MALIGN_METHOD!=0 transforms remain in track_through_csbend(). Losses are
+ * flagged here and compacted in the serial loop's order after the parallel
+ * region.
  */
 static long trackCsbendParticleOmp(double *coord,
                                    const CSBEND_OMP_TRACK_DATA *data,
@@ -214,31 +225,99 @@ static long trackCsbendParticleOmp(double *coord,
   CSBEND *csbend = data->csbend;
   double Qi[MAX_PROPERTIES_PER_PARTICLE];
   double Qf[MAX_PROPERTIES_PER_PARTICLE];
-  double x = coord[0], xp = coord[1];
-  double y = coord[2], yp = coord[3];
-  double s = coord[4], dp = coord[5];
+  double x, xp, y, yp, s, dp, dp0, rho, delta_xp, Fx, Fy, dp_prime;
   double *singleParticle = coord;
+  double rho0 = data->rho0, rho_actual = data->rhoActual;
+  double e1 = data->e1, e2 = data->e2;
+  double cos_ttilt = data->cosTilt, sin_ttilt = data->sinTilt;
   long particleLost;
 
+  if (csbend->malignMethod == 0) {
+    coord[4] += data->dzi * sqrt(1 + sqr(coord[1]) + sqr(coord[3]));
+    coord[0] = coord[0] + data->dxi + data->dzi * coord[1];
+    coord[2] = coord[2] + data->dyi + data->dzi * coord[3];
+
+    x = coord[0] * cos_ttilt + coord[2] * sin_ttilt;
+    y = -coord[0] * sin_ttilt + coord[2] * cos_ttilt;
+    xp = coord[1] * cos_ttilt + coord[3] * sin_ttilt;
+    yp = -coord[1] * sin_ttilt + coord[3] * cos_ttilt;
+    s = coord[4];
+    dp = dp0 = coord[5];
+  } else {
+    x = coord[0];
+    y = coord[2];
+    xp = coord[1];
+    yp = coord[3];
+    s = coord[4];
+    dp = dp0 = coord[5];
+  }
+
   if (csbend->edgeFlags & BEND_EDGE1_EFFECTS) {
-    Qi[0] = x;
-    Qi[1] = xp;
-    Qi[2] = y;
-    Qi[3] = yp;
-    Qi[4] = 0;
-    Qi[5] = dp;
-    convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
-    curvedDipoleFringe(
-      Qf, Qi, data->rhoActual, -1, csbend->edge_order,
-      csbend->b[1] / data->rho0, data->e1,
-      csbend->fringeInt[csbend->e1Index], csbend->edgeFlip);
-    convertFromDipoleCanonicalCoordinates(Qf, csbend->expandHamiltonian);
-    x = Qf[0];
-    xp = Qf[1];
-    y = Qf[2];
-    yp = Qf[3];
-    s += Qf[4];
-    dp = Qf[5];
+    delta_xp = 0;
+    rho = (1 + dp) * rho_actual;
+    if (csbend->edge_order <= 1 && csbend->edge_effects[csbend->e1Index] == 1) {
+      delta_xp = tan(e1) / rho * x;
+      if (data->e1KickLimit > 0 && fabs(delta_xp) > data->e1KickLimit)
+        delta_xp = SIGN(delta_xp) * data->e1KickLimit;
+      xp += delta_xp;
+      yp -= tan(e1 - data->psi1 / (1 + dp)) / rho * y;
+    } else if (csbend->edge_order >= 2 && csbend->edge_effects[csbend->e1Index] == 1) {
+      apply_edge_effects(&x, &xp, &y, &yp, rho, data->n, e1, data->he1, data->psi1 * (1 + dp), -1);
+    } else if (csbend->edge_effects[csbend->e1Index] == 2) {
+      Qi[0] = x;
+      Qi[1] = xp;
+      Qi[2] = y;
+      Qi[3] = yp;
+      Qi[4] = 0;
+      Qi[5] = dp;
+      convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
+      dipoleFringeKHwang(Qf, Qi, rho_actual, -1., csbend->edge_order, csbend->b[1] / rho0, e1, 2 * csbend->hgap,
+                         csbend->fint[csbend->e1Index] >= 0 ? csbend->fint[csbend->e1Index] : csbend->fintBoth,
+                         csbend->h[csbend->e1Index]);
+      convertFromDipoleCanonicalCoordinates(Qf, csbend->expandHamiltonian);
+      x = Qf[0];
+      xp = Qf[1];
+      y = Qf[2];
+      yp = Qf[3];
+      dp = Qf[5];
+    } else if (csbend->edge_effects[csbend->e1Index] == 3) {
+      applySimpleDipoleEdgeKick(&xp, &yp, x, y, dp, rho_actual, e1, data->psi1, data->e1KickLimit, csbend->expandHamiltonian);
+    } else if (csbend->edge_effects[csbend->e1Index] == 4) {
+      Qi[0] = x;
+      Qi[1] = xp;
+      Qi[2] = y;
+      Qi[3] = yp;
+      Qi[4] = 0;
+      Qi[5] = dp;
+      convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
+      dipoleFringeKHwangRLindberg(Qf, Qi, rho_actual, -1., csbend->b[1] / rho0, e1,
+                                  2 * csbend->hgap,
+                                  csbend->fint[csbend->e1Index] >= 0 ? csbend->fint[csbend->e1Index] : csbend->fintBoth,
+                                  csbend->h[csbend->e1Index]);
+      convertFromDipoleCanonicalCoordinates(Qf, csbend->expandHamiltonian);
+      x = Qf[0];
+      xp = Qf[1];
+      y = Qf[2];
+      yp = Qf[3];
+      dp = Qf[5];
+    } else if (csbend->edge_effects[csbend->e1Index] == 5) {
+      Qi[0] = x;
+      Qi[1] = xp;
+      Qi[2] = y;
+      Qi[3] = yp;
+      Qi[4] = 0;
+      Qi[5] = dp;
+      convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
+      curvedDipoleFringe(Qf, Qi, rho_actual, -1, csbend->edge_order, csbend->b[1] / rho0, e1,
+                         csbend->fringeInt[csbend->e1Index], csbend->edgeFlip);
+      convertFromDipoleCanonicalCoordinates(Qf, csbend->expandHamiltonian);
+      x = Qf[0];
+      xp = Qf[1];
+      y = Qf[2];
+      yp = Qf[3];
+      s += Qf[4];
+      dp = Qf[5];
+    }
   }
 
   Qi[0] = x;
@@ -247,16 +326,25 @@ static long trackCsbendParticleOmp(double *coord,
   Qi[3] = yp;
   Qi[4] = 0;
   Qi[5] = dp;
+
+  if (csbend->edgeFlags & BEND_EDGE1_EFFECTS && e1 != 0 && rad_coef) {
+    computeCSBENDFields(&Fx, &Fy, x, y);
+
+    dp_prime = -rad_coef * (sqr(Fx) + sqr(Fy)) * sqr(1 + dp) * sqrt(sqr(1 + x / rho0) + sqr(xp) + sqr(yp));
+    Qi[5] -= dp_prime * x * tan(e1);
+  }
+
   convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
+
   if (csbend->expandHamiltonian)
     particleLost = !integrate_csbend_ordn_expanded(
-      Qf, Qi, NULL, csbend->length, csbend->nSlices, -1, data->rho0,
+      Qf, Qi, NULL, csbend->length, csbend->nSlices, -1, rho0,
       data->Po, dzLost, data->apertureData, csbend->integration_order,
       data->eptr);
   else
     particleLost = !integrate_csbend_ordn(
       Qf, Qi, NULL, NULL, csbend->length, csbend->nSlices, -1,
-      data->rho0, data->Po, dzLost, data->apertureData,
+      rho0, data->Po, dzLost, data->apertureData,
       csbend->integration_order, data->eptr);
 
   if (csbend->fseCorrection == 1)
@@ -265,13 +353,35 @@ static long trackCsbendParticleOmp(double *coord,
   if (particleLost) {
     memcpy(coord, Qf, sizeof(*coord) * 6);
     convertFromCSBendCoords(
-      &singleParticle, 1, data->rho0, data->cosTilt, data->sinTilt, 0);
+      &singleParticle, 1, rho0, cos_ttilt, sin_ttilt, 0);
     coord[4] = data->zStart + *dzLost;
     coord[5] = data->Po * (1 + coord[5]);
     return 0;
   }
 
-  s += Qf[4];
+  if (csbend->edgeFlags & BEND_EDGE2_EFFECTS && e2 != 0 && rad_coef) {
+    x = Qf[0];
+    xp = Qf[1];
+    y = Qf[2];
+    yp = Qf[3];
+    dp = Qf[5];
+
+    computeCSBENDFields(&Fx, &Fy, x, y);
+
+    dp_prime = -rad_coef * (sqr(Fx) + sqr(Fy)) * sqr(1 + dp) * sqrt(sqr(1 + x / rho0) + sqr(xp) + sqr(yp));
+    Qf[5] -= dp_prime * x * tan(e2);
+  }
+
+  if (rad_coef || isrConstant) {
+    double p0, p1;
+    double beta0, beta1;
+    p0 = data->Po * (1 + dp0);
+    beta0 = p0 / sqrt(sqr(p0) + 1);
+    p1 = data->Po * (1 + Qf[5]);
+    beta1 = p1 / sqrt(sqr(p1) + 1);
+    s = beta1 * s / beta0 + Qf[4];
+  } else
+    s += Qf[4];
   x = Qf[0];
   xp = Qf[1];
   y = Qf[2];
@@ -279,32 +389,91 @@ static long trackCsbendParticleOmp(double *coord,
   dp = Qf[5];
 
   if (csbend->edgeFlags & BEND_EDGE2_EFFECTS) {
-    Qi[0] = x;
-    Qi[1] = xp;
-    Qi[2] = y;
-    Qi[3] = yp;
-    Qi[4] = 0;
-    Qi[5] = dp;
-    convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
-    curvedDipoleFringe(
-      Qf, Qi, data->rhoActual, 1, csbend->edge_order,
-      csbend->b[1] / data->rho0, data->e2,
-      csbend->fringeInt[csbend->e2Index], csbend->edgeFlip);
-    convertFromDipoleCanonicalCoordinates(Qf, csbend->expandHamiltonian);
-    x = Qf[0];
-    xp = Qf[1];
-    y = Qf[2];
-    yp = Qf[3];
-    s += Qf[4];
-    dp = Qf[5];
+    delta_xp = 0;
+    rho = (1 + dp) * rho_actual;
+    if (csbend->edge_order <= 1 && csbend->edge_effects[csbend->e2Index] == 1) {
+      delta_xp = tan(e2) / rho * x;
+      if (data->e2KickLimit > 0 && fabs(delta_xp) > data->e2KickLimit)
+        delta_xp = SIGN(delta_xp) * data->e2KickLimit;
+      xp += delta_xp;
+      yp -= tan(e2 - data->psi2 / (1 + dp)) / rho * y;
+    } else if (csbend->edge_order >= 2 && csbend->edge_effects[csbend->e2Index] == 1) {
+      apply_edge_effects(&x, &xp, &y, &yp, rho, data->n, e2, data->he2, data->psi2 * (1 + dp), 1);
+    } else if (csbend->edge_effects[csbend->e2Index] == 2) {
+      Qi[0] = x;
+      Qi[1] = xp;
+      Qi[2] = y;
+      Qi[3] = yp;
+      Qi[4] = 0;
+      Qi[5] = dp;
+      convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
+      dipoleFringeKHwang(Qf, Qi, rho_actual, 1., csbend->edge_order, csbend->b[1] / rho0, e2, 2 * csbend->hgap,
+                         csbend->fint[csbend->e2Index] >= 0 ? csbend->fint[csbend->e2Index] : csbend->fintBoth,
+                         csbend->h[csbend->e2Index]);
+      convertFromDipoleCanonicalCoordinates(Qf, csbend->expandHamiltonian);
+      x = Qf[0];
+      xp = Qf[1];
+      y = Qf[2];
+      yp = Qf[3];
+      dp = Qf[5];
+    } else if (csbend->edge_effects[csbend->e2Index] == 3) {
+      applySimpleDipoleEdgeKick(&xp, &yp, x, y, dp, rho_actual, e2, data->psi2, data->e2KickLimit, csbend->expandHamiltonian);
+    } else if (csbend->edge_effects[csbend->e2Index] == 4) {
+      Qi[0] = x;
+      Qi[1] = xp;
+      Qi[2] = y;
+      Qi[3] = yp;
+      Qi[4] = 0;
+      Qi[5] = dp;
+      convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
+      dipoleFringeKHwangRLindberg(Qf, Qi, rho_actual, 1., csbend->b[1] / rho0, e2, 2 * csbend->hgap,
+                                  csbend->fint[csbend->e2Index] >= 0 ? csbend->fint[csbend->e2Index] : csbend->fintBoth,
+                                  csbend->h[csbend->e2Index]);
+      convertFromDipoleCanonicalCoordinates(Qf, csbend->expandHamiltonian);
+      x = Qf[0];
+      xp = Qf[1];
+      y = Qf[2];
+      yp = Qf[3];
+      dp = Qf[5];
+    } else if (csbend->edge_effects[csbend->e2Index] == 5) {
+      Qi[0] = x;
+      Qi[1] = xp;
+      Qi[2] = y;
+      Qi[3] = yp;
+      Qi[4] = 0;
+      Qi[5] = dp;
+      convertToDipoleCanonicalCoordinates(Qi, csbend->expandHamiltonian);
+      curvedDipoleFringe(Qf, Qi, rho_actual, 1, csbend->edge_order, csbend->b[1] / rho0, e2,
+                         csbend->fringeInt[csbend->e2Index], csbend->edgeFlip);
+      convertFromDipoleCanonicalCoordinates(Qf, csbend->expandHamiltonian);
+      x = Qf[0];
+      xp = Qf[1];
+      y = Qf[2];
+      yp = Qf[3];
+      s += Qf[4];
+      dp = Qf[5];
+    }
   }
 
-  coord[0] = x;
-  coord[1] = xp;
-  coord[2] = y;
-  coord[3] = yp;
-  coord[4] = s;
-  coord[5] = dp;
+  if (csbend->malignMethod == 0) {
+    coord[0] = x * cos_ttilt - y * sin_ttilt + data->dcoordEtilt[0];
+    coord[2] = x * sin_ttilt + y * cos_ttilt + data->dcoordEtilt[2];
+    coord[1] = xp * cos_ttilt - yp * sin_ttilt + data->dcoordEtilt[1];
+    coord[3] = xp * sin_ttilt + yp * cos_ttilt + data->dcoordEtilt[3];
+    coord[4] = s + data->dcoordEtilt[4];
+    coord[5] = dp;
+
+    coord[0] += data->dxf + data->dzf * coord[1];
+    coord[2] += data->dyf + data->dzf * coord[3];
+    coord[4] += data->dzf * sqrt(1 + sqr(coord[1]) + sqr(coord[3]));
+  } else {
+    coord[0] = x;
+    coord[2] = y;
+    coord[1] = xp;
+    coord[3] = yp;
+    coord[4] = s;
+    coord[5] = dp;
+  }
   return 1;
 }
 #endif
@@ -921,9 +1090,12 @@ long track_through_csbend(double **part, int64_t n_part, CSBEND *csbend, double 
     i_part = gpu_track_through_csbend(n_part, csbend, p_error, Po, accepted,
                                       z_start, sigmaDelta2, rootname, maxamp, apContour, apFileData, iSlice, eptr);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    track_through_csbend(part, n_part, csbend, p_error, Po, accepted, z_start, sigmaDelta2, rootname, maxamp, apContour, apFileData, iSlice, eptr);
-    compareGpuCpu(n_part, "track_through_csbend");
+    /* If this is no longer set, a fallback or the loss path has already tracked these particles on the CPU */
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      track_through_csbend(part, n_part, csbend, p_error, Po, accepted, z_start, sigmaDelta2, rootname, maxamp, apContour, apFileData, iSlice, eptr);
+      compareGpuCpu(n_part, "track_through_csbend");
+    }
 #  endif /* GPU_VERIFY */
     return i_part;
   }
@@ -1283,15 +1455,10 @@ long track_through_csbend(double **part, int64_t n_part, CSBEND *csbend, double 
 #ifdef HAVE_GPU
   if (gpuOmpTrackingEnabled(n_part) && !accepted &&
       globalLossCoordOffset <= 0 && !sigmaDelta2 && !spinCoordOffset &&
-      !csbend->synch_rad && !csbend->isr &&
-      !csbend->distributionBasedRadiation &&
+      !csbend->isr && !csbend->distributionBasedRadiation &&
       (!csbend->photonOutputFile || !csbend->photonOutputFile[0]) &&
       !csbend->referenceCorrection && refTrajectoryMode == 0 &&
-      iSlice < 0 && csbend->malignMethod != 0 &&
-      (!(csbend->edgeFlags & BEND_EDGE1_EFFECTS) ||
-       csbend->edge_effects[csbend->e1Index] == 5) &&
-      (!(csbend->edgeFlags & BEND_EDGE2_EFFECTS) ||
-       csbend->edge_effects[csbend->e2Index] == 5)) {
+      iSlice < 0) {
     CSBEND_OMP_TRACK_DATA ompData;
     GPU_OMP_TRACKING_WORKSPACE *ompWorkspace;
     long ompParticles = n_part;
@@ -1314,6 +1481,21 @@ long track_through_csbend(double **part, int64_t n_part, CSBEND *csbend, double 
     ompData.e2 = e2;
     ompData.cosTilt = cos_ttilt;
     ompData.sinTilt = sin_ttilt;
+    ompData.n = n;
+    ompData.he1 = he1;
+    ompData.he2 = he2;
+    ompData.psi1 = psi1;
+    ompData.psi2 = psi2;
+    ompData.e1KickLimit = e1_kick_limit;
+    ompData.e2KickLimit = e2_kick_limit;
+    ompData.dxi = dxi;
+    ompData.dyi = dyi;
+    ompData.dzi = dzi;
+    ompData.dxf = dxf;
+    ompData.dyf = dyf;
+    ompData.dzf = dzf;
+    if (csbend->malignMethod == 0)
+      memcpy(ompData.dcoordEtilt, dcoord_etilt, sizeof(ompData.dcoordEtilt));
 #  if defined(_OPENMP)
 #    pragma omp taskloop num_tasks(ompThreads)
 #  endif
@@ -1324,7 +1506,7 @@ long track_through_csbend(double **part, int64_t n_part, CSBEND *csbend, double 
           part[i_part], &ompData, &localDzLost) ? 1 : 0;
       ompWorkspace->lossOffset[i_part] = localDzLost;
     }
-    i_top = gpuStableCompactParticles(
+    i_top = gpuCompactParticlesInCpuOrder(
               part, ompParticles, ompWorkspace->survived) - 1;
     goto csbend_particle_loop_done;
   }
@@ -2034,7 +2216,8 @@ long integrate_csbend_ordn(
 long gpu_verify_csrcsbend_cpu_body_slice(double *coord, CSRCSBEND *csbend,
                                          double beta0, double sliceLength,
                                          double localRho0,
-                                         double localRhoActual, double Po) {
+                                         double localRhoActual, double Po,
+                                         MULT_APERTURE_DATA *apertureData) {
   double Qi[6], Qf[6], dz_lost = 0;
 
   (void)localRhoActual;
@@ -2048,7 +2231,7 @@ long gpu_verify_csrcsbend_cpu_body_slice(double *coord, CSRCSBEND *csbend,
   Qi[5] = coord[5];
   convertToDipoleCanonicalCoordinates(Qi, 0);
   if (!integrate_csbend_ordn(Qf, Qi, NULL, NULL, sliceLength, 1, -1,
-                             localRho0, Po, &dz_lost, NULL,
+                             localRho0, Po, &dz_lost, apertureData,
                              csbend->integration_order, NULL))
     return 0;
   convertFromDipoleCanonicalCoordinates(Qf, 0);
@@ -2659,6 +2842,8 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
   long useGpuCsrResident = 0;
   long usedGpuCsrResident = 0;
   long gpuCsrResidentDeviceEntryDone = 0;
+  long gpuCsrResidentBodyLosses = 0; /* the device's beta0[] moved with lost particles */
+  long gpuCsrResidentLeft = 0;
   long gpuCsrResidentFinalDone = 0;
   long skipGpuCsrDriftPrep = 0;
 #endif
@@ -3008,7 +3193,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
 #if defined(HAVE_GPU) && !USE_MPI
   if (csrGpuCsbendDeviceEntryRequested) {
     if (n_partMoreThanOne &&
-        !maxamp && !apContour && (!apFileData || !apFileData->initialized) &&
+        gpu_csr_csbend_apertures_supported(&apertureData) &&
         gpu_csr_csbend_resident_available(csbend, n_part, nBins) &&
         csrResidentSimpleInitialTransformAvailable(
           csbend, e1, he1, psi1, cos_ttilt, sin_ttilt, dxi, dyi, dzi))
@@ -3122,7 +3307,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
 #if defined(HAVE_GPU) && !USE_MPI
   useGpuCsrResident =
     n_partMoreThanOne &&
-    !maxamp && !apContour && (!apFileData || !apFileData->initialized) &&
+    gpu_csr_csbend_apertures_supported(&apertureData) &&
     gpu_csr_csbend_resident_available(csbend, n_part, nBins);
   if (useGpuCsrResident && !gpuCsrResidentDeviceEntryDone &&
       !gpu_csr_csbend_resident_begin(beta0, n_part))
@@ -3148,10 +3333,17 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
           gpuCsrResidentBodyDone =
             gpu_track_csbend_csr_body_slice(csbend, n_part,
                                             csbend->length / csbend->nSlices,
-                                            rho0, rho_actual, Po);
+                                            rho0, rho_actual, Po, &apertureData,
+                                            z_start + kick * (csbend->length / csbend->nSlices),
+                                            cos_ttilt, sin_ttilt, accepted, &gpuCsrResidentLeft);
+          if (gpuCsrResidentBodyDone && gpuCsrResidentLeft < n_part) {
+            gpuCsrResidentBodyLosses = 1;
+            i_top = gpuCsrResidentLeft - 1;
+            n_part = gpuCsrResidentLeft;
+          }
           if (!gpuCsrResidentBodyDone) {
             forceParticlesToCpu("CSRCSBEND resident body fallback");
-            if (gpuCsrResidentDeviceEntryDone &&
+            if ((gpuCsrResidentDeviceEntryDone || gpuCsrResidentBodyLosses) &&
                 !gpu_copy_csbend_csr_beta0(beta0, n_part))
               bombElegant("unable to copy CUDA CSRCSBEND beta0 for body fallback", NULL);
             useGpuCsrResident = 0;
@@ -3325,7 +3517,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
           }
           if (nBinned < 0) {
             forceParticlesToCpu("CSRCSBEND resident histogram fallback");
-            if (gpuCsrResidentDeviceEntryDone &&
+            if ((gpuCsrResidentDeviceEntryDone || gpuCsrResidentBodyLosses) &&
                 !gpu_copy_csbend_csr_beta0(beta0, n_part))
               bombElegant("unable to copy CUDA CSRCSBEND beta0 for histogram fallback", NULL);
             useGpuCsrResident = 0;
@@ -3495,7 +3687,10 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
                                            csbend->trapazoidIntegration,
                                            diSlippage, diSlippage4,
                                            returnCsrWakeComponents,
-                                           copyCsrDgammaToHost)) {
+                                           copyCsrDgammaToHost,
+                                           /* the factors of T1 and T2 exactly as the loop below forms them */
+                                           CSRConstant * csbend->length / csbend->nSlices,
+                                           -CSRConstant * csbend->length / csbend->nSlices / slippageLength13)) {
 #  if !USE_MPI
             useGpuCsrResidentKick = 0;
 #  endif
@@ -3591,7 +3786,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
           } else {
             if (useGpuCsrResident) {
               forceParticlesToCpu("CSRCSBEND resident kick fallback");
-              if (gpuCsrResidentDeviceEntryDone &&
+              if ((gpuCsrResidentDeviceEntryDone || gpuCsrResidentBodyLosses) &&
                   !gpu_copy_csbend_csr_beta0(beta0, n_part))
                 bombElegant("unable to copy CUDA CSRCSBEND beta0 for kick fallback", NULL);
               useGpuCsrResident = 0;
@@ -3602,9 +3797,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
               csrDgammaHostCurrent = 1;
             }
 #endif
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(n_part))
-#endif
+          GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(n_part),
           for (i_part = 0; i_part < n_part; i_part++) {
             long localBin, nBins1;
             double f;
@@ -3623,7 +3816,7 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
               beta0[i_part] = beta1;
               */
             }
-          }
+          });
 #if defined(HAVE_GPU) && !USE_MPI
           }
 #endif
@@ -3677,6 +3870,12 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
                                    z_start + (kick * (z_end - z_start)) / (csbend->nSlices - 1),
                                    1);
         convertToCSBendCoords(sliceAnalysisPart, n_part, rho0, cos_ttilt, sin_ttilt, 1);
+#  if defined(HAVE_GPU)
+        /* the two conversions above changed the host copy by rounding; the device rows follow */
+        if (useGpuCsrResident &&
+            !gpu_csr_csbend_output_round_trip(n_part, cos_ttilt, sin_ttilt))
+          bombElegant("unable to repeat the CSRCSBEND output conversion on the CUDA device", NULL);
+#  endif
 #else
         if (isMaster)
           printf("Pelegant does not support slice analysis output inside an element now.");
@@ -3736,7 +3935,10 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
   skipGpuCsrDriftPrep =
     usedGpuCsrResident && !csrDriftCsbendFinalPrepNeededFollows(eptr);
   if (useGpuCsrResident) {
-    if (csrResidentSimpleFinalTransformAvailable(
+    /* The CSRDRIFT preparation below bins c*t, so the transform that converts
+     * it to distance has to come after that preparation when it runs. */
+    if (skipGpuCsrDriftPrep &&
+        csrResidentSimpleFinalTransformAvailable(
           csbend, e2, psi2, cos_ttilt, sin_ttilt,
           dxf, dyf, dzf, dcoord_etilt))
       gpuCsrResidentFinalDone =
@@ -3763,6 +3965,10 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
     /* prepare some data for use by CSRDRIFT element */
 #ifdef DEBUG
     fprintf(stderr, "Preparing data for CSRDRIFT, in case one follows\n");
+#endif
+#if defined(HAVE_GPU) && defined(GPU_VERIFY) && !USE_MPI
+    if (usedGpuCsrResident)
+      gpu_verify_csr_drift_prep_coordinates(part, n_part);
 #endif
     csrWake.dctBin = dct;
     ctLower = ctUpper = dct = 0;
@@ -4032,6 +4238,8 @@ long track_through_csbendCSR(double **part, int64_t n_part, CSRCSBEND *csbend, d
         applyFilterTable(cpuDGamma, nBins, dct / c_mks,
                          csbend->wffValues, csbend->wffFreqValue,
                          csbend->wffRealFactor, csbend->wffImagFactor);
+      /* Only dGamma has an independent value here. The scalars come from the same code on the
+         particles, and the particles are checked when the CSRDRIFT preparation reads them. */
       memcpy(&cpuCsrWake, &csrWake, sizeof(cpuCsrWake));
       cpuCsrWake.dGamma = cpuDGamma;
       compareCSR_LAST_WAKE(&csrWake, &cpuCsrWake);
@@ -4239,6 +4447,27 @@ void computeSaldinFdNorm(double **FdNorm, double **x, long *n, double sMax, long
 long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDrift,
                                      double Po, double **accepted, double zStart, CHARGE *charge, char *rootname);
 
+#ifdef HAVE_GPU
+/* track_through_driftCSR()'s own test for having more to do than a drift */
+long csrDriftHasWakeToApply(CSRDRIFT *csrDrift, long np) {
+  return np > 1 && csrWake.valid && (csrDrift->csr || csrDrift->LSCBins);
+}
+
+/* Runs track_through_driftCSR() with the beam on the CUDA device: the routine keeps its work on the
+ * wake's bins and hands its loops over particles to the device (gpu_csr_drift_*). */
+long track_through_driftCSR_cuda_resident_entry(
+  double **part, long np, CSRDRIFT *csrDrift, double Po, double **accepted,
+  double zStart, double revolutionLength, CHARGE *charge, char *rootname) {
+  long result;
+
+  csrGpuDriftResident++;
+  result = track_through_driftCSR(part, np, csrDrift, Po, accepted, zStart,
+                                  revolutionLength, charge, rootname);
+  csrGpuDriftResident--;
+  return result;
+}
+#endif
+
 long track_through_driftCSR(double **part, int64_t np, CSRDRIFT *csrDrift,
                             double Po, double **accepted, double zStart,
                             double revolutionLength, CHARGE *charge, char *rootname) {
@@ -4256,23 +4485,32 @@ long track_through_driftCSR(double **part, int64_t np, CSRDRIFT *csrDrift,
 #if USE_MPI
   long np_total = 1, np_tmp = np, binned_total;
 #endif
+#if defined(HAVE_GPU) && !USE_MPI
+  long useGpuResident = csrGpuDriftResident;
+#endif
 
   if (csrDrift->LSCBins && !csrDrift->useStupakov)
     bombElegant("LSCBINS is nonzero on CSRDRIFT but USE_STUPAKOV is zero. This is not supported.", NULL);
 
 #ifdef HAVE_GPU
-  if (getElementOnGpu()) {
+  if (getElementOnGpu() && !csrGpuDriftResident) {
 #  ifdef GPU_VERIFY
+    /* With a wake to apply, this routine itself runs with its particle loops on the device, and each
+     * of those steps is checked where it is made, so there is no second run here: it would change
+     * the stored wake twice. */
+    long wholeElementCheck = !(csrDrift->csr && csrDriftHasWakeToApply(csrDrift, np));
     CSR_LAST_WAKE initCsrWake;
     memcpy(&initCsrWake, &csrWake, sizeof(CSR_LAST_WAKE));
 #  endif
     startGpuTimer();
     iPart = gpu_track_through_driftCSR(np, csrDrift, Po, accepted, zStart, revolutionLength, charge, rootname);
 #  ifdef GPU_VERIFY
-    startCpuTimer();
-    memcpy(&csrWake, &initCsrWake, sizeof(CSR_LAST_WAKE));
-    track_through_driftCSR(part, np, csrDrift, Po, accepted, zStart, revolutionLength, charge, rootname);
-    compareGpuCpu(np, "track_through_driftCSR");
+    if (wholeElementCheck) {
+      startCpuTimer();
+      memcpy(&csrWake, &initCsrWake, sizeof(CSR_LAST_WAKE));
+      track_through_driftCSR(part, np, csrDrift, Po, accepted, zStart, revolutionLength, charge, rootname);
+      compareGpuCpu(np, "track_through_driftCSR");
+    }
 #  endif /* GPU_VERIFY */
     return iPart;
   }
@@ -4295,6 +4533,10 @@ long track_through_driftCSR(double **part, int64_t np, CSRDRIFT *csrDrift,
 #endif
     if (csrDrift->linearOptics) {
       int64_t i;
+#if defined(HAVE_GPU) && !USE_MPI
+      if (csrGpuDriftResident) /* not reached: a drift with no wake to apply is not sent here */
+        forceParticlesToCpu("CSRDRIFT with no wake to apply");
+#endif
       for (i = 0; i < np; i++) {
         part[i][0] += csrDrift->length * part[i][1];
         part[i][2] += csrDrift->length * part[i][3];
@@ -4437,6 +4679,13 @@ for (iKick = 0; iKick < nKicks; iKick++) {
   ctmax = -DBL_MAX;
 
   /* propagate particles forward, converting s to c*t=s/beta */
+#if defined(HAVE_GPU) && !USE_MPI
+  if (useGpuResident && !gpu_csr_drift_advance(np, dz, Po, csrDrift->linearOptics, 1)) {
+    forceParticlesToCpu("CSRDRIFT resident advance fallback");
+    useGpuResident = 0;
+  }
+  if (!useGpuResident)
+#endif
   if (isSlave || !distributedBeam) {
     for (iPart = 0; iPart < np; iPart++) {
       coord = part[iPart];
@@ -4525,6 +4774,20 @@ for (iKick = 0; iKick < nKicks; iKick++) {
   dzFirst = 0;
 
   /* apply kick to each particle and convert back to normal coordinates */
+#if defined(HAVE_GPU) && !USE_MPI
+  if (useGpuResident) {
+    long gpuBinned = 0;
+    if (csrWake.dGamma)
+      gpuBinned = gpu_csr_drift_count_in_range(np, ct0, dct, csrWake.bins);
+    if (gpuBinned < 0 ||
+        !gpu_csr_drift_kick(np, csrWake.dGamma, csrWake.bins, 1, ct0, dct, Po, 1, factor)) {
+      forceParticlesToCpu("CSRDRIFT resident kick fallback");
+      useGpuResident = 0;
+    } else
+      binned = gpuBinned;
+  }
+  if (!useGpuResident)
+#endif
   if (isSlave || !distributedBeam) {
     for (iPart = binned = 0; iPart < np; iPart++) {
       coord = part[iPart];
@@ -4574,6 +4837,13 @@ for (iKick = 0; iKick < nKicks; iKick++) {
 }
 /* do final drift of dz0/2 */
 dz = dz0 / 2;
+#if defined(HAVE_GPU) && !USE_MPI
+if (useGpuResident && !gpu_csr_drift_advance(np, dz, Po, csrDrift->linearOptics, 0)) {
+  forceParticlesToCpu("CSRDRIFT resident final drift fallback");
+  useGpuResident = 0;
+}
+if (!useGpuResident)
+#endif
 if (isSlave || !distributedBeam) {
   for (iPart = 0; iPart < np; iPart++) {
     coord = part[iPart];
@@ -4601,6 +4871,12 @@ if (csrWake.dGamma) {
   }
 }
 
+#if defined(HAVE_GPU) && defined(GPU_VERIFY) && !USE_MPI
+if (useGpuResident)
+  /* a verify build compares the host rows with the device's after the next step, and this element
+   * was not run a second time on the host, so bring the host rows up to the device's */
+  copyParticlesToCpuReadOnly("CSRDRIFT verification host rows");
+#endif
 return np;
 }
 
@@ -4853,15 +5129,13 @@ void exactDrift(double **part, int64_t np, double length) {
   }
 #endif /* HAVE_GPU */
 
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp taskloop if(gpuOmpTrackingRequested(np) && omp_in_parallel()) num_tasks(gpuGetOmpTrackingThreads())
-#endif
+  GPU_OMP_TASKLOOP(gpuOmpTrackingRequested(np) && omp_in_parallel(),
   for (i = 0; i < np; i++) {
     coord = part[i];
     coord[0] += coord[1] * length;
     coord[2] += coord[3] * length;
     coord[4] += length * sqrt(1 + sqr(coord[1]) + sqr(coord[3]));
-  }
+  });
 }
 
 double SolveForPhiStupakov(double x, double ds, double phim);
@@ -4895,6 +5169,13 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
   int64_t np_total = 1;
   double *buffer;
 #endif
+#if defined(HAVE_GPU) && !USE_MPI
+  /* the beam is on the CUDA device and the loops over particles run there */
+  long useGpuResident = csrGpuDriftResident && !csrDrift->LSCBins;
+
+  if (csrGpuDriftResident && !useGpuResident)
+    forceParticlesToCpu("CSRDRIFT with LSC");
+#endif
 
   getTrackingContext(&tContext);
 
@@ -4906,6 +5187,13 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
     length += (dzFirst = zStart - csrWake.zLast);
     /* propagate beam back so we can tranverse the missing length including CSR
      */
+#if defined(HAVE_GPU) && !USE_MPI
+    if (useGpuResident && !gpu_csr_drift_advance(np, -dzFirst, Po, csrDrift->linearOptics, 0)) {
+      forceParticlesToCpu("CSRDRIFT resident first drift fallback");
+      useGpuResident = 0;
+    }
+    if (!useGpuResident)
+#endif
     if (isSlave || !distributedBeam)
       for (iPart = 0; iPart < np; iPart++) {
         coord = part[iPart];
@@ -4957,6 +5245,13 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
     x = zTravel / csrWake.rho;
     dsMax = csrWake.rho / 24 * pow(csrWake.bendingAngle, 3) * (csrWake.bendingAngle + 4 * x) / (csrWake.bendingAngle + x);
     /* propagate particles forward, converting s to c*t=s/beta */
+#if defined(HAVE_GPU) && !USE_MPI
+    if (useGpuResident && !gpu_csr_drift_advance(np, dz, Po, csrDrift->linearOptics, 1)) {
+      forceParticlesToCpu("CSRDRIFT resident advance fallback");
+      useGpuResident = 0;
+    }
+    if (!useGpuResident)
+#endif
     if (isSlave || !distributedBeam) {
       for (iPart = 0; iPart < np; iPart++) {
         coord = part[iPart];
@@ -4972,6 +5267,28 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
     }
     /* bin the particle distribution */
     ctLower = ctUpper = dct = 0;
+#if defined(HAVE_GPU) && !USE_MPI
+    nBinned = -1;
+    if (useGpuResident) {
+      double gpuCtLower = 0, gpuCtUpper = 0, gpuDct = 0;
+      long gpuNBins = nBins;
+      /* the number of bins is the wake's, so the arrays sized for it above are large enough */
+      if (gpu_prepare_csbend_csr_histogram_device(
+            &gpuCtLower, &gpuCtUpper, &gpuDct, &gpuNBins,
+            csrWake.binRangeFactor < 1.1 ? 1.1 : csrWake.binRangeFactor, np, Po) >= 0 &&
+          gpuNBins == nBins)
+        nBinned = gpu_compute_csbend_csr_histogram_device(ctHist, np, gpuNBins, gpuCtLower, gpuDct);
+      if (nBinned >= 0) {
+        ctLower = gpuCtLower;
+        ctUpper = gpuCtUpper;
+        dct = gpuDct;
+      } else {
+        forceParticlesToCpu("CSRDRIFT resident histogram fallback");
+        useGpuResident = 0;
+      }
+    }
+    if (nBinned < 0)
+#endif
     nBinned = binParticleCoordinate(&ctHist, &maxBins,
                                     &ctLower, &ctUpper, &dct, &nBins,
                                     csrWake.binRangeFactor < 1.1 ? 1.1 : csrWake.binRangeFactor,
@@ -5144,6 +5461,19 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
     }
 
     /* apply kick to each particle and convert back to normal coordinates */
+#if defined(HAVE_GPU) && !USE_MPI
+    if (useGpuResident) {
+      /* a particle outside the bins gets a message from the loop below, so that loop runs then */
+      if (gpu_csr_drift_count_in_range(np, ctLower, dct, nBins) != np ||
+          !gpu_csr_drift_kick(np, csrWake.dGamma, nBins, csrDrift->csr ? 1 : 0, ctLower, dct, Po,
+                              0, 1.0)) {
+        forceParticlesToCpu("CSRDRIFT resident kick fallback");
+        useGpuResident = 0;
+      } else
+        binned = np;
+    }
+    if (!useGpuResident)
+#endif
     if (isSlave || !distributedBeam) {
       for (iPart = binned = 0; iPart < np; iPart++) {
         double f;
@@ -5173,11 +5503,22 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
       MPI_Barrier(MPI_COMM_WORLD); /* Make sure the information can be printed before aborting */
       MPI_Abort(MPI_COMM_WORLD, 1);
 #endif
+#if defined(HAVE_GPU) && !USE_MPI
+      performSliceAnalysisOutput(tContext.sliceAnalysis,
+                                 useGpuResident ?
+                                   copyParticlesToCpuReadOnly("CSRDRIFT resident slice analysis output") :
+                                   part,
+                                 np, 0, tContext.step, Po,
+                                 csrWake.MPCharge * np,
+                                 tContext.elementName,
+                                 zOutput, 0);
+#else
       performSliceAnalysisOutput(tContext.sliceAnalysis, part, np,
                                  0, tContext.step, Po,
                                  csrWake.MPCharge * np,
                                  tContext.elementName,
                                  zOutput, 0);
+#endif
     }
 #if USE_MPI
     if (isSlave && distributedBeam) {
@@ -5215,6 +5556,13 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
 
   /* do final drift of dz0/2 */
   dz = dz0 / 2;
+#if defined(HAVE_GPU) && !USE_MPI
+  if (useGpuResident && !gpu_csr_drift_advance(np, dz, Po, csrDrift->linearOptics, 0)) {
+    forceParticlesToCpu("CSRDRIFT resident final drift fallback");
+    useGpuResident = 0;
+  }
+  if (!useGpuResident)
+#endif
   if (isSlave || !distributedBeam)
     for (iPart = 0; iPart < np; iPart++) {
       coord = part[iPart];
@@ -5229,6 +5577,12 @@ long track_through_driftCSR_Stupakov(double **part, int64_t np, CSRDRIFT *csrDri
   if (csrDrift->LSCBins > 0)
     addLSCKick(part, np, &lscKick, Po, charge, dz, 0.0);
 
+#if defined(HAVE_GPU) && defined(GPU_VERIFY) && !USE_MPI
+  if (useGpuResident)
+    /* a verify build compares the host rows with the device's after the next step, and this element
+     * was not run a second time on the host, so bring the host rows up to the device's */
+    copyParticlesToCpuReadOnly("CSRDRIFT verification host rows");
+#endif
   csrWake.zLast = zStart + length;
   free(ctHist);
   free(ctHistDeriv);

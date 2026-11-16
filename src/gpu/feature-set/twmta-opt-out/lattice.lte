@@ -1,0 +1,6 @@
+! twmta-linac's TWMTA with ELEGANT_GPU_ENABLE_TWMTA=0 (suite.json): elegant's motion(). Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+TA: TWMTA, L=0.2, FREQUENCY=2.856e9, PHASE=10, EZ=10e6, KX=2, BETA_WAVE=0.99, BSOL=0.05, ALPHA=0.5, &
+    X_MAX=0.01, Y_MAX=0.01, METHOD="non-adaptive", N_STEPS=300, FIDUCIAL="t,median", ACCURACY=1e-9
+BL: LINE=(Q1, D, TA, D)

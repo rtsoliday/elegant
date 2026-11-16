@@ -1,0 +1,21 @@
+! ILMATRIX with TILT: a general angle, the angles rotateBeamCoordinatesForMisalignment() treats
+! specially (pi/2, -pi/2, pi) and 2 pi, which it skips. NUX is near the half integer without
+! CROSS_RESONANCE, so particles are lost in the rotated frame and stay in it.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 12 &end
+&bunched_beam
+  n_particles_per_bunch = 5000,
+  emit_x = 5e-11, beta_x = 7, alpha_x = 0.3,
+  emit_y = 5e-12, beta_y = 2.5, alpha_y = -0.2,
+  sigma_dp = 2e-3, sigma_s = 4e-3,
+&end
+&track &end

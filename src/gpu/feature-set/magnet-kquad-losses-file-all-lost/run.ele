@@ -1,0 +1,26 @@
+! KQUAD, KSEXT, KOCT and KQUSE with a sticky aperture and a losses file: some lost in each magnet, then every particle left lost in one magnet. The losses file must match elegant exactly.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 3000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  final = "%s.fin",
+  losses = "%s.los",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+
+&run_control n_passes = 1 &end
+
+&bunched_beam
+  n_particles_per_bunch = 3000,
+  emit_x = 2e-8, beta_x = 8, alpha_x = 0,
+  emit_y = 2e-8, beta_y = 8, alpha_y = 0,
+  sigma_dp = 5e-4, sigma_s = 1e-3,
+&end
+
+&track &end

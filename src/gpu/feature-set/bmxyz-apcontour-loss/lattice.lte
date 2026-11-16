@@ -1,0 +1,5 @@
+AC: APCONTOUR,FILENAME="contour.sdds",XCOLUMN="x",YCOLUMN="y",STICKY=1
+BM1: BMXYZ,L=0.8,ACCURACY=1e-3,METHOD="non-adaptive runge-kutta",FILENAME="../data/bmxyz_field.sdds",STRENGTH=0.1,XY_INTERPOLATION_ORDER=1
+BM2: BMXYZ,L=0.8,ACCURACY=1e-3,METHOD="non-adaptive runge-kutta",FILENAME="../data/bmxyz_field.sdds",STRENGTH=-0.1,XY_INTERPOLATION_ORDER=1
+D: DRIF,L=0.1
+RING: LINE=(AC,BM1,D,BM2,D)

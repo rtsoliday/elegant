@@ -232,6 +232,9 @@ double m_hproduct(MATRIX *M1, MATRIX *M2) {
 
 #define SMALL_ANGLE 1e-12
 
+/* Matrix most recently computed by the linearized methods, for getLinearizedMisalignmentMatrix */
+static VMATRIX *linearizedMisalignmentMatrix = NULL;
+
 /* Algorithm due to M. Venturini, ALSU-AP-TN-2021-001. */
 /* This is a fairly literal translation of his Mathematica code */
 void offsetParticlesForEntranceCenteredMisalignmentLinearized(
@@ -448,6 +451,7 @@ void offsetParticlesForEntranceCenteredMisalignmentLinearized(
       LVM->R[i][j] = LinMat->a[i][j];
     }
   }
+  linearizedMisalignmentMatrix = LVM;
 
   if (coord && np != 0) {
     double qx, qy, factor;
@@ -513,6 +517,36 @@ void offsetParticlesForEntranceCenteredMisalignmentLinearized(
   }
 }
 
+/* Gets the matrix that modes 1 and 2 of offsetParticlesForMisalignment apply to (x, qx, y, qy, s, delta) */
+void getLinearizedMisalignmentMatrix
+(
+ long mode, /* 1 = linear entrance, 2 = linear body */
+ double dx, double dy, double dz, /* error displacements */
+ double ax,                       /* error pitch */
+ double ay,                       /* error yaw */
+ double az,                       /* error roll or tilt */
+ double thetaBend,
+ double length,
+ short face, /* 1 => entry, 2 => exit */
+ double *C,
+ double (*R)[6]
+ ) {
+  long i, j;
+  if (mode == 1)
+    offsetParticlesForEntranceCenteredMisalignmentLinearized
+      (NULL, NULL, 0, dx, dy, dz, ax, ay, az, 0.0, thetaBend, length, face);
+  else if (mode == 2)
+    offsetParticlesForBodyCenteredMisalignmentLinearized
+      (NULL, NULL, 0, dx, dy, dz, ax, ay, az, 0.0, thetaBend, length, face);
+  else
+    bombElegantVA("Invalid mode %ld in call to getLinearizedMisalignmentMatrix", mode);
+  for (i = 0; i < 6; i++) {
+    C[i] = linearizedMisalignmentMatrix->C[i];
+    for (j = 0; j < 6; j++)
+      R[i][j] = linearizedMisalignmentMatrix->R[i][j];
+  }
+}
+
 void offsetParticlesForMisalignment
 (
  long mode, /* 0 = original, 1 = linear entrance, 2 = linear body, 3 = exact entrance, 4 = exact body */
@@ -567,6 +601,57 @@ void offsetParticlesForMisalignment
     
   }
 
+}
+
+/* Frame most recently computed by the exact methods, for getExactMisalignmentFrame() */
+static double exactMisalignmentFrame[EXACT_MISALIGNMENT_FRAME_SIZE];
+
+static void saveExactMisalignmentFrame(MATRIX *csi, MATRIX *eta, MATRIX *csiPP, MATRIX *etaPP, MATRIX *X, MATRIX *Y,
+                                       MATRIX *XFrame, MATRIX *YFrame, MATRIX *offset,
+                                       double tanThetaW, double cosThetaW, double sinThetaW, double LD) {
+  MATRIX *vector[9];
+  long i, j, n = 0;
+
+  vector[0] = csi;
+  vector[1] = eta;
+  vector[2] = csiPP;
+  vector[3] = etaPP;
+  vector[4] = X;
+  vector[5] = Y;
+  vector[6] = XFrame;
+  vector[7] = YFrame;
+  vector[8] = offset;
+  for (i = 0; i < 9; i++)
+    for (j = 0; j < 3; j++)
+      exactMisalignmentFrame[n++] = vector[i]->a[j][0];
+  exactMisalignmentFrame[n++] = tanThetaW;
+  exactMisalignmentFrame[n++] = cosThetaW;
+  exactMisalignmentFrame[n++] = sinThetaW;
+  exactMisalignmentFrame[n++] = LD;
+}
+
+/* What the particle loop of an exact method needs for one face, so that another implementation can run that loop */
+void getExactMisalignmentFrame
+(
+ long mode, /* 3 = exact entrance, 4 = exact body */
+ double dx, double dy, double dz, /* error displacements */
+ double ax,                       /* error pitch */
+ double ay,                       /* error yaw */
+ double az,                       /* error roll or tilt */
+ double thetaBend,
+ double length,
+ short face, /* 1 => entry, 2 => exit */
+ double *frame
+ ) {
+  if (mode == 3)
+    offsetParticlesForEntranceCenteredMisalignmentExact
+      (NULL, 0, dx, dy, dz, ax, ay, az, 0.0, thetaBend, length, face);
+  else if (mode == 4)
+    offsetParticlesForBodyCenteredMisalignmentExact
+      (NULL, 0, dx, dy, dz, ax, ay, az, 0.0, thetaBend, length, face);
+  else
+    bombElegantVA("Invalid mode %ld in call to getExactMisalignmentFrame", mode);
+  memcpy(frame, exactMisalignmentFrame, sizeof(exactMisalignmentFrame));
 }
 
 /* Algorithm due to M. Venturini, ALSU-AP-TN-2021-001. */
@@ -806,6 +891,8 @@ void offsetParticlesForEntranceCenteredMisalignmentExact(
       bombElegant("m_copy(tmp, OpPp);", NULL);
   }
 
+  saveExactMisalignmentFrame(csiAxis, etaAxis, csiPPAxis, etaPPAxis, Xaxis, Yaxis, XaxiSxyz, YaxiSxyz, tmp,
+                             tanThetaW, cosThetaW, sinThetaW, LD);
   if (coord && np != 0) {
     double qx, qy;
 
@@ -1178,6 +1265,7 @@ void offsetParticlesForBodyCenteredMisalignmentLinearized(
       LVM->R[i][j] = LinMat->a[i][j];
     }
   }
+  linearizedMisalignmentMatrix = LVM;
 
   if (coord && np != 0) {
     double qx, qy, factor;
@@ -1634,6 +1722,8 @@ void offsetParticlesForBodyCenteredMisalignmentExact(
       bombElegant("m_copy(tmp, OpPp);", NULL);
   }
 
+  saveExactMisalignmentFrame(csiAxis, etaAxis, csiPPAxis, etaPPAxis, Xaxis, Yaxis, XaxiSxyz, YaxiSxyz, tmp,
+                             tanThetaW, cosThetaW, sinThetaW, LD);
   if (coord && np != 0) {
     double qx, qy, factor;
     if (face==2 && tilt)

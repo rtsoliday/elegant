@@ -1,0 +1,9 @@
+! LSRMDLTR with ISR at 5 MeV and a 10% energy spread: the undulator slows each particle along z by an amount
+! that depends on its energy, so particles take 2,001 or 2,002 Runge-Kutta steps and draw that many ISR
+! numbers. The device guesses each particle's start in the CPU's sequence, finds the first wrong guess from
+! the counts and tracks again from there. The random numbers must be elegant's, so only rounding differs.
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+LM: LSRMDLTR, L=0.5, PERIODS=10, BU=0.1, N_STEPS=3000, ACCURACY=1e-6, FIELD_EXPANSION="exact", &
+    SYNCH_RAD=1, ISR=1, LASER_PEAK_POWER=0
+BL: LINE=(Q1, D, LM, D)

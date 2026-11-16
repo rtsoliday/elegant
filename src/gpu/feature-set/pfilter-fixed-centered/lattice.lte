@@ -1,0 +1,7 @@
+! PFILTER fixing its momentum limits on the first pass, then a centered delta window from the
+! Kahan sum of the survivors' delta, in particle order. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+PF: PFILTER, LOWERFRACTION=0.03, UPPERFRACTION=0.03, FIXPLIMITS=1, DELTALIMIT=1.2e-3, BEAMCENTERED=1
+BL: LINE=(Q1, D, R, D, PF, D)

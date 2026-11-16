@@ -1,0 +1,26 @@
+&run_setup
+    lattice = lattice.lte,
+    use_beamline = BL,
+    p_central_mev = 130,
+    default_order = 2,
+    output = %s.out,
+    centroid = %s.cen,
+    sigma = %s.sig,
+    final = %s.fin,
+    semaphore_file = %s.done
+&end
+
+&run_control
+    n_steps = 1,
+    first_is_fiducial = 1
+&end
+
+&bunched_beam
+    n_particles_per_bunch = 20000,
+    emit_nx = 1e-6, emit_ny = 1e-6,
+    beta_x = 10, beta_y = 10,
+    sigma_dp = 1e-3,
+    sigma_s = 300e-6,
+&end
+
+&track &end

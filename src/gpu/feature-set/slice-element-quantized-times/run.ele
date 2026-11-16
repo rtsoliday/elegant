@@ -1,0 +1,21 @@
+! SLICE elements after a 1 km drift for a bunch 0.3 pm long: the times fall on a grid a few
+! rounding units wide, so many particles sit exactly on slice limits (which belong to both
+! slices) and some slice widths are below the grid. Every file must be the CPU's to the last bit.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 2,
+  rootname = "run",
+  output = "%s.out",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 2 &end
+&bunched_beam
+  n_particles_per_bunch = 2000,
+  emit_x = 5e-11, beta_x = 7, alpha_x = 0.3,
+  emit_y = 5e-12, beta_y = 2.5, alpha_y = -0.2,
+  sigma_dp = 1e-3, sigma_s = 3e-13,
+&end
+&track &end

@@ -1,0 +1,5 @@
+! MATTER with L=0 and LEFFECTIVE=1e-3: the kicks without the length. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: MATTER, L=0, LEFFECTIVE=1e-3, XO=0.089, ENERGY_DECAY=1
+BL: LINE=(Q1, D, E, D)

@@ -1,0 +1,12 @@
+! PEPPOT with five holes, partial transmission and scattering in the plate: the device tests the
+! holes, the host draws the numbers and decides the losses in elegant's order, twice (before and
+! after the plate's length). Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: PEPPOT, L=1e-3, RADII=2e-4, TRANSMISSION=0.3, THETA_RMS=1e-3, N_HOLES=5, TILT=0.1
+0 0
+3e-4 0
+-3e-4 0
+0 3e-4
+0 -3e-4
+BL: LINE=(Q1, D, E, D)

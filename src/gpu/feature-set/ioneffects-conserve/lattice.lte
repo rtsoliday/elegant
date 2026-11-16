@@ -1,0 +1,10 @@
+! IONEFFECTS with the Gaussian field and conserve_momentum=1, which needs the kicks' sum: on the host copy,
+! x' and y' sent back. Must be identical
+Q1: QUAD, L=0.2, K1=0.9
+Q2: QUAD, L=0.2, K1=-0.9
+D: DRIF, L=0.4
+X: IONEFFECTS
+Y: IONEFFECTS
+C: CHARGE, TOTAL=1e-9
+CELL: LINE=(Q1, D, X, D, Q2, D, Y, D)
+BL: LINE=(C, 5*CELL)

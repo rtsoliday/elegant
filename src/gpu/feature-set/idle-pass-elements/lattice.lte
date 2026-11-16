@@ -1,0 +1,14 @@
+! Elements that leave the beam alone on most passes stay on the device on those passes: TWISS (after device elements) with
+! APPLY_ONCE=1 after its first pass, RIMULT always, SCATTER outside STARTONPASS..ENDONPASS (it scatters on
+! passes 2 and 3, on the CPU, drawing random_2 in the CPU's order), BRANCH, which jumps over Q2 once its
+! counter runs out. Only an output file, so the particles must be elegant's.
+D: DRIF, L=0.5
+K: KICKER, HKICK=2e-4, VKICK=-1e-4
+Q1: QUAD, L=0.2, K1=0.5
+Q2: QUAD, L=0.2, K1=-0.5
+TW: TWISS, BETAX=5, BETAY=5, APPLY_ONCE=1
+RI: RIMULT
+SC: SCATTER, XP=1e-5, YP=1e-5, STARTONPASS=2, ENDONPASS=3
+M2: MARK
+BR: BRANCH, COUNTER=3, BRANCH_TO="M2"
+BL: LINE=(K, D, Q1, TW, D, RI, SC, BR, Q2, D, M2, D)

@@ -1,0 +1,23 @@
+! Tune histories from the fused program: gpu_batched_tune_program_track() in gpu_stub.c tracks the whole
+! grid on the device, one kernel launch a turn, and computeTunesFromTrackingBatch() in twiss.cc uses its
+! histories only if the CPU, tracking a sample of the particles itself, gets the same bits.
+! The same ring with a MULT with length in every cell. The device's MULT with length isn't the CPU's
+! in any particle (1e-16 a magnet), so the histories of the sampled particles differ. (CSBENDs until
+! 2026-11-11, when their device arithmetic became the CPU's.)
+MAL: MALIGN
+MA0: MALIGN,ON_PASS=0,DX=1e-4,DP=1e-4
+MA1: MALIGN,ON_PASS=1,DYP=1e-5
+CH: CHARGE,TOTAL=1e-9
+W: WATCH,FILENAME="%s.w1",MODE="centroid"
+MX: MAXAMP,X_MAX=0.006,Y_MAX=0.006
+D: DRIF,L=0.4
+DE: EDRIFT,L=0.1
+QF: KQUAD,L=0.2,K1=1.5,N_SLICES=4
+QD: KQUAD,L=0.2,K1=-1.5,N_SLICES=4
+QM: QUAD,L=0.1,K1=0.2
+SX: SEXT,L=0.1,K2=3
+SF: KSEXT,L=0.1,K2=5,N_SLICES=4
+AP: RCOL,X_MAX=0.004,Y_MAX=0.004
+BM: MULT,L=0.3,ORDER=2,KNL=0.5,N_KICKS=4
+CELL: LINE=(D,QF,D,SF,DE,QD,D,QM,BM,SX)
+RING: LINE=(MAL,MA0,MA1,CH,MX,4*CELL,AP,W,4*CELL)

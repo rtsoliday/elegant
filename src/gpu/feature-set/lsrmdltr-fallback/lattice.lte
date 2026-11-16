@@ -1,0 +1,6 @@
+! ACCURACY=0 (the default): rk_odeint3_na() never meets the exit condition, so elegant loses every particle
+! with "Integration failure". The device sees the failures, puts the beam back and the CPU tracks. Identical.
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+LM: LSRMDLTR, L=0.4, PERIODS=10, BU=0.33, N_STEPS=200, LASER_PEAK_POWER=5e6, LASER_W0=3e-4
+BL: LINE=(Q1, D, LM, D)

@@ -1,0 +1,26 @@
+! Particles lost at a magnet entrance in the batched aperture search must report the same sLost as the CPU search.
+
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 1,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 8
+&end
+
+&find_aperture
+  mode = "three-line",
+  xmax = 0.024,
+  ymax = 0.012,
+  nx = 33,
+  n_splits = 1,
+  split_fraction = 0.2,
+  desired_resolution = 1e-4,
+  output = "%s.aper",
+  verbosity = 0,
+&end

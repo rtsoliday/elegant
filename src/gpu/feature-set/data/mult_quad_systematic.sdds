@@ -1,0 +1,13 @@
+SDDS1
+&parameter name=referenceRadius, units=m, type=double, fixed_value=0.02, &end
+&column name=order, type=long, &end
+&column name=an, type=double, &end
+&column name=bn, type=double, &end
+&data mode=ascii, &end
+! page 1
+5
+2 0.002 -0.001
+3 0.001 0.0005
+5 0.0005 0
+9 0 0.0002
+13 0.0003 -0.0001

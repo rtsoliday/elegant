@@ -1,0 +1,26 @@
+! A map through kick quadrupoles with classical radiation: the CPU tracks, and the file is the CPU's
+! bit for bit. A program that tracked them would leave the radiation out.
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 32
+&end
+
+&frequency_map
+    output = "%s.fma",
+    nx = 9,
+    ny = 9,
+    xmin = 1e-6,
+    xmax = 0.001,
+    ymin = 1e-6,
+    ymax = 0.001,
+    include_changes = 1,
+    verbosity = 0
+&end

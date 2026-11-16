@@ -1,0 +1,8 @@
+! MAPSOLENOID with a uniform transverse field over LUNIFORM, offsets and tilt, yaw and pitch: rotate3() of
+! the particle and the field. Identical
+RF: RFCA, L=0.01, VOLT=10e6, FREQ=2856e6, PHASE=90, CHANGE_P0=1
+S1: SOLE, L=0.14, B=-1.70450939
+S0: MAPSOLENOID, L=0.1991984, RCOLUMN="r", ZCOLUMN="z", BRCOLUMN="Br", BZCOLUMN="Bz", &
+    METHOD="non-adaptive runge-kutta", FACTOR=-1.2, N_STEPS=400, INPUTFILE="../data/mapsolenoid_map.sdds", &
+    BXUNIFORM=1e-3, BYUNIFORM=-2e-3, LUNIFORM=0.1, DX=2e-4, DY=-1e-4, ETILT=0.02, EYAW=1e-3, EPITCH=-2e-3
+BL: LINE=(RF, S0, S1)

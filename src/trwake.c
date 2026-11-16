@@ -263,11 +263,10 @@ void track_through_trwake(double **part0, int64_t np0, TRWAKE *wakeData, double 
           fflush(stdout);
 #endif
 
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+          GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
           for (ip = 0; ip < np; ip++)
             memcpy(part0[ipBucket[iBucket][ip]], part[ip], sizeof(double) * totalPropertiesPerParticle);
+          );
 
 #ifdef DEBUG
           printf("Done with bucket %ld\n", iBucket);
@@ -308,9 +307,7 @@ void applyTransverseWakeKicks(double **part, double *time, double *pz, long *pbi
   long offset;
 
   offset = 2 * plane + 1; /* xp or yp index */
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+  GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
   for (ip = 0; ip < np; ip++) {
     long ib;
     if ((ib = pbin[ip]) >= 0 && ib <= nb - 1) {
@@ -330,7 +327,7 @@ void applyTransverseWakeKicks(double **part, double *time, double *pz, long *pbi
       if (Vinterp)
         part[ip][offset] += Vinterp / (1e6 * particleMassMV * particleRelSign) / pz[ip];
     }
-  }
+  });
 }
 
 typedef struct {
@@ -539,13 +536,11 @@ void set_up_trwake(TRWAKE *wakeData, RUN *run, long pass, long particles, CHARGE
 void computeTimeCoordinatesOnly(double *time, double Po, double **part, int64_t np) {
   int64_t ip;
 
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+  GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
   for (ip = 0; ip < np; ip++) {
     double P = Po * (part[ip][5] + 1);
     time[ip] = part[ip][4] * sqrt(sqr(P) + 1) / (c_mks * P);
-  }
+  });
 }
 
 /* This routine should call computeTimeCoordinatesOnly() first instead of duplicating
@@ -621,14 +616,12 @@ double computeTimeCoordinates(double *time, double Po, double **part, int64_t np
 void computeDistanceCoordinates(double *time, double Po, double **part, int64_t np) {
   int64_t ip;
 
-#if defined(HAVE_GPU) && defined(_OPENMP)
-#  pragma omp parallel for num_threads(gpuGetOmpTrackingThreads()) schedule(static) if(gpuOmpTrackingRequested(np))
-#endif
+  GPU_OMP_PARALLEL_FOR(gpuOmpLightLoopRequested(np),
   for (ip = 0; ip < np; ip++) {
     double P = Po * (part[ip][5] + 1);
     double beta = P / sqrt(sqr(P) + 1);
     part[ip][4] = c_mks * beta * time[ip];
-  }
+  });
 }
 
 long binTransverseTimeDistribution(double **posItime, double *pz, long *pbin, double tmin, double dt, long nb,

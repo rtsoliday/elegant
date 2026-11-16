@@ -1,0 +1,4 @@
+D: DRIF,L=0.2
+Q: QUAD,L=0.2,K1=1
+W: WATCH,FILENAME="run.w1",MODE="parameter"
+RING: LINE=(D,Q,D,W,D,Q,D)

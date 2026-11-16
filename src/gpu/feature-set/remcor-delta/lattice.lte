@@ -1,0 +1,8 @@
+! REMCOR removing the correlation of x, x' and y' with delta, and of x with t once only: the host's sums
+! of copied columns, the subtraction on the device. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+RC: REMCOR, X=1, XP=1, YP=1, WITH=6
+RO: REMCOR, X=1, WITH=5, ONCE_ONLY=1
+BL: LINE=(Q1, D, R, D, RC, D, RO, D)

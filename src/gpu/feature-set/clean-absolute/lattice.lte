@@ -1,0 +1,7 @@
+! CLEAN by absolute deviation, then by absolute value. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+C1: CLEAN, MODE="absdeviation", XPLIMIT=3e-5, YLIMIT=1.5e-4
+C2: CLEAN, MODE="absvalue", YPLIMIT=4e-5, DELTALIMIT=2e-3
+BL: LINE=(Q1, D, C1, D, C2, D)

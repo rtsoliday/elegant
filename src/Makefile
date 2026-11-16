@@ -271,6 +271,23 @@ ifneq ($(CUDA_REQUESTED),)
     CXXFLAGS += -DGPU_VERIFY=1
     NVCCFLAGS += -DGPU_VERIFY=1
   endif
+  # gcov build for measuring which GPU code the test sets reach. Host code only:
+  # gcov can't see inside device kernels. Set GCOV_PREFIX to separate runs.
+  ifeq ($(GPU_COVERAGE),1)
+    OBJ_DIR := $(OBJ_DIR).coverage
+    BIN_DIR := $(BIN_DIR)-coverage
+    CFLAGS += --coverage
+    CXXFLAGS += --coverage
+    NVCCFLAGS += -Xcompiler --coverage
+    LDFLAGS += --coverage
+  endif
+  # Per-architecture variant used by "make gpu-elegant-all-sm": build only
+  # elegant, in its own object directory, installed as gpu-elegant-<sm>.
+  ifeq ($(GPU_ARCH_VARIANT),1)
+    OBJ_DIR := $(OBJ_DIR).$(CUDA_ARCH)
+    ELEGANT_INSTALL_NAME = gpu-elegant-$(CUDA_ARCH)$(EXEEXT)
+    PROD := elegant
+  endif
   CFLAGS += $(OG_OPT_FLAG) -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
   CXXFLAGS += $(OG_OPT_FLAG) -DHAVE_GPU=1 -Igpu -I$(CUDA_HOME)/include
   # CUDA 13 CCCL headers require C++17, including with older host defaults.
@@ -326,7 +343,7 @@ endif
 
 CUSTOM_LINK_PRODUCTS += elegant elegantto sddssasefel ibsEmittance abrat trimda iirFilterTest
 BUILD_GENERATED += $(patsubst %.nl,$(OBJ_DIR)/%.h,$(wildcard *.nl))
-BUILD_CONFIG_VARIABLES += NVCC NVCCFLAGS NVCCDEPFLAGS CUDA_ARCH HAVE_CUDA HAVE_GPU GPU_VERIFY MDEBUG MPROFILE
+BUILD_CONFIG_VARIABLES += NVCC NVCCFLAGS NVCCDEPFLAGS CUDA_ARCH HAVE_CUDA HAVE_GPU GPU_VERIFY GPU_COVERAGE MDEBUG MPROFILE
 ifneq ($(CUDA_REQUESTED),)
 INSTALL_PROGRAMS = $(filter-out $(OBJ_DIR)/elegant$(EXEEXT),$(FULLPROD))
 endif

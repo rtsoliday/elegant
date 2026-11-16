@@ -1,0 +1,7 @@
+! SCATTER with Gaussian kicks to x, x', y, y' and delta at a probability of 0.6 from the second pass:
+! the host draws elegant's random numbers in its order and the device adds them, keeping the time
+! through the delta kick. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: SCATTER, X=1e-5, XP=2e-5, Y=1.5e-5, YP=1e-5, DP=1e-4, PROBABILITY=0.6, STARTONPASS=1
+BL: LINE=(Q1, D, E, D)

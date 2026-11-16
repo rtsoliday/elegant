@@ -1,0 +1,6 @@
+! SCATTER with uniform kicks to x' and y at a probability of 0.3: the host walks random_2's sequence for
+! the decisions, the device makes the uniforms. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: SCATTER, Y=2e-5, XP=1e-5, DISTRIBUTION="uniform", PROBABILITY=0.3
+BL: LINE=(Q1, D, E, D)

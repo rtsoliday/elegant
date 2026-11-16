@@ -1,0 +1,30 @@
+! Frequency map of a ring with an RF cavity at 170 degrees. elegant tracks one particle one turn per call and
+! sets the cavity's reference again at each call (reset_rf_for_each_step, on by default), so every particle
+! sees the nominal phase on every turn. In gpu-elegant's batch the cavity therefore takes each particle as a
+! beam of its own and sets its reference again each time; one reference for the batch gave tunes off by 1e-3
+! here. Batched, and must be identical to the CPU.
+
+&run_setup
+    lattice = "lattice.lte",
+    use_beamline = "RING",
+    p_central_mev = 6000,
+    default_order = 2,
+    semaphore_file = "%s.done"
+&end
+
+&run_control
+    n_steps = 1,
+    n_passes = 32
+&end
+
+&frequency_map
+    output = "%s.fma",
+    nx = 16,
+    ny = 8,
+    xmin = -1.5e-3,
+    xmax = 1.5e-3,
+    ymin = 1e-6,
+    ymax = 1.5e-3,
+    include_changes = 1,
+    verbosity = 0
+&end

@@ -1,0 +1,6 @@
+! MATTER as 1 m of nitrogen at 10 Pa: density from the pressure, temperature and multiplicity,
+! radiation length computed, single scattering in sections. Must be identical
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+E: MATTER, L=1, Z=7, A=14, PRESSURE=10, TEMPERATURE=300, MULTIPLICITY=2, PLIMIT=0.05
+BL: LINE=(Q1, D, E, D)

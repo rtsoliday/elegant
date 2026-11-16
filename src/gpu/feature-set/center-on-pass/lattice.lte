@@ -1,0 +1,8 @@
+! CENTER with ON_PASS=2: on passes 0, 1 and 3 it does nothing and the beam stays on the device (an idle
+! pass); on pass 2 it centers X and XP. Only an output file, so the particles must be elegant's.
+D: DRIF, L=0.5
+K: KICKER, HKICK=2e-4, VKICK=-1e-4
+Q1: QUAD, L=0.2, K1=0.5
+Q2: QUAD, L=0.2, K1=-0.5
+CEN: CENTER, X=1, XP=1, ON_PASS=2
+BL: LINE=(K, D, Q1, D, CEN, Q2, D)

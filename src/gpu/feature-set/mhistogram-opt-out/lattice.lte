@@ -1,0 +1,6 @@
+! ELEGANT_GPU_ENABLE_MHISTOGRAM=0 (suite.json) keeps MHISTOGRAM on the CPU
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+R: RFCA, L=0.1, VOLT=2e6, PHASE=80, FREQ=2.856e9
+MH: MHISTOGRAM, FILE1D="%s.mh1", INPUT_BINS="../data/mhist_bins.sdds"
+BL: LINE=(Q1, D, MH, D)

@@ -1,0 +1,6 @@
+! DISTRIBUTION="uniform": ellipsoidalBeamKick() inside and outside the ellipse (complex sqrt and division).
+! Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+BB: BEAMBEAM, CHARGE=5e-9, XSIZE=100e-6, YSIZE=40e-6, XCENTER=1e-5, DISTRIBUTION="uniform"
+BL: LINE=(Q1, D, BB, D)

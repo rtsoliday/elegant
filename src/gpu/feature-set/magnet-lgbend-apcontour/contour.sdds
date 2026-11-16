@@ -1,0 +1,10 @@
+SDDS1
+&column name=x, type=double, units=m &end
+&column name=y, type=double, units=m &end
+&data mode=ascii, no_row_counts=1 &end
+-2.500000e-03 -2.500000e-03
+2.500000e-03 -2.500000e-03
+2.500000e-03 2.500000e-03
+-2.500000e-03 2.500000e-03
+-2.500000e-03 -2.500000e-03
+

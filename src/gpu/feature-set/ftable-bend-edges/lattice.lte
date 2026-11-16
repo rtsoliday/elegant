@@ -1,0 +1,7 @@
+! FTABLE as a 0.1 rad dipole with fringe lengths L1 and L2 and edge angles E1 and E2, in 200 kicks: the
+! entrance and exit frame changes on the device. Rounding expected
+Q1: QUAD, L=0.1, K1=0.5
+D: DRIF, L=0.2
+FB: FTABLE, L=0.16, L1=0.02, L2=0.02, ANGLE=0.1, E1=0.05, E2=0.05, INPUT_FILE="../data/ftable_dipole.sdds", &
+    N_KICKS=200, SIMPLE_INPUT=1
+BL: LINE=(Q1, D, FB, D)

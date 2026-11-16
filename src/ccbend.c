@@ -73,103 +73,10 @@ void rotateSpinsAboutYAxis(double **particle, int64_t np, double angle) {
     performQuaternionRotation(particle[i] + spinCoordOffset, 0.0, angle, 0.0);
 }
 
-static long track_through_ccbend_impl(
-                          double **particle, /* initial/final phase-space coordinates */
-                          int64_t n_part,       /* number of particles */
-                          ELEMENT_LIST *eptr,
-                          CCBEND *ccbend,
-                          double Po,
-                          double **accepted,
-                          double z_start,
-                          double *sigmaDelta2, /* use for accumulation of energy spread for radiation matrix computation */
-                          char *rootname,
-                          MAXAMP *maxamp,
-                          APCONTOUR *apContour,
-                          APERTURE_DATA *apFileData,
-                          /* If iPart non-negative, we do one step. The caller is responsible
-                           * for handling the coordinates appropriately outside this routine.
-                           * The element must have been previously optimized to determine FSE and X offsets.
-                           */
-                          int64_t iPart,
-                          /* If iFinalSlice is positive, we terminate integration inside the magnet. The caller is responsible
-                           * for handling the coordinates appropriately outside this routine.
-                           * The element must have been previously optimized to determine FSE and X offsets.
-                           */
-                          long iFinalSlice) {
-  double KnL[9];
-  long iTerm, nTerms;
-  double dx, dy, dz; /* offsets of the multipole center */
-  long nSlices, integ_order;
-  int64_t i_part, i_top;
-  double *coef;
-  double fse, etilt, epitch, eyaw, tilt, rad_coef, isr_coef, dzLoss = 0;
-  double rho0, arcLength, length, angle, yaw, angleSign;
-  MULTIPOLE_DATA *multData = NULL, *edge1MultData = NULL, *edge2MultData = NULL;
-  long freeMultData = 0;
-  MULT_APERTURE_DATA apertureData;
-  double referenceKnL = 0;
-  double gK[2];
-  double fringeInt1[N_CCBEND_FRINGE_INT], fringeInt2[N_CCBEND_FRINGE_INT];
-  double lastRho1;
-  GLOBAL_BEAM_SUMS *beamSums = NULL;
-  short disableSums = 1;
+void ccbendSetupCentroidOutput(CCBEND *ccbend) {
   TRACKING_CONTEXT context;
-#ifdef HAVE_GPU
-  GPU_OMP_TRACKING_WORKSPACE *ompWorkspace = NULL;
-  long ompActive = 0, ompParticles = 0, ompThreads = 1;
-#endif
+
   getTrackingContext(&context);
-
-  if (!particle)
-    bombTracking("particle array is null (track_through_ccbend)");
-
-#ifdef HAVE_GPU
-  if (getElementOnGpu()) {
-    startGpuTimer();
-    i_top = gpu_track_through_ccbend(n_part, eptr, ccbend, Po, accepted,
-                                     z_start, sigmaDelta2, rootname, maxamp,
-                                     apContour, apFileData, iPart,
-                                     iFinalSlice);
-#  ifdef GPU_VERIFY
-    startCpuTimer();
-    track_through_ccbend(particle, n_part, eptr, ccbend, Po, accepted,
-                         z_start, sigmaDelta2, rootname, maxamp, apContour,
-                         apFileData, iPart, iFinalSlice);
-    compareGpuCpu(n_part, "track_through_ccbend");
-#  endif
-    return i_top;
-  }
-#endif
-
-  if (iPart >= 0 && ccbend->optimized != 1)
-    bombTracking("Programming error: one-step mode invoked for unoptimized CCBEND.");
-  if (iFinalSlice > 0 && iPart >= 0)
-    bombTracking("Programming error: partial integration mode and one-step mode invoked together for CCBEND.");
-  if (iFinalSlice > 0 && ccbend->optimized != 1 && (ccbend->optimizeFse || ccbend->optimizeDx))
-    bombTracking("Programming error: partial integration mode invoked for unoptimized CCBEND.");
-  if (iFinalSlice >= ccbend->nSlices)
-    iFinalSlice = 0;
-
-  if (N_CCBEND_FRINGE_INT != 8)
-    bombTracking("Coding error detected: number of fringe integrals for CCBEND is different than expected.");
-  if (ccbend->fringeModel < -1 || ccbend->fringeModel > 1)
-    bombTracking("FRINGEMODEL parameter of CCBEND must be -1, 0, or 1.");
-
-  if (!ccbend->edgeFlip) {
-    memcpy(fringeInt1, ccbend->fringeInt1, N_CCBEND_FRINGE_INT * sizeof(fringeInt1[0]));
-    memcpy(fringeInt2, ccbend->fringeInt2, N_CCBEND_FRINGE_INT * sizeof(fringeInt2[0]));
-  } else {
-    memcpy(fringeInt1, ccbend->fringeInt2, N_CCBEND_FRINGE_INT * sizeof(fringeInt1[0]));
-    memcpy(fringeInt2, ccbend->fringeInt1, N_CCBEND_FRINGE_INT * sizeof(fringeInt2[0]));
-    // Per R. Lindberg, these integrals change sign from entrance to exit orientation
-    fringeInt1[0] *= -1;
-    fringeInt1[3] *= -1;
-    fringeInt1[5] *= -1;
-    fringeInt2[0] *= -1;
-    fringeInt2[3] *= -1;
-    fringeInt2[5] *= -1;
-  }
-
   ccbend->centroidsRequested = (ccbend->centroidOutputFile && strlen(ccbend->centroidOutputFile));
   if (ccbend->centroidsRequested && !ccbend->SDDScen
 #if USE_MPI
@@ -200,7 +107,153 @@ static long track_through_ccbend_impl(
     }
     free(filename);
   }
+}
 
+long ccbendCentroidSumsEnabled(CCBEND *ccbend, int64_t iPart, long iFinalSlice) {
+  TRACKING_CONTEXT context;
+
+  getTrackingContext(&context);
+  return !(iPart>0 || iFinalSlice>0 || context.flags&TEST_PARTICLES || context.iPass<0 || ccbend->optimized!=1 ||
+           !ccbend->centroidsRequested);
+}
+
+void ccbendWriteCentroidOutput(CCBEND *ccbend, ELEMENT_LIST *eptr, GLOBAL_BEAM_SUMS *beamSums, double Po) {
+  long iRow = 0;
+  TRACKING_CONTEXT context;
+
+  getTrackingContext(&context);
+  if (ccbend->SDDScen) {
+    if (!SDDS_StartPage(ccbend->SDDScen, ccbend->nSlices+1)) {
+      SDDS_SetError("Problem starting page for centroid output file for CCBEND");
+      SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+    }
+    if (!SDDS_SetParameters(ccbend->SDDScen, SDDS_SET_BY_NAME|SDDS_PASS_BY_VALUE,
+                            "Step", context.step, "Pass", context.iPass, "pCentral", Po,
+                            "ElementName", eptr->name, "ElementOccurence", eptr->occurence, NULL)) {
+      SDDS_SetError("Problem preparing parameter data for centroid output file for CCBEND");
+      SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+    }
+  }
+  for (int iSlice=0; iSlice<=ccbend->nSlices; iSlice++, iRow++) {
+#if USE_MPI
+    MPI_Allreduce(MPI_IN_PLACE, &beamSums[iRow].n_part, 1, MPI_INT64_T, MPI_SUM, workers);
+    MPI_Allreduce(MPI_IN_PLACE, beamSums[iRow].centroid, 6, MPI_DOUBLE, MPI_SUM, workers);
+#endif
+    if (beamSums[iRow].n_part) {
+      for (int i=0; i<5; i++)
+        beamSums[iRow].centroid[i] /= beamSums[iRow].n_part;
+    }
+    if (ccbend->SDDScen &&
+        !SDDS_SetRowValues(ccbend->SDDScen, SDDS_SET_BY_INDEX|SDDS_PASS_BY_VALUE, iRow,
+                           0, beamSums[iRow].centroid[4],
+                           1, iSlice,
+                           2, beamSums[iRow].centroid[0], 
+                           3, beamSums[iRow].centroid[1], 
+                           4, beamSums[iRow].centroid[2], 
+                           5, beamSums[iRow].centroid[3], 
+                           6, beamSums[iRow].centroid[5],
+                           7, beamSums[iRow].n_part,
+                           -1)) {
+      SDDS_SetError("Problem preparing column data for centroid output file for CCBEND");
+      SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+    }
+  }
+  if (ccbend->SDDScen &&
+      !SDDS_WritePage(ccbend->SDDScen)) {
+    SDDS_SetError("Problem writing page for centroid output file for CCBEND");
+    SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
+  }
+}
+
+void setupCcbendErrorMultipoles(CCBEND *ccbend, ELEMENT_LIST *eptr, double referenceKnL, long angleSign) {
+  if (!ccbend->multipolesInitialized) {
+    /* read the data files for the error multipoles */
+    readErrorMultipoleData(&(ccbend->systematicMultipoleData), ccbend->systematic_multipoles, 0);
+    if ((ccbend->edge1_multipoles && !ccbend->edgeFlip) || (ccbend->edge2_multipoles && ccbend->edgeFlip)) {
+      readErrorMultipoleData(&(ccbend->edge1MultipoleData),
+                             ccbend->edgeFlip ? ccbend->edge2_multipoles : ccbend->edge1_multipoles, 0);
+      if (ccbend->verbose && (ccbend->edgeFlip ? ccbend->edge2_multipoles : ccbend->edge1_multipoles) && eptr)
+        printf("Using file %s for edge 1 of %s#%ld\n",
+               ccbend->edgeFlip ? ccbend->edge2_multipoles : ccbend->edge1_multipoles,
+               eptr->name, eptr->occurence);
+    } else {
+      readErrorMultipoleData(&(ccbend->edge1MultipoleData), ccbend->edge_multipoles, 0);
+      if (ccbend->verbose && ccbend->edge_multipoles && eptr)
+        printf("Using file %s for edge 1 of %s#%ld\n",
+               ccbend->edge_multipoles, eptr->name, eptr->occurence);
+    }
+    if ((ccbend->edge2_multipoles && !ccbend->edgeFlip) || (ccbend->edge1_multipoles && ccbend->edgeFlip)) {
+      readErrorMultipoleData(&(ccbend->edge2MultipoleData),
+                             ccbend->edgeFlip ? ccbend->edge1_multipoles : ccbend->edge2_multipoles, 0);
+      if (ccbend->verbose && (ccbend->edgeFlip ? ccbend->edge1_multipoles : ccbend->edge2_multipoles) && eptr)
+        printf("Using file %s for edge 2 of %s#%ld\n",
+               ccbend->edgeFlip ? ccbend->edge1_multipoles : ccbend->edge2_multipoles,
+               eptr->name, eptr->occurence);
+    } else {
+      readErrorMultipoleData(&(ccbend->edge2MultipoleData), ccbend->edge_multipoles, 0);
+      if (ccbend->verbose && ccbend->edge_multipoles && eptr)
+        printf("Using file %s for edge 2 of %s#%ld\n",
+               ccbend->edge_multipoles, eptr->name, eptr->occurence);
+    }
+    if (ccbend->optimized != -1)
+      readErrorMultipoleData(&(ccbend->randomMultipoleData), ccbend->random_multipoles, 0);
+    ccbend->multipolesInitialized = 1;
+  }
+  if (!ccbend->totalMultipolesComputed) {
+    computeTotalErrorMultipoleFields(&(ccbend->totalMultipoleData),
+                                     &(ccbend->systematicMultipoleData), ccbend->systematicMultipoleFactor,
+                                     &(ccbend->edge1MultipoleData), &(ccbend->edge2MultipoleData),
+                                     &(ccbend->randomMultipoleData), ccbend->randomMultipoleFactor,
+                                     NULL, 0.0,
+                                     referenceKnL,
+                                     ccbend->referenceOrder, 0,
+                                     ccbend->minMultipoleOrder, ccbend->maxMultipoleOrder);
+    if (angleSign < 0) {
+      long i;
+      for (i = 0; i < ccbend->systematicMultipoleData.orders; i++) {
+        if (ccbend->totalMultipoleData.order[i] % 2) {
+          ccbend->totalMultipoleData.KnL[i] *= -1;
+          ccbend->totalMultipoleData.JnL[i] *= -1;
+        }
+      }
+      for (i = 0; i < ccbend->edge1MultipoleData.orders; i++) {
+        if (ccbend->totalMultipoleData.order[i] % 2) {
+          ccbend->edge1MultipoleData.KnL[i] *= -1;
+          ccbend->edge1MultipoleData.JnL[i] *= -1;
+        }
+      }
+      for (i = 0; i < ccbend->edge2MultipoleData.orders; i++) {
+        if (ccbend->totalMultipoleData.order[i] % 2) {
+          ccbend->edge2MultipoleData.KnL[i] *= -1;
+          ccbend->edge2MultipoleData.JnL[i] *= -1;
+        }
+      }
+    }
+    ccbend->totalMultipolesComputed = 1;
+  }
+}
+
+static void getCcbendFringeIntegrals(CCBEND *ccbend, double *fringeInt1, double *fringeInt2) {
+  if (!ccbend->edgeFlip) {
+    memcpy(fringeInt1, ccbend->fringeInt1, N_CCBEND_FRINGE_INT * sizeof(fringeInt1[0]));
+    memcpy(fringeInt2, ccbend->fringeInt2, N_CCBEND_FRINGE_INT * sizeof(fringeInt2[0]));
+  } else {
+    memcpy(fringeInt1, ccbend->fringeInt2, N_CCBEND_FRINGE_INT * sizeof(fringeInt1[0]));
+    memcpy(fringeInt2, ccbend->fringeInt1, N_CCBEND_FRINGE_INT * sizeof(fringeInt2[0]));
+    // Per R. Lindberg, these integrals change sign from entrance to exit orientation
+    fringeInt1[0] *= -1;
+    fringeInt1[3] *= -1;
+    fringeInt1[5] *= -1;
+    fringeInt2[0] *= -1;
+    fringeInt2[3] *= -1;
+    fringeInt2[5] *= -1;
+  }
+}
+
+/* Finds the FSE and x offset that center the reference trajectory, if that hasn't been done
+ * or the magnet has changed.  Tracks its own reference particle, never the beam. */
+static void optimizeCcbendIfNeeded(ELEMENT_LIST *eptr, CCBEND *ccbend, double Po, int64_t iPart,
+                                   double *fringeInt1, double *fringeInt2) {
   if ((ccbend->optimizeFse || ccbend->optimizeDx) && ccbend->optimized != -1 && ccbend->angle != 0) {
     if (ccbend->optimized == 0 ||
         ccbend->length != ccbend->referenceData[0] ||
@@ -212,7 +265,7 @@ static long track_through_ccbend_impl(
       double acc;
       double startValue[2], stepSize[2], lowerLimit[2], upperLimit[2];
       short disable[2] = {0, 0};
-      PoCopy = lastRho1 = lastX = lastXp =
+      PoCopy = lastX = lastXp =
         xMin = xFinal = xAve = xMax = xError = xpInitial = xInitial = xpError = 0;
       if (ccbend->verbose > 5) {
         long ifr;
@@ -293,7 +346,7 @@ static long track_through_ccbend_impl(
 
         ccbend->optimized = 1;
         particle0 = (double **)czarray_2d(sizeof(**particle0), 1, totalPropertiesPerParticle);
-        memset(particle0[0], 0, totalPropertiesPerParticle * sizeof(**particle));
+        memset(particle0[0], 0, totalPropertiesPerParticle * sizeof(**particle0));
         track_through_ccbend(particle0, 1, eptr, ccbend, Po, NULL, 0.0, NULL, NULL, NULL, NULL, NULL, -1, 0);
         for (int ii = 0; ii < 4; ii++)
           ccbend->referenceTrajectory[ii] = particle0[0][ii];
@@ -317,6 +370,108 @@ static long track_through_ccbend_impl(
       }
     }
   }
+}
+
+#ifdef HAVE_GPU
+/* The caller must have cleared the on-GPU flag, because this tracks its reference particle on the CPU */
+void optimizeCcbendForGpu(ELEMENT_LIST *eptr, CCBEND *ccbend, double Po) {
+  double fringeInt1[N_CCBEND_FRINGE_INT], fringeInt2[N_CCBEND_FRINGE_INT];
+
+  getCcbendFringeIntegrals(ccbend, fringeInt1, fringeInt2);
+  optimizeCcbendIfNeeded(eptr, ccbend, Po, -1, fringeInt1, fringeInt2);
+}
+#endif
+
+static long track_through_ccbend_impl(
+                          double **particle, /* initial/final phase-space coordinates */
+                          int64_t n_part,       /* number of particles */
+                          ELEMENT_LIST *eptr,
+                          CCBEND *ccbend,
+                          double Po,
+                          double **accepted,
+                          double z_start,
+                          double *sigmaDelta2, /* use for accumulation of energy spread for radiation matrix computation */
+                          char *rootname,
+                          MAXAMP *maxamp,
+                          APCONTOUR *apContour,
+                          APERTURE_DATA *apFileData,
+                          /* If iPart non-negative, we do one step. The caller is responsible
+                           * for handling the coordinates appropriately outside this routine.
+                           * The element must have been previously optimized to determine FSE and X offsets.
+                           */
+                          int64_t iPart,
+                          /* If iFinalSlice is positive, we terminate integration inside the magnet. The caller is responsible
+                           * for handling the coordinates appropriately outside this routine.
+                           * The element must have been previously optimized to determine FSE and X offsets.
+                           */
+                          long iFinalSlice) {
+  double KnL[9];
+  long iTerm, nTerms;
+  double dx, dy, dz; /* offsets of the multipole center */
+  long nSlices, integ_order;
+  int64_t i_part, i_top;
+  double *coef;
+  double fse, etilt, epitch, eyaw, tilt, rad_coef, isr_coef, dzLoss = 0;
+  double rho0, arcLength, length, angle, yaw, angleSign;
+  MULTIPOLE_DATA *multData = NULL, *edge1MultData = NULL, *edge2MultData = NULL;
+  long freeMultData = 0;
+  MULT_APERTURE_DATA apertureData;
+  double referenceKnL = 0;
+  double gK[2];
+  double fringeInt1[N_CCBEND_FRINGE_INT], fringeInt2[N_CCBEND_FRINGE_INT];
+  double lastRho1 = 0;
+  GLOBAL_BEAM_SUMS *beamSums = NULL;
+  short disableSums = 1;
+  TRACKING_CONTEXT context;
+#ifdef HAVE_GPU
+  GPU_OMP_TRACKING_WORKSPACE *ompWorkspace = NULL;
+  long ompActive = 0, ompParticles = 0, ompThreads = 1;
+#endif
+  getTrackingContext(&context);
+
+  if (!particle)
+    bombTracking("particle array is null (track_through_ccbend)");
+
+#ifdef HAVE_GPU
+  if (getElementOnGpu()) {
+    startGpuTimer();
+    i_top = gpu_track_through_ccbend(n_part, eptr, ccbend, Po, accepted,
+                                     z_start, sigmaDelta2, rootname, maxamp,
+                                     apContour, apFileData, iPart,
+                                     iFinalSlice);
+#  ifdef GPU_VERIFY
+    /* If this is no longer set, a fallback or the loss path has already tracked these particles on the CPU */
+    if (getElementOnGpu()) {
+      startCpuTimer();
+      track_through_ccbend(particle, n_part, eptr, ccbend, Po, accepted,
+                           z_start, sigmaDelta2, rootname, maxamp, apContour,
+                           apFileData, iPart, iFinalSlice);
+      compareGpuCpu(n_part, "track_through_ccbend");
+    }
+#  endif
+    return i_top;
+  }
+#endif
+
+  if (iPart >= 0 && ccbend->optimized != 1)
+    bombTracking("Programming error: one-step mode invoked for unoptimized CCBEND.");
+  if (iFinalSlice > 0 && iPart >= 0)
+    bombTracking("Programming error: partial integration mode and one-step mode invoked together for CCBEND.");
+  if (iFinalSlice > 0 && ccbend->optimized != 1 && (ccbend->optimizeFse || ccbend->optimizeDx))
+    bombTracking("Programming error: partial integration mode invoked for unoptimized CCBEND.");
+  if (iFinalSlice >= ccbend->nSlices)
+    iFinalSlice = 0;
+
+  if (N_CCBEND_FRINGE_INT != 8)
+    bombTracking("Coding error detected: number of fringe integrals for CCBEND is different than expected.");
+  if (ccbend->fringeModel < -1 || ccbend->fringeModel > 1)
+    bombTracking("FRINGEMODEL parameter of CCBEND must be -1, 0, or 1.");
+
+  getCcbendFringeIntegrals(ccbend, fringeInt1, fringeInt2);
+
+  ccbendSetupCentroidOutput(ccbend);
+
+  optimizeCcbendIfNeeded(eptr, ccbend, Po, iPart, fringeInt1, fringeInt2);
 
 #ifdef DEBUG
   if (ccbend->optimized == 1) {
@@ -405,71 +560,7 @@ static long track_through_ccbend_impl(
   if (ccbend->length < 1e-6 && (ccbend->isr || ccbend->synch_rad)) {
     rad_coef = isr_coef = 0; /* avoid unphysical results */
   }
-  if (!ccbend->multipolesInitialized) {
-    /* read the data files for the error multipoles */
-    readErrorMultipoleData(&(ccbend->systematicMultipoleData), ccbend->systematic_multipoles, 0);
-    if ((ccbend->edge1_multipoles && !ccbend->edgeFlip) || (ccbend->edge2_multipoles && ccbend->edgeFlip)) {
-      readErrorMultipoleData(&(ccbend->edge1MultipoleData),
-                             ccbend->edgeFlip ? ccbend->edge2_multipoles : ccbend->edge1_multipoles, 0);
-      if (ccbend->verbose && (ccbend->edgeFlip ? ccbend->edge2_multipoles : ccbend->edge1_multipoles) && eptr)
-        printf("Using file %s for edge 1 of %s#%ld\n",
-               ccbend->edgeFlip ? ccbend->edge2_multipoles : ccbend->edge1_multipoles,
-               eptr->name, eptr->occurence);
-    } else {
-      readErrorMultipoleData(&(ccbend->edge1MultipoleData), ccbend->edge_multipoles, 0);
-      if (ccbend->verbose && ccbend->edge_multipoles && eptr)
-        printf("Using file %s for edge 1 of %s#%ld\n",
-               ccbend->edge_multipoles, eptr->name, eptr->occurence);
-    }
-    if ((ccbend->edge2_multipoles && !ccbend->edgeFlip) || (ccbend->edge1_multipoles && ccbend->edgeFlip)) {
-      readErrorMultipoleData(&(ccbend->edge2MultipoleData),
-                             ccbend->edgeFlip ? ccbend->edge1_multipoles : ccbend->edge2_multipoles, 0);
-      if (ccbend->verbose && (ccbend->edgeFlip ? ccbend->edge1_multipoles : ccbend->edge2_multipoles) && eptr)
-        printf("Using file %s for edge 2 of %s#%ld\n",
-               ccbend->edgeFlip ? ccbend->edge1_multipoles : ccbend->edge2_multipoles,
-               eptr->name, eptr->occurence);
-    } else {
-      readErrorMultipoleData(&(ccbend->edge2MultipoleData), ccbend->edge_multipoles, 0);
-      if (ccbend->verbose && ccbend->edge_multipoles && eptr)
-        printf("Using file %s for edge 2 of %s#%ld\n",
-               ccbend->edge_multipoles, eptr->name, eptr->occurence);
-    }
-    if (ccbend->optimized != -1)
-      readErrorMultipoleData(&(ccbend->randomMultipoleData), ccbend->random_multipoles, 0);
-    ccbend->multipolesInitialized = 1;
-  }
-  if (!ccbend->totalMultipolesComputed) {
-    computeTotalErrorMultipoleFields(&(ccbend->totalMultipoleData),
-                                     &(ccbend->systematicMultipoleData), ccbend->systematicMultipoleFactor,
-                                     &(ccbend->edge1MultipoleData), &(ccbend->edge2MultipoleData),
-                                     &(ccbend->randomMultipoleData), ccbend->randomMultipoleFactor,
-                                     NULL, 0.0,
-                                     referenceKnL,
-                                     ccbend->referenceOrder, 0,
-                                     ccbend->minMultipoleOrder, ccbend->maxMultipoleOrder);
-    if (angleSign < 0) {
-      long i;
-      for (i = 0; i < ccbend->systematicMultipoleData.orders; i++) {
-        if (ccbend->totalMultipoleData.order[i] % 2) {
-          ccbend->totalMultipoleData.KnL[i] *= -1;
-          ccbend->totalMultipoleData.JnL[i] *= -1;
-        }
-      }
-      for (i = 0; i < ccbend->edge1MultipoleData.orders; i++) {
-        if (ccbend->totalMultipoleData.order[i] % 2) {
-          ccbend->edge1MultipoleData.KnL[i] *= -1;
-          ccbend->edge1MultipoleData.JnL[i] *= -1;
-        }
-      }
-      for (i = 0; i < ccbend->edge2MultipoleData.orders; i++) {
-        if (ccbend->totalMultipoleData.order[i] % 2) {
-          ccbend->edge2MultipoleData.KnL[i] *= -1;
-          ccbend->edge2MultipoleData.JnL[i] *= -1;
-        }
-      }
-    }
-    ccbend->totalMultipolesComputed = 1;
-  }
+  setupCcbendErrorMultipoles(ccbend, eptr, referenceKnL, angleSign);
   multData = &(ccbend->totalMultipoleData);
   edge1MultData = &(ccbend->edge1MultipoleData);
   edge2MultData = &(ccbend->edge2MultipoleData);
@@ -546,8 +637,7 @@ static long track_through_ccbend_impl(
       break;
     }
 
-  if (iPart>0 || iFinalSlice>0 || context.flags&TEST_PARTICLES || context.iPass<0 || ccbend->optimized!=1 ||
-      !ccbend->centroidsRequested)
+  if (!ccbendCentroidSumsEnabled(ccbend, iPart, iFinalSlice))
     disableSums = 1;
   else {
     disableSums = 0;
@@ -594,7 +684,7 @@ static long track_through_ccbend_impl(
       particle[i_part][4] = z_start + ompWorkspace->lossOffset[i_part];
       particle[i_part][5] = Po * (1 + particle[i_part][5]);
     }
-    i_top = gpuStableCompactParticles(
+    i_top = gpuCompactParticlesInCpuOrder(
       particle, ompParticles, ompWorkspace->survived) - 1;
   } else
 #endif
@@ -686,48 +776,7 @@ static long track_through_ccbend_impl(
   }
   
   if (ccbend->centroidsRequested && !disableSums) {
-    long iRow = 0;
-    if (ccbend->SDDScen) {
-      if (!SDDS_StartPage(ccbend->SDDScen, nSlices+1)) {
-	SDDS_SetError("Problem starting page for centroid output file for CCBEND");
-	SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
-      }
-      if (!SDDS_SetParameters(ccbend->SDDScen, SDDS_SET_BY_NAME|SDDS_PASS_BY_VALUE,
-			      "Step", context.step, "Pass", context.iPass, "pCentral", Po,
-			      "ElementName", eptr->name, "ElementOccurence", eptr->occurence, NULL)) {
-	SDDS_SetError("Problem preparing parameter data for centroid output file for CCBEND");
-	SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
-      }
-    }
-    for (int iSlice=0; iSlice<=ccbend->nSlices; iSlice++, iRow++) {
-#if USE_MPI
-      MPI_Allreduce(MPI_IN_PLACE, &beamSums[iRow].n_part, 1, MPI_INT64_T, MPI_SUM, workers);
-      MPI_Allreduce(MPI_IN_PLACE, beamSums[iRow].centroid, 6, MPI_DOUBLE, MPI_SUM, workers);
-#endif
-      if (beamSums[iRow].n_part) {
-	for (int i=0; i<5; i++)
-	  beamSums[iRow].centroid[i] /= beamSums[iRow].n_part;
-      }
-      if (ccbend->SDDScen &&
-	  !SDDS_SetRowValues(ccbend->SDDScen, SDDS_SET_BY_INDEX|SDDS_PASS_BY_VALUE, iRow,
-			     0, beamSums[iRow].centroid[4],
-			     1, iSlice,
-			     2, beamSums[iRow].centroid[0], 
-			     3, beamSums[iRow].centroid[1], 
-			     4, beamSums[iRow].centroid[2], 
-			     5, beamSums[iRow].centroid[3], 
-			     6, beamSums[iRow].centroid[5],
-			     7, beamSums[iRow].n_part,
-			     -1)) {
-	SDDS_SetError("Problem preparing column data for centroid output file for CCBEND");
-	SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
-      }
-    }
-    if (ccbend->SDDScen &&
-	!SDDS_WritePage(ccbend->SDDScen)) {
-      SDDS_SetError("Problem writing page for centroid output file for CCBEND");
-      SDDS_PrintErrors(stderr, SDDS_EXIT_PrintErrors | SDDS_VERBOSE_PrintErrors);
-    }
+    ccbendWriteCentroidOutput(ccbend, eptr, beamSums, Po);
     free(beamSums);
     beamSums = NULL;
   }

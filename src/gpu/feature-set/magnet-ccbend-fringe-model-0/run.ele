@@ -1,0 +1,23 @@
+! The default CCBEND fringe model: both bend directions, FINT and HGAP, every EDGE_ORDER, every integration order, COMPENSATE_KN, files and reversed elements.
+&run_setup
+  lattice = "lattice.lte",
+  use_beamline = "RING",
+  p_central_mev = 6000,
+  default_order = 1,
+  rootname = "run",
+  output = "%s.out",
+  centroid = "%s.cen",
+  sigma = "%s.sig",
+  tracking_updates = 0,
+  random_number_seed = 987654321,
+&end
+&run_control n_passes = 3 &end
+
+&bunched_beam
+  n_particles_per_bunch = 500,
+  emit_x = 2e-8, beta_x = 8, alpha_x = 0,
+  emit_y = 2e-8, beta_y = 8, alpha_y = 0,
+  sigma_dp = 5e-4, sigma_s = 1e-3,
+&end
+
+&track &end
