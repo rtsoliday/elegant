@@ -898,7 +898,7 @@ void computeChromaticities(double *chromx, double *chromy,
 
 void computeHigherOrderChromaticities(LINE_LIST *beamline, double *clorb, RUN *run,
                                       long concatOrder, double deltaStep, long deltaPoints,
-                                      long quickMode) {
+                                      long quickMode, long n_periods) {
 #define MAX_NDELTA_VALUES 101 /* must be at least 5 */
   double trace[2][MAX_NDELTA_VALUES], delta[MAX_NDELTA_VALUES];
   double eta[6];
@@ -948,12 +948,12 @@ void computeHigherOrderChromaticities(LINE_LIST *beamline, double *clorb, RUN *r
   for (i = 0; i < 2; i++) {
     lsfn(delta, trace[i], NULL, deltaPoints, (long)(MIN(deltaPoints - 2, 5)),
          coef, sCoef, &chi, NULL);
-    c1 = -coef[1] / (4 * PI * sin(PIx2 * beamline->tune[i]));
-    beamline->chrom2[i] = (2 * coef[2] + 8 * sqr(PI) * sqr(c1) * cos(PIx2 * beamline->tune[i])) / (-4 * PI * sin(PIx2 * beamline->tune[i]));
+    c1 = -coef[1] / (4 * PI * sin(PIx2 * beamline->tune[i]/n_periods));
+    beamline->chrom2[i] = n_periods*(2 * coef[2] + 8 * sqr(PI) * sqr(c1) * cos(PIx2 * beamline->tune[i]/n_periods)) / (-4 * PI * sin(PIx2 * beamline->tune[i]/n_periods));
     if (quickMode)
       beamline->chrom3[i] = 0;
     else
-      beamline->chrom3[i] = (6 * coef[3] - 16 * pow3(PI * c1) * sin(PIx2 * beamline->tune[i]) + 24 * sqr(PI) * c1 * beamline->chrom2[i] * cos(PIx2 * beamline->tune[i])) / (-4 * PI * sin(PIx2 * beamline->tune[i]));
+      beamline->chrom3[i] = n_periods*(6 * coef[3] - 16 * pow3(PI * c1) * sin(PIx2 * beamline->tune[i]/n_periods) + 24 * sqr(PI) * c1 * beamline->chrom2[i]/n_periods * cos(PIx2 * beamline->tune[i]/n_periods)) / (-4 * PI * sin(PIx2 * beamline->tune[i]/n_periods));
   }
   free_matrices(&M0);
   free_matrices(&M1);
