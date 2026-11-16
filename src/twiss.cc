@@ -2290,13 +2290,10 @@ void compute_twiss_parameters(RUN *run, LINE_LIST *beamline, double *starting_co
         computeHigherOrderChromaticities(beamline, starting_coord, run, twissConcatOrder,
                                          higher_order_chromaticity_range /
                                          (higher_order_chromaticity_points - 1),
-                                         higher_order_chromaticity_points, quick_higher_order_chromaticity);
+                                         higher_order_chromaticity_points, quick_higher_order_chromaticity,
+					 n_periods);
       beamline->chromaticity[0] *= n_periods;
       beamline->chromaticity[1] *= n_periods;
-      beamline->chrom2[0] *= n_periods;
-      beamline->chrom3[0] *= n_periods;
-      beamline->chrom2[1] *= n_periods;
-      beamline->chrom3[1] *= n_periods;
       computeChromaticTuneLimits(beamline);
       if (doTuneShiftWithAmplitude)
         computeTuneShiftWithAmplitude(beamline->dnux_dA, beamline->dnuy_dA,
@@ -2338,13 +2335,10 @@ void compute_twiss_parameters(RUN *run, LINE_LIST *beamline, double *starting_co
         computeHigherOrderChromaticities(beamline, starting_coord, run, twissConcatOrder,
                                          higher_order_chromaticity_range /
                                          (higher_order_chromaticity_points - 1),
-                                         higher_order_chromaticity_points, quick_higher_order_chromaticity);
+                                         higher_order_chromaticity_points, quick_higher_order_chromaticity,
+					 n_periods);
       beamline->chromaticity[0] *= n_periods;
       beamline->chromaticity[1] *= n_periods;
-      beamline->chrom2[0] *= n_periods;
-      beamline->chrom3[0] *= n_periods;
-      beamline->chrom2[1] *= n_periods;
-      beamline->chrom3[1] *= n_periods;
       computeChromaticTuneLimits(beamline);
       if (doTuneShiftWithAmplitude)
         computeTuneShiftWithAmplitude(beamline->dnux_dA, beamline->dnuy_dA,
@@ -3091,15 +3085,15 @@ void incrementRadIntegrals(RADIATION_INTEGRALS *radIntegrals, double *dI, ELEMEN
   } else if (elem->type == T_CCBEND) {
     double ccbendAngle = ((CCBEND *)elem->p_elem)->angle;
     addCcbendRadiationIntegrals((CCBEND *)elem->p_elem, coord, pCentral, eta0, etap0, beta0, alpha0, &I1, &I2, &I3, &I4, &I5, elem);
-    radIntegrals->RI[0] += I1;
-    radIntegrals->RI[1] += I2;
-    radIntegrals->RI[2] += I3;
-    radIntegrals->RI[3] += I4;
-    radIntegrals->RI[4] += I5;
+    radIntegrals->RI[0] += I1 * n_periods;
+    radIntegrals->RI[1] += I2 * n_periods;
+    radIntegrals->RI[2] += I3 * n_periods;
+    radIntegrals->RI[3] += I4 * n_periods;
+    radIntegrals->RI[4] += I5 * n_periods;
     if (ccbendAngle > 0)
-      radIntegrals->I3pos += I3;
+      radIntegrals->I3pos += I3 * n_periods;
     else if (ccbendAngle < 0)
-      radIntegrals->I3neg += I3;
+      radIntegrals->I3neg += I3 * n_periods;
   } else if (elem->type == T_LGBEND) {
     LGBEND *lgbend;
     lgbend = (LGBEND *)elem->p_elem;
@@ -3109,11 +3103,11 @@ void incrementRadIntegrals(RADIATION_INTEGRALS *radIntegrals, double *dI, ELEMEN
       track_through_lgbend(oneParticle, 1, elem, lgbend, pCentral, NULL, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
     }
     addLgbendRadiationIntegrals((LGBEND *)elem->p_elem, coord, pCentral, eta0, etap0, beta0, alpha0, &I1, &I2, &I3, &I4, &I5, elem);
-    radIntegrals->RI[0] += I1;
-    radIntegrals->RI[1] += I2;
-    radIntegrals->RI[2] += I3;
-    radIntegrals->RI[3] += I4;
-    radIntegrals->RI[4] += I5;
+    radIntegrals->RI[0] += I1 * n_periods;
+    radIntegrals->RI[1] += I2 * n_periods;
+    radIntegrals->RI[2] += I3 * n_periods;
+    radIntegrals->RI[3] += I4 * n_periods;
+    radIntegrals->RI[4] += I5 * n_periods;
     {
       double lgbendAngle = ((LGBEND *)elem->p_elem)->angle;
       if (lgbendAngle > 0)
