@@ -1929,7 +1929,8 @@ long integrate_csbend_ordn(
 
       if (spin) {
 	/* --do spin, if needed */
-	updateSpinQuaternionLocalFS(spin, Fx*fieldConversion, Fy*fieldConversion, 0, X, Y, QX, QY, ds, 1/rho0,
+	double f = (1 + X / rho0) / sqrt(sqr(1 + DPoP) - sqr(QX) - sqr(QY));
+	updateSpinQuaternionLocalFS(spin, Fx*fieldConversion, Fy*fieldConversion, 0, X, Y, f*QX, f*QY, ds, 1/rho0,
 				    p0*(1+DPoP),  -particleCharge*particleRelSign,
 				    particleMass, particleAnomalousMagneticMoment);
       }

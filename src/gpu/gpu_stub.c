@@ -648,8 +648,10 @@ extern int gpuCudaTrfmodeApplyKicks(
 extern void gpuCudaRfmodeRelease(void);
 extern int gpuCudaLscBin(void *coord, long nParticles, int stride,
                          const GPU_LSC_DATA *lsc, long *binnedCount,
+                         double *deltaSumReturn,
                          double *itimeReturn, void *deviceItimeScratch,
                          void *deviceBinnedCountScratch,
+                         void *deviceDeltaSumScratch,
                          float *milliseconds);
 extern int gpuCudaLscApplyKickAndDrift(void *coord, long nParticles,
                                        int stride,
@@ -780,6 +782,7 @@ typedef struct GPU_LSC_SCRATCH {
   void *result;
   void *itime;
   void *binnedCount;
+  void *deltaSum;
   void *vtime;
   long binsCapacity;
 } GPU_LSC_SCRATCH;
@@ -3508,6 +3511,11 @@ static void gpuReleaseLscScratch(void) {
     if (status != 0)
       gpuFatalStatus("cudaFree(LSC bin-count scratch)", status);
   }
+  if (gpuLscScratch.deltaSum) {
+    status = gpuCudaFree(gpuLscScratch.deltaSum);
+    if (status != 0)
+      gpuFatalStatus("cudaFree(LSC momentum-deviation scratch)", status);
+  }
   if (gpuLscScratch.vtime) {
     status = gpuCudaFree(gpuLscScratch.vtime);
     if (status != 0)
@@ -3725,7 +3733,8 @@ static void gpuEnsureLscScratch(long bins) {
   if (bins <= 0)
     return;
   if (gpuLscScratch.result && gpuLscScratch.itime &&
-      gpuLscScratch.binnedCount && gpuLscScratch.vtime &&
+      gpuLscScratch.binnedCount && gpuLscScratch.deltaSum &&
+      gpuLscScratch.vtime &&
       gpuLscScratch.binsCapacity >= bins)
     return;
   gpuReleaseLscScratch();
@@ -3740,6 +3749,9 @@ static void gpuEnsureLscScratch(long bins) {
                               (unsigned long)sizeof(unsigned long long));
   if (status != 0)
     gpuFatalStatus("cudaMalloc(LSC bin-count scratch)", status);
+  status = gpuCudaMallocDouble(&gpuLscScratch.deltaSum, 1UL);
+  if (status != 0)
+    gpuFatalStatus("cudaMalloc(LSC momentum-deviation scratch)", status);
   status = gpuCudaMallocDouble(&gpuLscScratch.vtime,
                                (unsigned long)(bins + 1));
   if (status != 0)
@@ -10582,7 +10594,7 @@ static void gpuLscComputeVoltage(double *vtime, double *ifreq,
                                  double dt, double length,
                                  double beamRadius,
                                  double macroParticleCharge,
-                                 long backtrack, double Po,
+                                 long backtrack, double pBeam,
                                  double lowFrequencyCutoff0,
                                  double lowFrequencyCutoff1,
                                  double highFrequencyCutoff0,
@@ -10665,7 +10677,7 @@ static void gpuLscComputeVoltage(double *vtime, double *ifreq,
     vfreq[nb - 1] = 0;
   for (ib = 1; ib < nfreq - 1; ib++) {
     k = ib * dk;
-    a1 = k * beamRadius / Po;
+    a1 = k * beamRadius / pBeam;
     ZImag = a2 / k * (1 - a1 * dbesk1(a1));
     iImag = (iReal = 2 * ib - 1) + 1;
     vfreq[iReal] = ifreq[iImag] * ZImag * factor;
@@ -10761,6 +10773,23 @@ static void gpuLscCompareCpuShadow(double **cpuCoord, double *gpuCopy,
             label ? label : "track_through_lscdrift", maxAbs, maxRel);
 }
 
+/* Mirrors lscBeamMomentum() in lsc.c for the verification shadow. */
+static double gpuLscCpuBeamMomentum(double **part, long *pbin, long np,
+                                    double Po) {
+  double deltaSum = 0;
+  long ip, count = 0;
+
+  for (ip = 0; ip < np; ip++) {
+    if (pbin[ip] < 0)
+      continue;
+    deltaSum += part[ip][5];
+    count++;
+  }
+  if (!count)
+    return Po;
+  return Po * (1 + deltaSum / count);
+}
+
 static void gpuLscAdvanceCpuShadow(double **part, double *time, long *pbin,
                                    long np, double Po, double *vtime,
                                    long nb, double tmin, double dt,
@@ -10793,6 +10822,7 @@ void gpu_track_through_lscdrift(long np0, void *lsc0, double Po, void *charge0) 
   GPU_BEAM_SUM_DATA sums;
   GPU_LSC_DATA data;
   double lengthLeft, length, Imin, Imax, kSC, S11, S33, beamRadius;
+  double deltaSum = 0, pBeam;
   long nb, binnedCount = 0;
   short kickMode = 0;
   float milliseconds = 0;
@@ -10891,8 +10921,9 @@ void gpu_track_through_lscdrift(long np0, void *lsc0, double Po, void *charge0) 
     milliseconds = 0;
     status = gpuCudaLscBin(gpuBase.deviceCoord, np0,
                            (int)gpuBase.deviceStride, &data,
-                           &binnedCount, Itime, gpuLscScratch.itime,
-                           gpuLscScratch.binnedCount, &milliseconds);
+                           &binnedCount, &deltaSum, Itime,
+                           gpuLscScratch.itime, gpuLscScratch.binnedCount,
+                           gpuLscScratch.deltaSum, &milliseconds);
     if (status != 0)
       gpuFatalStatus("LSCDRIFT CUDA binning kernel", status);
     gpuRecordLscKernel(milliseconds);
@@ -10918,10 +10949,12 @@ void gpu_track_through_lscdrift(long np0, void *lsc0, double Po, void *charge0) 
       exit(1);
     }
 
+    pBeam = binnedCount ? Po * (1 + deltaSum / binnedCount) : Po;
+
     if (Imax <= 0) {
       length = lengthLeft;
     } else {
-      kSC = 2 / beamRadius * sqrt(Imax / ipow3(Po) / 17045.0);
+      kSC = 2 / beamRadius * sqrt(Imax / ipow3(pBeam) / 17045.0);
       length = 0.1 / kSC;
       if (length > lengthLeft || kickMode)
         length = lengthLeft;
@@ -10931,7 +10964,7 @@ void gpu_track_through_lscdrift(long np0, void *lsc0, double Po, void *charge0) 
 
     gpuLscComputeVoltage(Vtime, Ifreq, Itime, nb, data.dt, length,
                          beamRadius, charge->macroParticleCharge,
-                         lsc->backtrack, Po,
+                         lsc->backtrack, pBeam,
                          lsc->lowFrequencyCutoff0,
                          lsc->lowFrequencyCutoff1,
                          lsc->highFrequencyCutoff0,
@@ -10953,7 +10986,8 @@ void gpu_track_through_lscdrift(long np0, void *lsc0, double Po, void *charge0) 
                              "LSCDRIFT", NULL);
     gpuLscComputeVoltage(cpuVtime, cpuIfreq, cpuItime, nb, data.dt, length,
                          beamRadius, charge->macroParticleCharge,
-                         lsc->backtrack, Po,
+                         lsc->backtrack,
+                         gpuLscCpuBeamMomentum(cpuCoord, cpuPbin, np0, Po),
                          lsc->lowFrequencyCutoff0,
                          lsc->lowFrequencyCutoff1,
                          lsc->highFrequencyCutoff0,
@@ -15485,7 +15519,7 @@ static void gpuTrackRfcwLscKickOnDevice(long np, LSCKICK *lsc, double Po,
   GPU_BEAM_SUM_DATA sums;
   GPU_LSC_DATA data;
   double Imin, Imax, S11, S33, beamRadius, lengthLimit, kSC;
-  double absLengthScale;
+  double absLengthScale, deltaSum = 0, pBeam;
   long nb, binnedCount = 0;
   float milliseconds = 0;
   int status;
@@ -15568,8 +15602,9 @@ static void gpuTrackRfcwLscKickOnDevice(long np, LSCKICK *lsc, double Po,
   milliseconds = 0;
   status = gpuCudaLscBin(gpuBase.deviceCoord, np,
                          (int)gpuBase.deviceStride, &data,
-                         &binnedCount, Itime, gpuLscScratch.itime,
-                         gpuLscScratch.binnedCount, &milliseconds);
+                         &binnedCount, &deltaSum, Itime,
+                         gpuLscScratch.itime, gpuLscScratch.binnedCount,
+                         gpuLscScratch.deltaSum, &milliseconds);
   if (status != 0)
     gpuFatalStatus("RFCW LSC CUDA binning kernel", status);
   gpuRecordLscKernel(milliseconds);
@@ -15592,9 +15627,11 @@ static void gpuTrackRfcwLscKickOnDevice(long np, LSCKICK *lsc, double Po,
     exit(1);
   }
 
+  pBeam = binnedCount ? Po * (1 + deltaSum / binnedCount) : Po;
+
   absLengthScale = fabs(lengthScale);
   if (Imax > 0) {
-    kSC = 2 / beamRadius * sqrt(Imax / ipow3(Po) / 17045.0);
+    kSC = 2 / beamRadius * sqrt(Imax / ipow3(pBeam) / 17045.0);
     if (kSC > 0 && isfinite(kSC)) {
       lengthLimit = 1 / kSC;
       if (dgammaOverGamma) {
@@ -15614,7 +15651,7 @@ static void gpuTrackRfcwLscKickOnDevice(long np, LSCKICK *lsc, double Po,
 
   gpuLscComputeVoltage(Vtime, Ifreq, Itime, nb, data.dt, absLengthScale,
                        beamRadius, charge->macroParticleCharge,
-                       data.backtrack, Po,
+                       data.backtrack, pBeam,
                        lsc->lowFrequencyCutoff0,
                        lsc->lowFrequencyCutoff1,
                        lsc->highFrequencyCutoff0,
@@ -15641,7 +15678,8 @@ static void gpuTrackRfcwLscKickOnDevice(long np, LSCKICK *lsc, double Po,
     cpuBeamRadius = (sqrt(cpuS11) + sqrt(cpuS33)) / 2 * lsc->radiusFactor;
     gpuLscComputeVoltage(cpuVtime, cpuIfreq, cpuItime, nb, cpuDt,
                          absLengthScale, cpuBeamRadius,
-                         charge->macroParticleCharge, data.backtrack, Po,
+                         charge->macroParticleCharge, data.backtrack,
+                         gpuLscCpuBeamMomentum(cpuCoord, cpuPbin, np, Po),
                          lsc->lowFrequencyCutoff0,
                          lsc->lowFrequencyCutoff1,
                          lsc->highFrequencyCutoff0,

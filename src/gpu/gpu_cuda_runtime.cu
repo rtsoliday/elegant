@@ -6775,7 +6775,8 @@ __device__ __forceinline__ void gpuLscAddToParticleEnergy(double *part,
 
 __global__ void gpuLscBinKernel(double *coord, long nParticles, int stride,
                                 GPU_LSC_DATA lsc, double *itime,
-                                unsigned long long *binnedCount) {
+                                unsigned long long *binnedCount,
+                                double *deltaSum) {
   long ip = (long)blockIdx.x * blockDim.x + threadIdx.x;
   double *part, t;
   long ib;
@@ -6789,6 +6790,7 @@ __global__ void gpuLscBinKernel(double *coord, long nParticles, int stride,
     return;
   atomicAdd(itime + ib, 1.0);
   atomicAdd(binnedCount, 1ULL);
+  atomicAdd(deltaSum, part[5]);
 }
 
 __global__ void gpuLscApplyKickAndDriftKernel(double *coord, long nParticles,
@@ -12762,24 +12764,30 @@ trwakeTrackHistogramCleanupWithoutEvents:
 
 extern "C" int gpuCudaLscBin(void *coord, long nParticles, int stride,
                              const GPU_LSC_DATA *lsc, long *binnedCount,
+                             double *deltaSumReturn,
                              double *itimeReturn, void *deviceItimeScratch,
                              void *deviceBinnedCountScratch,
+                             void *deviceDeltaSumScratch,
                              float *milliseconds) {
   static cudaEvent_t start = NULL, stop = NULL;
   cudaError_t cudaStatus;
   double *deviceItime = static_cast<double *>(deviceItimeScratch);
   unsigned long long *deviceBinnedCount =
     static_cast<unsigned long long *>(deviceBinnedCountScratch);
+  double *deviceDeltaSum = static_cast<double *>(deviceDeltaSumScratch);
   unsigned long long hostBinnedCount = 0;
+  double hostDeltaSum = 0;
   int freeDeviceItime = 0;
   int freeDeviceBinnedCount = 0;
+  int freeDeviceDeltaSum = 0;
   int threads = 256;
   int blocks;
   int status;
 
-  if (!coord || !lsc || !binnedCount || !itimeReturn)
+  if (!coord || !lsc || !binnedCount || !deltaSumReturn || !itimeReturn)
     return static_cast<int>(cudaErrorInvalidValue);
   *binnedCount = 0;
+  *deltaSumReturn = 0;
   if (milliseconds)
     *milliseconds = 0;
   if (nParticles <= 0)
@@ -12800,6 +12808,12 @@ extern "C" int gpuCudaLscBin(void *coord, long nParticles, int stride,
       goto lscBinCleanupWithoutEvents;
     freeDeviceBinnedCount = 1;
   }
+  if (!deviceDeltaSum) {
+    cudaStatus = cudaMalloc(&deviceDeltaSum, sizeof(*deviceDeltaSum));
+    if (cudaStatus != cudaSuccess)
+      goto lscBinCleanupWithoutEvents;
+    freeDeviceDeltaSum = 1;
+  }
 
   status = getCachedTimingEvents(&start, &stop);
   if (status != static_cast<int>(cudaSuccess)) {
@@ -12813,14 +12827,19 @@ extern "C" int gpuCudaLscBin(void *coord, long nParticles, int stride,
   if (cudaStatus == cudaSuccess)
     cudaStatus = cudaMemset(deviceBinnedCount, 0, sizeof(*deviceBinnedCount));
   if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemset(deviceDeltaSum, 0, sizeof(*deviceDeltaSum));
+  if (cudaStatus == cudaSuccess)
     gpuLscBinKernel<<<blocks, threads>>>(
       static_cast<double *>(coord), nParticles, stride, *lsc,
-      deviceItime, deviceBinnedCount);
+      deviceItime, deviceBinnedCount, deviceDeltaSum);
   if (cudaStatus == cudaSuccess)
     cudaStatus = cudaGetLastError();
   if (cudaStatus == cudaSuccess)
     cudaStatus = cudaMemcpy(&hostBinnedCount, deviceBinnedCount,
                             sizeof(hostBinnedCount), cudaMemcpyDeviceToHost);
+  if (cudaStatus == cudaSuccess)
+    cudaStatus = cudaMemcpy(&hostDeltaSum, deviceDeltaSum,
+                            sizeof(hostDeltaSum), cudaMemcpyDeviceToHost);
   if (cudaStatus == cudaSuccess)
     cudaStatus = cudaMemcpy(itimeReturn, deviceItime,
                             lsc->bins * sizeof(*itimeReturn),
@@ -12829,13 +12848,17 @@ extern "C" int gpuCudaLscBin(void *coord, long nParticles, int stride,
   status = cudaStatus == cudaSuccess ?
              finishTimedKernel(start, stop, milliseconds) :
              static_cast<int>(cudaStatus);
-  if (status == static_cast<int>(cudaSuccess))
+  if (status == static_cast<int>(cudaSuccess)) {
     *binnedCount = static_cast<long>(hostBinnedCount);
+    *deltaSumReturn = hostDeltaSum;
+  }
 
   if (freeDeviceItime)
     cudaFree(deviceItime);
   if (freeDeviceBinnedCount)
     cudaFree(deviceBinnedCount);
+  if (freeDeviceDeltaSum)
+    cudaFree(deviceDeltaSum);
   return status;
 
 lscBinCleanupWithoutEvents:
@@ -12843,6 +12866,8 @@ lscBinCleanupWithoutEvents:
     cudaFree(deviceItime);
   if (freeDeviceBinnedCount)
     cudaFree(deviceBinnedCount);
+  if (freeDeviceDeltaSum)
+    cudaFree(deviceDeltaSum);
   return static_cast<int>(cudaStatus);
 }
 

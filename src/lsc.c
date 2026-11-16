@@ -19,6 +19,40 @@
 #  include "gpu_lsc.h"
 #endif
 
+/* The LSC impedance is parameterized by the beam's Lorentz factor, which is not the
+ * reference momentum once the beam has been accelerated within the element (RFCW) or
+ * has lost energy upstream.  Average over the binned particles, which are exactly the
+ * ones sourcing the kick; this also excludes particles already marked lost, which carry
+ * coordinate[5]==-1 and would otherwise drag the average to zero.
+ * Collective: must be called by every rank that calls rms_emittance_p.
+ */
+static double lscBeamMomentum(double **part, int64_t np, long *pbin, double Po) {
+  double deltaSum = 0;
+  int64_t ip, count = 0;
+
+#if USE_MPI
+  if (distributedBeam && isMaster)
+    np = 0; /* the master holds no part of the beam, as in rms_emittance_p() */
+#endif
+  for (ip = 0; ip < np; ip++) {
+    if (pbin[ip] < 0)
+      continue;
+    deltaSum += part[ip][5];
+    count++;
+  }
+#if USE_MPI
+  if (distributedBeam) {
+    double deltaSumLocal = deltaSum;
+    int64_t countLocal = count;
+    MPI_Allreduce(&deltaSumLocal, &deltaSum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&countLocal, &count, 1, MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
+  }
+#endif
+  if (!count)
+    return Po;
+  return Po * (1 + deltaSum / count);
+}
+
 void track_through_lscdrift(double **part, int64_t np, LSCDRIFT *LSC, double Po, CHARGE *charge) {
   static double *Itime = NULL; /* array for histogram of particle density */
   static double *Ifreq = NULL; /* array for FFT of histogram of particle density */
@@ -34,7 +68,7 @@ void track_through_lscdrift(double **part, int64_t np, LSCDRIFT *LSC, double Po,
   double factor, tmin, tmax, dt, df, dk, a1, a2;
   double lengthLeft, Imin, Imax, kSC, Zmax;
   double Ia = 17045, Z0, length, k;
-  double S11, S33, beamRadius;
+  double S11, S33, beamRadius, pBeam;
   TRACKING_CONTEXT context;
   ELEMENT_LIST *eptr;
 #if DEBUG
@@ -225,8 +259,9 @@ void track_through_lscdrift(double **part, int64_t np, LSCDRIFT *LSC, double Po,
              S11, S33, LSC->radiusFactor);
       exitElegant(1);
     }
+    pBeam = lscBeamMomentum(part, np, pbin, Po);
     /* - compute kSC */
-    kSC = 2 / beamRadius * sqrt(Imax / ipow3(Po) / Ia);
+    kSC = 2 / beamRadius * sqrt(Imax / ipow3(pBeam) / Ia);
     /* - compute length to drift */
     length = 0.1 / kSC;
     if (length > lengthLeft || kickMode)
@@ -336,7 +371,7 @@ void track_through_lscdrift(double **part, int64_t np, LSCDRIFT *LSC, double Po,
     if (isSlave || !distributedBeam) {
       for (ib = 1; ib < nfreq - 1; ib++) {
         k = ib * dk;
-        a1 = k * beamRadius / Po;
+        a1 = k * beamRadius / pBeam;
         ZImag = a2 / k * (1 - a1 * dbesk1(a1));
 #if DEBUG
         fprintf(fpd, "%e %e\n", k, ZImag);
@@ -407,7 +442,7 @@ void addLSCKick(double **part, int64_t np, LSCKICK *LSC, double Po, CHARGE *char
   double factor, tmin, tmax, dt, df, dk, a1, a2;
   double Imin, Imax, kSC, Zmax;
   double Ia = 17045, Z0, length, k;
-  double S11, S33, beamRadius;
+  double S11, S33, beamRadius, pBeam;
 
   if (!charge)
     bombElegant("No charge defined for LSC.  Insert a CHARGE element in the beamline.", NULL);
@@ -498,8 +533,9 @@ void addLSCKick(double **part, int64_t np, LSCKICK *LSC, double Po, CHARGE *char
     printf("Error: beam radius is zero in LSCKICK\n");
     exitElegant(1);
   }
+  pBeam = lscBeamMomentum(part, np, pbin, Po);
   /* - compute kSC */
-  kSC = 2 / beamRadius * sqrt(Imax / ipow3(Po) / Ia);
+  kSC = 2 / beamRadius * sqrt(Imax / ipow3(pBeam) / Ia);
 
   /* - compute maximum length that we should be traveling between kicks */
   lengthScale = fabs(lengthScale);
@@ -624,7 +660,7 @@ void addLSCKick(double **part, int64_t np, LSCKICK *LSC, double Po, CHARGE *char
   Zmax = 0;
   for (ib = 1; ib < nfreq - 1; ib++) {
     k = ib * dk;
-    a1 = k * beamRadius / Po;
+    a1 = k * beamRadius / pBeam;
     ZImag = a2 / k * (1 - a1 * dbesk1(a1));
     if (ZImag > Zmax)
       Zmax = ZImag;
